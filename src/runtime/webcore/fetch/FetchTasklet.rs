@@ -18,7 +18,7 @@ use bun_http::{
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use bun_jsc::{Stopped, 
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
@@ -35,7 +35,6 @@ use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 
-use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
@@ -735,7 +734,7 @@ impl FetchTasklet {
         self.write_end_request(None);
     }
 
-    fn on_body_received(&mut self) -> JsTerminatedResult<()> {
+    fn on_body_received(&mut self) -> Result<(), Stopped> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -797,10 +796,10 @@ impl FetchTasklet {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                // now; narrow back to the real `JsTerminated` here.
+                // Body.rs aliases its `Stopped<T>` to `JsResult<T>` for
+                // now; narrow back to the real `Stopped` here.
                 body.to_error_instance(err, &global_this)
-                    .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                    .map_err(|_| bun_jsc::Stopped)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the
@@ -901,19 +900,19 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                    // now; narrow back to the real `JsTerminated` here.
+                    // Body.rs aliases its `Stopped<T>` to `JsResult<T>` for
+                    // now; narrow back to the real `Stopped` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
                     BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
-                        .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                        .map_err(|_| bun_jsc::Stopped)?;
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_progress_update(&mut self) -> Result<(), Stopped> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
@@ -2753,7 +2752,7 @@ pub(crate) struct FetchTaskletPromiseSettle {
 
 impl FetchTaskletPromiseSettle {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(mut self: Box<Self>) -> jsc::JsTerminatedResult<()> {
+    pub(crate) fn run(mut self: Box<Self>) -> Result<(), jsc::Stopped> {
         let prom = self.promise.value_or_empty().as_any_promise().unwrap();
         let res = self.held.swap();
         res.ensure_still_alive();

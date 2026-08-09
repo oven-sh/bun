@@ -120,6 +120,7 @@ pub use bun_jsc::webcore_types::{
 const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
+use bun_jsc::Stopped;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -146,7 +147,7 @@ pub trait BlobExt {
     fn do_read_from_s3<F: read_file::ReadFileToJs>(
         &self,
         global: &JSGlobalObject,
-    ) -> JsTerminatedResult<JSValue>;
+    ) -> Result<JSValue, Stopped>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// # Safety
     /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
@@ -155,7 +156,7 @@ pub trait BlobExt {
         &self,
         ctx: *mut H,
         global: &JSGlobalObject,
-    ) -> JsTerminatedResult<()>;
+    ) -> Result<(), Stopped>;
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue>
     where
         Self: Sized;
@@ -214,15 +215,15 @@ pub trait BlobExt {
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue>;
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
-    fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
+    fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
-    fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
+    fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
     fn get_array_buffer_clone(
         &self,
         global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
+    ) -> Result<JSValue, jsc::Stopped>;
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
-    fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
+    fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::Stopped>;
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
@@ -355,7 +356,7 @@ pub trait BlobExt {
         &self,
         global: &JSGlobalObject,
         _lifetime: Lifetime,
-    ) -> Result<JSValue, jsc::JsTerminated>;
+    ) -> Result<JSValue, jsc::Stopped>;
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
@@ -427,7 +428,7 @@ impl BlobExt for Blob {
     fn do_read_from_s3<F: read_file::ReadFileToJs>(
         &self,
         global: &JSGlobalObject,
-    ) -> JsTerminatedResult<JSValue> {
+    ) -> Result<JSValue, Stopped> {
         debug!("doReadFromS3");
         // Adapt `(b, g, bytes)` → `(b, g, bytes, .clone)`
         // and route through `to_js_host_call` so the exception scope is asserted.
@@ -519,7 +520,7 @@ impl BlobExt for Blob {
         &self,
         ctx: *mut H,
         global: &JSGlobalObject,
-    ) -> JsTerminatedResult<()> {
+    ) -> Result<(), Stopped> {
         if self.needs_to_read_file() {
             struct Adapter<H>(core::marker::PhantomData<H>);
             impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
@@ -574,7 +575,7 @@ impl BlobExt for Blob {
                 fn cb(
                     result: crate::webcore::__s3_client::S3DownloadResult,
                     opaque_self: *mut c_void,
-                ) -> JsTerminatedResult<()> {
+                ) -> Result<(), Stopped> {
                     // SAFETY: `opaque_self` was heap-allocated below.
                     let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
                     match result {
@@ -1226,7 +1227,7 @@ impl BlobExt for Blob {
         Ok(self.get_text_clone(global_this)?)
     }
 
-    fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
+    fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped> {
         let _store = self.store.get().clone(); // hold a ref across the call
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
@@ -1235,7 +1236,7 @@ impl BlobExt for Blob {
         Ok(self.get_json_share(global_this)?)
     }
 
-    fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
+    fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::Stopped> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
     }
@@ -1243,7 +1244,7 @@ impl BlobExt for Blob {
     fn get_array_buffer_clone(
         &self,
         global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
+    ) -> Result<JSValue, jsc::Stopped> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
@@ -1252,7 +1253,7 @@ impl BlobExt for Blob {
         Ok(self.get_array_buffer_clone(global_this)?)
     }
 
-    fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
+    fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::Stopped> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
@@ -3181,7 +3182,7 @@ impl BlobExt for Blob {
         &self,
         global: &JSGlobalObject,
         _lifetime: Lifetime,
-    ) -> Result<JSValue, jsc::JsTerminated> {
+    ) -> Result<JSValue, jsc::Stopped> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToFormDataWithBytesFn>(global));
         }
@@ -3793,9 +3794,6 @@ use crate::image::Image;
 use crate::node;
 use bun_core::string_joiner::StringJoiner;
 use bun_jsc::SysErrorJsc as _;
-// `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
-// `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 use crate::api::archive::Archive;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
@@ -4611,7 +4609,7 @@ fn write_file_with_empty_source_to_destination(
                 fn resolve(
                     result: S3UploadResult,
                     opaque_this: *mut c_void,
-                ) -> jsc::JsTerminatedResult<()> {
+                ) -> Result<(), jsc::Stopped> {
                     // SAFETY: opaque_this was heap-allocated in the caller below.
                     let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
                     let global = this.global.get();
@@ -4719,8 +4717,8 @@ pub(crate) fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
-                Err(write_file_mod::WriteFileWindowsError::JSTerminated) => {
-                    return Err(jsc::JsTerminated::JSTerminated.into());
+                Err(write_file_mod::WriteFileWindowsError::Stopped) => {
+                    return Err(jsc::Stopped.into());
                 }
                 Ok(_) => {}
             }
@@ -4877,7 +4875,7 @@ pub(crate) fn write_file_with_source_destination(
                         fn resolve(
                             result: S3UploadResult,
                             opaque_self: *mut c_void,
-                        ) -> jsc::JsTerminatedResult<()> {
+                        ) -> Result<(), jsc::Stopped> {
                             // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
                             let mut this =
                                 unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
@@ -5794,7 +5792,7 @@ impl S3BlobDownloadTask {
     pub(crate) fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
         mut this: Box<S3BlobDownloadTask>,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> Result<(), jsc::Stopped> {
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
         // from `this` (it must coexist with `&mut this` calls below).
         let global_ref = this.global_this;
@@ -5835,7 +5833,7 @@ impl S3BlobDownloadTask {
         global_this: &JSGlobalObject,
         blob: &Blob,
         handler: S3ReadHandler,
-    ) -> Result<JSValue, jsc::JsTerminated> {
+    ) -> Result<JSValue, jsc::Stopped> {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
@@ -5869,7 +5867,7 @@ impl S3BlobDownloadTask {
         fn s3_cb(
             result: crate::webcore::__s3_client::S3DownloadResult<'_>,
             ctx: *mut c_void,
-        ) -> Result<(), jsc::JsTerminated> {
+        ) -> Result<(), jsc::Stopped> {
             // SAFETY: `ctx` is the box leaked in `init()`; the download callback fires once.
             let task = unsafe { bun_core::heap::take(ctx.cast::<S3BlobDownloadTask>()) };
             S3BlobDownloadTask::on_s3_download_resolved(result, task)
@@ -6510,7 +6508,7 @@ impl Any {
         &mut self,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
-    ) -> Result<JSValue, jsc::JsTerminated> {
+    ) -> Result<JSValue, jsc::Stopped> {
         // `JSPromise::wrap` takes a `FnOnce(&JSGlobalObject) -> JsResult<JSValue>`;
         // capture `self`/`action` in the closure.
         JSPromise::wrap(global_this, |g| self.to_action_value(g, action))
@@ -6521,7 +6519,7 @@ impl Any {
         promise: jsc::AnyPromise,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> Result<(), jsc::Stopped> {
         // Must route through `AnyPromise::wrap` (NOT open-coded resolve/reject):
         // it opens a `top_scope!` and calls `to_action_value` via
         // `JSC__AnyPromise__wrap` → `to_js_host_call`, so the C++ ThrowScope inside

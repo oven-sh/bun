@@ -191,7 +191,7 @@ pub(crate) fn render_to_ansi(
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
-            // The parser can only return null via JSError / JSTerminated
+            // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());

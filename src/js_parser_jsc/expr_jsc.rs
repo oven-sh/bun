@@ -178,7 +178,7 @@ extern "C" fn Bun__JSONRows__wtf8ToJS(
     let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
     match utf8_bytes_to_js(bytes, global) {
         Ok(value) => value,
-        // Only the string's to_js can fail here (JSError / JSTerminated): the
+        // Only the string's to_js can fail here (JSError): the
         // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
         Err(_) => JSValue::ZERO,
     }

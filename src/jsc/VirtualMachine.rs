@@ -2593,7 +2593,7 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
     }
 

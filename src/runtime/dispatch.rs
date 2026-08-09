@@ -39,7 +39,7 @@ use bun_event_loop::EventLoopTimer::{
 };
 
 use bun_jsc::JSGlobalObject;
-use bun_jsc::event_loop::{EventLoop, JsTerminated};
+use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -172,7 +172,7 @@ pub(crate) fn run_task(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     global: &JSGlobalObject,
-) -> Result<RunTaskResult, JsTerminated> {
+) -> Result<RunTaskResult, Stopped> {
     /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
     macro_rules! cast {
         ($ty:ty) => {{
@@ -615,7 +615,7 @@ pub(crate) fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop.
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
@@ -1154,7 +1154,7 @@ unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     // SAFETY: per fn contract.
     let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)

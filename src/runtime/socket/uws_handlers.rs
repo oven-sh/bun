@@ -26,29 +26,40 @@ use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
-/// Some consumer methods are `bun.JSError!void` (they can throw into JS),
-/// some are plain `void`. The old `configure()` trampolines hand-unrolled the
-/// catch per call site; here we do it once. JS errors are already on the
-/// pending-exception slot — there's nowhere for the C event loop to propagate
-/// them — so we just don't lose the unwind.
-///
-/// A tiny trait specialised on `()` and `Result<(), E>` handles both shapes.
-#[inline]
-fn swallow<R: Swallow>(result: R) {
-    result.swallow();
+/// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql), a
+/// loop-level `Result<(), Stopped>`, or a `JsResult<()>` (it settled promises / converted values and
+/// something threw: valkey). All three become the `JsResult<()>` the dispatcher folds at the entry.
+trait IntoJsResult {
+    fn into_js_result(self) -> bun_jsc::JsResult<()>;
+}
+impl IntoJsResult for () {
+    #[inline]
+    fn into_js_result(self) -> bun_jsc::JsResult<()> {
+        Ok(())
+    }
+}
+impl IntoJsResult for bun_jsc::JsResult<()> {
+    #[inline]
+    fn into_js_result(self) -> bun_jsc::JsResult<()> {
+        self
+    }
+}
+impl IntoJsResult for Result<(), bun_jsc::Stopped> {
+    #[inline]
+    fn into_js_result(self) -> bun_jsc::JsResult<()> {
+        self.map_err(Into::into)
+    }
 }
 
-trait Swallow {
-    fn swallow(self);
-}
-impl Swallow for () {
-    #[inline]
-    fn swallow(self) {}
-}
-impl<E> Swallow for Result<(), E> {
-    #[inline]
-    fn swallow(self) {
-        let _ = self;
+/// The fold at a socket callback that entered JS (WebCore's "returned exception is termination or we
+/// are terminating => stand down, else report"): a uSockets callback returns `void`, so a pending
+/// exception has nowhere to propagate -- it is reported as uncaught here, on the JS thread this
+/// dispatch runs on, rather than left pending for whatever enters JS next; a stop just returns.
+#[cold]
+fn fold(result: bun_jsc::JsResult<()>) {
+    if let Err(err) = result {
+        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+        let _ = bun_jsc::task::report_error_or_terminate(global, err);
     }
 }
 
@@ -266,12 +277,9 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // `socket/mod.rs` (bridges to inherent methods).
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
-/// `SocketHandler<SSL>` namespace type. `swallow()` (specialised on `()` and
-/// `Result<(), E>` above) absorbs both infallible and fallible
-/// returns, so one expansion covers drivers whose inherent fns are
-/// infallible (postgres, mysql) and those returning `JsTerminatedResult<()>`
-/// (valkey). The dispatcher (`NsHandler: VHandler`) `swallow`s the trait
-/// result anyway, so swallowing one frame earlier is behaviour-preserving.
+/// `SocketHandler<SSL>` namespace type; `into_js_result()` lifts the three return shapes (see
+/// [`IntoJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
+/// (`NsHandler: VHandler`) folds the result at the entry.
 ///
 /// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
 /// so the trait default fires.
@@ -283,20 +291,17 @@ macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
             fn on_open(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_open(this, s));
-                Ok(())
+                Self::on_open(this, s).into_js_result()
             }
             fn on_data(
                 this: &mut $Owner,
                 s: NewSocketHandler<SSL>,
                 data: &[u8],
             ) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_data(this, s, data));
-                Ok(())
+                Self::on_data(this, s, data).into_js_result()
             }
             fn on_writable(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_writable(this, s));
-                Ok(())
+                Self::on_writable(this, s).into_js_result()
             }
             fn on_close(
                 this: &mut $Owner,
@@ -304,24 +309,20 @@ macro_rules! impl_ns_socket_events_forward {
                 code: i32,
                 reason: Option<*mut c_void>,
             ) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_close(this, s, code, reason));
-                Ok(())
+                Self::on_close(this, s, code, reason).into_js_result()
             }
             fn on_timeout(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_timeout(this, s));
-                Ok(())
+                Self::on_timeout(this, s).into_js_result()
             }
             fn on_end(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_end(this, s));
-                Ok(())
+                Self::on_end(this, s).into_js_result()
             }
             fn on_connect_error(
                 this: &mut $Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
             ) -> bun_jsc::JsResult<()> {
-                swallow(Self::on_connect_error(this, s, code));
-                Ok(())
+                Self::on_connect_error(this, s, code).into_js_result()
             }
             fn on_handshake(
                 this: &mut $Owner,
@@ -329,10 +330,10 @@ macro_rules! impl_ns_socket_events_forward {
                 ok: i32,
                 err: us_bun_verify_error_t,
             ) -> bun_jsc::JsResult<()> {
-                if let Some(f) = Self::ON_HANDSHAKE {
-                    swallow(f(this, s, ok, err));
+                match Self::ON_HANDSHAKE {
+                    Some(f) => f(this, s, ok, err).into_js_result(),
+                    None => Ok(()),
                 }
-                Ok(())
             }
         }
     };
@@ -521,31 +522,31 @@ where
 
     fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_open(this, wrap::<SSL>(s)));
+        fold(H::on_open(this, wrap::<SSL>(s)));
     }
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_data(this, wrap::<SSL>(s), data));
+        fold(H::on_data(this, wrap::<SSL>(s), data));
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_writable(this, wrap::<SSL>(s)));
+        fold(H::on_writable(this, wrap::<SSL>(s)));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_close(this, wrap::<SSL>(s), code, reason));
+        fold(H::on_close(this, wrap::<SSL>(s), code, reason));
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_timeout(this, wrap::<SSL>(s)));
+        fold(H::on_timeout(this, wrap::<SSL>(s)));
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_long_timeout(this, wrap::<SSL>(s)));
+        fold(H::on_long_timeout(this, wrap::<SSL>(s)));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_end(this, wrap::<SSL>(s)));
+        fold(H::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close before notify — see RawPtrHandler::on_connect_error.
@@ -556,7 +557,7 @@ where
         // SAFETY: snapshot of the ext slot taken before close; unique heap
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
         if let Some(t) = unsafe { thunk::ext_owner(&this) } {
-            swallow(H::on_connect_error(t, wrap::<SSL>(s), code));
+            fold(H::on_connect_error(t, wrap::<SSL>(s), code));
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
@@ -566,7 +567,7 @@ where
         else {
             return;
         };
-        swallow(H::on_connect_error(
+        fold(H::on_connect_error(
             this,
             NewSocketHandler::<SSL>::from_connecting(c),
             code,
@@ -579,7 +580,7 @@ where
         err: us_bun_verify_error_t,
     ) {
         let Some(this) = ext.owner_mut() else { return };
-        swallow(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
+        fold(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
     }
 }
 

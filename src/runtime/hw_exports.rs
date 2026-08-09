@@ -451,7 +451,7 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
             let _ = global.throw_out_of_memory();
             false
         }
-        // `JSError` / `JSTerminated` already set (or cleared) the pending
+        // `JSError` already set (or cleared) the pending
         // exception on `global`; the bindgen ABI signals "exception pending"
         // via `false`.
         Err(_) => false,

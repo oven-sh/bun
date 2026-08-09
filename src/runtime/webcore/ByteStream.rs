@@ -240,7 +240,7 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::Stopped> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`

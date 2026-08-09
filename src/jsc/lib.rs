@@ -560,7 +560,7 @@ Warning: options change between releases of Bun and WebKit without notice. This 
 /// There is deliberately no "terminated" variant. A worker being terminated reaches native code the way
 /// it reaches JSC's own host functions: as a pending TerminationException, i.e. `Thrown`; only the
 /// boundary that entered JS asks whether the exception it takes is the termination one (or whether the
-/// VM's gate has closed) and stands the loop down with [`JsTerminated`]. That is WebCore's shape too:
+/// VM's gate has closed) and stands the loop down with [`Stopped`]. That is WebCore's shape too:
 /// `if (vm.isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
@@ -594,9 +594,9 @@ impl From<bun_core::JsError> for JsError {
 
 /// A loop-level stop observed inside a `JsResult` function unwinds to the boundary like an exception
 /// does; the boundary finds the gate closed (or the termination pending) and stands down.
-impl From<JsTerminated> for bun_core::JsError {
+impl From<Stopped> for bun_core::JsError {
     #[inline]
-    fn from(_: JsTerminated) -> Self {
+    fn from(_: Stopped) -> Self {
         bun_core::JsError::Thrown
     }
 }
@@ -626,8 +626,8 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
 }
 
 /// See the `bun_core::JsError` impl: a loop-level stop unwinds to the boundary as `Thrown`.
-impl From<JsTerminated> for JsError {
-    fn from(_: JsTerminated) -> Self {
+impl From<Stopped> for JsError {
+    fn from(_: Stopped) -> Self {
         JsError::Thrown
     }
 }
@@ -1379,9 +1379,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, JsTerminated,
-    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
-    WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
+    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 #[cfg(unix)]

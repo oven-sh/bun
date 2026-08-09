@@ -525,10 +525,10 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
 }
 
 /// A loop-level stop crossing into this crate's error unwinds like an exception does (see
-/// `From<JsTerminated> for JsError`): the boundary finds the VM's gate closed.
-impl From<bun_jsc::JsTerminated> for Error {
+/// `From<Stopped> for JsError`): the boundary finds the VM's gate closed.
+impl From<bun_jsc::Stopped> for Error {
     #[inline]
-    fn from(_: bun_jsc::JsTerminated) -> Self {
+    fn from(_: bun_jsc::Stopped) -> Self {
         Self::JSError
     }
 }

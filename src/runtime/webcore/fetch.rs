@@ -2128,7 +2128,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::Stopped> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

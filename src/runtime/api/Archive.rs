@@ -664,7 +664,7 @@ impl PromiseResult {
         self,
         global: &JSGlobalObject,
         promise: &mut JSPromise,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    ) -> Result<(), bun_jsc::Stopped> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),

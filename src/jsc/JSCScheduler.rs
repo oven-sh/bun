@@ -1,6 +1,6 @@
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::event_loop::JsTerminated;
+use crate::event_loop::Stopped;
 use crate::virtual_machine::VirtualMachine;
 
 bun_opaque::opaque_ffi! {
@@ -37,7 +37,7 @@ impl JSCDeferredWorkTask {
         unsafe { Bun__deleteDeferredWorkTask(this) };
     }
 
-    pub fn run(&mut self) -> Result<(), JsTerminated> {
+    pub fn run(&mut self) -> Result<(), Stopped> {
         // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; `global` is
         // initialized during VM startup and remains valid for the VM's lifetime.
         let global_this = VirtualMachine::get().global();
@@ -47,7 +47,7 @@ impl JSCDeferredWorkTask {
         // wider `JsError` back down.
         scope
             .assert_no_exception_except_termination()
-            .map_err(|_| JsTerminated::JSTerminated)
+            .map_err(|_| Stopped)
     }
 }
 

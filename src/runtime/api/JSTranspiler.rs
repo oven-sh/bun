@@ -871,7 +871,7 @@ impl TransformTask {
         &mut self,
         promise: &mut JSPromise,
         global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    ) -> Result<(), bun_jsc::Stopped> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
@@ -905,7 +905,7 @@ impl TransformTask {
         &mut self,
         promise: &mut JSPromise,
         global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    ) -> Result<(), bun_jsc::Stopped> {
         promise.settle(global, self.output_code.transfer_to_js(global))
     }
 }

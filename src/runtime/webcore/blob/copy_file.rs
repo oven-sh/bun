@@ -132,7 +132,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> Result<(), jsc::Stopped> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -159,7 +159,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> Result<(), jsc::Stopped> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {

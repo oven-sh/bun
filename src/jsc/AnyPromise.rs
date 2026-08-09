@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
+use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, Stopped, VM};
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 ///
@@ -59,12 +59,12 @@ impl AnyPromise {
     }
 
     #[inline]
-    pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), Stopped> {
         any_promise_dispatch!(self, |p| p.resolve(global_this, value))
     }
 
     #[inline]
-    pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), Stopped> {
         any_promise_dispatch!(self, |p| p.reject(global_this, Ok(value)))
     }
 
@@ -77,7 +77,7 @@ impl AnyPromise {
         self,
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> Result<(), JsTerminated> {
+    ) -> Result<(), Stopped> {
         value.attach_async_stack_from_promise(
             global_this,
             JSPromise::opaque_ref(self.as_js_promise()),
@@ -110,7 +110,7 @@ impl AnyPromise {
     /// into a rejection of this existing promise; otherwise resolve with the
     /// result. The C++ side (`JSC__AnyPromise__wrap`, bindings.cpp) owns the
     /// resolve/reject decision.
-    pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
+    pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), Stopped>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
@@ -145,10 +145,10 @@ impl AnyPromise {
             call::<F>,
         );
         // C++ converts any thrown exception into a rejection, so a pending non-termination
-        // exception here indicates a bug; surface termination as JsTerminated.
+        // exception here indicates a bug; surface termination as Stopped.
         scope
             .assert_no_exception_except_termination()
-            .map_err(|_| JsTerminated::JSTerminated)
+            .map_err(|_| Stopped)
     }
 }
 

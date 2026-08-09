@@ -239,8 +239,8 @@ pub enum IPCDecodeError {
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
+    #[error("Stopped")]
+    Stopped,
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -629,7 +629,7 @@ pub(crate) fn decode_ipc_message(
     // The previous message's JS handler may have taken a worker's termination
     // trap; JSONParse with it pending trips LiteralParser's state assert.
     if global.bun_vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
-        return Err(IPCDecodeError::JSTerminated);
+        return Err(IPCDecodeError::Stopped);
     }
     match mode {
         Mode::Advanced => advanced::decode_ipc_message(data, global),

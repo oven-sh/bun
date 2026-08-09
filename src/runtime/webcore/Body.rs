@@ -87,8 +87,6 @@ fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
-type JsTerminated<T> = jsc::JsResult<T>;
-
 // R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
 // `Response` (and aliased via `HiveRef` in `Request`). Every BodyMixin host
 // fn takes `&self` and projects `&mut Value` through this `JsCell`; the
@@ -1087,7 +1085,7 @@ impl Value {
         // Opaque C++ handle, mutated via FFI. Taking
         // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
         headers: Option<NonNull<FetchHeaders>>,
-    ) -> JsTerminated<()> {
+    ) -> jsc::JsResult<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
             if let Some(readable) = locked.readable.get(global) {
@@ -1349,7 +1347,7 @@ impl Value {
         &mut self,
         err: ValueError,
         global: &JSGlobalObject,
-    ) -> JsTerminated<()> {
+    ) -> jsc::JsResult<()> {
         if let Value::Locked(_) = self {
             // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
             // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on

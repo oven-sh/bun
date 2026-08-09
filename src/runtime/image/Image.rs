@@ -1775,7 +1775,7 @@ impl PipelineTask {
         mut self,
         mut js: PipelineJs,
         cx: &jsc::JsThread<'_>,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> Result<(), jsc::Stopped> {
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);

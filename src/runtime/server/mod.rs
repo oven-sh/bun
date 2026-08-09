@@ -4214,7 +4214,7 @@ impl ServerAllConnectionsClosedTask {
     /// `this` must be the unique owning pointer heap-allocated in
     /// [`Self::schedule`]; ownership is reclaimed and `this` must not be used
     /// after this returns.
-    pub(crate) fn run_from_js_thread(this: *mut Self) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn run_from_js_thread(this: *mut Self) -> Result<(), jsc::Stopped> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
         // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim

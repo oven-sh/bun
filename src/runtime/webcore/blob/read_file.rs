@@ -85,7 +85,7 @@ pub trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
     /// this call (it is reclaimed via `bun_core::heap::take`).
-    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> Result<(), jsc::Stopped>;
     /// The read will never complete (its VM stopped before it did): release `ctx`.
     ///
     /// # Safety
@@ -100,7 +100,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
     unsafe fn run(
         handler: *mut Self,
         maybe_bytes: ReadFileResultType,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> Result<(), jsc::Stopped> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // `Strong::swap()` ties the returned `&mut JSPromise` to
@@ -157,7 +157,7 @@ impl ReadFileCompletionFns {
     /// Erase a typed `ReadFileCompletion`.
     pub(crate) fn of<C: ReadFileCompletion>(ctx: *mut C) -> Self {
         fn run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // The JsTerminated error is intentionally swallowed: the VM is stopping.
+            // The Stopped error is intentionally swallowed: the VM is stopping.
             // SAFETY: `ctx` is the `*mut C` erased below; ownership transfers per the trait.
             let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
         }
@@ -626,7 +626,7 @@ impl ReadFile {
         this: Self,
         completion: ReadFileCompletionFns,
         _: &JSGlobalObject,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> Result<(), jsc::Stopped> {
         let mut this = this;
 
         if this.store.is_none() && this.system_error.is_some() {

@@ -942,7 +942,7 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::Stopped> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
@@ -1695,7 +1695,7 @@ mod _async_tasks {
             let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::Stopped> {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap

@@ -1901,7 +1901,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             (*this).aborted = true;
         }
 
-        // Only JsTerminated escapes flush_promise; there is no JS caller to
+        // Only Stopped escapes flush_promise; there is no JS caller to
         // surface it to from a socket-close callback, so teardown continues.
         // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
         let _ = unsafe { (*this).flush_promise() };
@@ -2061,7 +2061,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     /// Only VM termination
     /// escapes; promise resolution cannot raise an ordinary JS exception here.
-    pub(crate) fn flush_promise(&mut self) -> core::result::Result<(), jsc::JsTerminated> {
+    pub(crate) fn flush_promise(&mut self) -> core::result::Result<(), jsc::Stopped> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
@@ -2273,7 +2273,7 @@ impl NetworkSink {
         task: &bun_s3::MultiPartUpload,
         this: *mut NetworkSink,
         flushed: u64,
-    ) -> core::result::Result<(), jsc::JsTerminated> {
+    ) -> core::result::Result<(), jsc::Stopped> {
         bun_core::scoped_log!(
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
@@ -2638,7 +2638,7 @@ impl BufferAction {
         &mut self,
         global: &JSGlobalObject,
         blob: &mut AnyBlob,
-    ) -> core::result::Result<(), jsc::JsTerminated> {
+    ) -> core::result::Result<(), jsc::Stopped> {
         blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
     }
 
@@ -2646,7 +2646,7 @@ impl BufferAction {
         &mut self,
         global: &JSGlobalObject,
         err: &StreamError,
-    ) -> core::result::Result<(), jsc::JsTerminated> {
+    ) -> core::result::Result<(), jsc::Stopped> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }

@@ -12,7 +12,7 @@
 //!    in the crate that owns `YourType`.
 //! 3. Add a match arm in `bun_runtime::dispatch::run_tasks`.
 
-use crate::event_loop::JsTerminated;
+use crate::event_loop::Stopped;
 use crate::{JSGlobalObject, JsError};
 
 // ─── Task / TaskTag / Taskable ───────────────────────────────────────────────
@@ -43,10 +43,10 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 pub fn report_error_or_terminate(
     global: &JSGlobalObject,
     proof: JsError,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
-        return Err(JsTerminated::JSTerminated);
+        return Err(Stopped);
     }
     let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();
     let exc = ex

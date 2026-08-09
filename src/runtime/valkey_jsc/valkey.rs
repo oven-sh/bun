@@ -23,8 +23,6 @@ use super::valkey_command_body::{Args, Command};
 /// spelling here so the generated `pub use` and prototype thunks resolve.
 pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
-type JsTerminated<T> = bun_jsc::JsResult<T>;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
@@ -290,7 +288,7 @@ struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    fn run(self) -> JsTerminated<()> {
+    fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -501,7 +499,7 @@ impl ValkeyClient {
         entries_ptr: &mut command::entry::Queue,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
-    ) -> JsTerminated<()> {
+    ) -> JsResult<()> {
         let mut pending = core::mem::replace(pending_ptr, command::promise_pair::Queue::init());
         let mut entries = core::mem::replace(entries_ptr, command::entry::Queue::init());
         // Note: `defer pending.deinit()` / `defer entries.deinit()` — handled by Drop.
@@ -519,7 +517,7 @@ impl ValkeyClient {
         Ok(())
     }
 
-    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
         if self.in_flight.readable_length() == 0 {
             return Ok(());
         }
@@ -561,7 +559,7 @@ impl ValkeyClient {
     }
 
     /// Mark the connection as failed with error message
-    pub(crate) fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    pub(crate) fn fail(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
         if self.flags.failed {
             return Ok(());
@@ -598,7 +596,7 @@ impl ValkeyClient {
         &mut self,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
-    ) -> JsTerminated<()> {
+    ) -> JsResult<()> {
         if self.flags.failed {
             return Ok(());
         }
@@ -645,7 +643,7 @@ impl ValkeyClient {
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsTerminated<()> {
+    pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
@@ -734,7 +732,7 @@ impl ValkeyClient {
     /// Process data received from socket
     ///
     /// Caller refs / derefs.
-    pub(crate) fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
+    pub(crate) fn on_data(&mut self, data: &[u8]) -> JsResult<()> {
         debug!(
             "Low-level onData called with {} bytes: {}",
             data.len(),
@@ -980,7 +978,7 @@ impl ValkeyClient {
         }
     }
 
-    fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         debug!("Processing HELLO response");
 
         match value {
@@ -1048,7 +1046,7 @@ impl ValkeyClient {
     }
 
     /// Handle Valkey protocol response
-    fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    fn handle_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         // Special handling for the initial HELLO response
         if !self.flags.is_authenticated {
             self.handle_hello_response(value)?;
@@ -1217,7 +1215,7 @@ impl ValkeyClient {
     }
 
     /// Send authentication command to Valkey server
-    fn authenticate(&mut self) -> JsTerminated<()> {
+    fn authenticate(&mut self) -> JsResult<()> {
         // First send HELLO command for RESP3 protocol
         debug!("Sending HELLO 3 command");
 
@@ -1279,7 +1277,7 @@ impl ValkeyClient {
     }
 
     /// Handle socket open event
-    pub(crate) fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
+    pub(crate) fn on_open(&mut self, socket: AnySocket) -> JsResult<()> {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
@@ -1302,7 +1300,7 @@ impl ValkeyClient {
     }
 
     /// Start the connection process
-    pub(crate) fn start(&mut self) -> JsTerminated<()> {
+    pub(crate) fn start(&mut self) -> JsResult<()> {
         self.authenticate()?;
         let _ = self.flush_data();
         Ok(())
@@ -1538,7 +1536,10 @@ impl ValkeyClient {
         self.parent().global_object
     }
 
-    pub(crate) fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    pub(crate) fn on_valkey_connect(
+        &mut self,
+        value: &mut RESPValue,
+    ) -> Result<(), bun_jsc::Stopped> {
         self.parent().on_valkey_connect(value)
     }
 
@@ -1558,7 +1559,7 @@ impl ValkeyClient {
         self.parent().on_valkey_reconnect();
     }
 
-    pub(crate) fn on_valkey_close(&mut self) -> JsTerminated<()> {
+    pub(crate) fn on_valkey_close(&mut self) -> Result<(), bun_jsc::Stopped> {
         self.parent().on_valkey_close()
     }
 }

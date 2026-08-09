@@ -78,7 +78,7 @@ test(
         // env var outranks bunfig. Point it at this iteration's cache dir so
         // every install is a cold fetch and the assertion reads the right dir.
         env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, "cache") },
-        stdout: "ignore",
+        stdout: "pipe",
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

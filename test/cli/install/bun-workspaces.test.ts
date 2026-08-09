@@ -1912,6 +1912,228 @@ test.concurrent("can override npm package with workspace package under a differe
   });
 });
 
+// An override for a name that is also a workspace member must not displace dependencies
+// that link to the member. Previously the override rewrote the workspace-linked edge back
+// to a registry range, leaving the root with two conflicting resolutions for the same name
+// and every install failed with "Package \"no-deps@2.0.0\" has a dependency loop (DependencyLoop)".
+test.concurrent("override for a workspace member's name does not displace the member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "^1.0.0",
+          "one-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  let { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let stderrText = await stderr.text();
+  expect(stderrText).not.toContain("dependency loop");
+  expect(stderrText).toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+
+  // the satisfying range links the member; the override does not unlink it
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  // the override still applies to registry edges with the same name
+  expect(
+    await file(join(packageDir, "node_modules", "one-dep", "node_modules", "no-deps", "package.json")).json(),
+  ).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+
+  // repeat install does not change the lockfile
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+
+  // --frozen-lockfile reinstalls from the lockfile
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});
+
+test.concurrent("override for a workspace member's name does not apply to workspace: dependencies", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "workspace:*",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  const { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});
+
+test.concurrent("override for a workspace member's name does not apply to a sibling member's dependency", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({ name: "bar", version: "1.0.0", dependencies: { "no-deps": "^1.0.0" } }),
+    ),
+  ]);
+
+  const { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  // bar's satisfying range links the sibling member, so no overridden registry
+  // copy is nested under bar
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await exists(join(packageDir, "node_modules", "bar", "node_modules", "no-deps"))).toBe(false);
+});
+
+test.concurrent("override still applies to a workspace: dependency with no matching member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  // without the override this install fails with "Workspace dependency \"no-deps\" not found"
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: {
+        "no-deps": "workspace:*",
+      },
+      overrides: {
+        "no-deps": "2.0.0",
+      },
+    }),
+  );
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+});
+
+test.concurrent("override still applies when the range does not link the member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "^3.0.0",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await exited).toBe(0);
+  // ^3.0.0 does not link the member, so the name resolves from the registry and
+  // the override picks the version
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+});
+
 describe("LinkWorkspacePackages", () => {
   // Shared setup previously done in a `beforeEach`: each test gets its own dir,
   // a root workspace package.json, and a `no-deps` workspace package.

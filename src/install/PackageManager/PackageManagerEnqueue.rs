@@ -687,9 +687,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
         }
 
-        // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
-        // if it's a workspaceOnly dependency
+        // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>",
+        // is a workspaceOnly dependency, or links a present workspace member (overrides never displace a workspace
+        // package; a `workspace:` dependency whose member is missing stays overridable)
         if !dependency.behavior.is_workspace()
+            && !(dependency.version.tag == dependency::version::Tag::Workspace
+                && crate::lockfile::package_index::contains_workspace_package(
+                    &this.lockfile.package_index,
+                    this.lockfile.packages.items_resolution(),
+                    name_hash,
+                ))
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.npm().is_alias)
         {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { existsSync, readdirSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
@@ -96,6 +97,33 @@ overlapTest(
   },
 );
 
+snapshotTest("a snapshot built with the parent-death watchdog on does not fire it at restore", async () => {
+  // The builder's watch (on the builder's parent) is in the snapshot; a restored process must watch its own parent instead of
+  // acting on the inherited one. Before the fix every restored launch exited 129 on macOS.
+  using dir = tempDir("bun-snapshot-no-orphans", {});
+  const img = join(String(dir), "s.snapshot");
+  {
+    await using p = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "smoke-fixture.js")],
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "smoke-fixture.js")],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(stderr).toContain("[snapshot] restored");
+  expect(stdout).toContain("epoch 1");
+  expect(code).toBe(0);
+});
+
 snapshotTest("a stale sidecar cannot stand in for a snapshot the app failed to take", async () => {
   using dir = tempDir("bun-snapshot-stale-sidecar", { "app.js": `process.exit(3);` });
   const exe = join(String(dir), "app");
@@ -109,7 +137,7 @@ snapshotTest("a stale sidecar cannot stand in for a snapshot the app failed to t
   });
   expect(build.stderr.toString()).toContain("exited with status 3");
   expect(build.exitCode).not.toBe(0);
-  expect(require("fs").existsSync(exe + ".snapshot")).toBe(false);
+  expect(existsSync(exe + ".snapshot")).toBe(false);
 });
 
 snapshotTest(
@@ -138,7 +166,7 @@ snapshotTest(
     expect(buildOut).toContain("[snapshot] wrote");
     expect(buildOut).toContain("MB snapshot into the executable");
     // Nothing beside the executable: the snapshot is in its __BUN/.bun section, and a launch maps the executable itself.
-    expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]);
+    expect(readdirSync(String(dir)).sort()).toEqual(["heavy"]);
     const rawMB = Number(/\[snapshot\] wrote .*?: \d+ regions, ([\d.]+)MB/.exec(buildOut)?.[1]);
     expect(rawMB).toBeGreaterThan(1);
     expect(Bun.file(exe).size).toBeGreaterThan(Bun.file(bunExe()).size + rawMB * 1048576 * 0.9); // embedded as is
@@ -171,7 +199,7 @@ snapshotTest(
       expect(stdout).toContain("fetch -> hello from restored server");
       expect(exitCode).toBe(0);
     }
-    expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]); // launches wrote nothing anywhere (HOME is this dir)
+    expect(readdirSync(String(dir)).sort()).toEqual(["heavy"]); // launches wrote nothing anywhere (HOME is this dir)
     // Opt out boots normally.
     const plain = Bun.spawnSync({
       cmd: [exe],

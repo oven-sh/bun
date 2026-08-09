@@ -36,7 +36,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time.
     const override = !cfg.asan && (cfg.linux || (cfg.darwin && process.env.BUN_MIMALLOC_OVERRIDE_DARWIN === "1"));
-    const osxZone = cfg.darwin && !cfg.asan && !!process.env.BUN_MIMALLOC_OVERRIDE_DARWIN;
+    const osxZone = cfg.darwin && !cfg.asan && process.env.BUN_MIMALLOC_OVERRIDE_DARWIN === "1";
 
     const defines: Record<string, string | number | true> = {
       // The .a path; gates symbol visibility in mimalloc/internal.h.

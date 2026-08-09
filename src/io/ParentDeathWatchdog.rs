@@ -291,6 +291,19 @@ pub fn enable() {
 #[inline]
 pub fn ensure_kill_on_close_job() {}
 
+/// A process restored from a snapshot inherited the builder's parent pid and (on macOS) the builder's registered watch, both
+/// meaningless here: watch this process's own parent instead. The inherited poll is left alone by the restore (see
+/// `FilePoll::rearm_after_snapshot_restore`); it never kept the loop alive and nothing will ever fire it.
+pub fn reinstall_after_snapshot_restore(handle: EventLoopCtx) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    // SAFETY: getppid cannot fail.
+    ORIGINAL_PPID.store(unsafe { libc::getppid() }, Ordering::Relaxed);
+    EVENT_LOOP_INSTALLED.store(false, Ordering::Relaxed);
+    install_on_event_loop(handle);
+}
+
 /// Register `EVFILT_PROC`/`NOTE_EXIT` for the original parent on the main
 /// event loop's kqueue. Called from `VirtualMachine.init` once the uws loop is
 /// up. macOS-only; no-op elsewhere and on subsequent calls.

@@ -209,7 +209,7 @@ impl ElfFile {
     /// `.got.plt` come after it, and expanding in-place would invalidate their
     /// absolute virtual addresses.
     ///
-    /// Re-injecting into our own earlier output works too: every block ends with the `BUN_COMPILED` slot's vaddr, so a rewrite appends a new block (the old one becomes dead space) and repoints the slot.
+    /// Re-injecting into our own earlier output works too: every block ends with the `BUN_COMPILED` slot's vaddr, so a rewrite finds the previous block and replaces it: in place when the new payload fits, otherwise at the same address with the segment regrown, so a file never carries more than one block.
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;

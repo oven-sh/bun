@@ -1256,9 +1256,14 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         // quick page-level filter: skip cells on clean pages
 #if OS(DARWIN)
         {
-            std::vector<int> disp(1);
-            mach_vm_size_t cnt = 1;
-            if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED))) {
+            uintptr_t first = (uintptr_t)cell & ~(pg - 1);
+            uintptr_t last = ((uintptr_t)cell + heapCell->cellSize() - 1) & ~(pg - 1);
+            mach_vm_size_t cnt = (last - first) / pg + 1;
+            std::vector<int> disp(cnt);
+            bool allClean = mach_vm_page_range_query(mach_task_self(), first, cnt * pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS;
+            for (mach_vm_size_t k = 0; allClean && k < cnt; k++)
+                allClean = !(disp[k] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED));
+            if (allClean) {
                 scanned++;
                 return IterationStatus::Continue;
             }
@@ -1289,6 +1294,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         {
             int k = 0;
             JSC::Structure* st = object->structure();
+            if (!st->hasPropertyTableForSnapshot()) shape += "?"; else
             st->forEachProperty(vm, [&](const JSC::PropertyTableEntry& e) { if (k < 5) { if (k) shape += ","; auto* u = e.key(); shape += (u && u->is8Bit()) ? std::string((const char*)u->span8().data(), std::min<size_t>(u->length(), 24)) : "?"; } k++; return true; });
             if (k > 5) shape += ",+" + std::to_string(k - 5);
         }
@@ -1559,6 +1565,10 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
             if (fd < 0) return;
             fflush(stderr);
             saved = dup(2);
+            if (saved < 0) { // no fd left to remember stderr by: leave it alone rather than lose it
+                close(fd);
+                return;
+            }
             dup2(fd, 2);
             close(fd);
         }
@@ -1768,3 +1778,6 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
 #endif
 }
 #endif // BUN_STARTUP_SNAPSHOT_TOOLING
+#if BUN_STARTUP_SNAPSHOT_TOOLING && !BUN_STARTUP_SNAPSHOT_SUPPORTED
+extern "C" void Bun__startupSnapshotToolingTick(JSC::VM*) { }
+#endif

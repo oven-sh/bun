@@ -264,6 +264,8 @@ pub mod parent_death_watchdog {
 
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
+    #[inline]
+    pub fn reinstall_after_snapshot_restore(_handle: EventLoopCtx) {}
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;
 

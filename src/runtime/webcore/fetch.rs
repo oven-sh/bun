@@ -1199,15 +1199,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             .throw_disabled_in_snapshot_error_if_needed("fetch")
             .is_err()
     {
-        // Refused: the gate left its error thrown; a fetch() rejects instead. Abort the caller's signal so its own
-        // timeout/cleanup runs, and reject before any tasklet, body stream or listener is created.
+        // Refused: the gate left its error thrown; a fetch() rejects instead, before any tasklet, body stream or listener
+        // is created. The caller's signal is theirs: a rejected fetch never aborts it.
         global_this.clear_exception();
         if let Some(sig) = signal.take() {
-            // SAFETY: `sig` came from `AbortSignal::ref_()` above; unref after signalling.
-            unsafe {
-                (*sig).signal(global_this, jsc::CommonAbortReason::UserAbort);
-                (*sig).unref();
-            }
+            // SAFETY: `sig` came from `AbortSignal::ref_()` above and is not otherwise retained on this path.
+            unsafe { (*sig).unref() };
         }
         let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot: its result would be frozen into every launch. Do it after restore (process.on('restore'))"));
         return Ok(

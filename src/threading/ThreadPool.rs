@@ -1553,7 +1553,11 @@ pub mod node {
 
         /// Approximate (racy) emptiness: no pointer bits in `stack` and nothing in the consumer cache.
         pub(super) fn is_empty_approx(&self) -> bool {
-            (self.stack.load(Ordering::Acquire) & Self::PTR_MASK) == 0 && self.cache.get().is_null()
+            // Purely from the atomic word: HAS_CACHE mirrors `cache` (only its holder may read the cell itself), and a
+            // consumer mid-run means work is still in flight, which for "is the pool idle?" is not empty either.
+            self.stack.load(Ordering::Acquire)
+                & (Self::PTR_MASK | Self::HAS_CACHE | Self::IS_CONSUMING)
+                == 0
         }
 
         pub(super) fn push(&self, list: &List) {

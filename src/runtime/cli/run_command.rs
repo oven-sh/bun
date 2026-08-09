@@ -2006,6 +2006,10 @@ pub extern "C" fn Bun__startupSnapshotContinueEventLoop() -> ! {
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     // SAFETY: `vm_ptr` is the snapshot's main-thread VM, now installed for this thread.
     let vm = unsafe { &mut *vm_ptr };
+    // SAFETY: the VM was just adopted on this thread; its event loop is the one the watch is registered on.
+    bun_io::ParentDeathWatchdog::reinstall_after_snapshot_restore(unsafe {
+        bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm_ptr)
+    });
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
         let n = store.dispatch_snapshot_hangups();

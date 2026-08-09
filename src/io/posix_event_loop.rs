@@ -339,9 +339,9 @@ impl FilePoll {
             Flags::Readable
         } else if self.flags.contains(Flags::PollWritable) {
             Flags::Writable
-        } else if self.flags.contains(Flags::PollProcess) {
-            Flags::Process
         } else {
+            // A process poll's "fd" is a pid from the building process; the one such poll a snapshot can hold (the parent-death
+            // watchdog: children block the freeze) is re-created for this process's parent by its owner, not re-armed or hung up.
             return StartupSnapshotRearm::Untouched;
         };
         // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the

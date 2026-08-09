@@ -168,11 +168,13 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
-        unsafe extern "C" {
-            fn Bun__startupSnapshotInit();
-        }
-        Bun__startupSnapshotInit();
     }
+    // Every platform: where snapshots are unsupported this is the stub that refuses the environment knobs out loud.
+    unsafe extern "C" {
+        fn Bun__startupSnapshotInit();
+    }
+    // SAFETY: no arguments; called once, on the main thread, before any other thread exists.
+    unsafe { Bun__startupSnapshotInit() };
 
     // Windows-only startup. Must run BEFORE the first libuv
     // call (uv allocator) and before anything reads `Bun.env`/`process.env`

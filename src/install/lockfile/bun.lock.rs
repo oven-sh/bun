@@ -3446,15 +3446,11 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
-                // A member whose root `packages` key is owned by another
-                // package had its workspace dependency replaced when the
-                // lockfile was written; honor that recorded shape rather
-                // than re-deriving it from the current config, so a
-                // `linkWorkspacePackages` flip re-resolves through the
-                // normal changes diff instead of binding a workspace edge
-                // to the npm package. The range scan mirrors
-                // `Package::parse_dependency` for aliased dependencies,
-                // whose root key is the alias.
+                // The key-ownership check honors the shape the lockfile was
+                // written in (a linkWorkspacePackages flip must re-resolve,
+                // not bind a workspace edge to the npm package); the range
+                // scan mirrors `Package::parse_dependency` for aliased
+                // dependencies, whose root key is the alias.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
                     !member_owns_packages_key(pkgs_expr, name, path) || {

@@ -110,7 +110,14 @@ describe("--use-system-ca", () => {
           }));
           `,
         ],
-        env: { ...bunEnv, SSL_CERT_FILE: join(keysDir, "ca1-cert.pem"), KEYS_DIR: keysDir, NODE_USE_SYSTEM_CA: "0" },
+        env: {
+          ...bunEnv,
+          SSL_CERT_FILE: join(keysDir, "ca1-cert.pem"),
+          KEYS_DIR: keysDir,
+          NODE_USE_SYSTEM_CA: "0",
+          // An ambient NODE_EXTRA_CA_CERTS would join every store and skew the counts.
+          NODE_EXTRA_CA_CERTS: undefined,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

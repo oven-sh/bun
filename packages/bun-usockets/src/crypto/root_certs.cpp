@@ -223,7 +223,10 @@ extern "C" X509_STORE *us_get_default_ca_store(int use_system_ca) {
     return NULL;
   }
 
-  if (!X509_STORE_set_default_paths(store)) {
+  // OpenSSL's default file/dir lookups (SSL_CERT_FILE / SSL_CERT_DIR) are the
+  // OS trust store on Linux, so they only belong here when the system CAs do;
+  // unconditional, they hand a --no-use-system-ca store system trust anyway.
+  if (use_system_ca && !X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
   }

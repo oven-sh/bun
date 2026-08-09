@@ -1929,8 +1929,7 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
     return globalObject->makeNapiEnvForFFI();
 }
 
-// Fallback for when requiring node:util throws during lazy initialization of
-// m_utilInspectFunction (e.g. globalThis.process was clobbered by user code).
+// Stub installed by m_utilInspectFunction's initializer when node:util fails to load.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionUtilInspectFallback, (JSGlobalObject * globalObject, CallFrame*))
 {
     return JSValue::encode(jsEmptyString(globalObject->vm()));
@@ -2324,9 +2323,7 @@ void GlobalObject::finishCreation(VM& vm)
                     }
                 }
             }
-            // Requiring node:util runs JS that can throw (e.g. user code clobbered
-            // globalThis.process). The initializer must still set the property, so
-            // degrade to a stub instead of crashing.
+            // Requiring node:util can throw; a LazyProperty initializer must always init.set().
             (void)scope.tryClearException();
             init.set(JSFunction::create(init.vm, init.owner, 2, "inspect"_s, jsFunctionUtilInspectFallback, ImplementationVisibility::Public));
         });
@@ -2366,8 +2363,7 @@ void GlobalObject::finishCreation(VM& vm)
                     }
                 }
             }
-            // The initializer must still set the property even when util.inspect is
-            // unavailable; fall back to the stylizer that applies no colors.
+            // The initializer must still init.set() when util.inspect is unavailable.
             (void)scope.tryClearException();
             init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });

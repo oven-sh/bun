@@ -846,6 +846,9 @@ it.skipIf(isWindows)(
         if (stdout.includes("ready\n")) ready.resolve();
       }
     })();
+    // Drain stderr from the start so a spewing child (crash report, ASAN
+    // output) cannot fill the pipe and block instead of exiting.
+    const stderrDone = proc.stderr.text();
     // If the fixture dies before printing "ready", unblock the wait so the
     // assertions below report the crash instead of hanging.
     const exited = proc.exited.then(code => {
@@ -875,7 +878,7 @@ it.skipIf(isWindows)(
       await Bun.sleep(4);
     }
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), exited]);
+    const [stderr, exitCode] = await Promise.all([stderrDone, exited]);
     await stdoutDone;
     expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "ready\nmatches 1500 builds-ok true\n",
@@ -884,5 +887,5 @@ it.skipIf(isWindows)(
       signalCode: null,
     });
   },
-  isDebug ? Infinity : 60_000,
+  isDebug ? 300_000 : 60_000,
 );

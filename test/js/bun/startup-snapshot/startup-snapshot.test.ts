@@ -49,6 +49,42 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   });
 }
 
+// Statics that cache a process-specific address get baked into the snapshot; WTF's stack-bounds code on Linux caches the
+// original `environ` (a stack address) and clamps the main thread's stack origin to it whenever the bounds contain it.
+// Restored, that is the build process's stack address, and a launch whose stack ASLR happened to place over the same
+// range died in JSC's stack sanitizer. Forced deterministically: no ASLR for both processes, and a build environment
+// large enough that the builder's environ sits well below where the restored process's frames end up.
+const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+const setarch = isLinux ? Bun.which("setarch") : null;
+const canDisableAslr =
+  !!setarch && Bun.spawnSync({ cmd: [setarch, arch, "-R", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+const overlapTest = test.skipIf(!hasSnapshots || !canDisableAslr);
+overlapTest(
+  "restore: the main thread's stack bounds are this process's even when its stack overlaps where the builder's was",
+  async () => {
+    using dir = tempDir("bun-snapshot-stack-overlap", {});
+    const exe = join(String(dir), "app");
+    const padding: Record<string, string> = {};
+    for (let i = 0; i < 14; i++) padding[`SNAPSHOT_TEST_PAD_${i}`] = "x".repeat(96 * 1024); // 14 × 96 KB, each under Linux's 128 KB per-string limit
+    const build = Bun.spawnSync({
+      cmd: [setarch!, arch, "-R", bunExe(), "build", "--compile", "--snapshot=manual", join(import.meta.dir, "smoke-fixture.js"), "--outfile", exe],
+      env: { ...buildEnv, ...padding },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(build.stderr.toString() + build.stdout.toString()).toMatch(/embedded a .* snapshot/);
+    await using proc = Bun.spawn({
+      cmd: [setarch!, arch, "-R", exe],
+      env: restoreEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("[js] tick 3");
+    expect(exitCode).toBe(0);
+  },
+);
+
 snapshotTest(
   "bun build --compile --snapshot embeds the snapshot; the single file restores from itself with no env",
   async () => {

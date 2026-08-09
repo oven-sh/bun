@@ -697,6 +697,28 @@ static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
             }
         }
     }
+    // Copy relocations: libc variables (__libc_stack_end, program_invocation_name, environ, ...) that a non-PIE executable hosts in its
+    // own .bss. They describe this process (glibc derives the main thread's stack bounds from __libc_stack_end), so they are kept too.
+    for (auto& sec : sh) {
+        if (sec.sh_type != SHT_RELA || sec.sh_link >= sh.size() || sh[sec.sh_link].sh_type != SHT_DYNSYM) continue;
+        std::vector<Elf64_Rela> relas(sec.sh_size / sizeof(Elf64_Rela));
+        std::vector<Elf64_Sym> syms(sh[sec.sh_link].sh_size / sizeof(Elf64_Sym));
+        if (::pread(fd, relas.data(), relas.size() * sizeof(Elf64_Rela), sec.sh_offset) != (ssize_t)(relas.size() * sizeof(Elf64_Rela))) continue;
+        if (::pread(fd, syms.data(), syms.size() * sizeof(Elf64_Sym), sh[sec.sh_link].sh_offset) != (ssize_t)(syms.size() * sizeof(Elf64_Sym))) continue;
+#if CPU(ARM64)
+        constexpr uint32_t copyType = R_AARCH64_COPY;
+#else
+        constexpr uint32_t copyType = R_X86_64_COPY;
+#endif
+        for (auto& r : relas) {
+            if (ELF64_R_TYPE(r.r_info) != copyType || n >= cap) continue;
+            uint32_t si = ELF64_R_SYM(r.r_info);
+            uint64_t size = si < syms.size() && syms[si].st_size ? syms[si].st_size : 8;
+            out[n][0] = r.r_offset;
+            out[n][1] = r.r_offset + ((size + 7) & ~7ull);
+            n++;
+        }
+    }
     close(fd);
     return n;
 }
@@ -1642,8 +1664,8 @@ static void snapshotRestoreAndRun(const char* path)
     DataSeg dataSegs[16];
     size_t nDataSegs = 0; // no heap here: the allocator's state is being overlaid
     bool useLibFixups = fixupsWanted;
-    uint64_t linkerRanges[8][2];
-    size_t nLinkerRanges = platformLinkerOwnedRanges(linkerRanges, 8);
+    uint64_t linkerRanges[96][2];
+    size_t nLinkerRanges = platformLinkerOwnedRanges(linkerRanges, 96);
     const bool deferDataCopy = useLibFixups || nLinkerRanges > 0; // words this process owns inside our data segments are skipped by the deferred copy
     bool verbose = !!getenv("BUN_STARTUP_SNAPSHOT_VERBOSE");
     for (auto& r : regions) {

@@ -3406,7 +3406,6 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
     }
     fprintf(stderr, "[napi-diag] stack words pointing at Array/Object/Napi* cells: %u\n", hits);
 
-
     // 4a. Every thread registered with this heap's MachineThreads (each one is
     //     suspended and its registers + stack [sp, origin) conservatively
     //     scanned by every collection). Report them, and any word anywhere in

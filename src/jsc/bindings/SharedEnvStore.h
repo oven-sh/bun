@@ -77,6 +77,13 @@ public:
 
     // While a snapshot is being built, remember what the app read: values read before the freeze are baked into the snapshot.
     void startRecordingReads() { m_recordReads = true; }
+    void finishRecordingReads() // called once the report is printed, before the freeze: the snapshot bakes in "not recording"
+    {
+        m_recordReads = false;
+        Locker locker { m_lock };
+        m_readKeys = { };
+        m_enumerationSites = { };
+    }
     bool isRecordingReads() const { return m_recordReads; }
     void noteRead(const String& key)
     {

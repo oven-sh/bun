@@ -237,7 +237,8 @@ snapshotTest(
     {
       await using p = Bun.spawn({
         cmd: [bunExe(), fixture, "built-arg"],
-        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") },
+        // BUN_OPTIONS is spliced into argv; the build has one token and the launch below has none, so argv must be re-derived, not inherited.
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA"), BUN_OPTIONS: "--silent" },
         cwd: join(String(dir), "a"),
         stdout: "pipe",
         stderr: "pipe",

@@ -222,10 +222,17 @@ static bool snapshotEnvIsSet()
 
 static void reexecWithoutASLRIfSlid()
 {
-    // The re-exec'd generation is tagged in argv[0] (survives env scrubbing) and never re-execs again, whatever the environment says.
+    // The re-exec'd generation is tagged in argv[0] so it never re-execs again even if disabling ASLR silently failed; the tag is
+    // cut off again right here, before anything (Bun's argv capture, ps) can see it.
     static constexpr const char* kReexecTag = " [snapshot-reexec]";
 #if OS(DARWIN)
-    const bool alreadyReexeced = (*_NSGetArgv())[0] && strstr((*_NSGetArgv())[0], kReexecTag);
+    bool alreadyReexeced = false;
+    if (char* argv0 = (*_NSGetArgv())[0]) {
+        if (char* tag = strstr(argv0, kReexecTag)) {
+            *tag = '\0';
+            alreadyReexeced = true;
+        }
+    }
 #else
     const bool alreadyReexeced = false;
 #endif
@@ -413,7 +420,9 @@ static bool findEmbeddedSnapshot(char* out, size_t cap)
 
 extern "C" void Bun__startupSnapshotMaybeRestore()
 {
-    snapshotTimingMark(getenv("BUN_STARTUP_SNAPSHOT_REEXECED") ? "main reached (second generation)" : "main reached (first generation)");
+    const bool secondGeneration = getenv("BUN_STARTUP_SNAPSHOT_REEXECED");
+    unsetenv("BUN_STARTUP_SNAPSHOT_REEXECED"); // consumed: processes this one spawns must make their own re-exec decision
+    snapshotTimingMark(secondGeneration ? "main reached (second generation)" : "main reached (first generation)");
     // Only compiled executables carry or sit next to snapshots; a plain `bun` takes part only when asked to through the environment.
     if (!bun_is_compiled_executable() && !getenv("BUN_STARTUP_SNAPSHOT_IN") && !getenv("BUN_STARTUP_SNAPSHOT_OUT"))
         return;
@@ -1145,7 +1154,7 @@ static uint64_t s_snapshotOpenFds[16]; // fds 0..1023 open in the build process:
 struct SnapshotFileFd {
     int fd;
     int flags;
-    char path[1000];
+    char path[1024]; // F_GETPATH needs MAXPATHLEN
 };
 static SnapshotFileFd s_snapshotFileFds[32];
 static int s_snapshotFileFdCount = 0; // writable regular files (logs) get reopened O_APPEND at the same fd number

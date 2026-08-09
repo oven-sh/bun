@@ -1031,13 +1031,14 @@ void printEnvReadsBeforeSnapshot(Zig::GlobalObject* globalObject, const Vector<S
     }
     std::sort(names.begin(), names.end(), WTF::codePointCompareLessThan);
     unsigned enumerations = store->enumerations();
+    auto sites = store->enumerationSites();
+    store->finishRecordingReads();
     if (names.isEmpty() && !enumerations)
         return;
     StringBuilder out;
     out.append("snapshot: values read from process.env before the freeze are baked into the snapshot; read them in a 'restore' listener or list them in envGate:"_s);
     if (enumerations) {
         out.append("\n  process.env was enumerated or copied "_s, enumerations, enumerations == 1 ? " time"_s : " times"_s, " (every variable)"_s);
-        auto sites = store->enumerationSites();
         std::sort(sites.begin(), sites.end(), [](auto& a, auto& b) { return a.second > b.second; });
         for (auto& [site, count] : sites) {
             out.append("\n    "_s, count, count == 1 ? " copy from:\n"_s : " copies from:\n"_s, site);

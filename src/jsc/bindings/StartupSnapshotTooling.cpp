@@ -424,6 +424,10 @@ static void fileSnapshotHeap(JSC::VM& vm)
     else
         vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     mi_collect(true);
+    if (freeze && !freshHeap) { // as the real restore does, so the census can tell post-"restore" malloc from snapshot memory
+        freshHeap = mi_heap_new();
+        mi_theap_set_default(mi_heap_theap(freshHeap));
+    }
     size_t pg = getpagesize();
     bool onlyLive = !getenv("BUN_FILESNAP_ALL");
     {
@@ -1068,6 +1072,7 @@ static void dumpUCBCensus(JSC::VM& vm)
     struct Acc {
         size_t n = 0, cell = 0, ins = 0, expr = 0, meta = 0, ident = 0, cst = 0, jt = 0, prof = 0, rare = 0;
     } all, fresh;
+    {
     JSC::HeapIterationScope scope(vm.heap);
     vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
         if (!isJSCellKind(kind)) return IterationStatus::Continue;
@@ -1090,6 +1095,7 @@ static void dumpUCBCensus(JSC::VM& vm)
         }
         return IterationStatus::Continue;
     });
+    }
     for (auto [name, a] : { std::pair { "all", all }, std::pair { "new", fresh } }) {
         double M = 1048576.0;
         size_t tot = a.cell + a.ins + a.expr + a.meta + a.ident + a.cst + a.jt + a.prof + a.rare;
@@ -1150,7 +1156,7 @@ static void dumpNewPayload(JSC::VM& vm)
     },
         &ctx);
     fclose(ctx.f);
-    fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks (each ~%s bytes of allocation volume) -> %s\n", ctx.n, getenv("MIMALLOC_PROF_SAMPLE_RATE") ? getenv("MIMALLOC_PROF_SAMPLE_RATE") : "?", path);
+    fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks, %.1fMB (each ~%s bytes of allocation volume) -> %s\n", ctx.n, ctx.bytes / 1048576.0, getenv("MIMALLOC_PROF_SAMPLE_RATE") ? getenv("MIMALLOC_PROF_SAMPLE_RATE") : "?", path);
 }
 
 static void dumpNewCells(JSC::VM& vm)
@@ -1490,7 +1496,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
     if (const char* at = getenv("BUN_STARTUP_SNAPSHOT_OUT_AT_MS")) {
         static bool doneImg = false;
         static auto startImg = std::chrono::steady_clock::now();
-        if (!doneImg && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startImg).count() > atoi(at)) {
+        if (!doneImg && !req && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startImg).count() > atoi(at)) {
             doneImg = true;
             req = 8;
         }
@@ -1498,7 +1504,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
     if (const char* at = getenv("BUN_FILESNAP_AT_MS")) {
         static bool done = false;
         static auto start = std::chrono::steady_clock::now();
-        if (!done && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() > atoi(at)) {
+        if (!done && !req && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() > atoi(at)) {
             done = true;
             req = 4;
         }

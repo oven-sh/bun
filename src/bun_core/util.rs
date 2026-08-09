@@ -3890,17 +3890,33 @@ pub fn compile_exec_argc() -> usize {
     let _ = argv_view();
     COMPILE_EXEC_ARGC.load(core::sync::atomic::Ordering::Relaxed)
 }
-/// For a `--compile`d executable: index in `argv()` where the user's own arguments begin (0 = not standalone).
-/// Everything JS sees as "its" argv (`process.argv.slice(2)`, `Bun.argv`) is derived from `argv()[offset..]`, so it
-/// follows the launch context of the current process (see `snapshot::ProcessDerived`).
-static PASSTHROUGH_OFFSET: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+/// Where the user's own arguments begin in `argv()`, kept relative to the spliced-options prefix (argv[0] + compile-time
+/// options + `BUN_OPTIONS` tokens): that prefix is recomputed with `argv()` itself after a snapshot restore, and the launching
+/// process may carry a different `BUN_OPTIONS` than the one that built the snapshot, so an absolute index would slice wrong.
+static PASSTHROUGH_AFTER_PREFIX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(PASSTHROUGH_DISABLED);
+const PASSTHROUGH_DISABLED: usize = usize::MAX;
+fn spliced_prefix_len() -> usize {
+    let _ = argv_view();
+    1 + COMPILE_EXEC_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+        + BUN_OPTIONS_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// `offset` is an absolute index into the current `argv()`; 0 disables (the arguments are not a verbatim argv tail).
 pub fn set_standalone_passthrough_offset(offset: usize) {
     // (name kept: also set for plain `bun entry args…` when the args are a verbatim argv tail)
-    PASSTHROUGH_OFFSET.store(offset, core::sync::atomic::Ordering::Relaxed);
+    let value = if offset == 0 {
+        PASSTHROUGH_DISABLED
+    } else {
+        offset.saturating_sub(spliced_prefix_len())
+    };
+    PASSTHROUGH_AFTER_PREFIX.store(value, core::sync::atomic::Ordering::Relaxed);
 }
+/// Absolute index into the current process's `argv()` (0 = disabled).
 pub fn standalone_passthrough_offset() -> usize {
-    PASSTHROUGH_OFFSET.load(core::sync::atomic::Ordering::Relaxed)
+    match PASSTHROUGH_AFTER_PREFIX.load(core::sync::atomic::Ordering::Relaxed) {
+        PASSTHROUGH_DISABLED => 0,
+        after_prefix => (spliced_prefix_len() + after_prefix).min(argv_view().len()),
+    }
 }
 
 #[cold]
@@ -3911,16 +3927,18 @@ fn argv_view_init() -> ArgvView {
     // Splice the executable's own compile-time options, then BUN_OPTIONS tokens, after argv[0].
     // SAFETY: written once during single-threaded startup.
     let compile_opts = unsafe { COMPILE_EXEC_ARGV.read() };
+    let before = view.len();
     if !compile_opts.is_empty() {
-        let before = view.len();
         append_options_env::<&'static ZStr>(compile_opts, &mut view);
-        COMPILE_EXEC_ARGC.store(view.len() - before, core::sync::atomic::Ordering::Relaxed);
     }
+    COMPILE_EXEC_ARGC.store(view.len() - before, core::sync::atomic::Ordering::Relaxed);
+    // Stored even when absent: this runs again in a process restored from a snapshot, whose environment may lack a
+    // BUN_OPTIONS the building process had.
+    let before = view.len();
     if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        let original_len = view.len();
         append_options_env::<&'static ZStr>(opts, &mut view);
-        set_bun_options_argc(view.len() - original_len);
     }
+    set_bun_options_argc(view.len() - before);
     ArgvView(RacyCell::new(Vec::leak(view)))
 }
 

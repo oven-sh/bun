@@ -271,8 +271,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return rope;
     }
 
-    // Sizes are taken at write() time, so a buffer detached before end() can make this
-    // overcount; rejecting such an over-limit write set is still the right outcome.
+    // Sizes are recorded at write() time; rejecting even if buffers were detached later is intended.
     const double estimatedLength = accumulator.estimatedLength;
     if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
         || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {

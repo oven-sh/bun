@@ -6101,3 +6101,65 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("fs.Utf8Stream", () => {
+  // A write started from the reopen 'ready' listener is still in flight when the
+  // reopen path announces 'drain'; the write's own completion is what must emit it.
+  it("does not emit 'drain' after reopen while a write started in 'ready' is in flight", async () => {
+    using dir = tempDir("utf8stream-reopen-drain", {});
+    const dest = path.join(String(dir), "out.log");
+
+    let heldWrite: (() => void) | undefined;
+    let holdWrites = false;
+    const stream = new fs.Utf8Stream({
+      dest,
+      sync: false,
+      fs: {
+        write(...args: any[]) {
+          if (!holdWrites) return (fs.write as any)(...args);
+          const cb = args.pop();
+          heldWrite = () => (fs.write as any)(...args, cb);
+        },
+      },
+    });
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.write("before reopen\n");
+    stream.once("drain", () => {
+      stream.reopen();
+      stream.once("ready", () => {
+        holdWrites = true;
+        stream.write("after reopen\n");
+        expect(stream.writing).toBe(true);
+
+        let drainedWhileHeld = false;
+        const onEarlyDrain = () => (drainedWhileHeld = true);
+        stream.on("drain", onEarlyDrain);
+        // The reopen path schedules its 'drain' with process.nextTick; give it
+        // (and anything queued behind it) a full turn to fire.
+        setImmediate(() => {
+          stream.off("drain", onEarlyDrain);
+          try {
+            expect(drainedWhileHeld).toBe(false);
+            expect(heldWrite).toBeFunction();
+          } catch (e) {
+            return reject(e);
+          }
+          stream.once("drain", () => {
+            try {
+              expect(fs.readFileSync(dest, "utf8")).toBe("before reopen\nafter reopen\n");
+            } catch (e) {
+              return reject(e);
+            }
+            stream.once("close", resolve);
+            stream.end();
+          });
+          holdWrites = false;
+          heldWrite!();
+        });
+      });
+    });
+    await done;
+  });
+});

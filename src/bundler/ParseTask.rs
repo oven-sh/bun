@@ -847,6 +847,7 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseXML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
                     let rows: Expr = bun_parsers::xml::XML::parse(
                         source,
                         &mut temp_log,

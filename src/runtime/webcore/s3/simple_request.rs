@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
-use bun_core::strings;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
@@ -20,7 +19,7 @@ use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
-use crate::webcore::s3::list_objects;
+use crate::webcore::s3::{list_objects, xml_response};
 
 // The result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (not owned; they must be copied if used
@@ -86,7 +85,7 @@ pub enum S3DeleteResult<'a> {
 }
 
 pub enum S3ListObjectsResult<'a> {
-    Success(Box<list_objects::S3ListObjectsV2Result<'a>>),
+    Success(Box<list_objects::S3ListObjectsV2Result>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -217,6 +216,7 @@ impl S3HttpSimpleTask {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
+        let parsed;
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
             has_error_code = true;
@@ -224,21 +224,14 @@ impl S3HttpSimpleTask {
             let bytes = self.response_buffer.list.as_slice();
             if !bytes.is_empty() {
                 message = bytes;
-                if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                    let value_start = start + b"<Code>".len();
-                    if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                        if end >= value_start {
-                            code = &bytes[value_start..end];
-                            has_error_code = true;
-                        }
+                parsed = xml_response::parse_error(bytes);
+                if let Some(error) = &parsed {
+                    if let Some(body_code) = error.code.as_deref() {
+                        code = body_code;
+                        has_error_code = true;
                     }
-                }
-                if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                    let value_start = start + b"<Message>".len();
-                    if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                        if end >= value_start {
-                            message = &bytes[value_start..end];
-                        }
+                    if let Some(body_message) = error.message.as_deref() {
+                        message = body_message;
                     }
                 }
             }
@@ -257,38 +250,24 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
+    /// A commit can answer 200 and still carry an `<Error>` document.
     fn fail_if_contains_error(&mut self, status: u32) -> JsTerminatedResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
-
+        let parsed;
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
         } else {
             let bytes = self.response_buffer.list.as_slice();
-            let mut has_error = false;
             if !bytes.is_empty() {
                 message = bytes;
-                if strings::index_of(bytes, b"<Error>").is_some() {
-                    has_error = true;
-                    if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                        let value_start = start + b"<Code>".len();
-                        if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                            if end >= value_start {
-                                code = &bytes[value_start..end];
-                            }
-                        }
-                    }
-                    if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                        let value_start = start + b"<Message>".len();
-                        if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                            if end >= value_start {
-                                message = &bytes[value_start..end];
-                            }
-                        }
-                    }
-                }
             }
-            if (!has_error && status == 200) || status == 206 {
+            parsed = xml_response::parse_error(bytes);
+            if let Some(error) = &parsed {
+                code = error.code.as_deref().unwrap_or(code);
+                message = error.message.as_deref().unwrap_or(message);
+            }
+            if (parsed.is_none() && status == 200) || status == 206 {
                 return Ok(false);
             }
         }
@@ -347,15 +326,18 @@ impl S3HttpSimpleTask {
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
-                    // parse_s3_list_objects_result is infallible (alloc-only
-                    // failure modes abort).
-                    let success = list_objects::parse_s3_list_objects_result(
-                        this.response_buffer.list.as_slice(),
-                    );
-                    callback(
-                        S3ListObjectsResult::Success(Box::new(success)),
-                        this.callback_context,
-                    )?;
+                    let body = this.response_buffer.list.as_slice();
+                    let result = match list_objects::parse_s3_list_objects_result(body) {
+                        Some(listing) => S3ListObjectsResult::Success(Box::new(listing)),
+                        // Half a listing is worse than none: S3 emits keys
+                        // with control characters as (ill-formed) XML
+                        // unless asked to URL-encode them.
+                        None => S3ListObjectsResult::Failure(S3Error {
+                            code: b"InvalidResponse",
+                            message: b"ListObjectsV2 response is not a well-formed <ListBucketResult> document (if keys can contain control characters, pass encodingType: \"url\")",
+                        }),
+                    };
+                    callback(result, this.callback_context)?;
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,

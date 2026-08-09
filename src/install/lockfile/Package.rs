@@ -1750,7 +1750,7 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if workspace_path.is_some() {
+                if let Some(wp) = workspace_path {
                     let satisfies = match workspace_version {
                         Some(workspace_version) => {
                             dependency_version
@@ -1764,9 +1764,6 @@ impl Package<u64> {
                     };
                     if pm.options.link_workspace_packages && satisfies {
                         if workspace_version.is_some() {
-                            // `String::sliced` takes `&'a self`; bind the unwrapped
-                            // value so the borrow outlives the parse call.
-                            let wp = workspace_path.unwrap();
                             let path = wp.sliced(buf);
                             if let Some(mut dep) = dependency::parse_with_tag(
                                 external_alias.value,

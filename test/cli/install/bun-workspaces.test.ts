@@ -755,6 +755,47 @@ describe("workspace and npm dependency sharing a name", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true });
   });
 
+  test.concurrent("scoped displaced member round-trips and keeps scoped walk boundaries", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // a scoped name is a single tree node: resolving the member's hoisted
+    // dependency must walk "beta/@types/is-number" straight to "beta",
+    // never probing "beta/@types/<dep>"
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "@types/is-number": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "tin", "package.json"),
+        JSON.stringify({ name: "@types/is-number", version: "9.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "@types/is-number": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"@types/is-number": ["@types/is-number@1.0.0"`);
+    expect(lockfile).toContain(`"beta/@types/is-number": ["@types/is-number@workspace:packages/tin"]`);
+    // the member's no-deps hoists to the root
+    expect(lockfile).not.toContain("beta/@types/is-number/no-deps");
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    expect(await exists(join(packageDir, "packages", "tin", "node_modules", "no-deps"))).toBe(false);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
   test.concurrent("duplicate workspace keys in a hand-edited lockfile are rejected", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;

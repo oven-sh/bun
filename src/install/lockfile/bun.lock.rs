@@ -2931,9 +2931,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             // strip one tree level; a scoped package name is
                             // a single node, so never leave a bare "@scope"
                             // segment as the tail
-                            let Some(i) = strings::last_index_of_char(prefix, b'/') else {
-                                return None;
-                            };
+                            let i = strings::last_index_of_char(prefix, b'/')?;
                             let parent = &prefix[..i as usize];
                             let tail_start = strings::last_index_of_char(parent, b'/')
                                 .map_or(0, |j| j as usize + 1);

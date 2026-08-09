@@ -1907,6 +1907,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
     assert!(!vm_ptr.is_null(), "snapshot has no main-thread VM");
     bun_core::startup_snapshot::did_restore();
+    bun_boringssl_sys::reinit_fork_detection_after_snapshot_restore();
     bun_threading::work_pool::WorkPool::did_restore_from_snapshot();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     {

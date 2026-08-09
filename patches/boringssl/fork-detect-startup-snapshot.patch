@@ -1,0 +1,45 @@
+--- a/crypto/rand/fork_detect.cc
++++ b/crypto/rand/fork_detect.cc
+@@ -171,6 +171,15 @@
+   return current_generation;
+ }
+ 
++// Bun: a process resumed from a startup snapshot inherits these statics from the process that built it, including a
++// page address that is not mapped here. Restore is single-threaded; installing this process's own page is enough,
++// since the once flag above already reads as done.
++extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {
++  g_fork_detect_addr = nullptr;
++  g_fork_generation = 0;
++  init_fork_detect();
++}
++
+ void bssl::CRYPTO_fork_detect_force_madv_wipeonfork_for_testing(int on) {
+   g_force_madv_wipeonfork = 1;
+   g_force_madv_wipeonfork_enabled = on;
+@@ -197,6 +206,11 @@
+   g_atfork_fork_generation = 1;
+ }
+ 
++// Bun: see the WIPEONFORK variant; here the build process's atfork registration does not exist in this process.
++extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {
++  init_pthread_fork_detection();
++}
++
+ uint64_t bssl::CRYPTO_get_fork_generation() {
+   CRYPTO_once(&g_pthread_fork_detection_once, init_pthread_fork_detection);
+ 
+@@ -210,6 +224,7 @@
+ // assume address space duplication is not a concern and adding entropy to
+ // every RAND_bytes call is not needed.
+ uint64_t bssl::CRYPTO_get_fork_generation() { return 0xc0ffee; }
++extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {}
+ 
+ #else
+ 
+@@ -218,5 +233,6 @@
+ // space duplication could have occurred on any call entropy must be added to
+ // every RAND_bytes call.
+ uint64_t bssl::CRYPTO_get_fork_generation() { return 0; }
++extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {}
+ 
+ #endif

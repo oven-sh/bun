@@ -3,6 +3,12 @@
 pub mod boringssl;
 pub use boringssl::*;
 
+/// After a startup-snapshot restore: fork detection's statics describe the build process (patches/boringssl/fork-detect-startup-snapshot.patch).
+pub fn reinit_fork_detection_after_snapshot_restore() {
+    // SAFETY: restore is single-threaded; the hook only touches BoringSSL's own statics.
+    unsafe { boringssl::CRYPTO_fork_detect_reinit_for_startup_snapshot() }
+}
+
 /// Fill `buf` with cryptographically-secure random bytes via BoringSSL `RAND_bytes`.
 ///
 /// BoringSSL's `RAND_bytes` is a thread-local AES-CTR DRBG seeded once from the

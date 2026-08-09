@@ -265,21 +265,6 @@ impl ErrorCode {
     const MAX_PENDING_SETTINGS_ACK: Self = Self(0xe);
 }
 
-// Open set of wire values → newtype over u16
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct SettingsType(u16);
-impl SettingsType {
-    const SETTINGS_HEADER_TABLE_SIZE: Self = Self(0x1);
-    const SETTINGS_ENABLE_PUSH: Self = Self(0x2);
-    const SETTINGS_MAX_CONCURRENT_STREAMS: Self = Self(0x3);
-    const SETTINGS_INITIAL_WINDOW_SIZE: Self = Self(0x4);
-    const SETTINGS_MAX_FRAME_SIZE: Self = Self(0x5);
-    const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
-    // non standard extension settings here (we still dont support this ones)
-    const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Packed wire structs
 // ──────────────────────────────────────────────────────────────────────────
@@ -392,53 +377,31 @@ impl FrameHeader {
     }
 }
 
-// packed struct(u336) — 7 × (u16 type + u32 value) = 42 bytes
-// Wire layout via #[repr(C, packed)]: all fields are byte-aligned u16/u32, and
-// the per-field swap_bytes() in write() swaps each field individually, not the
-// whole backing int.
-#[repr(C, packed)]
+// HTTP/2 SETTINGS values, one field per standard parameter.
 #[derive(Clone, Copy)]
 pub(crate) struct FullSettingsPayload {
-    _header_table_size_type: u16,
     header_table_size: u32,
-    _enable_push_type: u16,
     enable_push: u32,
-    _max_concurrent_streams_type: u16,
     max_concurrent_streams: u32,
-    _initial_window_size_type: u16,
     initial_window_size: u32,
-    _max_frame_size_type: u16,
     max_frame_size: u32,
-    _max_header_list_size_type: u16,
     max_header_list_size: u32,
-    _enable_connect_protocol_type: u16,
     enable_connect_protocol: u32,
 }
-const _: () =
-    assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 impl Default for FullSettingsPayload {
     fn default() -> Self {
         Self {
-            _header_table_size_type: SettingsType::SETTINGS_HEADER_TABLE_SIZE.0,
             header_table_size: 4096,
-            _enable_push_type: SettingsType::SETTINGS_ENABLE_PUSH.0,
             enable_push: 1,
-            _max_concurrent_streams_type: SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS.0,
             max_concurrent_streams: 4294967295,
-            _initial_window_size_type: SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0,
             initial_window_size: 65535,
-            _max_frame_size_type: SettingsType::SETTINGS_MAX_FRAME_SIZE.0,
             max_frame_size: 16384,
-            _max_header_list_size_type: SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE.0,
             max_header_list_size: 65535,
-            _enable_connect_protocol_type: SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL.0,
             enable_connect_protocol: 0,
         }
     }
 }
 impl FullSettingsPayload {
-    pub(crate) const BYTE_SIZE: usize = 42;
-
     pub(crate) fn to_engine_settings(&self) -> crate::api::h2::settings::Settings {
         crate::api::h2::settings::Settings {
             header_table_size: self.header_table_size,
@@ -453,7 +416,6 @@ impl FullSettingsPayload {
 
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         let result = JSValue::create_empty_object(global_object, 8);
-        // Packed-field reads are by-value (Copy) → no unaligned-ref hazard.
         let header_table_size = self.header_table_size;
         let enable_push = self.enable_push;
         let max_concurrent_streams = self.max_concurrent_streams;
@@ -1245,8 +1207,7 @@ pub struct H2FrameParser {
     padding_strategy: Cell<PaddingStrategy>,
 
     // ---- from-scratch rewrite engine (src/runtime/api/bun/h2) ----
-    // The fields above are the legacy frame state being retired; read()/host functions will route
-    // through `engine` instead. `None` until configured with is_server + settings.
+    // `None` until configured with is_server + settings.
     engine: core::cell::RefCell<Option<crate::api::h2::connection::Connection>>,
     /// Unconsumed inbound tail (the engine holds no reassembly buffer — design B): bytes after the
     /// last complete frame are kept here and prepended to the next read().
@@ -3537,7 +3498,6 @@ fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: Global
         max_frame_size: s.max_frame_size,
         max_header_list_size: s.max_header_list_size,
         enable_connect_protocol: s.enable_connect_protocol,
-        ..Default::default()
     };
     fp.to_js(&global)
 }
@@ -3873,7 +3833,6 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             max_frame_size: settings.max_frame_size,
             max_header_list_size: settings.max_header_list_size,
             enable_connect_protocol: settings.enable_connect_protocol,
-            ..Default::default()
         };
         self.remote_settings.set(Some(fp));
         // §6.9.2: when the peer's INITIAL_WINDOW_SIZE grows, raise the

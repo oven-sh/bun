@@ -1138,6 +1138,15 @@ static std::atomic<size_t> s_trapCount { 0 };
 static size_t s_trapCap = 0;
 static struct sigaction s_prevBus, s_prevSegv;
 
+// A dup'd controlling-tty fd to recreate at restore: fd, the F_GETFL word, and source stdio+1 in disjoint fields (an overlapping layout let x86-64's O_LARGEFILE bleed into the fd number).
+static uint64_t ttyFdRecord(int fd, int flags, int src) { return ((uint64_t)(uint32_t)fd << 40) | ((uint64_t)(uint32_t)flags << 8) | (uint64_t)(src + 1); }
+static void ttyFdRecordUnpack(uint64_t v, int& fd, int& flags, int& src)
+{
+    fd = (int)(v >> 40);
+    flags = (int)((v >> 8) & 0xffffffffu);
+    src = (int)(v & 0xff) - 1;
+}
+
 static struct termios s_snapshotTermios;
 static int s_snapshotTermiosFd = -1; // lives in __DATA, so it travels inside the snapshot
 static uint64_t s_snapshotOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
@@ -1352,7 +1361,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                     break;
                 }
             if (src < 0) continue;
-            hdr.reserved[2 + n++] = ((uint64_t)fd << 16) | ((uint64_t)(fl & 0xffff) << 4) | (uint64_t)(src + 1);
+            hdr.reserved[2 + n++] = ttyFdRecord(fd, fl, src);
             if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] tty fd %d (flags %x) <- std%d\n", fd, fl, src);
         }
     }
@@ -1814,10 +1823,11 @@ static void snapshotRestoreAndRun(const char* path)
     }
     if (s_snapshotTermiosFd >= 0 && isatty(s_snapshotTermiosFd)) tcsetattr(s_snapshotTermiosFd, TCSANOW, &s_snapshotTermios); // raw mode etc. as the build process left it
     for (int i = 2; i < 7 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
-        int fd = (int)(hdr.reserved[i] >> 16), fl = (int)((hdr.reserved[i] >> 4) & 0xfff), src = (int)(hdr.reserved[i] & 0xf) - 1;
+        int fd, fl, src;
+        ttyFdRecordUnpack(hdr.reserved[i], fd, fl, src);
         if (isatty(src) && dup2(src, fd) == fd) {
             if (fl & O_NONBLOCK) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-            if (verbose) fprintf(stderr, "[snapshot] dup2(%d, %d)\n", src, fd);
+            if (verbose) fprintf(stderr, "[snapshot] dup2(%d, %d) flags %x\n", src, fd, fl);
         }
     }
     setvbuf(stderr, nullptr, _IONBF, 0);

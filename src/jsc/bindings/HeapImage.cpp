@@ -1894,8 +1894,9 @@ static void imageRestoreAndRun(const char* path)
         JSC::JSLockHolder lock(*vm);
         NakedPtr<JSC::Exception> exception;
         globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
-        // chdir('.') refreshes libc's idea of the cwd for code that cached it; the reclean runs once startup work has settled.
-        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => Bun.unsafe.recleanImagePages(), 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        // chdir('.') refreshes libc's idea of the cwd for code that cached it. Once the app's own startup work has settled, one full
+        // collection frees what that burst left behind and the reclean hands back the image pages it only wrote transiently.
+        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.unsafe.recleanImagePages(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
         if (exception) fprintf(stderr, "[image] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
     Bun__imageContinueEventLoop(); // never returns

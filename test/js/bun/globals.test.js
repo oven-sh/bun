@@ -265,24 +265,26 @@ it("accessing Bun.SQL while unwinding from stack overflow does not crash", async
   const src = `
     Error.stackTraceLimit = 0;
     let probes = 200;
+    let caught = 0;
     function F() {
       if (!new.target) throw "must call with new";
       try { new F(); } catch {}
       if (probes > 0) {
         probes--;
-        try { Bun.SQL; } catch {}
+        try { Bun.SQL; } catch { caught++; }
       }
     }
     new F();
     Bun.SQL;
-    console.log("survived");
+    console.log("survived, sawLazyInitFailure:", caught > 0);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("survived\n");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("survived, sawLazyInitFailure: true\n");
   expect(exitCode).toBe(0);
 });

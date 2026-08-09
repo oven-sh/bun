@@ -300,6 +300,7 @@ pub fn reinstall_after_snapshot_restore(handle: EventLoopCtx) {
     }
     // SAFETY: getppid cannot fail.
     ORIGINAL_PPID.store(unsafe { libc::getppid() }, Ordering::Relaxed);
+    #[cfg(target_os = "macos")]
     EVENT_LOOP_INSTALLED.store(false, Ordering::Relaxed);
     install_on_event_loop(handle);
 }

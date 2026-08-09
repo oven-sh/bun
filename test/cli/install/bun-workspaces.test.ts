@@ -193,6 +193,200 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
+// A `*` range accepts a workspace member whose version is a prerelease even
+// though `*` does not satisfy prereleases under npm semver rules, and the
+// outcome must not depend on whether the root or another member declares the
+// dependency (`no-deps` also exists in the registry with 2.0.0 as latest).
+test.concurrent("root wildcard dependency on a prerelease workspace member links the workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "*",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0-beta.1" }),
+    ),
+  ]);
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain("no-deps@workspace:packages/no-deps");
+  expect(lock).not.toContain("no-deps@2.0.0");
+  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
+    "3.0.0-beta.1",
+  );
+
+  // repeat install converges: no re-save, identical lockfile
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lock);
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+});
+
+test.concurrent("member wildcard dependency on a prerelease workspace member stays linked and stable", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0-beta.1" }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "*",
+        },
+      }),
+    ),
+  ]);
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain("no-deps@workspace:packages/no-deps");
+  expect(lock).not.toContain("no-deps@2.0.0");
+  const hoisted = join(packageDir, "node_modules", "no-deps", "package.json");
+  const nested = join(packageDir, "packages", "pkg1", "node_modules", "no-deps", "package.json");
+  const installedPkgJson = (await exists(nested)) ? nested : hoisted;
+  expect((await file(installedPkgJson).json()).version).toBe("3.0.0-beta.1");
+
+  // repeat install converges: no re-save, identical lockfile
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lock);
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+});
+
+// Boundary guard: only a wildcard gets the prerelease exception. A range the
+// member's prerelease version does not satisfy keeps installing from the
+// registry. Passes on an unmodified build by design.
+test.concurrent("non-wildcard range on a prerelease workspace member still installs from the registry", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0-beta.1" }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain("no-deps@1.1.0");
+  expect(lock).not.toContain("no-deps@workspace:packages/no-deps");
+  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.1.0");
+});
+
 test.concurrent("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

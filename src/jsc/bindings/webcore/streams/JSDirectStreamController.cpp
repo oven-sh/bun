@@ -271,21 +271,41 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return rope;
     }
 
+    // The UTF-8 re-encode below only grows the estimate (binary bytes are exact, string
+    // chunks count UTF-16 code units), so an estimate past the string limit is final.
+    // Throw before appending anything: Vector's capacity CRASH()es past INT32_MAX, so a
+    // >2GB accumulation would abort in append before the exceedsStringLimit() throw
+    // below is ever reached.
+    const double estimatedLength = accumulator.estimatedLength;
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     Vector<uint8_t> bytes;
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
+        bool appended = true;
         if (value.isString()) {
             String string = asString(value)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto utf8 = string.utf8();
-            bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+            appended = bytes.tryAppend(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                appended = bytes.tryAppend(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
             auto* impl = buffer->impl();
             if (impl && !impl->isDetached())
-                bytes.append(impl->span());
+                appended = bytes.tryAppend(impl->span());
+        }
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
         }
     }
     if (!accumulator.rope.isEmpty()) {
@@ -293,7 +313,10 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         auto utf8 = rope.utf8();
-        bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!bytes.tryAppend(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() })) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
+        }
     }
     if (Bun::WebStreams::exceedsStringLimit(bytes.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

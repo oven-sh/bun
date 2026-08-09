@@ -327,7 +327,13 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         RETURN_IF_EXCEPTION(scope, false);
         if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
             size_t oldSize = bytes.size();
-            bytes.grow(oldSize + byteLength);
+            // tryGrow/tryAppend: UTF-8 expansion can push the total past the estimate that
+            // sized the vector, and growing past the Vector capacity limit must surface as
+            // a catchable out-of-memory error, not a CRASH() in allocateBuffer.
+            if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return false;
+            }
             size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
             // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
             ASSERT(written == byteLength);
@@ -337,13 +343,19 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         return true;
     }
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
-            bytes.append(view->span());
+        if (!view->isDetached() && !bytes.tryAppend(view->span())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
     }
     if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-            bytes.append(impl->span());
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached()) {
+            if (!bytes.tryAppend(impl->span())) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return false;
+            }
+        }
         return true;
     }
     throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
@@ -709,10 +721,24 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return rope.substring(1);
         return rope;
     }
-    WTF::Vector<uint8_t> bytes;
+    // The UTF-8 re-encode below only grows the estimate (binary bytes are exact, string
+    // chunks count UTF-16 code units), so an estimate past the string limit is final.
+    // Throw before touching the Vector: its capacity CRASH()es past INT32_MAX, so an
+    // estimate in [2^31, 2^32) would abort in reserveInitialCapacity before the
+    // exceedsStringLimit() throw below is ever reached.
     const double estimatedLength = accumulator.estimatedLength;
-    if (estimatedLength > 0 && estimatedLength < static_cast<double>(std::numeric_limits<uint32_t>::max()))
-        bytes.reserveInitialCapacity(static_cast<size_t>(estimatedLength));
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
+    WTF::Vector<uint8_t> bytes;
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
         if (!value)
@@ -727,7 +753,11 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         WTF::CString utf8 = rope.utf8();
-        bytes.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!bytes.tryAppend(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() })) [[unlikely]] {
+            releaseAccumulated();
+            throwOutOfMemoryError(globalObject, scope);
+            return WTF::String();
+        }
     }
     releaseAccumulated();
     if (exceedsStringLimit(bytes.size())) [[unlikely]] {

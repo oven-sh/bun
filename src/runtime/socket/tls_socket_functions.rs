@@ -394,16 +394,66 @@ pub(super) fn get_tls_version(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
+    Ok(tls_version_to_js(ssl_ptr, global))
+}
+
+fn tls_version_to_js(ssl_ptr: *mut boringssl::SSL, global: &JSGlobalObject) -> JSValue {
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
     if version.is_null() {
-        return Ok(JSValue::NULL);
+        return JSValue::NULL;
     }
     // SAFETY: SSL_get_version returns a static NUL-terminated C string.
     let slice = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
     if slice.is_empty() {
-        return Ok(JSValue::NULL);
+        return JSValue::NULL;
     }
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    ZigString::from_utf8(slice).to_js(global)
+}
+
+// ── C-exported TLS introspection, called from JSNodeHTTPServerSocketPrototype.cpp
+// so the socket node:https hands to request handlers can expose the
+// tls.TLSSocket surface (getPeerCertificate / getCipher / getProtocol).
+
+/// # Safety
+/// `ssl` must be null or the live `SSL*` of a TLS socket (the C++ caller
+/// passes `us_socket_get_native_handle` of an SSL socket). On failure the
+/// exception is pending on `global` and `JSValue::ZERO` is returned.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__NodeHTTPServerSocket__getPeerCertificate(
+    ssl: *mut boringssl::SSL,
+    global: &JSGlobalObject,
+    abbreviated: bool,
+) -> JSValue {
+    if ssl.is_null() {
+        return JSValue::UNDEFINED;
+    }
+    peer_certificate_to_js(ssl, abbreviated, global).unwrap_or(JSValue::ZERO)
+}
+
+/// # Safety
+/// See [`Bun__NodeHTTPServerSocket__getPeerCertificate`].
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__NodeHTTPServerSocket__getCipher(
+    ssl: *mut boringssl::SSL,
+    global: &JSGlobalObject,
+) -> JSValue {
+    if ssl.is_null() {
+        return JSValue::UNDEFINED;
+    }
+    cipher_to_js(ssl, global)
+}
+
+/// # Safety
+/// See [`Bun__NodeHTTPServerSocket__getPeerCertificate`].
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__NodeHTTPServerSocket__getTLSVersion(
+    ssl: *mut boringssl::SSL,
+    global: &JSGlobalObject,
+) -> JSValue {
+    if ssl.is_null() {
+        return JSValue::NULL;
+    }
+    tls_version_to_js(ssl, global)
 }
 
 pub(super) fn set_max_send_fragment(
@@ -457,6 +507,17 @@ pub(super) fn get_peer_certificate(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
+    peer_certificate_to_js(ssl_ptr, abbreviated, global)
+}
+
+/// Build the Node-shaped peer-certificate object for `ssl_ptr`. Shared by the
+/// `Bun.connect`/`tls.connect` socket binding and the C-exported node:http
+/// server socket surface.
+fn peer_certificate_to_js(
+    ssl_ptr: *mut boringssl::SSL,
+    abbreviated: bool,
+    global: &JSGlobalObject,
+) -> JsResult<JSValue> {
     let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
 
     if abbreviated {
@@ -783,6 +844,10 @@ pub(super) fn get_cipher(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
+    Ok(cipher_to_js(ssl_ptr, global))
+}
+
+fn cipher_to_js(ssl_ptr: *mut boringssl::SSL, global: &JSGlobalObject) -> JSValue {
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
     let result = JSValue::create_empty_object(global, 0);
 
@@ -790,7 +855,7 @@ pub(super) fn get_cipher(
         result.put(global, b"name", JSValue::NULL);
         result.put(global, b"standardName", JSValue::NULL);
         result.put(global, b"version", JSValue::NULL);
-        return Ok(result);
+        return result;
     }
     let cipher = ffi::SSL_CIPHER::opaque_ref(cipher);
 
@@ -825,7 +890,7 @@ pub(super) fn get_cipher(
         result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
     }
 
-    Ok(result)
+    result
 }
 
 pub(super) fn get_tls_peer_finished_message(

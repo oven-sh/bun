@@ -307,7 +307,7 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
+static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout, bool breakOnSigint)
 {
     if (vm.hasTerminationRequest()) {
         // The whole VM is being stopped (worker terminate()/exit): that
@@ -327,6 +327,11 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else if (timeout) {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
+        } else if (breakOnSigint) {
+            // SIGINT raced the watcher registration or teardown: the watcher
+            // observed the global but not the script receiver, so the request
+            // was set without the paired sigintReceived flag.
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
         }
@@ -414,7 +419,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, newLimit, options.breakOnSigint)) {
         return {};
     }
 
@@ -481,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, newLimit, options.breakOnSigint)) {
         return {};
     }
 

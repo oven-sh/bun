@@ -3913,29 +3913,22 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Temporarily remove from the visited map to allow
-            // printErrorlikeObject to process it. The circular reference
-            // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
-                self.map.remove(&value).is_some()
-            } else {
-                false
-            };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
-
+            // The value must STAY in the visited map while the error printer
+            // runs: it re-enters this formatter for the error's properties
+            // (`cause` rendered inline, the `errors` array), and an error
+            // reachable from itself through those would otherwise recurse
+            // until the stack runs out (e.cause = e; e.errors = [e]).
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            // `print_errorlike_object` returns unit and can leave a pending
+            // exception (e.g. the AggregateError branch swallows `for_each`
+            // failures); restore the JsResult contract for `?`-chaining
+            // callers.
+            if self.global_this.has_exception() {
+                return Err(jsc::JsError::Thrown);
+            }
             Ok(())
         }
 

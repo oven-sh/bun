@@ -6397,7 +6397,15 @@ impl VirtualMachine {
                         if global_ref.has_exception() {
                             global_ref.clear_exception();
                         }
-                    } else if global_ref.has_exception() || formatter.failed {
+                    } else if global_ref.has_exception() {
+                        // Propagate instead of returning Ok with the exception
+                        // still pending: `?`-chaining callers (console.log,
+                        // the worker error render) treat Ok as "nothing
+                        // pending", and a leaked exception trips
+                        // assertNoExceptionExceptTermination on the next
+                        // ExceptionScope in debug builds.
+                        return Err(crate::CrateError::JSError);
+                    } else if formatter.failed {
                         return Ok(());
                     }
 

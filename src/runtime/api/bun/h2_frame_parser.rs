@@ -5357,6 +5357,9 @@ impl H2FrameParser {
         // The callback runs arbitrary JS while `stream` is held (here and by every caller):
         // arm the dispatch guard so a reentrant read() cannot drain
         // pending_engine_stream_closes at depth 0 and free the box under us.
+        // Deliberately not enter_stream_dispatch: no `&mut Stream` may live across the
+        // call — the streamStart handler's refused-stream path re-enters rst_stream,
+        // which forms its own `&mut` to this stream.
         let _dispatch = self.enter_dispatch();
         match callback.call(
             &global,

@@ -157,6 +157,33 @@ test(
       console.error("unexpected stream id: " + id);
       process.exit(1);
     }
+    // The close must have been deferred, not drained inside the callback: the native
+    // entry is still alive (pre-fix this throws "Invalid stream id" on every build
+    // tier because the drain freed it), and no context may have been installed for
+    // the closed stream (a guard-only fix would return the Http2Stream here).
+    let ctx;
+    try {
+      ctx = parser.getStreamContext(2);
+    } catch (e) {
+      console.error("getStreamContext threw: " + e.message);
+      process.exit(1);
+    }
+    if (ctx !== undefined) {
+      console.error("context installed for closed stream");
+      process.exit(1);
+    }
+    // One depth-0 read runs the deferred drain; the entry must actually go away.
+    parser.read(Buffer.alloc(0));
+    let drained = false;
+    try {
+      parser.getStreamContext(2);
+    } catch (e) {
+      drained = true;
+    }
+    if (!drained) {
+      console.error("deferred close never drained");
+      process.exit(1);
+    }
     session.destroy();
     console.log("OK");
     process.exit(0);

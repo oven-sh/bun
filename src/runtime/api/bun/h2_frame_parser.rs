@@ -21,7 +21,6 @@ use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
-use bun_core::MutableString;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_http::lshpack;
@@ -397,17 +396,6 @@ impl FrameHeader {
     }
 }
 
-// packed struct(u48): type: u16, value: u32
-#[repr(C, packed)]
-#[derive(Clone, Copy, Default)]
-pub struct SettingsPayloadUnit {
-    type_: u16,
-    value: u32,
-}
-impl SettingsPayloadUnit {
-    pub const BYTE_SIZE: usize = 6;
-}
-
 // packed struct(u336) — 7 × (u16 type + u32 value) = 42 bytes
 // Wire layout via #[repr(C, packed)]: all fields are byte-aligned u16/u32, and
 // the per-field swap_bytes() in write() swaps each field individually, not the
@@ -430,11 +418,6 @@ pub(crate) struct FullSettingsPayload {
     _enable_connect_protocol_type: u16,
     enable_connect_protocol: u32,
 }
-// SAFETY: `#[repr(C, packed)]` with only `u16`/`u32` fields — no padding, no
-// niches, every 42-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for FullSettingsPayload {}
 const _: () =
     assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 impl Default for FullSettingsPayload {
@@ -1102,7 +1085,7 @@ impl TxFrameTracker {
                 let header = FrameHeader::decode(&self.header);
                 self.header_len = 0;
                 self.remaining = header.length;
-                // PUSH_PROMISE is not a FrameType variant (the inbound path matches it raw too).
+                // PUSH_PROMISE is not a FrameType variant.
                 const PUSH_PROMISE: u8 = 0x05;
                 if header.type_ == FrameType::HTTP_FRAME_HEADERS as u8
                     || header.type_ == PUSH_PROMISE
@@ -1193,8 +1176,6 @@ pub struct H2FrameParser {
     enforced_max_header_list_size: Cell<u32>,
     // only available after receiving settings or ACK
     remote_settings: Cell<Option<FullSettingsPayload>>,
-    // buffer if more data is needed for the current frame
-    read_buffer: JsCell<MutableString>,
 
     // local Window limits the download of data
     // current window size for the connection
@@ -3463,7 +3444,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 // are inherent methods now.)
 
 // ──────────────────────────────────────────────────────────────────────────
-// H2FrameParser impl — frame handlers
+// H2FrameParser impl — stream registry
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
@@ -4001,9 +3982,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 );
                 return;
             }
-            // Balance the increment from send_ping: the legacy inbound path decremented this in
-            // handle_ping; the engine path must do the same or the outstanding-ping limit trips
-            // on long-lived sessions.
+            // Balance the increment from send_ping, or the outstanding-ping
+            // limit trips on long-lived sessions.
             self.out_standing_pings
                 .set(self.out_standing_pings.get().saturating_sub(1));
         }
@@ -7773,7 +7753,6 @@ impl H2FrameParser {
                 FullSettingsPayload::default().max_header_list_size,
             ),
             remote_settings: Cell::new(None),
-            read_buffer: JsCell::new(MutableString::default()),
             window_size: Cell::new(DEFAULT_WINDOW_SIZE),
             used_window_size: Cell::new(0),
             remote_window_size: Cell::new(DEFAULT_WINDOW_SIZE),
@@ -8030,10 +8009,6 @@ impl H2FrameParser {
         self.unregister_auto_flush();
         self.detach_native_socket();
 
-        // Free the allocation, not just the length: `reset()` would only
-        // clear `len`; detach() is reachable from JS without a following `deinit`, so the
-        // capacity must be released here. Drop-and-replace = free.
-        self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
@@ -8092,7 +8067,7 @@ impl H2FrameParser {
         drop(streams);
 
         // Drop is still owed on the remaining fields (`handlers`, `auto_flusher`, the now-
-        // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …);
+        // empty `streams`/`write_buffer`/`strong_this`, …);
         // `HiveArrayFallback::put` runs `drop_in_place` before recycling the slot,
         // and `heap::destroy` drops via `Box<T>`, so both branches drop exactly once.
         // R-2: refcount==0, sole owner — `as_ctx_ptr()` is sound for the

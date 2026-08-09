@@ -5379,7 +5379,8 @@ impl H2FrameParser {
                     self.sctx.with_mut(|m| {
                         m.insert(stream_identifier, StrongOptional::create(returned, &global));
                     });
-                    self.enter_stream_dispatch(stream).set_context(returned, &global);
+                    self.enter_stream_dispatch(stream)
+                        .set_context(returned, &global);
                 }
             }
         }

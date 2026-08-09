@@ -81,8 +81,8 @@ public:
     {
         m_recordReads = false;
         Locker locker { m_lock };
-        m_readKeys = { };
-        m_enumerationSites = { };
+        m_readKeys = {};
+        m_enumerationSites = {};
     }
     bool isRecordingReads() const { return m_recordReads; }
     void noteRead(const String& key)

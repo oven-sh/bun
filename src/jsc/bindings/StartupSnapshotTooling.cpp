@@ -1073,28 +1073,28 @@ static void dumpUCBCensus(JSC::VM& vm)
         size_t n = 0, cell = 0, ins = 0, expr = 0, meta = 0, ident = 0, cst = 0, jt = 0, prof = 0, rare = 0;
     } all, fresh;
     {
-    JSC::HeapIterationScope scope(vm.heap);
-    vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
-        if (!isJSCellKind(kind)) return IterationStatus::Continue;
-        auto* ucb = dynamicDowncast<JSC::UnlinkedCodeBlock>(static_cast<JSC::JSCell*>(cell));
-        if (!ucb) return IterationStatus::Continue;
-        auto c = ucb->componentSizesForCensus();
-        bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
-        for (Acc* a : { &all, isNew ? &fresh : (Acc*)nullptr }) {
-            if (!a) continue;
-            a->n++;
-            a->cell += cell->cellSize();
-            a->ins += c.instructions;
-            a->expr += c.expressionInfo;
-            a->meta += c.metadata;
-            a->ident += c.identifiers;
-            a->cst += c.constants;
-            a->jt += c.jumpTargets;
-            a->prof += c.profiles;
-            a->rare += c.rareData;
-        }
-        return IterationStatus::Continue;
-    });
+        JSC::HeapIterationScope scope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+            if (!isJSCellKind(kind)) return IterationStatus::Continue;
+            auto* ucb = dynamicDowncast<JSC::UnlinkedCodeBlock>(static_cast<JSC::JSCell*>(cell));
+            if (!ucb) return IterationStatus::Continue;
+            auto c = ucb->componentSizesForCensus();
+            bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
+            for (Acc* a : { &all, isNew ? &fresh : (Acc*)nullptr }) {
+                if (!a) continue;
+                a->n++;
+                a->cell += cell->cellSize();
+                a->ins += c.instructions;
+                a->expr += c.expressionInfo;
+                a->meta += c.metadata;
+                a->ident += c.identifiers;
+                a->cst += c.constants;
+                a->jt += c.jumpTargets;
+                a->prof += c.profiles;
+                a->rare += c.rareData;
+            }
+            return IterationStatus::Continue;
+        });
     }
     for (auto [name, a] : { std::pair { "all", all }, std::pair { "new", fresh } }) {
         double M = 1048576.0;

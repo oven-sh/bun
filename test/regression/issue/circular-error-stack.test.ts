@@ -83,9 +83,6 @@ test("error with circular reference in cause chain", async () => {
   expect(stderr).not.toContain("Maximum call stack");
 });
 
-// A plain Error that is its own `cause` AND sits in its own `errors` array
-// used to alternate between the cause branch and the errors branch of the
-// printer, bypassing both cycle guards and crashing the process (SIGSEGV).
 test.concurrent("uncaught error that is its own cause and its own errors entry", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `const e = new Error('cyc'); e.cause = e; e.errors = [e]; throw e;`],
@@ -94,7 +91,7 @@ test.concurrent("uncaught error that is its own cause and its own errors entry",
     stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("error: cyc");
   expect(stderr).toContain("[Circular]");
@@ -113,18 +110,13 @@ test.concurrent("console.log of error that is its own cause and its own errors e
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("[Circular]");
   expect(stdout).toContain("after error print");
   expect(exitCode).toBe(0);
 });
 
-// Thrown inside a worker, the same cyclic error is rendered to build the
-// 'error' event payload. The render used to overflow, leaving the RangeError
-// pending across the dispatch (debug assert / aborted process), and the
-// serialization failure made the parent receive the rendered dump as
-// `message` instead of the real one.
 test.concurrent("worker uncaught cyclic error reaches the parent error event intact", async () => {
   using dir = tempDir("worker-cyclic-error", {
     "index.js": `

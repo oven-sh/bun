@@ -606,43 +606,48 @@ test("Bun.startupSnapshot.main(): the program runs after restore with each launc
   expect(plain.stdout.toString()).toContain('[js] main epoch=0 args=["p","q"]');
 });
 
-test.skipIf(!hasSnapshots)("stdio set up before the snapshot is re-created for each launch's own descriptors", async () => {
-  using dir = tempDir("bun-snapshot-stdio", {});
-  const exe = join(String(dir), "tool");
-  const b = build(["--compile", "--snapshot", join(import.meta.dir, "stdio-fixture.js"), "--outfile", exe]); // built with piped stdio
-  expect(b.out).toContain("process.stdin/stdout/stderr were set up before the freeze");
-  expect(b.out).toMatch(/process\.stdout from:\n\s+at \/\$bunfs\/root\/tool:\d+:\d+/); // compiled modules are named after the executable
-  expect(b.code).toBe(0);
-  // Launched with stdout redirected to a file: the write must land there (the snapshot's stream was over a pipe).
-  const outFile = join(String(dir), "out.txt");
-  const toFile = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: Bun.file(outFile), stderr: "pipe" });
-  expect(await Bun.file(outFile).text()).toBe("epoch=1 builtWithTTY=false nowTTY=false colors=false\n");
-  expect(toFile.exitCode).toBe(0);
-  // Launched on a terminal: both the re-created stream and Bun's own color decision follow this launch's descriptors.
-  let seen = "";
-  await using pty = Bun.spawn({
-    cmd: [exe],
-    env: { ...runEnv(), TERM: "xterm-256color" },
-    terminal: {
-      cols: 80,
-      rows: 24,
-      data(_t, d) {
-        seen += new TextDecoder().decode(d);
+test.skipIf(!hasSnapshots)(
+  "stdio set up before the snapshot is re-created for each launch's own descriptors",
+  async () => {
+    using dir = tempDir("bun-snapshot-stdio", {});
+    const exe = join(String(dir), "tool");
+    const b = build(["--compile", "--snapshot", join(import.meta.dir, "stdio-fixture.js"), "--outfile", exe]); // built with piped stdio
+    expect(b.out).toContain("process.stdin/stdout/stderr were set up before the freeze");
+    expect(b.out).toMatch(/process\.stdout from:\n\s+at \/\$bunfs\/root\/tool:\d+:\d+/); // compiled modules are named after the executable
+    expect(b.code).toBe(0);
+    // Launched with stdout redirected to a file: the write must land there (the snapshot's stream was over a pipe).
+    const outFile = join(String(dir), "out.txt");
+    const toFile = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: Bun.file(outFile), stderr: "pipe" });
+    expect(await Bun.file(outFile).text()).toBe("epoch=1 builtWithTTY=false nowTTY=false colors=false\n");
+    expect(toFile.exitCode).toBe(0);
+    // Launched on a terminal: both the re-created stream and Bun's own color decision follow this launch's descriptors.
+    let seen = "";
+    await using pty = Bun.spawn({
+      cmd: [exe],
+      env: { ...runEnv(), TERM: "xterm-256color" },
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_t, d) {
+          seen += new TextDecoder().decode(d);
+        },
       },
-    },
-  });
-  await pty.exited;
-  expect(seen).toContain("epoch=1 builtWithTTY=false nowTTY=true colors=true");
-});
+    });
+    await pty.exited;
+    expect(seen).toContain("epoch=1 builtWithTTY=false nowTTY=true colors=true");
+  },
+);
 
-test.skipIf(!hasSnapshots)("signal listeners registered before the snapshot are installed again in a restored launch", () => {
-  using dir = tempDir("bun-snapshot-signal", {});
-  const exe = join(String(dir), "tool");
-  const b = build(["--compile", "--snapshot", join(import.meta.dir, "signal-fixture.js"), "--outfile", exe]);
-  expect(b.out).toContain("[snapshot] embedded");
-  expect(b.code).toBe(0);
-  const r = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: "pipe", stderr: "pipe" });
-  expect(r.stdout.toString()).toContain("[js] SIGUSR1 handled in epoch 1"); // unfixed: the process dies of the signal
-  expect(r.exitCode).toBe(0);
-});
-
+test.skipIf(!hasSnapshots)(
+  "signal listeners registered before the snapshot are installed again in a restored launch",
+  () => {
+    using dir = tempDir("bun-snapshot-signal", {});
+    const exe = join(String(dir), "tool");
+    const b = build(["--compile", "--snapshot", join(import.meta.dir, "signal-fixture.js"), "--outfile", exe]);
+    expect(b.out).toContain("[snapshot] embedded");
+    expect(b.code).toBe(0);
+    const r = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: "pipe", stderr: "pipe" });
+    expect(r.stdout.toString()).toContain("[js] SIGUSR1 handled in epoch 1"); // unfixed: the process dies of the signal
+    expect(r.exitCode).toBe(0);
+  },
+);

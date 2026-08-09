@@ -5354,6 +5354,10 @@ impl H2FrameParser {
         if global.has_exception() {
             return Some(stream);
         }
+        // The callback runs arbitrary JS while `stream` is held (here and by every caller):
+        // arm the dispatch guard so a reentrant read() cannot drain
+        // pending_engine_stream_closes at depth 0 and free the box under us.
+        let _dispatch = self.enter_dispatch();
         match callback.call(
             &global,
             ctx_value,
@@ -5363,12 +5367,21 @@ impl H2FrameParser {
             Ok(returned) => {
                 // streamStart returns the JS stream it created; storing it here saves the
                 // setStreamContext host call the JS layer used to make per stream.
-                if returned.is_object() {
+                // Skip if the callback closed the stream (free_resources queued its id and
+                // dropped its sctx root): re-rooting it would pin the dead JS stream until
+                // the session dies.
+                if returned.is_object()
+                    && !self
+                        .pending_engine_stream_closes
+                        .get()
+                        .contains(&stream_identifier)
+                {
                     self.sctx.with_mut(|m| {
                         m.insert(stream_identifier, StrongOptional::create(returned, &global));
                     });
                     // SAFETY: stream is *mut Stream from self.streams; valid while the map
-                    // entry exists
+                    // entry exists — the armed dispatch guard deferred the only free path
+                    // (rewrite_read's pending close drain) while the callback ran.
                     unsafe { (*stream).set_context(returned, &global) };
                 }
             }

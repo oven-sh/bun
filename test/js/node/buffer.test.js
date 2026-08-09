@@ -4696,12 +4696,9 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
   },
 );
 
-// The reported byte count itself can be exactly 2**32: a UTF-16 source whose
-// UTF-8 encoding fills a MAX_LENGTH buffer. Buffer.write/TextEncoder.encodeInto
-// used to round-trip that count through uint32, reporting 0 even though every
-// byte was written, and TextEncoder.encode aborted (the wrapped count failed
-// its completeness check and the fallback's ArrayBuffer length cast panics).
-// Needs ~10 GiB RSS per spawn (4 GiB destination + UTF-16 source).
+// A UTF-16 source can encode to exactly 2**32 UTF-8 bytes (a full MAX_LENGTH
+// buffer). Pre-fix, Buffer.write/encodeInto reported the u32-wrapped count (0)
+// and TextEncoder.encode aborted. Needs ~10 GiB RSS per spawn.
 it.skipIf(os.totalmem() < 16 * 1024 ** 3)(
   "Buffer.write/TextEncoder.encodeInto/TextEncoder.encode handle a byte count of exactly 2**32 without uint32 wrap",
   async () => {

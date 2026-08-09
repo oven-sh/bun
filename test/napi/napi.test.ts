@@ -1009,6 +1009,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);
     });
+
+    it("throws Illegal invocation when a prototype method is called with a foreign receiver", async () => {
+      const output = await checkSameOutput("test_napi_class_receiver_check", []);
+      expect(output).toContain("b.check(): returned 0");
+      expect(output).toContain("check.call(a): TypeError: Illegal invocation");
+      expect(output).toContain("check.call({}): TypeError: Illegal invocation");
+      expect(output).toContain("check.call(Object.create(B.prototype)): TypeError: Illegal invocation");
+      expect(output).toContain("check.call(42): TypeError: Illegal invocation");
+      expect(output).toContain("check.call(null): TypeError: Illegal invocation");
+      // Node.js does not put accessors behind a signature check.
+      expect(output).toContain("getter on a: returned 1");
+      expect(output).toContain("setter on a: returned ok");
+      expect(output).toContain("sub.check(): returned 0");
+      expect(output).toContain("check.call(reflected): returned 0");
+      expect(output).toContain("B.staticCheck.call({}): returned static");
+      expect(output).toContain("check.call(a with B.prototype): TypeError: Illegal invocation");
+      expect(output).toContain("check.call(b with swapped B.prototype): returned 0");
+      // 3 on b + 2 accessor on a + 2 on sub + 1 on reflected + 1 on b3 = 9;
+      // the callback must not have been reached for any rejected receiver.
+      expect(output).toContain("native callback calls: 9");
+    });
+
+    it("keeps the receiver check working after GC drops the class", async () => {
+      const output = await checkSameOutput("test_napi_class_receiver_check_gc", []);
+      expect(output).toContain("b after GC: 0");
+      expect(output).toContain("a after GC: TypeError: Illegal invocation");
+    });
   });
 
   describe("bigint conversion to int64/uint64", () => {

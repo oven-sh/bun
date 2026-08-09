@@ -10,9 +10,22 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     NapiClass* thisObject = uncheckedDowncast<NapiClass>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_signaturePrototype);
+    visitor.append(thisObject->m_classPrototype);
 }
 
 DEFINE_VISIT_CHILDREN(NapiClass);
+
+template<typename Visitor>
+void NapiPrototype::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    NapiPrototype* thisObject = uncheckedDowncast<NapiPrototype>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_constructedBy);
+}
+
+DEFINE_VISIT_CHILDREN(NapiPrototype);
 
 template<bool ConstructCall>
 JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -34,32 +47,39 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSValue newTarget;
 
     if constexpr (ConstructCall) {
-        // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
-        auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, {});
-        NapiPrototype* prototype = dynamicDowncast<NapiPrototype>(prototypeValue);
-
-        if (!prototype) {
-            JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
-            return JSValue::encode(JSC::jsUndefined());
-        }
+        NapiPrototype* prototype = napi->classPrototype();
+        ASSERT(prototype);
 
         newTarget = callFrame->newTarget();
-        JSObject* thisValue;
+        NapiPrototype* thisValue;
         // Match the behavior from
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/ObjectConstructor.cpp#L118-L145
         if (newTarget && newTarget != napi) {
             JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
+            auto* zigFunctionGlobal = dynamicDowncast<Zig::GlobalObject>(functionGlobalObject);
+            Structure* baseStructure = zigFunctionGlobal
+                ? zigFunctionGlobal->NapiPrototypeStructure()
+                : uncheckedDowncast<Zig::GlobalObject>(globalObject)->NapiPrototypeStructure();
             Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
             RETURN_IF_EXCEPTION(scope, {});
-            thisValue = constructEmptyObject(vm, objectStructure);
+            thisValue = NapiPrototype::create(vm, objectStructure);
         } else {
             thisValue = prototype->subclass(globalObject, asObject(newTarget));
         }
         RETURN_IF_EXCEPTION(scope, {});
+        if (thisValue) {
+            thisValue->setConstructedBy(vm, prototype);
+        }
         callFrame->setThisValue(thisValue);
+    } else if (NapiPrototype* signaturePrototype = napi->signaturePrototype()) {
+        // v8::Signature parity: reject a foreign |this| before the native callback runs.
+        JSValue thisValue = callFrame->thisValue();
+        NapiPrototype* instance = thisValue.isCell() ? dynamicDowncast<NapiPrototype>(thisValue.asCell()) : nullptr;
+        if (!instance || instance->constructedBy() != signaturePrototype) [[unlikely]] {
+            JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Illegal invocation"_s));
+            return JSValue::encode(JSC::jsUndefined());
+        }
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
@@ -116,6 +136,7 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 
     NapiPrototype* prototype = NapiPrototype::create(vm, globalObject->NapiPrototypeStructure());
+    m_classPrototype.set(vm, this, prototype);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto env = m_env;
@@ -124,8 +145,9 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
 
-        JSC::JSObject* target = (property.attributes & napi_static) ? static_cast<JSC::JSObject*>(this) : prototype;
-        napi_status status = Napi::defineProperty(env, target, property, throwScope);
+        bool isStatic = property.attributes & napi_static;
+        JSC::JSObject* target = isStatic ? static_cast<JSC::JSObject*>(this) : prototype;
+        napi_status status = Napi::defineProperty(env, target, property, throwScope, isStatic ? nullptr : prototype);
 
         if (throwScope.exception()) {
             result = napi_pending_exception;

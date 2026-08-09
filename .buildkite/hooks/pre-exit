@@ -47,12 +47,21 @@ case "${BUILDKITE_AGENT_NAME:-}" in
       gip=$("$tart_bin" ip "bk-${BUILDKITE_JOB_ID}" 2>/dev/null)
       sip=$("$tart_bin" ip "sc-${BUILDKITE_JOB_ID}" 2>/dev/null)
       echo "[tart-host] tart ip: guest=${gip:-gone} sidecar=${sip:-gone}"
-      for ip in ${gip:-} ${sip:-} 192.168.64.1; do
-        echo "[tart-host] keyscan ${ip}:"
-        ssh-keyscan -T 2 -t ed25519 "$ip" 2>&1 | head -2
+      echo "[tart-host] vm mac map:"
+      for cfg in "$HOME"/.tart/vms/*/config.json; do
+        [ -f "$cfg" ] || continue
+        vm=${cfg%/config.json}; vm=${vm##*/}
+        echo "  ${vm}: $(tr -d ' \n' < "$cfg" | grep -o '"macAddress":"[^"]*"' | head -1)"
       done
-      echo "[tart-host] dhcpd_leases (tail):"
-      tail -60 /var/db/dhcpd_leases 2>/dev/null
+      # One parallel keyscan of every address the host currently resolves on
+      # the vmnet bridge, plus this job's VM addresses: whoever answers ssh on
+      # a contested IP identifies itself by host key.
+      scan_ips=$( { arp -an 2>/dev/null | grep -o '192\.168\.64\.[0-9]*'; echo "${gip:-}"; echo "${sip:-}"; } | grep -v '\.255$' | sort -u | tr '\n' ' ')
+      echo "[tart-host] keyscan of ${scan_ips}:"
+      # shellcheck disable=SC2086
+      ssh-keyscan -T 3 -t ed25519 ${scan_ips} 2>/dev/null | sort
+      echo "[tart-host] dhcpd_leases (head, newest first):"
+      head -c 12000 /var/db/dhcpd_leases 2>/dev/null
       for vmlog in "/tmp/bk-${BUILDKITE_JOB_ID}.log" "/tmp/sc-${BUILDKITE_JOB_ID}.log"; do
         [ -s "$vmlog" ] && { echo "[tart-host] ${vmlog##*/}:"; grep -v '^Stopping VM\.\.\.' "$vmlog" | tail -12; }
       done

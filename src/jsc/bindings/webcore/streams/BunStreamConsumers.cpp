@@ -358,10 +358,9 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     unsigned length = chunks->length();
 
     // ONE pass over the array: read each element exactly once, materialize each string
-    // exactly once, and size the output as we go. `values` roots every chunk across the
-    // string materializations; `measuredChunks` carries each chunk's measured byte size
-    // (plus the materialized string for string chunks) so the write pass below never
-    // re-reads the array or re-encodes.
+    // exactly once, and size the output as we go. `values` roots every chunk; `measuredChunks`
+    // carries each chunk's measured size (and each materialized string) so the write pass
+    // below never re-reads the array or re-encodes.
     MarkedArgumentBuffer values;
     WTF::Vector<std::pair<WTF::String, size_t>, 16> measuredChunks;
     bool anyString = false;
@@ -405,10 +404,9 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    // Assemble directly into the result ArrayBuffer, like the all-binary arm above does.
-    // Staging through a WTF::Vector<uint8_t> would CRASH() past its INT32_MAX capacity
-    // cap, while a 64-bit ArrayBuffer legitimately holds up to MAX_ARRAY_BUFFER_SIZE
-    // bytes (and allocation failure here must throw, not abort).
+    // Assemble directly into the result ArrayBuffer: WTF::Vector<uint8_t> CRASH()es past
+    // its INT32_MAX capacity cap, while ArrayBuffer capacities are size_t and allocation
+    // failure throws instead of aborting.
     RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreateUninitialized(total.value(), 1);
     if (!resultBuffer) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -436,17 +434,16 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
                 span = impl->span();
         }
-        // Clamp to the measured size so a chunk that grew since the sizing pass (a
-        // growable SharedArrayBuffer can grow from another thread) cannot overrun the
-        // space sized for the chunks after it.
+        // Clamp to the measured size: a chunk grown since the sizing pass (a growable
+        // SharedArrayBuffer, from another thread) must not overrun the buffer.
         size_t copyLength = std::min(span.size(), measuredByteLength);
         if (copyLength)
             memcpy(bytes.data() + offset, span.data(), copyLength);
         offset += copyLength;
     }
     if (offset < bytes.size()) [[unlikely]] {
-        // A chunk shrank or detached after it was measured; re-create at the actual size
-        // rather than exposing the never-written (uninitialized) tail.
+        // A chunk shrank or detached after measurement: re-create at the actual size
+        // instead of exposing the uninitialized tail.
         RefPtr<JSC::ArrayBuffer> rightSized = JSC::ArrayBuffer::tryCreate(bytes.first(offset));
         if (!rightSized) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);

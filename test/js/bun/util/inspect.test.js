@@ -945,7 +945,7 @@ it("console.log survives a lazy property builder throwing mid-walk", async () =>
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("SURVIVED");
   expect(exitCode).toBe(0);
 });

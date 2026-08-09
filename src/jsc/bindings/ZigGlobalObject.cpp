@@ -3334,6 +3334,35 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
     };
     fprintf(stderr, "[napi-diag] live JS cells: %u\n", liveCells.size());
 
+    // A word "hits" a cell if it points anywhere in [cell, cell+64): that covers
+    // interior pointers (ConservativeRoots cellAlign()s them) and, for our
+    // 16-byte JSArray, the [cell+16, cell+24] "butterfly just past the previous
+    // object" case that genericAddPointer maps back onto the cell to the left.
+    // The offset is reported so over-matches can be discounted by hand.
+    static size_t bunNapiDiagLastOff;
+    bunNapiDiagLastOff = 0;
+    auto interesting = [&](uintptr_t v, uintptr_t& base) -> const char* {
+        base = 0;
+        if (v < 4096 || v == UINTPTR_MAX)
+            return nullptr;
+        uintptr_t aligned = v & ~uintptr_t(7);
+        for (size_t off = 0; off <= 56; off += 8) {
+            if (aligned < off + 4096)
+                break;
+            if (liveCells.contains(aligned - off)) {
+                base = aligned - off;
+                bunNapiDiagLastOff = v - base;
+                break;
+            }
+        }
+        if (!base)
+            return nullptr;
+        const char* cls = describe(base);
+        if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
+            return nullptr;
+        return cls;
+    };
+
     // 2. VM-owned conservatively scanned buffers (Heap::gatherVMRoots).
     {
         JSC::ConservativeRoots vmRoots(vm.heap);
@@ -3368,38 +3397,15 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
     fprintf(stderr, "[napi-diag] scanning machine stack %p..%p (%zu words)\n", (void*)sp, (void*)origin, (size_t)(origin - sp));
     unsigned hits = 0;
     for (uintptr_t* w = sp; w < origin; ++w) {
-        uintptr_t v = *w;
-        uintptr_t base = 0;
-        if (liveCells.contains(v))
-            base = v;
-        else if (liveCells.contains(v & ~uintptr_t(0xF)))
-            base = v & ~uintptr_t(0xF);
-        else if (v >= 8 && liveCells.contains(v - 8))
-            base = v - 8;
-        if (!base) continue;
-        const char* cls = describe(base);
-        // Only report the interesting classes to keep the log readable.
-        if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
+        uintptr_t base;
+        const char* cls = interesting(*w, base);
+        if (!cls)
             continue;
         ++hits;
-        fprintf(stderr, "[napi-diag]   stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((origin - w) * sizeof(uintptr_t)), (void*)v, cls, (void*)base);
+        fprintf(stderr, "[napi-diag]   stack[%p] (origin-0x%zx) = %p -> %s @%p +%zu\n", (void*)w, (size_t)((origin - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base, bunNapiDiagLastOff);
     }
     fprintf(stderr, "[napi-diag] stack words pointing at Array/Object/Napi* cells: %u\n", hits);
 
-    auto interesting = [&](uintptr_t v, uintptr_t& base) -> const char* {
-        base = 0;
-        if (liveCells.contains(v))
-            base = v;
-        else if (liveCells.contains(v & ~uintptr_t(0xF)))
-            base = v & ~uintptr_t(0xF);
-        else if (v >= 8 && liveCells.contains(v - 8))
-            base = v - 8;
-        if (!base) return nullptr;
-        const char* cls = describe(base);
-        if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
-            return nullptr;
-        return cls;
-    };
 
     // 4a. Every thread registered with this heap's MachineThreads (each one is
     //     suspended and its registers + stack [sp, origin) conservatively
@@ -3424,7 +3430,7 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
                 const char* cls = interesting(*w, base);
                 if (!cls) continue;
                 if (++th <= 40)
-                    fprintf(stderr, "[napi-diag]     other-thread stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((hi - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);
+                    fprintf(stderr, "[napi-diag]     other-thread stack[%p] (origin-0x%zx) = %p -> %s @%p +%zu\n", (void*)w, (size_t)((hi - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base, bunNapiDiagLastOff);
             }
             fprintf(stderr, "[napi-diag]     words on that thread's stack pointing at Array/Object/Napi* cells: %u\n", th);
         }
@@ -3435,7 +3441,7 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
         if (!bunNapiDiagCalleeSavedNames[i][0]) continue;
         uintptr_t base;
         const char* cls = interesting(bunNapiDiagCalleeSaved[i], base);
-        fprintf(stderr, "[napi-diag]   callee-saved %s = %p%s%s\n", bunNapiDiagCalleeSavedNames[i], (void*)bunNapiDiagCalleeSaved[i], cls ? " -> " : "", cls ? cls : "");
+        fprintf(stderr, "[napi-diag]   callee-saved %s = %p%s%s +%zu\n", bunNapiDiagCalleeSavedNames[i], (void*)bunNapiDiagCalleeSaved[i], cls ? " -> " : "", cls ? cls : "", cls ? bunNapiDiagLastOff : (size_t)0);
     }
 
     // 5. The dead region below gc()'s frame as it was BEFORE the collection
@@ -3452,7 +3458,7 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
             if (!cls) continue;
             ++below;
             uintptr_t* where = bunNapiDiagBelowSpFrom + i;
-            fprintf(stderr, "[napi-diag]   pre-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p\n", (void*)where, (size_t)((sp - where) * sizeof(uintptr_t)), (void*)bunNapiDiagBelowSpCopy[i], cls, (void*)base);
+            fprintf(stderr, "[napi-diag]   pre-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p +%zu\n", (void*)where, (size_t)((sp - where) * sizeof(uintptr_t)), (void*)bunNapiDiagBelowSpCopy[i], cls, (void*)base, bunNapiDiagLastOff);
         }
         fprintf(stderr, "[napi-diag] pre-gc words BELOW gc()'s frame pointing at Array/Object/Napi* cells: %u (region %p..%p)\n", below, (void*)bunNapiDiagBelowSpFrom, (void*)(bunNapiDiagBelowSpFrom + n));
     }
@@ -3467,7 +3473,7 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
             const char* cls = interesting(*w, base);
             if (!cls) continue;
             ++belowNow;
-            fprintf(stderr, "[napi-diag]   post-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((sp - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);
+            fprintf(stderr, "[napi-diag]   post-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p +%zu\n", (void*)w, (size_t)((sp - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base, bunNapiDiagLastOff);
         }
         fprintf(stderr, "[napi-diag] post-gc words BELOW gc()'s frame pointing at Array/Object/Napi* cells: %u\n", belowNow);
     }

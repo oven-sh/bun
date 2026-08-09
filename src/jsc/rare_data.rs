@@ -34,7 +34,7 @@ use super::uuid::UUID;
 //   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
+//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
@@ -858,18 +858,20 @@ impl RareData {
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
-    /// there would dispatch into freed JSC heap.
-    pub(crate) fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+    /// Drain every embedded socket group. Runs in teardown's stop phase (script
+    /// already forbidden) and must run BEFORE JSC teardown: native close paths
+    /// release Strong handles and touch heap-owned state. RareData.deinit() runs
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
+    /// freed JSC heap.
+    pub(crate) fn close_all_socket_groups(
+        &mut self,
+        vm: &VirtualMachine,
+    ) -> crate::virtual_machine::SweepResult {
+        // A native close path can cascade (closing one socket completes or
+        // fails another, whose own close lands in a group already drained), so
+        // loop until every group is observed empty in the same pass — bounded;
+        // the post-close force-drain in close_all handles whatever is left
+        // after the cap.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -886,12 +888,18 @@ impl RareData {
             }
             rounds += 1;
         }
+        let result = if rounds > 0 {
+            crate::virtual_machine::SweepResult::Stopped
+        } else {
+            crate::virtual_machine::SweepResult::Idle
+        };
         // us_socket_close pushes to loop->data.closed_head; loop_post() normally
         // frees it on the next tick. We're past the last tick, so drain it now —
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
         vm.uws_loop_mut().drain_closed_sockets();
+        result
     }
 }
 
@@ -1093,6 +1101,15 @@ impl Drop for RareData {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
 
+        self.detach_socket_groups_from_loop();
+    }
+}
+
+impl RareData {
+    /// Detach every embedded socket group from the thread's uSockets loop
+    /// (asserting each is empty). A thread teardown calls this before it frees
+    /// that loop; `Drop` calls it for every other owner. Idempotent.
+    pub(crate) fn detach_socket_groups_from_loop(&mut self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {
@@ -1106,6 +1123,7 @@ impl Drop for RareData {
                 // loop has already unlinked it (close_all_socket_groups ran),
                 // so destroy reduces to the empty-list debug asserts.
                 unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
+                g.loop_ = core::ptr::null_mut();
             }
         });
     }

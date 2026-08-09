@@ -20,11 +20,12 @@ enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
 
 namespace WebCore {
+class MessagePort;
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-class WorkerGlobalScope;
+class GlobalEventScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
@@ -80,7 +81,7 @@ class JSMockFunction;
 }
 
 namespace WebCore {
-class WorkerGlobalScope;
+class GlobalEventScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -180,9 +181,6 @@ public:
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
-
-    void queueTask(WebCore::EventLoopTask* task);
-    void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -349,6 +347,13 @@ public:
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
+    WebCore::Performance* existingPerformance() const { return m_performance.get(); }
+
+    // VM teardown, in order: forbidExecution() (clear microtasks and module caches, forbid script,
+    // request termination) -> prepareForDestruction() (fence cross-thread producers, stop every
+    // ActiveDOMObject, strip listeners) -> the caller's own sweeps and child joins.
+    void prepareForDestruction();
+    void forbidExecution();
 
     Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
@@ -377,7 +382,9 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Ref<Bun::WorkerGlobalScope> globalEventScope;
+    Ref<Bun::GlobalEventScope> globalEventScope;
+    RefPtr<WebCore::MessagePort> m_nodeParentPort;
+    bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -537,7 +544,7 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
-    /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
+    /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
@@ -700,7 +707,9 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcTagAdvancedBuffersFunction)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
@@ -777,6 +786,15 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
+    // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
+    // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
+    void setNodeParentPort(WebCore::MessagePort*);
+    WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
+    // A node worker's parentPort delivers nothing until the entry module has evaluated (node's
+    // ordering; a message must not run — or throw — while the entry that handles it is loading).
+    bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
+    void nodeWorkerEntryDidSettle();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

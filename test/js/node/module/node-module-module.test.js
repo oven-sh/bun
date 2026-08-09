@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -66,21 +67,153 @@ describe.concurrent("node-module-module", () => {
       }),
     ).toThrow(new RangeError("portable boom"));
     expect(order).toEqual(["directory", "portable"]);
-    // Valid shapes: string | {directory?, portable?} | undefined.
-    for (const ok of [
-      undefined,
-      "/tmp/cache",
-      {},
-      [],
-      Object.create(null),
-      { directory: "/tmp/cache" },
-      { directory: undefined },
-    ]) {
-      expect(Module.enableCompileCache(ok)).toEqual({
-        status: Module.constants.compileCacheStatus.FAILED,
-        message: expect.any(String),
+  });
+
+  test("module.enableCompileCache accepts valid shapes", async () => {
+    // Run in a child so enabling the cache doesn't affect this test process.
+    using dir = tempDir("compile-cache-shapes", {});
+    const cacheDir = JSON.stringify(path.join(String(dir), "cc"));
+    // Valid shapes: string | {directory?, portable?} | undefined. The first
+    // call enables the cache; the rest report ALREADY_ENABLED.
+    const code = `
+      const Module = require("module");
+      const { ENABLED, ALREADY_ENABLED } = Module.constants.compileCacheStatus;
+      const shapes = [
+        ${cacheDir},
+        undefined,
+        {},
+        [],
+        Object.create(null),
+        { directory: ${cacheDir} },
+        { directory: undefined },
+      ];
+      for (const shape of shapes) {
+        const r = Module.enableCompileCache(shape);
+        if (r.status !== ENABLED && r.status !== ALREADY_ENABLED) {
+          console.error("unexpected status", r.status, JSON.stringify(r));
+          process.exit(1);
+        }
+        if (typeof r.directory !== "string") {
+          console.error("missing directory", JSON.stringify(r));
+          process.exit(1);
+        }
+      }
+      console.log("shapes-ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("shapes-ok");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "compile cache persists modules loaded after a non-fatal self-kill",
+    async () => {
+      // A self-directed signal that proves non-fatal (SIGWINCH is ignored by
+      // default) must not latch the exit-time persist: modules loaded after
+      // the kill still reach the cache when the process really exits.
+      using dir = tempDir("compile-cache-selfkill", {
+        "late.js": "module.exports = 42;",
+        "main.js": `process.kill(process.pid, "SIGWINCH");
+console.log("survived", require("./late.js"));`,
       });
+      const cacheDir = path.join(String(dir), "cc");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("survived 42");
+      expect(exitCode).toBe(0);
+      // Both main.js and late.js are cached; pre-fix only main.js was.
+      const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+      expect(files.length).toBe(2);
+    },
+  );
+
+  test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
+    using dir = tempDir("compile-cache-tmporder", {});
+    const temp = path.join(String(dir), "from-temp");
+    const tmp = path.join(String(dir), "from-tmp");
+    fs.mkdirSync(temp);
+    fs.mkdirSync(tmp);
+    const env = { ...bunEnv, TEMP: temp, TMP: tmp };
+    delete env.NODE_COMPILE_CACHE;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = require("module").enableCompileCache();
+        console.log(JSON.stringify(r.directory));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toStartWith(path.join(temp, "node-compile-cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  test("compile cache entries are keyed by sha256 and accepted on re-run", async () => {
+    using dir = tempDir("compile-cache-sha", {
+      "main.js": `console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = { ...bunEnv, NODE_COMPILE_CACHE: cacheDir, NODE_DEBUG_NATIVE: "COMPILE_CACHE" };
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      expect(exitCode).toBe(0);
     }
+    // Entry names are the first 8 bytes of SHA256(type byte || path) in hex.
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    for (const f of files) {
+      expect(path.basename(f)).toMatch(/^[0-9a-f]{16}$/);
+    }
+    {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("7");
+      // The second run accepts both entries from disk and rewrites nothing.
+      expect(stderr).toContain("was accepted");
+      expect(stderr).not.toContain("writing cache");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {
+    // Entries hold the module's post-transpile source, and the default cache
+    // location is a world-readable tmpdir; Node creates entry files 0600.
+    using dir = tempDir("compile-cache-mode", {
+      "main.js": `process.umask(0o022); console.log(require("./dep.js"));`,
+      "dep.js": "module.exports = 7;",
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("7");
+    expect(stderr).toBe("");
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+    const modes = files.map(f => (fs.statSync(path.join(cacheDir, f)).mode & 0o777).toString(8));
+    expect(modes).toEqual(["600", "600"]);
+    expect(exitCode).toBe(0);
   });
 
   test("native module functions are not constructors", () => {

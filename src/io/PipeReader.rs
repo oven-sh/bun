@@ -1444,6 +1444,9 @@ impl WindowsBufferedReader {
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
+        // Ownership of the handle (or listed file) moves with the source;
+        // `set_parent` below re-records this reader as the one a VM teardown
+        // stops it through.
         self.source = other.source.take();
 
         other.flags.insert(WindowsFlags::IS_DONE);
@@ -1476,7 +1479,7 @@ impl WindowsBufferedReader {
             // immutable-then-mutable-borrow conflict.
             let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(source) = self.source.as_mut() {
-                source.set_data(self_ptr);
+                source.set_owner(self_ptr, Self::stop_for_vm_teardown);
             }
         }
     }
@@ -1616,7 +1619,10 @@ impl WindowsBufferedReader {
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
-        self.source.as_mut().unwrap().set_data(self_ptr);
+        self.source
+            .as_mut()
+            .unwrap()
+            .set_owner(self_ptr, Self::stop_for_vm_teardown);
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
@@ -1635,8 +1641,35 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
+    }
+
+    /// Take ownership of `source` (reading starts later, or never). For a pipe
+    /// or tty this reader is from now on the one a VM teardown stops the handle
+    /// through — whether or not it ever starts reading — so nothing else may
+    /// close that handle while it sits here.
+    pub fn set_source(&mut self, source: Source) {
+        debug_assert!(self.source.is_none());
+        self.source = Some(source);
+        let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
+        if let Some(source) = self.source.as_mut() {
+            // A read over a file is a uv request with no handle to close: list
+            // the boxed File so a thread teardown closes this reader (`close()`
+            // below) before draining the loop. Unlisted where the box leaves
+            // this reader (`close_impl`, `Drop`).
+            if let Some(file) = source.file_key() {
+                uv::open_handles::add_file(file);
+            }
+            source.set_owner(self_ptr, Self::stop_for_vm_teardown);
+        }
+    }
+
+    /// `uv::open_handles` closes this reader's stream through here at teardown.
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+        // SAFETY: recorded via `Source::set_owner` by this live reader; the slot
+        // is replaced/dropped before the reader goes away (close_impl / from / Drop).
+        unsafe { (*this.cast::<WindowsBufferedReader>()).close() };
     }
 
     pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
@@ -1644,12 +1677,11 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let mut source = match Source::open(loop_.cast(), fd) {
+        let source = match Source::open(loop_.cast(), fd) {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };
-        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
-        self.source = Some(source);
+        self.set_source(source);
         self.start_with_current_pipe()
     }
 
@@ -1785,8 +1817,9 @@ impl WindowsBufferedReader {
         // Mark no longer in flight
         this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
 
-        // If canceled, check if we need to call deferred done
-        if was_canceled {
+        // Cancelled, or `close()` was asked for while this read was out (the
+        // cancel need not have won): finish the close, deliver nothing.
+        if was_canceled || this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
             if this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
                 this.flags.remove(WindowsFlags::DEFER_DONE_CALLBACK);
                 // Now safe to call done - buffer will be freed by deinit
@@ -1926,7 +1959,7 @@ impl WindowsBufferedReader {
         debug_assert!(!source.is_closed());
 
         match source {
-            Source::File(file) => {
+            Source::File(file) | Source::SyncFile(file) => {
                 let file_raw: *mut crate::source::File = file.as_mut();
                 // SAFETY (each access below): `file_raw` points into the boxed
                 // File owned by `self.source` — a heap allocation disjoint
@@ -1977,7 +2010,7 @@ impl WindowsBufferedReader {
                     return sys::Result::Err(err);
                 }
             }
-            _ => {
+            Source::Pipe(_) | Source::Tty(_) => {
                 // SAFETY: source is a live Pipe/Tty stream handle.
                 if let Some(err) = unsafe {
                     uv::uv_read_start(
@@ -2013,11 +2046,11 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         };
         match source {
-            Source::File(file) => {
+            Source::File(file) | Source::SyncFile(file) => {
                 file.stop();
             }
-            _ => {
-                // SAFETY: stream handle is live (just matched non-File).
+            Source::Pipe(_) | Source::Tty(_) => {
+                // SAFETY: stream handle is live (just matched a stream source).
                 unsafe { uv::uv_read_stop(source.to_stream()) };
             }
         }
@@ -2027,7 +2060,8 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(file) | Source::File(file) => {
+                Source::SyncFile(mut file) | Source::File(mut file) => {
+                    uv::open_handles::remove_file(core::ptr::from_mut(&mut *file).cast());
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -2038,6 +2072,12 @@ impl WindowsBufferedReader {
                     // is the sole reclaimer (heap::take in on_close_complete /
                     // on_file_read's detached path) when one is left pending.
                     unsafe {
+                        // A read in flight writes into `self._buffer` (via
+                        // `iov`) whenever it completes; this reader may be
+                        // dropped before then, so the buffer goes with the File.
+                        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+                            (*raw).orphaned_read_buf = core::mem::take(&mut self._buffer);
+                        }
                         if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
                             (*raw).detach();
                         } else if !(*raw).detach_borrowed_fd() {
@@ -2247,6 +2287,10 @@ impl Drop for WindowsBufferedReader {
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {
+                let mut source = source;
+                if let Some(file) = source.file_key() {
+                    uv::open_handles::remove_file(file);
+                }
                 core::mem::forget(source);
             }
         }

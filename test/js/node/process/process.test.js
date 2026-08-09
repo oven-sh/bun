@@ -1965,6 +1965,36 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
 
+// DEP0111/DEP0119 latch once per thread, like node's per-Environment
+// deprecate() closures: a worker warns again even after the main thread did.
+it("process.binding deprecation warnings latch per thread, not per process", () => {
+  using dir = tempDir("binding-deprecation-latch", {
+    "main.js": `const { Worker } = require("worker_threads");
+let count = 0;
+process.on("warning", w => { if (w.code === "DEP0119") count++; });
+process.binding("uv").errname(-2);
+process.binding("uv").errname(-2); // second call must not warn again
+const w = new Worker(require("path").join(__dirname, "worker.js"));
+w.on("message", m => console.log(m));
+w.on("exit", () => console.log("main-warned:" + count));`,
+    "worker.js": `const { parentPort } = require("worker_threads");
+let warned = 0;
+process.on("warning", x => { if (x.code === "DEP0119") warned++; });
+process.binding("uv").errname(-2);
+process.binding("uv").errname(-2); // the worker-local latch must hold too
+setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
+  });
+  const child = spawnSync({
+    cmd: [bunExe(), "--pending-deprecation", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const out = child.stdout.toString();
+  expect(out).toContain("worker-warned:1");
+  expect(out).toContain("main-warned:1");
+  expect(child.exitCode).toBe(0);
+});
+
 it("delete process.env.TZ invalidates existing Date instances", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -2307,4 +2337,50 @@ describe("NODE_NO_WARNINGS", () => {
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
+});
+
+it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {
+  // Node runs 'exit' handlers and nothing queued before them; the exit-time
+  // teardown must discard, not drain, the pre-exit microtask/nextTick queues.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.nextTick(() => console.log("TICK_FIRED"));
+       queueMicrotask(() => console.log("MICROTASK_FIRED"));
+       Promise.resolve().then(() => console.log("THEN_FIRED"));
+       process.on("exit", () => console.log("exit handler"));
+       process.exit(0);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit handler\n");
+  expect(exitCode).toBe(0);
+});
+
+// Node runs its environment cleanup with JS execution disallowed: closing the
+// process's sockets/servers at exit dispatches no 'close'/'error' handlers, so
+// nothing of the user's runs after the 'exit' event.
+it("no socket close handler runs after the 'exit' event", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() { console.log("server socket closed after exit"); } } });
+       Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+         data() {},
+         close() { console.log("client socket closed after exit"); },
+         open() { process.on("exit", () => console.log("exit")); process.exit(0); },
+       } });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit\n");
+  expect(exitCode).toBe(0);
 });

@@ -218,6 +218,15 @@ describe("well-formedness", () => {
     expect(syntaxError(Buffer.from([0x3c, 0x61, 0x3e, 0xed, 0xa0, 0x80, 0x3c, 0x2f, 0x61, 0x3e])).message).toBe(
       "XML Parse error: Invalid UTF-8",
     );
+    // Nor are lone surrogates characters when they arrive in a string; pairs are.
+    expect(syntaxError("<a>\uD800</a>").message).toBe("XML Parse error: Invalid character in XML: U+D800");
+    expect(syntaxError("<a b='\uDFFF'/>").message).toContain("U+DFFF");
+    expect(syntaxError("<a>x\uD83Dy\uDE00</a>").message).toContain("U+D83D");
+    expect(syntaxError(`<!DOCTYPE a [<!ENTITY e "\uDC00">]><a/>`).message).toContain("U+DC00");
+    expect(syntaxError("<a>ok</a>\uD800").message).toContain("U+D800");
+    expect(XML.parse("<a \u{1F600}='\u{1F600}'>\uD83D\uDE00</a>")).toEqual({
+      a: { "@\u{1F600}": "\u{1F600}", "#text": "\u{1F600}" },
+    });
   });
 
   test("character references must name a Char", () => {
@@ -347,6 +356,50 @@ describe("well-formedness", () => {
     expect(withDefaults.r["@d5"]).toBe("5");
     expect(withDefaults.r["@d19"]).toBe("19");
     expect(Object.keys(withDefaults.r).length).toBe(n + 20);
+  });
+
+  test("'>' inside attribute values does not disturb what follows", () => {
+    // A literal '>' in a value, then more attributes with whitespace to
+    // normalize, characters to reject, and a long tail so the rest of the
+    // tag is far from the '>' that started it.
+    expect(XML.parse(`<a b="x>y" c="1\t2"\n d='p"q>' e="&amp;>"/>`)).toEqual({
+      a: { "@b": "x>y", "@c": "1 2", "@d": 'p"q>', "@e": "&>" },
+    });
+    expect(syntaxError('<a b=">" c="\uFFFE"/>').message).toContain("U+FFFE");
+    expect(syntaxError('<a b="1>2\x01"/>').message).toContain("control character 0x01");
+    expect(syntaxError('<a b=">" c="<"/>').message).toContain("'<' is not allowed in attribute values");
+    const pad = Buffer.alloc(20_000, "z").toString();
+    expect(XML.parse(`<r><a b=">${pad}" c="v\tw">t</a><a d="q">${pad}</a></r>`)).toEqual({
+      r: {
+        a: [
+          { "@b": ">" + pad, "@c": "v w", "#text": "t" },
+          { "@d": "q", "#text": pad },
+        ],
+      },
+    });
+    expect(XML.parse(`<!DOCTYPE r [<!ATTLIST r x CDATA "1>2" y CDATA "a\tb">]><r/>`)).toEqual({
+      r: { "@x": "1>2", "@y": "a b" },
+    });
+  });
+
+  test("keys of every kind reach JS intact", () => {
+    // Index-like, non-ASCII and long names, in both shapes.
+    const doc = `<r _0="i" éé="n" ${"k".repeat(40)}="l"><_1>a</_1><ünïcödé>b</ünïcödé><${"w".repeat(64)}>c</${"w".repeat(64)}></r>`;
+    const result = XML.parse(doc) as any;
+    expect(result.r["@_0"]).toBe("i");
+    expect(result.r["@éé"]).toBe("n");
+    expect(result.r["@" + "k".repeat(40)]).toBe("l");
+    expect(result.r._1).toBe("a");
+    expect(result.r["ünïcödé"]).toBe("b");
+    expect(result.r["w".repeat(64)]).toBe("c");
+    expect(Object.keys(result.r)).toEqual(["@_0", "@éé", "@" + "k".repeat(40), "_1", "ünïcödé", "w".repeat(64)]);
+    const node = XML.parse(doc, nodes) as any;
+    expect(node.attributes).toEqual({ _0: "i", éé: "n", ["k".repeat(40)]: "l" });
+    expect(node.children.map((c: any) => c.name)).toEqual(["_1", "ünïcödé", "w".repeat(64)]);
+    // Values: empty, single characters, short repeated (cached) and long.
+    expect(XML.parse(`<r><a></a><b>x</b><c>x</c><d>${"y".repeat(100)}</d><e>true</e><e>true</e></r>`)).toEqual({
+      r: { a: "", b: "x", c: "x", d: "y".repeat(100), e: ["true", "true"] },
+    });
   });
 
   test("wide elements: many distinct and many repeated children", () => {

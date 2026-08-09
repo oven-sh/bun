@@ -444,9 +444,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
         bun_base64::encode_len(input)
     };
 
-    // An over-MaxLength output can never become a string; fail here instead of
-    // allocating and encoding `to_len` bytes first (the create_* constructors
-    // re-check, and callers surface Dead as ERR_STRING_TOO_LONG).
+    // Checked here so an over-MaxLength output fails before the allocate+encode, not after.
     if to_len > BunString::max_length() {
         return BunString::dead();
     }

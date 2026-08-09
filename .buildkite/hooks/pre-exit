@@ -6,11 +6,11 @@
 # `reported-$BUILDKITE_JOB_ID` via markBuildkiteStepReported() just before
 # exiting. Anything that kills the step before that marker is written (agent
 # command-hook failures such as a tart guest that never boots, artifact
-# download failures, `node` missing, the runner/build script itself crashing)
-# leaves the job red with nothing in the build's annotation list, so the
-# failure is only discoverable by opening the raw log. This repository pre-exit
-# hook posts a generic annotation for any such job so it shows up alongside
-# test/build failures.
+# download failures, `node` missing, the runner/build script itself crashing,
+# a job-level timeout killing a hung step) leaves the job red with nothing in
+# the build's annotation list, so the failure is only discoverable by opening
+# the raw log. This repository pre-exit hook posts a generic annotation for
+# any such job so it shows up alongside test/build failures.
 #
 # The marker is build meta-data, which is server-side and so remains visible
 # here even when the reporter ran inside an ephemeral VM (the darwin tart
@@ -23,21 +23,29 @@ status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
 [ "$status" = "0" ] && exit 0
 [ -n "${BUILDKITE_JOB_ID:-}" ] || exit 0
 
-# Skip canceled/timed-out jobs: on cancel the agent SIGTERMs then SIGKILLs the
-# command, so the reporter had no chance to set the marker, and a canceled
-# build annotating every running job is noise, not signal. The agent's
-# Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell env
-# (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
-# BUILDKITE_JOB_TIMED_OUT=true when the cancel was a job-level timeout.
-if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
-# TODO(ci): the exit-code fallback below is only needed while agents older than
-# v3.94.0 remain in the fleet (as of 2026-07: the linux queue=ci image is still
-# on v3.87.0 and several bare-metal darwin boxes are on v3.87.0/v3.94.0;
-# scripts/bootstrap.sh already pins 3.114.0, those images just need rebaking).
-# -1 is the posix agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT,
-# both observed on cancel in build 76127. Delete this `case` once every agent is
-# v3.94.0+.
-case "$status" in -1|3221225786) exit 0 ;; esac
+# The agent's Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell
+# env (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
+# BUILDKITE_JOB_TIMED_OUT=true when the cancel came from the job's
+# timeout_in_minutes rather than a user. A job-level timeout is a real failure
+# the build surfaces with no annotation at all, so it proceeds to the
+# annotation below; a user/build cancel stays silent (a canceled build
+# annotating every running job is noise, not signal).
+timed_out=""
+if [ "${BUILDKITE_JOB_TIMED_OUT:-}" = "true" ]; then
+  timed_out=1
+else
+  if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
+  # The exit-code fallback below is only needed while agents older than
+  # v3.94.0 remain in the fleet (as of 2026-08: the linux queue=ci image and
+  # the darwin tart hosts sourdough/challah are on v3.87.0;
+  # scripts/bootstrap.sh already pins 3.114.0, those images just need
+  # rebaking). Those agents set neither variable above, so their job timeouts
+  # are indistinguishable from cancels and stay silent here. -1 is the posix
+  # agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT, both
+  # observed on cancel in build 76127. Delete this `case` once every agent is
+  # v3.94.0+.
+  case "$status" in -1|3221225786) exit 0 ;; esac
+fi
 
 if buildkite-agent meta-data exists "reported-${BUILDKITE_JOB_ID}" 2>/dev/null; then
   exit 0
@@ -46,26 +54,64 @@ fi
 label="${BUILDKITE_LABEL:-${BUILDKITE_STEP_KEY:-job}}"
 job_url="${BUILDKITE_BUILD_URL:-}#${BUILDKITE_JOB_ID}"
 
+detail=""
+# $1 = section name, $2 = content; empty content adds nothing.
+append_detail() {
+  [ -n "$2" ] || return 0
+  detail+="${detail:+$'\n'}$1: $2"
+}
+
 # darwin tart agents redirect `tart run` to /tmp/{bk,sc}-<job-id>.log on the
 # host. A guest that booted and was cleanly stopped writes only
 # `Stopping VM...`; anything else is tart reporting why it exited.
-detail=""
+is_tart=""
 for log in "/tmp/bk-${BUILDKITE_JOB_ID}.log" "/tmp/sc-${BUILDKITE_JOB_ID}.log"; do
+  [ -e "$log" ] && is_tart=1
   [ -s "$log" ] || continue
   # Cap per-log output so a pathological tart dump cannot push the shared
   # `--append`ed annotation past Buildkite's 1 MiB body limit.
   body=$(grep -v '^Stopping VM\.\.\.' "$log" 2>/dev/null | head -c 2048 || true)
-  [ -n "$body" ] && detail+="${detail:+$'\n'}${log##*/}: ${body}"
+  append_detail "${log##*/}" "$body"
 done
+
+# A timed-out tart job is the wedge in issue #37246: the guest-command ssh
+# session goes silent (every observed case right at node_modules pre-warm) and
+# the job burns its whole timeout budget. The ssh denials PR #37220 root-caused
+# on the same hosts point at stale VMs squatting recycled vmnet addresses, so
+# capture the host's VM and address state at kill time while it still exists;
+# this snapshot is what identifies the squatter.
+if [ -n "$timed_out" ] && [ -n "$is_tart" ]; then
+  tart_bin=$(command -v tart || true)
+  [ -x "${tart_bin:-}" ] || tart_bin="/opt/homebrew/bin/tart"
+  if [ -x "$tart_bin" ]; then
+    append_detail "tart list" "$("$tart_bin" list 2>&1 | head -c 2048 || true)"
+  fi
+  leases="/var/db/dhcpd_leases"
+  if [ -r "$leases" ]; then
+    append_detail "$leases" "$(wc -l <"$leases" 2>/dev/null | tr -d ' ') lines, tail: $(tail -c 2048 "$leases" 2>/dev/null || true)"
+  fi
+  append_detail "arp -an" "$(arp -an 2>/dev/null | head -c 1024 || true)"
+fi
+
 [ -n "$detail" ] || detail="see the job log for output"
 
 # Match escapeCodeBlock() in scripts/runner.node.mjs: the body renders inside a
 # ```terminal fence, so only backticks need escaping.
 preview=$(printf '%s' "$detail" | sed 's/`/\\`/g')
 
-printf '<details><summary><a><code>step failed outside runner</code></a> - exit %s on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
-  "$status" "$job_url" "$label" "$preview" \
-  | buildkite-agent annotate --append --style error --context step-failed-outside-runner --priority 5 2>&1 \
+if [ -n "$timed_out" ]; then
+  # Name the agent: one sick host timing out every job it takes reads as
+  # unrelated PR failures until the annotations line up on the same name.
+  heading="job timed out${BUILDKITE_TIMEOUT:+ at ${BUILDKITE_TIMEOUT} minutes}${BUILDKITE_AGENT_NAME:+ on ${BUILDKITE_AGENT_NAME}}"
+  context="job-timed-out"
+else
+  heading="step failed outside runner - exit ${status}"
+  context="step-failed-outside-runner"
+fi
+
+printf '<details><summary><a><code>%s</code></a> on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
+  "$heading" "$job_url" "$label" "$preview" \
+  | buildkite-agent annotate --append --style error --context "$context" --priority 5 2>&1 \
   || echo "pre-exit: buildkite-agent annotate failed (non-fatal)"
 
 exit 0

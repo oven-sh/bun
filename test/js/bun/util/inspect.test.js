@@ -928,3 +928,33 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("tolerates lazy Bun property builders that throw during the walk", async () => {
+  // Clobbering the global Symbol makes lazily-loaded internal modules (the
+  // builders behind Bun.$, Bun.sql, ...) throw from module scope when the
+  // property walk materializes them. The walk used to continue with that
+  // exception still pending, entering the next lazy builder with it.
+  const fixture = `
+    Symbol = NaN;
+    const out = Bun.inspect(Bun);
+    console.log("inspect:", typeof out === "string" && out.length > 0);
+    try { Bun.sql; console.log("sql: no error"); } catch (e) { console.log("sql:", e.constructor.name); }
+    try { Bun.SQL; console.log("SQL: no error"); } catch (e) { console.log("SQL:", e.constructor.name); }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      // Skip symbolizing a failure report; symbolization of the debug
+      // binary takes longer than the test timeout.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe(["inspect: true", "sql: TypeError", "SQL: TypeError", ""].join("\n"));
+  expect(exitCode).toBe(0);
+});

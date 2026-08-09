@@ -1750,43 +1750,51 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf);
-                    if pm.options.link_workspace_packages && satisfies {
-                        // `String::sliced` takes `&'a self`; bind the unwrapped
-                        // value so the borrow outlives the parse call.
-                        let wp = workspace_path.unwrap();
-                        let path = wp.sliced(buf);
-                        if let Some(mut dep) = dependency::parse_with_tag(
-                            external_alias.value,
-                            Some(external_alias.hash),
-                            path.slice,
-                            dependency::version::Tag::Workspace,
-                            &path,
-                            Some(&mut *log),
-                            Some(&mut *pm),
-                        ) {
-                            // Whole-struct move so `Drop` frees the old npm
-                            // chain; keep the existing `literal`.
-                            dep.literal = dependency_version.literal;
-                            dependency_version = dep;
-                        }
-                    } else {
-                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                        for dep in &mut package_dependencies[0..dependencies_count as usize] {
-                            if dep.name_hash == name_hash && dep.behavior.is_workspace() {
-                                *dep = Dependency {
-                                    behavior: group.behavior,
-                                    name: external_alias.value,
-                                    name_hash: external_alias.hash,
-                                    version: dependency_version,
-                                };
-                                return Ok(None);
-                            }
+                // A versionless workspace member satisfies a wildcard range
+                // (the resolver links it; see the resolve-from-workspace rule
+                // in `get_or_put_resolved_package`). Apply the same rule here
+                // so re-parsing package.json yields the workspace-tagged
+                // dependency a loaded lockfile holds, instead of a mismatch
+                // that re-saves an unchanged lockfile on every install.
+                let satisfies = match workspace_version {
+                    Some(workspace_version) => dependency_version
+                        .npm()
+                        .version
+                        .satisfies(workspace_version, buf, buf),
+                    None => {
+                        workspace_path.is_some() && dependency_version.npm().version.is_star()
+                    }
+                };
+                if pm.options.link_workspace_packages && satisfies {
+                    // `String::sliced` takes `&'a self`; bind the unwrapped
+                    // value so the borrow outlives the parse call.
+                    let wp = workspace_path.unwrap();
+                    let path = wp.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        // Whole-struct move so `Drop` frees the old npm
+                        // chain; keep the existing `literal`.
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                } else if workspace_version.is_some() {
+                    // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                    for dep in &mut package_dependencies[0..dependencies_count as usize] {
+                        if dep.name_hash == name_hash && dep.behavior.is_workspace() {
+                            *dep = Dependency {
+                                behavior: group.behavior,
+                                name: external_alias.value,
+                                name_hash: external_alias.hash,
+                                version: dependency_version,
+                            };
+                            return Ok(None);
                         }
                     }
                 }

@@ -193,6 +193,69 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
+test.concurrent(
+  "repeat install does not re-save the lockfile for a wildcard dependency on a versionless workspace member",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "*",
+          },
+        }),
+      ),
+      // no version field on purpose
+      write(join(packageDir, "packages", "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "*",
+          },
+        }),
+      ),
+    ]);
+
+    var { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const lockBefore = await file(join(packageDir, "bun.lock")).text();
+    // the wildcard dependencies resolve to the workspace member, not the registry
+    expect(lockBefore).toContain("no-deps@workspace:packages/no-deps");
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockBefore);
+  },
+);
+
 test.concurrent("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

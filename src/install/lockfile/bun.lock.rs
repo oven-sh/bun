@@ -2095,6 +2095,7 @@ pub(crate) fn parse_into_binary_lockfile(
             None
         };
 
+        let root_pkgs_expr = root.get(b"packages");
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
             &root_pkg_exr,
@@ -2104,6 +2105,7 @@ pub(crate) fn parse_into_binary_lockfile(
             None,
             None,
             Some(&workspaces_obj),
+            root_pkgs_expr.as_ref(),
             link_workspace_packages,
         )?;
 
@@ -2128,6 +2130,10 @@ pub(crate) fn parse_into_binary_lockfile(
 
     let workspace_pkgs_off: u32 = 1;
     let mut workspace_pkgs_len: u32 = 0;
+
+    // Workspace-name duplicate detection, decoupled from the conditional
+    // `pkg_map` claim below so it fires even for displaced members.
+    let mut seen_workspace_names: PkgPathSet = PkgPathSet::init();
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
@@ -2162,6 +2168,16 @@ pub(crate) fn parse_into_binary_lockfile(
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
+                if seen_workspace_names.contains(name) {
+                    log.add_error_fmt(
+                        source,
+                        row.key_loc,
+                        format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
+                    );
+                    return Err(ParseError::InvalidWorkspaceObject);
+                }
+                seen_workspace_names.put(name, ());
+
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
 
@@ -2171,6 +2187,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     &mut *log,
                     source,
                     &mut optional_peers_buf,
+                    None,
                     None,
                     None,
                     None,
@@ -2192,26 +2209,24 @@ pub(crate) fn parse_into_binary_lockfile(
                 }
 
                 // there should be no duplicates
+                let pkgs_len_before = lockfile.packages.len();
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
                 // A member displaced by a root dependency only appears
                 // nested; pre-claiming its name would falsely collide with
                 // the root `packages` key the other package owns.
-                if member_owns_packages_key(&pkgs_expr_for_claims, name, path) {
+                if member_owns_packages_key(pkgs_expr_for_claims.as_ref(), name, path) {
                     let entry = pkg_map.get_or_put(name)?;
-                    if entry.found_existing {
-                        log.add_error_fmt(
-                            source,
-                            row.key_loc,
-                            format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
-                        );
-                        return Err(ParseError::InvalidWorkspaceObject);
-                    }
-
+                    debug_assert!(!entry.found_existing, "caught by seen_workspace_names");
                     *entry.value_ptr = pkg_id;
                 }
 
-                workspace_pkgs_len += 1;
+                // `workspace_pkgs_len` sizes the 1..1+len package-id range
+                // resolved below; it must count appended packages, not loop
+                // iterations.
+                if lockfile.packages.len() > pkgs_len_before {
+                    workspace_pkgs_len += 1;
+                }
                 continue 'workspaces;
             }
         }
@@ -2274,6 +2289,11 @@ pub(crate) fn parse_into_binary_lockfile(
             }
             bundled_pkgs.put(pkg_path, ());
         }
+
+        // Workspace packages claimed under a `packages` key other than their
+        // name (nested under a dependent, or aliased). Their own dependency
+        // keys are written under that placement, e.g. "beta/member/dep".
+        let mut member_tree_keys: Vec<(PackageID, &[u8])> = Vec::new();
 
         'next_pkg_key: for row in object_rows(&pkgs_expr) {
             let key_loc = row.key_loc;
@@ -2466,6 +2486,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             //   "another-pkg1": "workspaces:packages/pkg1",
                             // },
                             *entry.value_ptr = workspace_pkg_id;
+                            member_tree_keys.push((workspace_pkg_id, pkg_path));
                             continue 'next_pkg_key;
                         }
                     }
@@ -2532,6 +2553,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             &mut optional_peers_buf,
                             Some(pkg_path),
                             Some(&bundled_pkgs),
+                            None,
                             None,
                             link_workspace_packages,
                         )?;
@@ -2866,6 +2888,25 @@ pub(crate) fn parse_into_binary_lockfile(
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
+                    // A displaced member's node lives under its recorded
+                    // `packages` key (e.g. "beta/member"), so its own
+                    // dependency keys are "beta/member/dep", not
+                    // "member/dep".
+                    let nested_res_id = member_tree_keys.iter().find_map(|&(id, key)| {
+                        if id != pkg_id {
+                            return None;
+                        }
+                        let needed = key.len() + 1 + dep_name.len();
+                        let buf_slice = &mut path_buf[..];
+                        if needed > buf_slice.len() {
+                            return None;
+                        }
+                        buf_slice[..key.len()].copy_from_slice(key);
+                        buf_slice[key.len()] = b'/';
+                        buf_slice[key.len() + 1..needed].copy_from_slice(dep_name);
+                        pkg_map.get(&buf_slice[..needed]).copied()
+                    });
+
                     let workspace_node_modules = {
                         let buf_slice = &mut path_buf[..];
                         let needed = workspace_name.len() + 1 + dep_name.len();
@@ -2898,7 +2939,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     } else {
                         None
                     };
-                    let Some(res_id) = peer_res_id.or_else(|| {
+                    let Some(res_id) = peer_res_id.or(nested_res_id).or_else(|| {
                         pkg_map
                             .get(workspace_node_modules)
                             .or_else(|| pkg_map.get(dep_name))
@@ -3170,7 +3211,7 @@ fn map_dep_to_pkg(
 /// name. When a root dependency replaced the member's workspace dependency
 /// (`Package::parse_dependency`), that key holds the other package and the
 /// member only appears nested, so its name must not pre-claim the key.
-fn member_owns_packages_key(pkgs_expr: &Option<Expr>, name: &[u8], path: &[u8]) -> bool {
+fn member_owns_packages_key(pkgs_expr: Option<&Expr>, name: &[u8], path: &[u8]) -> bool {
     let Some(pkgs) = pkgs_expr else {
         return true;
     };
@@ -3254,6 +3295,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
     // Only meaningful when `IS_ROOT`.
+    pkgs_expr: Option<&Expr>,
     link_workspace_packages: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
@@ -3404,28 +3446,38 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
-                // Mirror `Package::parse_dependency`: an npm range that
-                // cannot link this member replaced its workspace dependency,
-                // so the loaded root dependency list must match.
+                // A member whose root `packages` key is owned by another
+                // package had its workspace dependency replaced when the
+                // lockfile was written; honor that recorded shape rather
+                // than re-deriving it from the current config, so a
+                // `linkWorkspacePackages` flip re-resolves through the
+                // normal changes diff instead of binding a workspace edge
+                // to the npm package. The range scan mirrors
+                // `Package::parse_dependency` for aliased dependencies,
+                // whose root key is the alias.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
-                    let member_version = lockfile.workspace_versions.get(&name_hash).copied();
-                    lockfile.buffers.dependencies.as_slice()[off..]
-                        .iter()
-                        .any(|dep| {
-                            if dep.version.tag != DependencyVersionTag::Npm {
-                                return false;
-                            }
-                            let npm = dep.version.npm();
-                            if StringBuilder::string_hash(npm.name.slice(bytes)) != name_hash {
-                                return false;
-                            }
-                            let satisfies = match member_version {
-                                Some(version) => npm.version.satisfies(version, bytes, bytes),
-                                None => npm.version.is_star(),
-                            };
-                            !(link_workspace_packages && satisfies)
-                        })
+                    !member_owns_packages_key(pkgs_expr, name, path) || {
+                        let member_version =
+                            lockfile.workspace_versions.get(&name_hash).copied();
+                        lockfile.buffers.dependencies.as_slice()[off..]
+                            .iter()
+                            .any(|dep| {
+                                if dep.version.tag != DependencyVersionTag::Npm {
+                                    return false;
+                                }
+                                let npm = dep.version.npm();
+                                if StringBuilder::string_hash(npm.name.slice(bytes)) != name_hash
+                                {
+                                    return false;
+                                }
+                                let satisfies = match member_version {
+                                    Some(version) => npm.version.satisfies(version, bytes, bytes),
+                                    None => npm.version.is_star(),
+                                };
+                                !(link_workspace_packages && satisfies)
+                            })
+                    }
                 };
                 if overridden {
                     continue 'workspaces;

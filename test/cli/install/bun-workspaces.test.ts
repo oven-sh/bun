@@ -542,6 +542,168 @@ describe("workspace and npm dependency sharing a name", () => {
 
     await runBunInstall(env, packageDir, { frozenLockfile: true });
   });
+
+  test.concurrent("flipping linkWorkspacePackages re-resolves instead of failing", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfig = (linkWorkspacePackages: boolean) =>
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          linkWorkspacePackages,
+          registry: verdaccio.registryUrl(),
+        },
+      });
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), bunfig(false)),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"no-deps": ["no-deps@1.0.0"`);
+
+    // the lockfile embodies linkWorkspacePackages = false; flipping the
+    // config must fail a frozen install loudly and re-resolve on a plain
+    // install, not error forever with an internal DependencyLoop
+    await write(join(packageDir, "bunfig.toml"), bunfig(true));
+    const frozen = await runBunInstall(env, packageDir, {
+      frozenLockfile: true,
+      allowErrors: true,
+      expectedExitCode: 1,
+    });
+    expect(frozen.err).toContain("lockfile had changes");
+    expect(frozen.err).not.toContain("DependencyLoop");
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+      `"no-deps": ["no-deps@workspace:packages/no-deps"]`,
+    );
+    const stable = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(stable.err).not.toContain("Saved lockfile");
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+    // and back
+    await write(join(packageDir, "bunfig.toml"), bunfig(false));
+    const frozenBack = await runBunInstall(env, packageDir, {
+      frozenLockfile: true,
+      allowErrors: true,
+      expectedExitCode: 1,
+    });
+    expect(frozenBack.err).toContain("lockfile had changes");
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"no-deps": ["no-deps@1.0.0"`);
+    const stableBack = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(stableBack.err).not.toContain("Saved lockfile");
+  });
+
+  test.concurrent("displaced member's own pinned dependency survives reload", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "no-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"beta/no-deps/a-dep": ["a-dep@1.0.1"`);
+
+    // a cold install from the lockfile must resolve the member's dependency
+    // under its nested key, not fall back to the root version
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+
+    expect(
+      await file(join(packageDir, "packages", "no-deps", "node_modules", "a-dep", "package.json")).json(),
+    ).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+      name: "a-dep",
+      version: "1.0.2",
+    });
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  });
+
+  test.concurrent("duplicate workspace keys in a hand-edited lockfile are rejected", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "nd", "package.json"),
+        JSON.stringify({ name: "member-a", version: "1.0.0" }),
+      ),
+      // duplicate workspace path keys with an npm package owning the first
+      // member name's root packages key; the duplicate must be rejected by
+      // the parser, not trip an out-of-bounds workspace package range
+      write(
+        join(packageDir, "bun.lock"),
+        `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": { "name": "sandbox", "dependencies": { "no-deps": "1.0.0" } },
+    "packages/nd": { "name": "member-a", "version": "1.0.0" },
+    "packages/nd": { "name": "member-b", "version": "1.0.0" },
+    "packages/nd": { "name": "member-c", "version": "1.0.0" },
+  },
+  "packages": {
+    "member-a": ["member-a@1.0.0", "", {}, ""],
+  }
+}`,
+      ),
+    ]);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Duplicate workspace name: 'member-a'");
+    expect(exitCode).toBe(1);
+  });
 });
 
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {

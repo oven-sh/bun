@@ -2276,8 +2276,20 @@ impl<'a> PackageInstall<'a> {
             dest_name_buf[..dest.len()].copy_from_slice(dest);
             // SAFETY: zero-initialized; NUL at [dest.len()].
             let dest_z = ZStr::from_buf(&dest_name_buf, dest.len());
-            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
-                return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+            if let Err(first_err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
+                // A stale entry can survive `skip_delete`: a workspace
+                // member's internal node_modules is not reset by wiping the
+                // root node_modules. Replace it and retry, like the Windows
+                // branch above.
+                let retry = first_err.get_errno() == sys::E::EEXIST;
+                let mut result = Err(first_err);
+                if retry {
+                    self.uninstall_before_install(destination_dir);
+                    result = sys::symlinkat(target_z, dest_dir.fd(), dest_z);
+                }
+                if let Err(err) = result {
+                    return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                }
             }
         }
 

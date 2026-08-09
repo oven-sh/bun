@@ -928,3 +928,24 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The Bun object's lazy properties (like Bun.$) are built on first access. With
+// `process` clobbered, building Bun.$ throws, and the property walk used by
+// console.log must clear that pending exception instead of leaving it set,
+// which aborted debug builds at the next exception-scope assertion.
+it("console.log survives a lazy property builder throwing mid-walk", async () => {
+  const code = `
+    globalThis.process = undefined;
+    console.log(Bun);
+    console.log("SURVIVED");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("SURVIVED");
+  expect(exitCode).toBe(0);
+});

@@ -344,6 +344,7 @@ describe("Atomics.waitAsync worker teardown", () => {
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
+      stderr: "pipe",
     });
 
     // Fail fast instead of waiting out a quadratic teardown (minutes in debug).
@@ -356,9 +357,9 @@ describe("Atomics.waitAsync worker teardown", () => {
     if (first === "deadline") proc.kill("SIGKILL");
     expect(first).not.toBe("deadline");
 
-    const stdout = await proc.stdout.text();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { exitAfterMs } = JSON.parse(stdout);
     expect(exitAfterMs).toBeLessThan(15_000);
-    expect(await proc.exited).toBe(0);
   }, 90_000);
 });

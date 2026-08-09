@@ -1682,13 +1682,10 @@ pub(crate) mod strings_impl {
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
-    ///
-    /// `read`/`written` are `usize`: a UTF-16 source can encode to exactly
-    /// 2^32 UTF-8 bytes (JSC allows 2^32-byte ArrayBuffers), which a `u32`
-    /// count would silently wrap to 0.
-    ///
-    /// `repr(C)`: returned by value from `TextEncoder__encodeInto8/16`
-    /// (mirrored as `TextEncoderEncodeIntoResult` in `headers-handwritten.h`).
+    /// Counts are `usize` because `written` can be exactly 2^32 (JSC's max
+    /// ArrayBuffer size), which a `u32` would wrap to 0. `repr(C)` to return by
+    /// value from `TextEncoder__encodeInto8/16` (`TextEncoderEncodeIntoResult`
+    /// in `headers-handwritten.h`).
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
     pub struct EncodeIntoResult {

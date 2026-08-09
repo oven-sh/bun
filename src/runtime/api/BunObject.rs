@@ -994,7 +994,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
                 // `edit.name` is observed (single-threaded JS VM).
                 edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                 edit.detect_editor(env);
-                editor_choice = edit.editor;
+                editor_choice = edit.found();
                 if editor_choice.is_none() {
                     slot.name_storage = prev_storage;
                     *edit = prev;
@@ -1017,11 +1017,11 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             }
         }
 
-        let editor = match editor_choice.or(edit.editor) {
+        let editor = match editor_choice.or_else(|| edit.found()) {
             Some(e) => e,
             None => {
                 edit.auto_detect_editor(env);
-                match edit.editor {
+                match edit.found() {
                     Some(e) => e,
                     None => {
                         return Err(global_this.throw(format_args!("Failed to auto-detect editor")));

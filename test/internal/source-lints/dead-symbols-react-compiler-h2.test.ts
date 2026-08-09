@@ -87,6 +87,12 @@ test("dead h2_frame_parser inbound-path symbols do not reappear", () => {
     [file, /\bpreface_received_len\b/],
     [file, /\bpending_header_block\b/],
     [file, /\bis_waiting_more_headers\b/],
+    [file, /\bread_buffer\b/],
+    // Wire-decode leftovers that escaped the dead_code lint (pub struct,
+    // trait impls): the parser's own SettingsPayloadUnit copy and the
+    // bytemuck impls whose only consumer was the removed write().
+    [file, /\bSettingsPayloadUnit\b/],
+    [file, /bytemuck::(Zeroable|Pod) for FullSettingsPayload/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });

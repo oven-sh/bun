@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -158,6 +159,59 @@ describe("Atomics", () => {
       } else {
         expect(typeof result.value).toBe("string");
       }
+    });
+
+    // GC of a SharedArrayBuffer on one thread must not cancel another thread's
+    // pending Atomics.waitAsync in place: whichever thread drops the last
+    // reference runs the SAB destructor, and the cancellation has to be handed
+    // to the VM that owns the waiter. Aborted with an assertion in
+    // JSC::DeferredWorkTimer::cancelPendingWork on assert-enabled builds.
+    test.concurrent("waitAsync survives cross-thread GC of the SharedArrayBuffer", async () => {
+      using dir = tempDir("atomics-waitasync-sab-gc", {
+        "waitasync-sab-gc-fixture.ts": `
+          import { Worker, isMainThread, parentPort } from "node:worker_threads";
+          if (!isMainThread) {
+            parentPort.on("message", m => {
+              // Pending forever; the waiter does not keep the SAB alive.
+              Atomics.waitAsync(new Int32Array(m.sab), 0, 0);
+              m = null;
+              // Let the handler frame return so the worker's GC sweeps its SAB
+              // wrapper and the main thread holds the last reference.
+              setTimeout(() => {
+                Bun.gc(true);
+                parentPort.postMessage("armed");
+              }, 5);
+            });
+          } else {
+            const w = new Worker(new URL(import.meta.url));
+            for (let i = 0; i < 20; i++) {
+              let sab = new SharedArrayBuffer(64);
+              w.postMessage({ sab });
+              await new Promise(r => w.once("message", r));
+              // Main now drops the last reference: the SAB destructor runs on
+              // this thread and tears down the worker's pending waiter.
+              sab = null;
+              Bun.gc(true);
+              await new Promise(r => setTimeout(r, 2));
+            }
+            console.log("done");
+            await w.terminate();
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "waitasync-sab-gc-fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("ASSERTION FAILED");
+      expect(stdout).toBe("done\n");
+      expect(exitCode).toBe(0);
     });
   });
 

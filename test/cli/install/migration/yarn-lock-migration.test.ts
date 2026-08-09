@@ -1490,11 +1490,18 @@ describe("yarn.lock migration scales linearly", () => {
   // slow machine, and several times below what the quadratic version took.
   test("large yarn.lock migrates quickly", async () => {
     const N = 12000;
+    // Only a slice of the lock entries are direct dependencies of the root:
+    // the quadratic consolidation/spec scans were driven by the entry count,
+    // while a huge direct-dependency count exercises the (unrelated,
+    // per-directory) hoisting cost that this test should not measure.
+    const rootDepCount = 100;
     const integrity = `sha512-${Buffer.alloc(86, "A").toString()}==`;
     const lines: string[] = ["# yarn lockfile v1", "", ""];
     const dependencies: Record<string, string> = {};
     for (let i = 0; i < N; i++) {
-      dependencies[`p${i}`] = "^1.0.0";
+      if (i < rootDepCount) {
+        dependencies[`p${i}`] = "^1.0.0";
+      }
       lines.push(
         `p${i}@^1.0.0:`,
         `  version "1.0.0"`,
@@ -1518,8 +1525,13 @@ describe("yarn.lock migration scales linearly", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: String(tmpDir),
-      env: bunEnv,
-      stdout: "pipe",
+      env: {
+        ...bunEnv,
+        // A populated machine-wide cache would let the post-migration
+        // metadata pass find manifests for these synthetic names.
+        BUN_INSTALL_CACHE_DIR: join(String(tmpDir), ".bun-cache"),
+      },
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
@@ -1529,12 +1541,14 @@ describe("yarn.lock migration scales linearly", () => {
     expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
 
+    // Only packages reachable from the root survive into bun.lock; the
+    // unreferenced entries still had to be parsed and consolidated above.
     const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toContain(`"p0"`);
-    expect(bunLockContent).toContain(`"p${N - 1}"`);
+    expect(bunLockContent).toContain(`"p${rootDepCount - 1}"`);
 
-    expect(elapsed).toBeLessThan(isDebug || isASAN ? 45_000 : 4_000);
-  }, 240_000);
+    expect(elapsed).toBeLessThan(isDebug || isASAN ? 25_000 : 2_000);
+  }, 150_000);
 
   test("entries for the same name and version in separate blocks consolidate", async () => {
     // yarn normally merges these into one "a@^1.0.0, a@~1.0.0:" block, but
@@ -1571,8 +1585,11 @@ dup-pkg@~1.0.2:
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: String(tmpDir),
-      env: bunEnv,
-      stdout: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(tmpDir), ".bun-cache"),
+      },
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });

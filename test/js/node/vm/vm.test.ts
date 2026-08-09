@@ -1714,8 +1714,10 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
 // to hit RELEASE_ASSERT_NOT_REACHED ("terminated due neither to SIGINT nor
 // to timeout"), a crash in release builds too. The inner run must leave the
 // request for the outer frame, which reports the timeout as node does.
-test.concurrent("nested vm run propagates the outer frame's termination", async () => {
-  const fixture = `
+test.concurrent(
+  "nested vm run propagates the outer frame's termination",
+  async () => {
+    const fixture = `
     const vm = require("node:vm");
     globalThis.vm = vm;
     try {
@@ -1728,14 +1730,16 @@ test.concurrent("nested vm run propagates the outer frame's termination", async 
     for (let i = 0; i < 100000; i++) n++;
     console.log("alive", n === 100000);
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-}, 20_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);

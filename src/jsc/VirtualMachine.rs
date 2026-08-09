@@ -6398,9 +6398,6 @@ impl VirtualMachine {
                             global_ref.clear_exception();
                         }
                     } else if global_ref.has_exception() || formatter.failed {
-                        // Deliberate Ok with the exception left pending: Err
-                        // would get cleared upstream, and Bun.inspect rethrows
-                        // the pending overflow.
                         return Ok(());
                     }
 

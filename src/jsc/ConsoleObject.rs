@@ -3913,16 +3913,12 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Deliberately left in the visited map: the printer re-enters
-            // this formatter for the error's `cause`/`errors` properties, and
-            // removing the value here let a self-referencing error recurse
-            // until stack overflow.
+            // The value stays in the visited map so re-entrant property
+            // formatting hits the `[Circular]` guard.
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
-            // `print_errorlike_object` returns unit; surface a pending
-            // exception as Err for `?`-chaining callers.
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }

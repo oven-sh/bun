@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import os from "node:os";
 
 function expectInvalidCharacters(val) {
@@ -76,7 +76,7 @@ it("btoa", () => {
 // small machines (same gate as blob-oom.test.ts).
 describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("btoa at the 2 GiB string limit", () => {
   // Building and encoding multi-GiB strings is slow under debug/ASAN.
-  const timeout = 90_000;
+  const timeout = isDebug || isASAN ? 90_000 : undefined;
 
   it(
     "throws ERR_STRING_TOO_LONG when the output would exceed 2^31 - 1 characters",

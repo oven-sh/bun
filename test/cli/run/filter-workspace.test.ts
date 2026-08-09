@@ -774,10 +774,10 @@ describe.skipIf(!isWindows).each([
 });
 
 describe("output timing", () => {
-  // A script is finished when its process has exited AND its output has reached
-  // EOF; treating the exit alone as "finished" drops output that hasn't been
-  // read yet (here: written by a child the script left behind).
-  test("output written after the script's shell exits is not dropped", async () => {
+  // A script is finished when its process exits: output it already wrote is
+  // drained at that point, but a detached child still holding the pipe write
+  // ends must not keep the run alive waiting for an EOF that may never come.
+  test("a detached child holding the pipes does not delay the script's finish", async () => {
     using dir = tempDir("filter-late-output", {
       "package.json": JSON.stringify({
         name: "ws-late",
@@ -790,30 +790,39 @@ describe("output timing", () => {
         },
       }),
       "packages/late/late.js": `
-        Bun.spawn({
-          cmd: [process.execPath, "-e", "await Bun.sleep(300); console.log('late-line')"],
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000); console.log('late-line')"],
           stdio: ["ignore", "inherit", "inherit"],
           // Windows: keep the child out of this process's kill-on-close job.
           detached: true,
-        }).unref();
+        });
+        child.unref();
+        await Bun.write("pid.txt", String(child.pid));
         console.log("early-line");
       `,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
       // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
-      // bun SIGKILL the detached child on exit, defeating the late write.
+      // bun SIGKILL the detached child on exit; unset it so the child really
+      // keeps the pipes open.
       env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(join(String(dir), "packages", "late", "pid.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
     expect(stdout).toContain("early-line");
-    expect(stdout).toContain("late-line");
     expect(stdout).toContain("Exited with code 0");
-    // The exit status line is printed at finish, after the output has ended.
-    expect(stdout.indexOf("late-line")).toBeLessThan(stdout.indexOf("Exited with code 0"));
+    // The run ends when the script exits; the child's much later write goes to
+    // a closed pipe instead of delaying the run by 30s.
+    expect(stdout).not.toContain("late-line");
     expect(exitCode).toBe(0);
   });
 

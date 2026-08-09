@@ -1750,3 +1750,41 @@ test.concurrent(
   },
   20_000,
 );
+
+// An inner breakOnSigint-only run must not claim the outer frame's watchdog
+// termination as a SIGINT: the misattributed (and catchable) error would let
+// the guest swallow it and keep running with the outer's one-shot watchdog
+// already spent, silently bypassing the outer {timeout}. The termination must
+// propagate uncatchably to the outer frame, which reports the timeout.
+test.concurrent(
+  "outer timeout fires during a nested breakOnSigint run",
+  async () => {
+    const fixture = `
+    const vm = require("node:vm");
+    globalThis.vm = vm;
+    try {
+      vm.runInThisContext(
+        "try { vm.runInThisContext('for(;;);', { breakOnSigint: true }); } catch (e) { console.log('guest caught', e.code); } for(;;);",
+        { timeout: 100 },
+      );
+      console.log("returned");
+    } catch (e) {
+      console.log("caught", e.code);
+    }
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    console.log("alive", n === 100000);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);

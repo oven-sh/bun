@@ -315,10 +315,12 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // evaluate() caught like any other exception.
         if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
             return false;
-        // Not armed by this run and not flagged for it: the interrupt belongs
-        // to an outer vm frame (nested runs share the VM), whose own
-        // checkForTermination reports it. Leave the request pending.
-        if (!script->getSigintReceived() && !timeout && !breakOnSigint)
+        // Not attributable to this run: no SIGINT flag, no own timeout, and
+        // breakOnSigint alone cannot claim it while an enclosing frame's
+        // watchdog is armed (that is the outer timeout firing during this
+        // run). The owning frame's checkForTermination reports it; leave the
+        // request pending.
+        if (!script->getSigintReceived() && !timeout && (!breakOnSigint || outerWatchdogArmed(vm)))
             return false;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
@@ -326,7 +328,7 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
         if (vm.hasPendingTerminationException())
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        if (!consumeTermination(vm)) {
+        if (!consumeTermination(vm, timeout.has_value())) {
             // Deliver the re-armed worker stop right away; the caller's
             // RETURN_IF_EXCEPTION propagates it.
             vm.throwTerminationException();

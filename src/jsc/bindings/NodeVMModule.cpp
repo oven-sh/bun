@@ -73,11 +73,12 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 bool NodeVMModule::reportOwnedTermination(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMGlobalObject* nodeVmGlobalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = JSC::getVM(globalObject);
-    // Ours only if the VM is not being stopped and this evaluation armed an
-    // interrupt source; otherwise the termination belongs to VM teardown or
-    // an outer vm frame (nested runs share the VM).
+    // Ours only if the VM is not being stopped and this evaluation can
+    // attribute the termination to its own arming: a flagged SIGINT, its own
+    // {timeout}, or breakOnSigint with no enclosing armed watchdog (an armed
+    // outer watchdog means this is the outer frame's timeout firing).
     bool owned = Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)
-        && (getSigintReceived() || timeout != 0 || breakOnSigint);
+        && (getSigintReceived() || timeout != 0 || (breakOnSigint && !NodeVM::outerWatchdogArmed(vm)));
     if (!owned) {
         if (!vm.hasPendingTerminationException())
             vm.throwTerminationException();
@@ -86,7 +87,7 @@ bool NodeVMModule::reportOwnedTermination(JSC::JSGlobalObject* globalObject, JSC
     vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
     if (vm.hasPendingTerminationException())
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-    if (!NodeVM::consumeTermination(vm)) {
+    if (!NodeVM::consumeTermination(vm, timeout != 0)) {
         vm.throwTerminationException();
         return false;
     }

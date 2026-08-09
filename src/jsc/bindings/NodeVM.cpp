@@ -8,6 +8,7 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 #include "BunClientData.h"
+#include "JavaScriptCore/Watchdog.h"
 #include "NodeVM.h"
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
@@ -530,16 +531,18 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
-bool consumeTermination(JSC::VM& vm)
+bool consumeTermination(JSC::VM& vm, bool armedWatchdog)
 {
     vm.clearHasTerminationRequest();
-    // A parked thread services no traps, so stand down both traps this run's
-    // interrupt machinery can leave pending: the SIGINT watcher's
-    // NeedTermination, and NeedWatchdogCheck from a {timeout} watchdog that
-    // fired mid-park (left stale, it trips Watchdog::startTimer's
-    // ASSERT(hasTimeLimit()); an outer timed run re-arms via its restore).
+    // A parked thread services no traps, so the SIGINT watcher's
+    // NeedTermination can still be pending here; same for NeedWatchdogCheck
+    // when this run armed a {timeout} watchdog that fired mid-park (left
+    // stale after the time-limit restore, it trips Watchdog::startTimer's
+    // ASSERT(hasTimeLimit())). An outer frame's pending watchdog check is not
+    // ours to clear: its limit is still armed and it must keep enforcing.
     vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
-    vm.traps().clearTrap(JSC::VMTraps::NeedWatchdogCheck);
+    if (armedWatchdog)
+        vm.traps().clearTrap(JSC::VMTraps::NeedWatchdogCheck);
     // worker.terminate() may have landed after the caller's scriptAllowed
     // check, and the clears above must not eat its trap: fireTrap and
     // clearTrap serialize on the trap-signaling lock, so a stop whose trap we
@@ -550,6 +553,11 @@ bool consumeTermination(JSC::VM& vm)
         return false;
     }
     return true;
+}
+
+bool outerWatchdogArmed(JSC::VM& vm)
+{
+    return vm.watchdog() && vm.watchdog()->hasTimeLimit();
 }
 
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)

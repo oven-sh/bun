@@ -1580,6 +1580,9 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
 
     this.encrypted = encrypted;
     if (encrypted) {
+      // Overwrites the own `isServer = false` net.Socket's constructor set, so
+      // the inherited TLSSocket server-side guards (setServername) apply.
+      this.isServer = true;
       Object.setPrototypeOf(this, getNodeHTTPTLSServerSocketPrototype());
     }
     this.on("timeout", onNodeHTTPServerSocketTimeout);
@@ -2182,7 +2185,6 @@ function getNodeHTTPTLSServerSocketPrototype() {
       ...Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype),
       ...Object.getOwnPropertyDescriptors({
         constructor: TLSSocket,
-        isServer: true,
         // Unlike the inherited TLSSocket methods (which read this._handle,
         // always null here), these read the native NodeHTTP handle.
         getPeerCertificate(detailed) {

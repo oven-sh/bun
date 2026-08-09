@@ -5,7 +5,8 @@ use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::JsClass as _;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _,
+    self as jsc, CallFrame, HostReturn as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    ZigStringJsc as _,
 };
 
 use crate::api::bun_x509 as X509;
@@ -426,7 +427,7 @@ unsafe extern "C" fn Bun__NodeHTTPServerSocket__getPeerCertificate(
     if ssl.is_null() {
         return JSValue::UNDEFINED;
     }
-    peer_certificate_to_js(ssl, abbreviated, global).unwrap_or(JSValue::ZERO)
+    peer_certificate_to_js(ssl, abbreviated, global).or_pending_exception()
 }
 
 /// # Safety

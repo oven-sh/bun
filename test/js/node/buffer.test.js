@@ -4699,9 +4699,11 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
 // The reported byte count itself can be exactly 2**32: a UTF-16 source whose
 // UTF-8 encoding fills a MAX_LENGTH buffer. Buffer.write/TextEncoder.encodeInto
 // used to round-trip that count through uint32, reporting 0 even though every
-// byte was written. Needs ~10 GiB RSS (4 GiB destination + UTF-16 source).
+// byte was written, and TextEncoder.encode aborted (the wrapped count failed
+// its completeness check and the fallback's ArrayBuffer length cast panics).
+// Needs ~10 GiB RSS per spawn (4 GiB destination + UTF-16 source).
 it.skipIf(os.totalmem() < 16 * 1024 ** 3)(
-  "Buffer.write/TextEncoder.encodeInto report a byte count of exactly 2**32 without uint32 wrap",
+  "Buffer.write/TextEncoder.encodeInto/TextEncoder.encode handle a byte count of exactly 2**32 without uint32 wrap",
   async () => {
     const script = `
       const N = 2 ** 32;
@@ -4737,7 +4739,29 @@ it.skipIf(os.totalmem() < 16 * 1024 ** 3)(
       stderr: "",
     });
     expect(exitCode).toBe(0);
+
+    // TextEncoder.encode in a second spawn (sequential, so the ~10 GiB
+    // envelopes don't overlap): the count wrap made this abort, not miscount.
+    const encodeScript = `
+      const N = 2 ** 32;
+      const str = "\\u0800".repeat((N - 1) / 3) + "a";
+      const arr = new TextEncoder().encode(str);
+      console.log(JSON.stringify({ byteLength: arr.byteLength, tail: Array.from(arr.subarray(N - 3)) }));
+    `;
+    await using proc2 = Bun.spawn({
+      cmd: [bunExe(), "-e", encodeScript],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+    expect({ stdout: stdout2.trim(), stderr: stderr2 }).toEqual({
+      stdout: JSON.stringify({ byteLength: 4294967296, tail: [0xa0, 0x80, 0x61] }),
+      stderr: "",
+    });
+    expect(exitCode2).toBe(0);
   },
-  // Two full 4.3 GB encode passes take ~1 min under a debug+ASAN build.
-  5 * 60 * 1000,
+  // Each spawn does multiple full 4.3 GB encode passes; ~1 min per spawn
+  // under a debug+ASAN build.
+  10 * 60 * 1000,
 );

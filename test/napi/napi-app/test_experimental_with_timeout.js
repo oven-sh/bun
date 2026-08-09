@@ -36,15 +36,15 @@ proc.stdout.on('data', (data) => {
 proc.stderr.on('data', (data) => {
   stderr += data.toString();
   process.stderr.write(data);
-  
-  // Check if we've seen the expected crash messages
-  if (data.toString().includes('FATAL ERROR')) {
+
+  // Check the accumulated output: a marker can be split across two chunks.
+  if (stderr.includes('FATAL ERROR')) {
     sawFatalError = true;
   }
-  if (data.toString().includes('panic(main thread)')) {
+  if (stderr.includes('panic(main thread)')) {
     sawPanic = true;
   }
-  
+
   // If we've seen both messages, kill the process immediately
   // This avoids hanging on llvm-symbolizer
   if (sawFatalError && sawPanic) {
@@ -57,9 +57,11 @@ const timeout = setTimeout(() => {
   proc.kill('SIGKILL');
 }, 5000);
 
-proc.on('exit', (code, signal) => {
+// 'close', not 'exit': 'exit' can fire before the stdio pipes have been
+// drained, and the verdict below depends on everything the child wrote.
+proc.on('close', (code, signal) => {
   clearTimeout(timeout);
-  
+
   // Check if the test passed
   if (sawFatalError && sawPanic) {
     console.log('\n\nTEST PASSED: Process crashed as expected');

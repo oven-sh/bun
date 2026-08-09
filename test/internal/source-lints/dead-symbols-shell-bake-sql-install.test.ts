@@ -127,8 +127,8 @@ test("dead install/cli symbols do not reappear", () => {
     // list never read) and its feeding timer was always None.
     ["src/install/PackageManager/PackageManagerLifecycle.rs", /LifecycleScriptTimeLog/],
     ["src/install/lifecycle_script_runner.rs", /MIN_MILLISECONDS_TO_LOG/],
-    // PackageInstall.file_count carried a literal "TODO: this is never
-    // read" comment; the copy() results' error paths are all that matter.
+    // PackageInstall.file_count was written but never read; the copy()
+    // results' error paths are all that matter.
     ["src/install/PackageInstall.rs", /\bfile_count\b/],
     // PackError::MissingPackageJSON was never constructed (the live
     // MissingPackageJSON variants on bun_install::Error, bun_runtime::Error,

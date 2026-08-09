@@ -37,6 +37,9 @@ test("dead react_compiler symbols do not reappear", () => {
       "src/react_compiler/validation/validate_no_derived_computations_in_effects.rs",
       /validate_no_derived_computations_in_effects_exp/,
     ],
+    // The write-only env-config flag and pragma arm that fed it.
+    ["src/react_compiler/hir/environment_config.rs", /validate_no_derived_computations_in_effects_exp/],
+    ["src/react_compiler/program.rs", /validate_no_derived_computations_in_effects_exp/],
     // Back-compat alias for a previous parser-hook API; nothing used it.
     ["src/react_compiler/program.rs", /\bSymbolHost\b/],
     ["src/react_compiler/lib.rs", /\bSymbolHost\b/],
@@ -88,6 +91,9 @@ test("dead h2_frame_parser inbound-path symbols do not reappear", () => {
     [file, /\bpending_header_block\b/],
     [file, /\bis_waiting_more_headers\b/],
     [file, /\bread_buffer\b/],
+    // \b does not match inside remote_used_window_size (underscore is a word
+    // character), so this only catches the removed standalone fields.
+    [file, /\bused_window_size\b/],
     // Wire-decode leftovers that escaped the dead_code lint (pub struct,
     // trait impls): the parser's own SettingsPayloadUnit copy and the
     // bytemuck impls whose only consumer was the removed write().

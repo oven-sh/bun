@@ -1,9 +1,5 @@
 //! HTTP/2 frame parser.
 #![allow(
-    // Transitional: the legacy inbound half of this file is dead now that the rewrite engine
-    // (src/runtime/api/bun/h2) serves all inbound traffic; it is removed together with the
-    // outbound migration. Until then, suppress dead-code for the file.
-    dead_code,
     non_camel_case_types,
     non_upper_case_globals,
     clippy::too_many_arguments
@@ -1180,8 +1176,6 @@ pub struct H2FrameParser {
     // local Window limits the download of data
     // current window size for the connection
     window_size: Cell<u64>,
-    // used window size for the connection
-    used_window_size: Cell<u64>,
 
     // remote Window limits the upload of data
     // remote window size for the connection
@@ -1417,8 +1411,6 @@ pub struct Stream {
     weight: u16,
     // current window size for the stream
     window_size: u64,
-    // used window size for the stream
-    used_window_size: u64,
     // remote window size for the stream
     remote_window_size: u64,
     // remote used window size for the stream
@@ -1956,7 +1948,6 @@ impl Stream {
             // which is what stream.state.weight reports when no priority was signaled.
             weight: 16,
             window_size: initial_window_size as u64,
-            used_window_size: 0,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
             signal: None,
@@ -3927,7 +3918,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             ..Default::default()
         };
         self.remote_settings.set(Some(fp));
-        // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
+        // §6.9.2: when the peer's INITIAL_WINDOW_SIZE grows, raise the
         // send window of streams opened before its SETTINGS arrived (a client's first request is
         // typically sent before the server's SETTINGS lands), then resume queued sends.
         for (_, item) in self.streams.get().iter() {
@@ -4207,8 +4198,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_stream_end(&self, stream_id: u32, state: u8) {
         // The engine only sees the inbound half while outbound flows through the legacy path, so it
         // can't know the local side already sent END_STREAM. Combine with the legacy stream's local
-        // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
-        // mirroring the legacy handle_data/headers END_STREAM logic.
+        // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7).
         let mut effective = state;
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -4653,11 +4643,6 @@ impl H2FrameParser {
                 .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
         }
         let window_size_value: u32 = window_size.to_u32();
-        if this.used_window_size.get() > window_size_value as u64 {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "Expected windowSize to be greater than usedWindowSize"
-            )));
-        }
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
         if this.local_settings.get().initial_window_size < window_size_value {
@@ -4694,9 +4679,6 @@ impl H2FrameParser {
         for (_, item) in this.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
             let stream = unsafe { &mut **item };
-            if stream.used_window_size > window_size_value as u64 {
-                continue;
-            }
             stream.window_size = window_size_value as u64;
         }
         Ok(JSValue::UNDEFINED)
@@ -4740,7 +4722,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"effectiveRecvDataLength",
-            JSValue::js_number((this.window_size.get() - this.used_window_size.get()) as f64),
+            JSValue::js_number(this.window_size.get() as f64),
         );
         result.put(
             global_object,
@@ -7754,7 +7736,6 @@ impl H2FrameParser {
             ),
             remote_settings: Cell::new(None),
             window_size: Cell::new(DEFAULT_WINDOW_SIZE),
-            used_window_size: Cell::new(0),
             remote_window_size: Cell::new(DEFAULT_WINDOW_SIZE),
             remote_used_window_size: Cell::new(0),
             max_header_list_pairs: Cell::new(128),

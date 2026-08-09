@@ -123,4 +123,28 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
       `);
     expect(result).toEqual(threw);
   }, 60_000);
+
+  // The direct sink records sizes at write() time and reads the spans at end(), so a
+  // resizable ArrayBuffer grown in between bypasses the up-front estimate check; the
+  // append itself must reject the oversized span.
+  test("direct stream with a buffer grown past the limit after write() rejects", async () => {
+    const result = await run(`
+      const ab = new ArrayBuffer(8, { maxByteLength: 2400000000 });
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          c.write(new Uint8Array(ab));
+          ab.resize(2400000000);
+          c.end();
+        },
+      });
+      try {
+        const text = await Bun.readableStreamToText(rs);
+        console.log("resolved", text.length);
+      } catch (e) {
+        console.log("threw", e.name, e.message);
+      }
+    `);
+    expect(result).toEqual(threw);
+  });
 });

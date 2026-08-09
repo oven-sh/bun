@@ -445,9 +445,7 @@ describe("workspace and npm dependency sharing a name", () => {
     expect(lockfile.match(/"no-deps": \[/g)).toHaveLength(1);
     expect(lockfile).toContain(`"no-deps": ["no-deps@1.0.0"`);
     expect(lockfile).toContain(`"beta/no-deps": ["no-deps@workspace:packages/no-deps"]`);
-    expect(
-      await file(join(packageDir, "packages", "beta", "node_modules", "no-deps", "package.json")).json(),
-    ).toEqual({
+    expect(await file(join(packageDir, "packages", "beta", "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "3.0.0",
     });

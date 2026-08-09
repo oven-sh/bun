@@ -1752,10 +1752,12 @@ impl Package<u64> {
             dependency::version::Tag::Npm => {
                 if workspace_path.is_some() {
                     let satisfies = match workspace_version {
-                        Some(workspace_version) => dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf),
+                        Some(workspace_version) => {
+                            dependency_version
+                                .npm()
+                                .version
+                                .satisfies(workspace_version, buf, buf)
+                        }
                         // A member without a version can only be used by a
                         // wildcard range (`get_or_put_resolved_package`
                         // applies the same rule when resolving).

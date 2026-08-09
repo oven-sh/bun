@@ -516,7 +516,6 @@ impl<'a> State<'a> {
     #[cfg(target_env = "ohos")]
     fn drain_ohos_pipes(&mut self) {
         let handles_ptr = self.handles.as_mut_ptr();
-        let state_ptr: *mut State<'a> = self;
         // SAFETY: indices are in bounds; each reader is re-borrowed one at a
         // time from its handle, same aliasing pattern as the buffered-reader
         // dispatch above.
@@ -551,7 +550,7 @@ impl<'a> State<'a> {
         // line_buffer flush in maybe_finish.
         // SAFETY: `reader` is the live PipeReader; its reader is registered
         // for this fd and outlives this call.
-        unsafe { reader.reader.read(&raw mut reader.reader) };
+        unsafe { BufferedReader::read(&raw mut reader.reader) };
     }
 
     fn start_dependents(dependents: &[*mut ProcessHandle]) {

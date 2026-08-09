@@ -3401,29 +3401,42 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 // folder other than this member's directory replaced the
                 // member's workspace dependency. The stored dependency holds
                 // the raw `file:` literal (possibly absolute), so apply the
-                // same join + relativize it applied before comparing.
-                let overridden = {
+                // same checked join + relativize it applied before comparing.
+                let mut overridden = false;
+                {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
-                    lockfile.buffers.dependencies.as_slice()[off..]
-                        .iter()
-                        .any(|dep| {
-                            if dep.name_hash != name_hash
-                                || dep.version.tag != DependencyVersionTag::Folder
-                            {
-                                return false;
-                            }
-                            let top = FileSystem::instance().top_level_dir();
-                            let mut abs_buf = bun_paths::path_buffer_pool::get();
-                            let joined =
-                                resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
-                                    top,
-                                    &mut abs_buf[..],
-                                    &[dep.version.folder().slice(bytes)],
-                                );
-                            let relative = resolve_path::relative(top, joined);
-                            !folder_path_is_workspace_path(relative, path)
-                        })
-                };
+                    for dep in &lockfile.buffers.dependencies.as_slice()[off..] {
+                        if dep.name_hash != name_hash
+                            || dep.version.tag != DependencyVersionTag::Folder
+                        {
+                            continue;
+                        }
+                        let top = FileSystem::instance().top_level_dir();
+                        let mut abs_buf = bun_paths::path_buffer_pool::get();
+                        let Some(joined) = resolve_path::join_abs_string_buf_checked::<
+                            resolve_path::platform::Auto,
+                        >(
+                            top,
+                            &mut abs_buf[..],
+                            &[dep.version.folder().slice(bytes)],
+                        ) else {
+                            log.add_error_fmt(
+                                source,
+                                value_loc_of(source, row.key_loc),
+                                format_args!(
+                                    "Dependency \"{}\" has an unsafe folder path",
+                                    bstr::BStr::new(dep.name.slice(bytes)),
+                                ),
+                            );
+                            return Err(ParseError::InvalidPackageInfo);
+                        };
+                        let relative = resolve_path::relative(top, joined);
+                        if !folder_path_is_workspace_path(relative, path) {
+                            overridden = true;
+                            break;
+                        }
+                    }
+                }
                 if overridden {
                     continue 'workspaces;
                 }

@@ -436,6 +436,45 @@ describe("workspace and file: dependency sharing a name", () => {
     },
   );
 
+  test.concurrent("oversized file: path in bun.lock is rejected without crashing", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { alpha: "file:./vendor/alpha" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { alpha: "workspace:*" } }),
+      ),
+      write(join(packageDir, "vendor", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "2.0.0" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    // corrupt the lockfile with a folder path too long to normalize
+    const lockPath = join(packageDir, "bun.lock");
+    const huge = `file:./${Buffer.alloc(70000, "a").toString()}`;
+    await write(lockPath, (await file(lockPath).text()).replace('"alpha": "file:./vendor/alpha"', `"alpha": "${huge}"`));
+
+    const second = await runBunInstall(env, packageDir, { allowErrors: true, allowWarnings: true });
+    expect(second.err).toContain("Ignoring lockfile");
+
+    const final = await file(lockPath).text();
+    expect(final).toContain(`"alpha": ["alpha@file:vendor/alpha"`);
+    expect(final.match(/"alpha": \[/g)).toHaveLength(1);
+  });
+
   test.concurrent("aliased file: dependency colliding with another member's name", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;

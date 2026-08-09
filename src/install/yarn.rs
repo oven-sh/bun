@@ -38,13 +38,9 @@ use bun_sys::Fd;
 
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// `(package name, version)` -> index into `entries`, maintained by
-    /// `consolidate_and_append_entry` so each parsed block consolidates in
-    /// O(1) instead of rescanning (and re-deriving the name of) every prior
-    /// entry.
+    /// `(package name, version)` -> index into `entries`.
     name_version_to_idx: HashMap<(&'a [u8], &'a [u8]), usize>,
-    /// spec -> lowest index of an entry whose `specs` contains it, i.e. the
-    /// entry a front-to-back linear scan would find.
+    /// spec -> lowest index of an entry whose `specs` contains it.
     spec_to_idx: HashMap<&'a [u8], usize>,
 }
 
@@ -478,9 +474,7 @@ impl<'a> YarnLock<'a> {
         self.spec_to_idx.get(spec).copied()
     }
 
-    /// Record `spec` as living in `entries[idx]`, keeping the lowest index
-    /// when the same spec string appears in more than one entry (a merge can
-    /// add a duplicated spec to an earlier entry).
+    /// Keeps the lowest index so lookups match what a front-to-back scan finds.
     fn note_spec(&mut self, spec: &'a [u8], idx: usize) -> Result<(), Error> {
         if let Some(existing) = self.spec_to_idx.get_mut(&spec) {
             if *existing > idx {
@@ -1338,9 +1332,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let _ = this.package_index.remove(&original_name_hash);
     }
 
-    // Mirror of the ids currently present in `package_index`, so the
-    // duplicate check below is a probe instead of a full index walk per
-    // scoped version.
+    // Ids currently present in `package_index`, kept in sync below.
     let mut ids_in_package_index: HashMap<PackageID, ()> = HashMap::new();
     for (_, index_value) in this.package_index.iter() {
         match index_value {
@@ -1403,9 +1395,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    // Entry indices (in entry order) that have a production dependency on a
-    // given name, so the scoped-name search below visits only actual
-    // dependents instead of rescanning every entry per scoped package.
+    // Entry indices, in entry order, with a production dependency on a name.
     let mut dependents_by_dep_name: HashMap<&[u8], Vec<usize>> = HashMap::new();
     for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
         if yarn_entry_to_package_id[dep_entry_idx] == install::INVALID_PACKAGE_ID {

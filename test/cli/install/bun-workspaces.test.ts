@@ -2412,11 +2412,25 @@ test.concurrent("removing the member migrates an exempted npm-range dependency t
     env,
   }));
   stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Workspace dependency");
+  expect(stderrText).toContain("Saved lockfile");
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "2.0.0",
   });
+
+  // and converges
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Saved lockfile");
+  expect(await exited).toBe(0);
 });
 
 // A ranged `workspace:` dependency a present member cannot satisfy is rejected while

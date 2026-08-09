@@ -693,8 +693,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.npm().is_alias)
         {
-            if !links_workspace_member(this, &dependency.version, name, name_hash)
-                && let Some(new) = this.lockfile.overrides.get(name_hash)
+            if let Some(new) = this.lockfile.overrides.get(name_hash)
+                && !links_workspace_member(this, &dependency.version, name, name_hash)
             {
                 bun_output::scoped_log!(
                     PackageManager,

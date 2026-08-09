@@ -91,6 +91,7 @@ async function compileShim(dir: string): Promise<string> {
   await using proc = Bun.spawn({
     cmd: [cc!, "-shared", "-fPIC", "-O2", "-o", shim, source, "-ldl"],
     env: bunEnv,
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

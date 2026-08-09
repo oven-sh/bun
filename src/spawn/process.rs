@@ -363,11 +363,7 @@ impl Process {
         }
     }
 
-    /// Monitor the child via the shared waiter thread (a per-pid `wait4`
-    /// loop). Used when `should_use_waiter_thread()` is set globally, and as
-    /// the per-process fallback when registering the pidfd/kqueue watch with
-    /// the event loop fails: the child is still alive, so dropping monitoring
-    /// would leave `kill()` a silent no-op and `.exited` unsettled.
+    /// Monitor the child via the shared waiter thread (a per-pid `wait4` loop).
     #[cfg(unix)]
     fn watch_with_waiter_thread(&mut self, ctx: bun_io::EventLoopCtx) {
         if !matches!(self.poller, Poller::WaiterThread(_)) {
@@ -443,14 +439,12 @@ impl Process {
                 Err(err) => {
                     // SAFETY: poll is live; borrow scoped to the call.
                     unsafe { (*poll).disable_keeping_process_alive(ctx) };
-                    // The process is already gone; callers reap via `wait()`.
+                    // ESRCH: already gone; callers reap via `wait()`.
                     if err.get_errno() == bun_sys::E::ESRCH {
                         return Err(err);
                     }
-                    // Registration failed while the child is running (e.g.
-                    // ENOMEM/ENOSPC when epoll watches are exhausted). Fall
-                    // back to the waiter thread, mirroring the `pidfd_open`
-                    // fallback in `pifd_from_pid`.
+                    // Unwatchable but still running (ENOMEM/ENOSPC): fall
+                    // back to the waiter thread, like `pifd_from_pid` does.
                     if let Some(poll) = self.poller.fd_poll_mut() {
                         poll.deinit();
                     }
@@ -1334,9 +1328,8 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn reload_handlers() {
-            // No flag check: the waiter thread also runs as a per-process
-            // fallback (`watch_with_waiter_thread`) without the global flag,
-            // and it relies on SIGCHLD to wake the `wait4` loop.
+            // No `waiter_thread_flag` gate: `watch_with_waiter_thread` also
+            // runs this thread without the flag and needs SIGCHLD installed.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // SAFETY: sigaction with a valid handler.

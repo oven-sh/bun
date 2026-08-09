@@ -65,7 +65,8 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let path = path.to_bun_string(global)?.to_owned_slice();
     let cpath = std::ffi::CString::new(path)
         .map_err(|_| global.throw_invalid_arguments(format_args!("path contains NUL")))?;
-    crate::cli::run_command::Bun__requestSnapshot(global.vm(), cpath.as_ptr());
+    // SAFETY: `cpath` is NUL-terminated and outlives the call.
+    unsafe { crate::cli::run_command::Bun__requestSnapshot(global.vm(), cpath.as_ptr()) };
     // Unwind every JS frame right now; the outermost EventLoop::tick sees the request and writes the image.
     JSC__VM__throwTerminationExceptionNow(global);
     Err(jsc::JsError::Thrown)
@@ -204,7 +205,9 @@ fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     } else {
         exe_path.clone()
     };
-    let image = match std::fs::read(String::from_utf8_lossy(&img_path).as_ref()) {
+    let image = match bun_sys::File::openat(bun_sys::Fd::cwd(), &img_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+    {
         Ok(b) => b,
         Err(e) => {
             return Err(global.throw_invalid_arguments(format_args!(

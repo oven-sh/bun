@@ -783,15 +783,18 @@ impl StandaloneModuleGraph {
 
 /// C++ (heap-image restore) asks: does this executable carry an embedded image, and where is it in memory? File offset is derived by the caller
 /// from the section mapping. Returns false when not a compiled executable or no image was embedded.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__standaloneEmbeddedImage(
+pub unsafe extern "C" fn Bun__standaloneEmbeddedImage(
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> bool {
     let Some((ptr, len)) = StandaloneModuleGraph::embedded_image_early() else {
         return false;
     };
-    // SAFETY: caller passes valid out-pointers.
+    // SAFETY: per the function contract.
     unsafe {
         *out_ptr = ptr;
         *out_len = len;
@@ -1914,7 +1917,9 @@ pub fn embed_image_into_executable(
     out_name: &[u8],
     env: &mut bun_dotenv::Loader,
 ) -> crate::Result<CompileResult> {
-    let file = match std::fs::read(String::from_utf8_lossy(exe_path).as_ref()) {
+    let file = match bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+    {
         Ok(f) => f,
         Err(_) => {
             return Ok(CompileResult::fail_fmt(format_args!(
@@ -1924,7 +1929,7 @@ pub fn embed_image_into_executable(
         }
     };
     // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
-    let Some(tpos) = file.windows(TRAILER.len()).rposition(|w| w == TRAILER) else {
+    let Some(tpos) = bun_core::strings::last_index_of(&file, TRAILER) else {
         return Ok(CompileResult::fail_fmt(format_args!(
             "{} is not a `bun build --compile` executable (no trailer)",
             bstr::BStr::new(exe_path)
@@ -1996,7 +2001,7 @@ pub fn to_executable(
     let bytes: Vec<u8> = if let Some(p) = prebuilt_payload {
         p.to_vec()
     } else {
-        let bytes = match to_bytes(
+        match to_bytes(
             module_prefix,
             output_files,
             output_format,
@@ -2011,8 +2016,7 @@ pub fn to_executable(
                     bstr::BStr::new(e.name())
                 )));
             }
-        };
-        bytes
+        }
     };
     if let Some(out) = serialized_out {
         out.clear();
@@ -2301,7 +2305,7 @@ impl StandaloneModuleGraph {
             return None;
         }
         // SAFETY: subrange of the mapped section.
-        Some((unsafe { base.add(off) } as *const u8, ilen))
+        Some((unsafe { base.add(off) }.cast_const(), ilen))
     }
 
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {

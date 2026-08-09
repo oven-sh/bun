@@ -1759,7 +1759,12 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     }
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
-    unsafe { Bun__imageDumpNow(vm.jsc_vm() as *const _ as *mut _, cpath.as_ptr()) };
+    unsafe {
+        Bun__imageDumpNow(
+            ::core::ptr::from_ref(vm.jsc_vm()).cast_mut(),
+            cpath.as_ptr(),
+        )
+    };
     bun_core::Global::exit(0);
 }
 
@@ -1805,15 +1810,18 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
 }
 
 /// `Bun.unsafe.snapshot(path)` / cmd-file trigger: leave JS via an uncatchable termination and snapshot from the run loop.
+///
+/// # Safety
+/// `path` must point to a NUL-terminated string that outlives the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::core::ffi::c_char) {
-    // SAFETY: NUL-terminated C string from the caller.
+pub unsafe extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::core::ffi::c_char) {
+    // SAFETY: per the function contract.
     let path = unsafe { ::core::ffi::CStr::from_ptr(path) }.to_string_lossy();
     bun_core::image::request_snapshot(&path);
     Bun__imageUnwindJS(vm); // termination trap: unwinds any running JS; the outermost `EventLoop::tick` then takes the snapshot
-    if let Some(main) =
-        unsafe { bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr().as_mut() }
-    {
+    // SAFETY: called on the JS thread; the main-thread VM, if any, outlives this call.
+    let main = unsafe { bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr().as_mut() };
+    if let Some(main) = main {
         main.wakeup();
     }
 }
@@ -1838,6 +1846,7 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     {
         // SAFETY: main-thread VM. Its cached stack top/limits are the builder's; refresh before anything can allocate JS objects (GC sanitizes the stack).
         let vm = unsafe { &mut *vm_ptr };
+        // SAFETY: `vm.jsc_vm` is the image's live JSC VM, now owned by this thread.
         unsafe { Bun__VM__refreshStackBoundsAfterImageRestore(vm.jsc_vm) };
         {
             let state = crate::jsc_hooks::runtime_state();
@@ -1906,9 +1915,11 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
             // SAFETY: loop_ is the process-global uws loop.
             let (rearmed, hung_up) = store.rearm_for_image(unsafe { &mut *loop_ });
-            bun_core::Output::debug_warn(format_args!(
-                "[image] file polls: {rearmed} re-armed, {hung_up} hung up"
-            ));
+            bun_core::debug_warn!(
+                "[image] file polls: {} re-armed, {} hung up",
+                rearmed,
+                hung_up
+            );
         }
     }
 }
@@ -1924,9 +1935,10 @@ pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
     if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
         let n = store.dispatch_image_hangups();
         if n > 0 {
-            bun_core::Output::debug_warn(format_args!(
-                "[image] delivered {n} hangups for fds that did not survive the restore"
-            ));
+            bun_core::debug_warn!(
+                "[image] delivered {} hangups for fds that did not survive the restore",
+                n
+            );
         }
     }
     // The 'restore' listeners just ran synchronously; continuations of anything that awaited them are microtasks and

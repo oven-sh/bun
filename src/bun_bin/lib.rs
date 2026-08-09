@@ -203,8 +203,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
-    // Experiment (heap image): with stdio/Output ready, a BUN_IMAGE_IN process diverges here and never returns.
+    // Heap image: with stdio and Output ready, a process that has an image to map diverges here and never returns.
     #[cfg(unix)]
+    // SAFETY: single-threaded startup; the callee takes no arguments and either returns or continues the imaged process.
     unsafe {
         unsafe extern "C" {
             fn Bun__imageMaybeRestore();

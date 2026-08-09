@@ -3738,6 +3738,7 @@ static ARGV_STORAGE: crate::image::ProcessDerived<Vec<ZBox>> = crate::image::Pro
 struct ArgvView(RacyCell<&'static [&'static ZStr]>);
 // SAFETY: the view is written during single-threaded startup / restore adoption only (see `set_argv`).
 unsafe impl Sync for ArgvView {}
+// SAFETY: as above; the view holds only `'static` data.
 unsafe impl Send for ArgvView {}
 static ARGV: crate::image::ProcessDerived<ArgvView> = crate::image::ProcessDerived::new();
 

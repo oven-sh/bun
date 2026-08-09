@@ -957,17 +957,23 @@ impl BuildCommand {
                     let embed_raw = bun_core::env_var::BUN_IMAGE_EMBED_RAW
                         .get()
                         .unwrap_or(false);
-                    let embed_path = if embed_raw {
-                        img_path.clone()
-                    } else {
-                        format!("{img_path}.zst")
-                    };
-                    let img = match std::fs::read(&embed_path) {
+                    let mut zst_path = img_path.clone();
+                    zst_path.extend_from_slice(b".zst");
+                    let embed_path: &[u8] = if embed_raw { &img_path } else { &zst_path };
+                    let img = match bun_sys::File::openat(
+                        bun_sys::Fd::cwd(),
+                        embed_path,
+                        bun_sys::O::RDONLY,
+                        0,
+                    )
+                    .and_then(|f| f.read_to_end())
+                    {
                         Ok(img) => img,
                         Err(e) => {
                             Output::print_errorln(format_args!(
                                 "--compile-image: could not read {}: {}",
-                                embed_path, e
+                                bstr::BStr::new(embed_path),
+                                e
                             ));
                             Global::exit(1);
                         }
@@ -993,18 +999,22 @@ impl BuildCommand {
                             Global::exit(1);
                         }
                         Ok(_) => {
-                            Output::prettyln(format_args!(
+                            bun_core::prettyln!(
                                 "<green>[image]</r> embedded {:.1} MB {} heap image into the executable",
                                 img.len() as f64 / 1048576.0,
                                 if embed_raw { "raw" } else { "compressed" }
-                            ));
+                            );
                             // Development: keeping <exe>.img next to the executable lets a rebuilt image be dropped in without re-embedding.
                             if !bun_core::env_var::BUN_IMAGE_KEEP_SIDECAR
                                 .get()
                                 .unwrap_or(false)
                             {
-                                let _ = std::fs::remove_file(&img_path);
-                                let _ = std::fs::remove_file(format!("{img_path}.zst"));
+                                let _ = bun_sys::unlink(&bun_core::ZBox::from_vec_with_nul(
+                                    img_path.clone(),
+                                ));
+                                let _ = bun_sys::unlink(&bun_core::ZBox::from_vec_with_nul(
+                                    zst_path.clone(),
+                                ));
                             }
                         }
                     }
@@ -1500,8 +1510,9 @@ pub(crate) fn collect_compile_assets(
 }
 
 /// `--compile-image`: run the freshly built executable with `BUN_IMAGE_OUT=<exe>.img`; the app snapshots itself once idle.
-fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) -> String {
-    let mut exe: Vec<u8> = if outfile.first() == Some(&b'/') {
+/// Returns the image path.
+fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) -> Vec<u8> {
+    let exe: Vec<u8> = if outfile.first() == Some(&b'/') {
         outfile.to_vec()
     } else {
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -1513,43 +1524,41 @@ fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) -> String {
         p.extend_from_slice(outfile);
         p
     };
-    let _ = &mut exe;
     let mut img = exe.clone();
     img.extend_from_slice(b".img");
-    let exe_str = String::from_utf8_lossy(&exe).into_owned();
-    let img_str = String::from_utf8_lossy(&img).into_owned();
-    Output::prettyln(format_args!(
+    bun_core::prettyln!(
         "<d>[image]</r> running {} to produce {}",
-        exe_str, img_str
-    ));
+        bstr::BStr::new(&exe),
+        bstr::BStr::new(&img)
+    );
     Output::flush();
-    let status = std::process::Command::new(&exe_str)
-        .env("BUN_IMAGE_OUT", &img_str)
-        .status();
-    match status {
-        Ok(st) if std::path::Path::new(&img_str).exists() => {
-            let size = std::fs::metadata(&img_str).map(|m| m.len()).unwrap_or(0);
-            Output::prettyln(format_args!(
-                "<green>[image]</r> wrote {} ({:.1} MB, exit {})",
-                img_str,
-                size as f64 / 1048576.0,
-                st.code().unwrap_or(-1)
-            ));
-            img_str
+    let img_z = bun_core::ZBox::from_vec_with_nul(img.clone());
+    // SAFETY: single-threaded CLI; both strings are NUL-terminated and outlive the call (setenv copies them).
+    unsafe { libc::setenv(c"BUN_IMAGE_OUT".as_ptr(), img_z.as_ptr(), 1) };
+    let status = bun_core::util::spawn_sync_inherit(&[exe.as_slice()]);
+    let written = bun_sys::stat(&img_z).map(|st| st.st_size.max(0) as u64);
+    match (status, written) {
+        (Ok(_), Ok(size)) => {
+            bun_core::prettyln!(
+                "<green>[image]</r> wrote {} ({:.1} MB)",
+                bstr::BStr::new(&img),
+                size as f64 / 1048576.0
+            );
+            img
         }
-        Ok(st) => {
+        (Ok(_), Err(_)) => {
             Output::print_errorln(format_args!(
-                "--compile-image: {} exited ({}) without writing {} — does the app call Bun.unsafe.snapshot()?",
-                exe_str,
-                st.code().unwrap_or(-1),
-                img_str
+                "--compile-image: {} exited without writing {} — does the app call Bun.unsafe.snapshot()?",
+                bstr::BStr::new(&exe),
+                bstr::BStr::new(&img)
             ));
             Global::exit(1);
         }
-        Err(e) => {
+        (Err(e), _) => {
             Output::print_errorln(format_args!(
-                "--compile-image: could not run {}: {}",
-                exe_str, e
+                "--compile-image: could not run {}: {:?}",
+                bstr::BStr::new(&exe),
+                e
             ));
             Global::exit(1);
         }

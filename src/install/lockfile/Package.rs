@@ -1750,12 +1750,8 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                // A versionless workspace member satisfies a wildcard range
-                // (the resolver links it; see the resolve-from-workspace rule
-                // in `get_or_put_resolved_package`). Apply the same rule here
-                // so re-parsing package.json yields the workspace-tagged
-                // dependency a loaded lockfile holds, instead of a mismatch
-                // that re-saves an unchanged lockfile on every install.
+                // A versionless member satisfies only a wildcard range, the
+                // same rule resolution applies in `get_or_put_resolved_package`.
                 let satisfies = match workspace_version {
                     Some(workspace_version) => {
                         dependency_version

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, fstatSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -3215,4 +3215,42 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+describe("$.inheritStdio()", () => {
+  test("passes the parent's stdout fd to spawned commands", async () => {
+    using dir = tempDir("shell-inherit-stdio", {});
+    const probeOut = join(String(dir), "probe.json");
+    // The child writes the identity of its stdout fd to a file so the parent
+    // can compare it against its own. `.inheritStdio()` makes the two match;
+    // the default piped behavior does not.
+    const script = `import { fstatSync, writeFileSync } from "fs"; writeFileSync(process.env.PROBE_OUT, JSON.stringify({ dev: fstatSync(1).dev, ino: fstatSync(1).ino }));`;
+    const { exitCode } = await $`${BUN} -e ${script}`
+      .env({ ...bunEnv, PROBE_OUT: probeOut })
+      .inheritStdio();
+    expect(exitCode).toBe(0);
+    const child = JSON.parse(await Bun.file(probeOut).text());
+    const parent = fstatSync(1);
+    expect(child).toEqual({ dev: parent.dev, ino: parent.ino });
+  });
+
+  test("default: stdout is piped, not the parent's fd", async () => {
+    using dir = tempDir("shell-inherit-stdio", {});
+    const probeOut = join(String(dir), "probe.json");
+    const script = `import { fstatSync, writeFileSync } from "fs"; writeFileSync(process.env.PROBE_OUT, JSON.stringify({ dev: fstatSync(1).dev, ino: fstatSync(1).ino }));`;
+    const { exitCode } = await $`${BUN} -e ${script}`.env({ ...bunEnv, PROBE_OUT: probeOut });
+    expect(exitCode).toBe(0);
+    const child = JSON.parse(await Bun.file(probeOut).text());
+    const parent = fstatSync(1);
+    expect(child.ino).not.toBe(parent.ino);
+  });
+
+  test("throws when combined with quiet()", () => {
+    expect(() => $`echo hi`.inheritStdio().quiet()).toThrow(/Cannot use quiet/);
+    expect(() => $`echo hi`.quiet().inheritStdio()).toThrow(/Cannot use inheritStdio/);
+  });
+
+  test("throws when combined with output methods", async () => {
+    await expect($`echo hi`.inheritStdio().text()).rejects.toThrow(/Cannot use quiet/);
+  });
 });

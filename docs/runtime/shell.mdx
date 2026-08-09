@@ -60,6 +60,16 @@ const welcome = await $`echo "Hello World!"`.text();
 console.log(welcome); // Hello World!\n
 ```
 
+To pass the parent process's stdout/stderr file descriptors to spawned commands instead of piping them, use `.inheritStdio()`:
+
+```js
+import { $ } from "bun";
+
+await $`git log --color`.inheritStdio();
+```
+
+By default, the shell pipes subprocess stdout/stderr through capture buffers, so `isatty(1)`/`isatty(2)` are `false` inside the spawned commands and colors, progress bars, and pagers are disabled. `.inheritStdio()` makes the commands see the real terminal, at the cost of not capturing their output: reading it back with `.text()`, `.json()`, or the other output methods is not supported and throws. It is mutually exclusive with `.quiet()`.
+
 By default, `await`ing returns stdout and stderr as `Buffer`s.
 
 ```js

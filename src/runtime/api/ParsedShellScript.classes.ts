@@ -25,6 +25,10 @@ export default [
         fn: "setQuiet",
         length: 1,
       },
+      setInheritStdio: {
+        fn: "setInheritStdio",
+        length: 1,
+      },
     },
   }),
 ];

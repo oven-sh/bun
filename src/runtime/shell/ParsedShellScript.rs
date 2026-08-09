@@ -28,6 +28,7 @@ pub struct ParsedShellScript {
     pub(crate) jsobjs: JsCell<Vec<JSValue>>,
     pub(crate) export_env: JsCell<Option<EnvMap>>,
     pub(crate) quiet: Cell<bool>,
+    pub(crate) inherit_stdio: Cell<bool>,
     pub(crate) cwd: Cell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
@@ -44,6 +45,7 @@ impl Default for ParsedShellScript {
             jsobjs: JsCell::new(Vec::new()),
             export_env: JsCell::new(None),
             quiet: Cell::new(false),
+            inherit_stdio: Cell::new(false),
             cwd: Cell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
@@ -83,15 +85,17 @@ impl ParsedShellScript {
         Box<ShellArgs>,
         Vec<JSValue>,
         bool,
+        bool,
         Option<BunString>,
         Option<EnvMap>,
     ) {
         let args = self.args.replace(None).expect("args already taken");
         let jsobjs = self.jsobjs.replace(Vec::new());
         let quiet = self.quiet.get();
+        let inherit_stdio = self.inherit_stdio.get();
         let cwd = self.cwd.take();
         let export_env = self.export_env.replace(None);
-        (args, jsobjs, quiet, cwd, export_env)
+        (args, jsobjs, quiet, inherit_stdio, cwd, export_env)
     }
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
@@ -139,6 +143,17 @@ impl ParsedShellScript {
     ) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_inherit_stdio(
+        &self,
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arg = callframe.argument(0);
+        self.inherit_stdio.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 

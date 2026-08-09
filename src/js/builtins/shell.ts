@@ -107,6 +107,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
+    #inheritStdio: boolean = false;
+    #quietState: boolean = false;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
 
@@ -177,12 +179,33 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     #quiet(isQuiet: boolean = true): this {
       this.#throwIfRunning();
+      if (isQuiet && this.#inheritStdio) {
+        throw new Error("Cannot use quiet() after inheritStdio()");
+      }
+      this.#quietState = isQuiet;
       this.#args!.setQuiet(isQuiet);
       return this;
     }
 
     quiet(isQuiet: boolean | undefined): this {
       return this.#quiet(isQuiet ?? true);
+    }
+
+    /**
+     * Pass the parent process's stdout/stderr file descriptors to spawned
+     * commands instead of piping them, so `isatty(1)`/`isatty(2)` return
+     * `true` and colors, progress bars, and pagers work. Output is not
+     * captured — reading it back via `.text()`/`.json()`/etc. is not
+     * supported and throws.
+     */
+    inheritStdio(): this {
+      this.#throwIfRunning();
+      if (this.#quietState) {
+        throw new Error("Cannot use inheritStdio() after quiet()");
+      }
+      this.#inheritStdio = true;
+      this.#args!.setInheritStdio(true);
+      return this;
     }
 
     nothrow(): this {

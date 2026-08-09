@@ -410,9 +410,8 @@ fn tls_version_to_js(ssl_ptr: *mut boringssl::SSL, global: &JSGlobalObject) -> J
     ZigString::from_utf8(slice).to_js(global)
 }
 
-// ── C-exported TLS introspection, called from JSNodeHTTPServerSocketPrototype.cpp
-// so the socket node:https hands to request handlers can expose the
-// tls.TLSSocket surface (getPeerCertificate / getCipher / getProtocol).
+// ── C-exported TLS introspection for node:http server sockets
+// (called from JSNodeHTTPServerSocketPrototype.cpp) ──
 
 /// # Safety
 /// `ssl` must be null or the live `SSL*` of a TLS socket (the C++ caller
@@ -510,9 +509,8 @@ pub(super) fn get_peer_certificate(
     peer_certificate_to_js(ssl_ptr, abbreviated, global)
 }
 
-/// Build the Node-shaped peer-certificate object for `ssl_ptr`. Shared by the
-/// `Bun.connect`/`tls.connect` socket binding and the C-exported node:http
-/// server socket surface.
+/// Node-shaped peer-certificate object for `ssl_ptr`; shared by the socket
+/// binding above and the C-exported node:http server socket surface.
 fn peer_certificate_to_js(
     ssl_ptr: *mut boringssl::SSL,
     abbreviated: bool,

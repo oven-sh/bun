@@ -299,10 +299,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSG
     return JSValue::encode(JSC::jsBoolean(thisObject->isPeerCertificateVerified()));
 }
 
-// TLS introspection for the socket node:https hands to request handlers. The
-// SSL state lives on the uWS socket; the Rust side renders the same
-// Node-shaped objects the tls.TLSSocket handle returns. Null SSL (plain HTTP
-// or closed socket) yields undefined/null, matching a detached TLS handle.
+// The SSL* of the uWS socket; null for plain HTTP or a closed socket (the
+// Rust side then answers like a detached TLS handle).
 static void* sslHandleFor(JSNodeHTTPServerSocket* socket)
 {
     if (!socket->is_ssl || !socket->socket) {

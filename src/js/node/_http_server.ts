@@ -306,14 +306,7 @@ function normalizeServerTls(tls) {
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
 function connectionListener(this: Server, socket) {
-  if (socket instanceof NodeHTTPServerSocket) return;
-  // Encrypted native sockets have their prototype swapped to the TLS variant,
-  // which chains through TLSSocket.prototype, not NodeHTTPServerSocket.prototype.
-  if (
-    NodeHTTPTLSServerSocketPrototype !== undefined &&
-    Object.getPrototypeOf(socket) === NodeHTTPTLSServerSocketPrototype
-  )
-    return;
+  if (isNodeHTTPServerSocket(socket)) return;
   connectionListenerHTTP1(this, socket, {
     http1Options: {
       IncomingMessage: this[kIncomingMessage],
@@ -2168,12 +2161,19 @@ function _writeHead(statusCode, reason, obj, response) {
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
-// node:https request handlers must see a tls.TLSSocket (`req.socket
-// instanceof tls.TLSSocket`, getPeerCertificate(), ...). The TLS variant is a
-// prototype that keeps every NodeHTTPServerSocket member (copied as own
-// properties) but chains through TLSSocket.prototype instead of going straight
-// to net.Socket.prototype. The constructor swaps it onto encrypted instances;
-// private fields and brands are per-instance, so the swap does not affect them.
+// A native server socket is either a plain NodeHTTPServerSocket or, when
+// encrypted, one whose prototype the constructor swapped to the TLS variant.
+function isNodeHTTPServerSocket(socket) {
+  return (
+    socket instanceof NodeHTTPServerSocket ||
+    (NodeHTTPTLSServerSocketPrototype !== undefined &&
+      Object.getPrototypeOf(socket) === NodeHTTPTLSServerSocketPrototype)
+  );
+}
+
+// node:https request handlers must see a tls.TLSSocket: this prototype keeps
+// every NodeHTTPServerSocket member as own properties but chains through
+// TLSSocket.prototype instead of going straight to net.Socket.prototype.
 let NodeHTTPTLSServerSocketPrototype;
 function getNodeHTTPTLSServerSocketPrototype() {
   if (NodeHTTPTLSServerSocketPrototype === undefined) {
@@ -2183,14 +2183,13 @@ function getNodeHTTPTLSServerSocketPrototype() {
       ...Object.getOwnPropertyDescriptors({
         constructor: TLSSocket,
         isServer: true,
-        // The inherited TLSSocket methods read this._handle, which is always
-        // null here (the connection is driven by the native NodeHTTP handle);
-        // these have NodeHTTP-handle-backed native implementations.
+        // Unlike the inherited TLSSocket methods (which read this._handle,
+        // always null here), these read the native NodeHTTP handle.
         getPeerCertificate(detailed) {
           const handle = this[kHandle];
           if (!handle) return null;
-          // The native parameter means "abbreviated" - the inverse of Node's
-          // `detailed` - matching TLSSocket.prototype.getPeerCertificate.
+          // The native parameter means "abbreviated": the inverse of Node's
+          // `detailed`, matching TLSSocket.prototype.getPeerCertificate.
           const cert = arguments.length < 1 ? handle.getPeerCertificate() : handle.getPeerCertificate(!detailed);
           return cert || {};
         },

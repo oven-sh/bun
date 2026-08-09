@@ -3272,5 +3272,8 @@ describe("$.inheritStdio()", () => {
     expect(error.exitCode).toBe(1);
     expect(() => error.text()).toThrow(/not captured when inheritStdio/);
     expect(() => error.json()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.arrayBuffer()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.bytes()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.blob()).toThrow(/not captured when inheritStdio/);
   });
 });

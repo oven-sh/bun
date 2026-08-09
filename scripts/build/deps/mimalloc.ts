@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "8ecfcde0aba58221a14398186ecba03f99067f18"; // oven-sh/mimalloc#13 (heap-image support)
+const MIMALLOC_COMMIT = "b9aedbc67b5c94e30b75e8f87dd87deee35bf9f4"; // oven-sh/mimalloc#13 (heap-image support)
 
 export const mimalloc: Dependency = {
   name: "mimalloc",

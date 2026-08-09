@@ -113,12 +113,7 @@ test.skipIf(!isTartGuest)(
       const version = await docker("/version");
       log("docker version:", JSON.stringify(version));
       const info = await docker("/info");
-      log(
-        "docker info: name=%s kernel=%s os=%s",
-        info?.Name,
-        info?.KernelVersion,
-        info?.OperatingSystem,
-      );
+      log("docker info: name=%s kernel=%s os=%s", info?.Name, info?.KernelVersion, info?.OperatingSystem);
       const images = (await docker("/images/json")) as any[];
       const tags = images.flatMap(i => i.RepoTags ?? []).filter(t => t && !t.startsWith("<none>"));
       log("sidecar images:", JSON.stringify(tags));
@@ -132,7 +127,7 @@ test.skipIf(!isTartGuest)(
       const script = [
         "echo HOSTNAME $(cat /proc/sys/kernel/hostname)",
         "echo UPTIME $(cat /proc/uptime)",
-        'for d in /sys/class/net/*; do echo IFACE $(basename $d) mac=$(cat $d/address 2>/dev/null) state=$(cat $d/operstate 2>/dev/null); done',
+        "for d in /sys/class/net/*; do echo IFACE $(basename $d) mac=$(cat $d/address 2>/dev/null) state=$(cat $d/operstate 2>/dev/null); done",
         'echo PROXY_ARP; for f in /proc/sys/net/ipv4/conf/*/proxy_arp; do echo "  $f=$(cat $f)"; done',
         "echo IP_FORWARD $(cat /proc/sys/net/ipv4/ip_forward)",
         "echo ADDRS; ip -4 addr show 2>/dev/null || cat /proc/net/fib_trie | head -80",

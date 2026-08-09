@@ -405,10 +405,8 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
-    /// Last cached listing seen per watched directory, kept after
-    /// `bust_dir_cache` evicts it so later events can still invalidate the
-    /// per-file stat caches. Lifetime and locking: see
-    /// [`Self::probe_entries_cache`].
+    /// Last cached listing per watched directory, kept past `bust_dir_cache`
+    /// to invalidate per-file stat caches; see [`Self::probe_entries_cache`].
     #[cfg(not(windows))]
     pub(crate) tombstones: StringHashMap<*mut Fs::DirEntry>,
 
@@ -1192,11 +1190,9 @@ where
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        // Locked `data`-map walk; see
-                                        // `probe_entries_cache`. The yielded
-                                        // `*mut Entry` is EntryStore-owned
-                                        // (process lifetime), so it may
-                                        // outlive the guard.
+                                        // Locked walk (see `probe_entries_cache`);
+                                        // the `*mut Entry` is EntryStore-owned and
+                                        // may outlive the guard.
                                         let file_ent: Option<core::ptr::NonNull<Fs::Entry>> = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();
                                             // SAFETY: `dir_ent` is cache-owned

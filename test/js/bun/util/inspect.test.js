@@ -967,8 +967,7 @@ it("console.log survives util.inspect failing to load for custom inspect", async
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toContain("hi");
-  expect(stdout).toContain("SURVIVED");
+  expect(stdout).toBe("hi\nSURVIVED\n");
   expect(exitCode).toBe(0);
 });
 
@@ -987,7 +986,6 @@ it("stylize degrades to no color when util.inspect failed to load", async () => 
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toContain("hi");
-  expect(stdout).toContain("SURVIVED");
+  expect(stdout).toBe("hi\nSURVIVED\n");
   expect(exitCode).toBe(0);
 });

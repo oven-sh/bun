@@ -1416,6 +1416,13 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Condvar::new(),
 );
 
+/// After the freeze-time shutdown: the snapshot must not carry "shutting down", or the thread `init` starts again in a
+/// restored process (its `SnapshotOnce` re-runs there) would exit at once; and that process's own exit must still drain.
+pub fn reset_shutdown_state_for_snapshot() {
+    SHUTDOWN_REQUESTED.store(false, Ordering::Release);
+    *SHUTDOWN_DONE.0.lock() = false;
+}
+
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.

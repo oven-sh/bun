@@ -1788,6 +1788,16 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
     #[cfg(target_os = "macos")]
     crate::node::fs_events::shutdown_for_snapshot();
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
+    // The HTTP client thread exists once anything fetched (allowed by --snapshot-io=network); a no-op if it never started.
+    if !bun_http::http_thread::shutdown_for_exit() {
+        bun_core::Output::err_generic(
+            "snapshot: the HTTP client thread did not stop; no snapshot taken",
+            (),
+        );
+        bun_core::Output::flush();
+        bun_core::Global::exit(70);
+    }
+    bun_http::http_thread::reset_shutdown_state_for_snapshot();
     {
         let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
         bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[0]

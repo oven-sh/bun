@@ -1073,7 +1073,7 @@ static uint64_t platformCpuFeatures()
     f = getauxval(AT_HWCAP) & 0xffffffffull;
     f |= (getauxval(AT_HWCAP2) & 0x7fffffffull) << 32;
 #endif
-    f |= 1ull << 62; // "arm64" tag
+    f |= 1ull << 63; // "arm64" tag: HWCAP2 is masked to 31 bits (32-62) and the Darwin keys use low bits, so nothing else reaches 63
 #endif
     return f;
 }

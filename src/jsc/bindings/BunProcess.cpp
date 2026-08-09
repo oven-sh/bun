@@ -3085,6 +3085,8 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getExecPath(globalObject));
 }
 
+static void refreshReifiedLaunchProperties(VM&, JSObject*);
+
 extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -3289,9 +3291,31 @@ extern "C" void Bun__Process__reloadEnvAfterSnapshotRestore(JSC::JSGlobalObject*
         process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
     }
     uncheckedDowncast<Bun::Process>(process)->invalidateLaunchContext();
+    refreshReifiedLaunchProperties(vm, process);
     // Launch-context lazy properties were reified on first access; deleting them sends the next access back through the PropertyCallback.
     Bun__BunObject__refreshLaunchDerivedProperties(globalObject);
     (void)scope.tryClearException();
+}
+
+// PropertyCallback entries are reified into own properties on first read; a builder that read them left the building
+// process's values on the object. Same shape as Bun__BunObject__refreshLaunchDerivedProperties.
+static void refreshReifiedLaunchProperties(VM& vm, JSObject* processObject)
+{
+    struct LaunchDerivedProp {
+        ASCIILiteral name;
+        JSValue (*make)(VM&, JSObject*);
+    };
+    static const LaunchDerivedProp props[] = {
+        { "pid"_s, constructPid },
+        { "argv0"_s, constructArgv0 },
+        { "execPath"_s, constructExecPath },
+    };
+    for (auto& p : props) {
+        JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);
+        if (processObject->getDirectOffset(vm, id) == invalidOffset)
+            continue; // never read during the build: the static-table callback runs on first access
+        processObject->putDirect(vm, id, p.make(vm, processObject), 0);
+    }
 }
 
 void Process::invalidateLaunchContext()

@@ -598,7 +598,6 @@ static void fileSnapshotHeap(JSC::VM& vm)
     if (freeze && !getenv("BUN_FILESNAP_NOMI")) {
         std::sort(frozenRanges.begin(), frozenRanges.end());
         mi_arenas_freeze_pages();
-        mi_theap_set_default(mi_heap_theap(mi_heap_new())); // main thread allocates from fresh pages from now on
         size_t inFrozen = 0;
         for (int k = 0; k < 64; k++) {
             void* probe = mi_malloc(48 + k * 16);

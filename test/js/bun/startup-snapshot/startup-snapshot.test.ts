@@ -297,6 +297,8 @@ snapshotTest(
     const line = out.split("\n").find(l => l.startsWith("[js] restored "));
     expect(line, err.slice(-2000)).toBeDefined();
     const got = JSON.parse(line!.slice("[js] restored ".length));
+    expect(got.pid).toBe(p.pid); // not the builder's, even though the builder read it
+    expect(got.execPath).toBe(bunExe());
     expect(got.argv).toEqual(["restored-arg", "--flag"]);
     expect(got.bunArgv).toEqual(["restored-arg", "--flag"]);
     expect(got.marker).toBe("restorer");

@@ -34,6 +34,17 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
+/// Publishes the restore epoch a cached value was (re)loaded in, after the value itself, whatever path the loader took.
+struct PublishEpoch<'a>(&'a core::sync::atomic::AtomicU32);
+impl Drop for PublishEpoch<'_> {
+    fn drop(&mut self) {
+        self.0.store(
+            crate::startup_snapshot::epoch(),
+            core::sync::atomic::Ordering::Release,
+        );
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Declarations
 // ──────────────────────────────────────────────────────────────────────────────
@@ -361,7 +372,7 @@ pub(crate) mod kind {
             }
 
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
+                if self.epoch.load(Ordering::Acquire) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 let len = self.len_value.load(Ordering::Acquire);
@@ -386,8 +397,7 @@ pub(crate) mod kind {
                 &self,
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
-                self.epoch
-                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
+                let _publish = PublishEpoch(&self.epoch); // stored last, on every exit path: a reader that sees the epoch sees the value
                 // The implementation is racy and allows two threads to both set the value at
                 // the same time, as long as the value they are setting is the same. This is
                 // difficult to write an assertion for since it requires the DEV path take a
@@ -448,7 +458,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
+                if self.epoch.load(Ordering::Acquire) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 // only ever stored from StoredType discriminants
@@ -471,8 +481,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
-                self.epoch
-                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
+                let _publish = PublishEpoch(&self.epoch); // stored last, on every exit path: a reader that sees the epoch sees the value
                 let Some(raw_env) = raw_env else {
                     self.value
                         .store(StoredType::NotSet as u8, Ordering::Relaxed);
@@ -587,7 +596,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
+                if self.epoch.load(Ordering::Acquire) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 match self.value.load(Ordering::Relaxed) {
@@ -602,8 +611,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
-                self.epoch
-                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
+                let _publish = PublishEpoch(&self.epoch); // stored last, on every exit path: a reader that sees the epoch sees the value
                 let Some(raw_env) = raw_env else {
                     self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                     return None;

@@ -335,9 +335,11 @@ impl JSGlobalObject {
     fn current_call_site_for_report(&self) -> Vec<u8> {
         let err = self.create_error_instance(format_args!(""));
         let Ok(Some(stack)) = err.get(self, "stack") else {
+            self.clear_exception(); // a user Error.prepareStackTrace may have thrown; the report is best-effort
             return Vec::new();
         };
         let Ok(stack) = stack.to_bun_string(self) else {
+            self.clear_exception();
             return Vec::new();
         };
         let utf8 = stack.to_utf8();

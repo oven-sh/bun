@@ -1604,6 +1604,10 @@ pub(crate) fn parse_into_binary_lockfile(
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
+    let link_workspace_packages = manager
+        .as_deref()
+        .is_none_or(|m| m.options.link_workspace_packages);
+
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         log.add_error(Some(source), root.loc, b"Missing lockfile version");
         return Err(ParseError::InvalidLockfileVersion);
@@ -2774,6 +2778,7 @@ pub(crate) fn parse_into_binary_lockfile(
         // tree path (see `resolve_peer_dep_version_based`).
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
+        let workspace_versions = &lockfile.workspace_versions;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -2833,6 +2838,9 @@ pub(crate) fn parse_into_binary_lockfile(
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    string_buf,
+                    workspace_versions,
+                    link_workspace_packages,
                 );
             }
         }
@@ -2917,6 +2925,9 @@ pub(crate) fn parse_into_binary_lockfile(
                         resolutions,
                         lockfile_version,
                         pkg_resolutions,
+                        string_buf,
+                        workspace_versions,
+                        link_workspace_packages,
                     );
                 }
             }
@@ -2989,6 +3000,9 @@ pub(crate) fn parse_into_binary_lockfile(
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    string_buf,
+                    workspace_versions,
+                    link_workspace_packages,
                 );
             }
         }
@@ -3133,12 +3147,33 @@ fn map_dep_to_pkg(
     resolutions: &mut [PackageID],
     text_lockfile_version: Version,
     pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+    workspace_versions: &VersionHashMap,
+    link_workspace_packages: bool,
 ) {
     resolutions[dep_id as usize] = pkg_id;
 
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
+            // Rewrite the dependency only into the shape `Package::parse_dependency`
+            // would produce for it: an npm range becomes a workspace dependency
+            // only for a member version the range satisfies. A dependency the
+            // parser keeps npm-tagged (a wildcard on a versionless member) must
+            // keep its parsed tag here too, or every install diffs the loaded
+            // lockfile against the fresh parse and re-saves it unchanged.
+            if dep.version.tag == DependencyVersionTag::Npm {
+                let npm = dep.version.npm();
+                let parse_would_rewrite = link_workspace_packages
+                    && workspace_versions
+                        .get(&StringBuilder::string_hash(npm.name.slice(string_buf)))
+                        .is_some_and(|version| {
+                            npm.version.satisfies(*version, string_buf, string_buf)
+                        });
+                if !parse_would_rewrite {
+                    return;
+                }
+            }
             // Whole-struct assign so `DependencyVersion::Drop` frees any prior
             // npm chain. SAFETY: `res.tag == Workspace` checked above.
             let literal = dep.version.literal;

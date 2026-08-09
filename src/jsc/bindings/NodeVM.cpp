@@ -530,6 +530,12 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
+void consumeTermination(JSC::VM& vm)
+{
+    vm.clearHasTerminationRequest();
+    vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
+}
+
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)
 {
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(exception->value())) {

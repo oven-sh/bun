@@ -208,12 +208,9 @@ bool SigintWatcher::signalAll()
 
     for (JSGlobalObject* globalObject : m_globalObjects) {
         JSC::VM& vm = globalObject->vm();
-        // The NeedTermination trap alone cannot interrupt a thread parked in
-        // Atomics.wait: VMTraps wakes vm.syncWaiter(), but the park loop in
-        // WaiterListManager::waitForSync only exits on hasTerminationRequest(),
-        // which is otherwise set at a safepoint the parked thread never
-        // reaches. Set it first so the woken waiter observes the interrupt
-        // instead of re-parking forever.
+        // Atomics.wait's park loop (WaiterListManager::waitForSync) only exits
+        // on hasTerminationRequest(); the NeedTermination trap wakes the waiter
+        // but is serviced only at safepoints, which a parked thread never reaches.
         vm.setHasTerminationRequest();
         vm.notifyNeedTermination();
     }

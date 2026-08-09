@@ -321,12 +321,7 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
         if (vm.hasPendingTerminationException())
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        // If the termination interrupted Atomics.wait, the waiter observed
-        // hasTerminationRequest() directly and the NeedTermination trap was
-        // never serviced by handleTraps. Clear it so the next trap check
-        // doesn't re-terminate the VM we just revived.
-        vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
+        consumeTermination(vm);
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);

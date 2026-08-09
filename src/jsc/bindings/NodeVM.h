@@ -30,6 +30,10 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+// Clear a termination node:vm consumed (breakOnSigint/timeout). The request
+// flag alone is insufficient: a termination that interrupted Atomics.wait
+// never ran handleTraps, and the pending trap would re-terminate the VM.
+void consumeTermination(JSC::VM& vm);
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);

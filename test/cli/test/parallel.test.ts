@@ -885,10 +885,11 @@ test("--parallel: back-to-back huge result lines drain in linear time without co
   // whole remainder after every partial write is quadratic in frame size,
   // and on macOS (~8KB socketpair buffers) one 64MB frame alone took ~90s
   // of memmove.
+  const TITLE_LENGTH = 60_000_000;
   using dir = tempDir("parallel-huge-backlog", {
     "huge.test.js": `import {test,expect} from "bun:test";
-      test("A".repeat(60_000_000), () => expect(1).toBe(2));
-      test("B".repeat(60_000_000), () => expect(1).toBe(2));`,
+      test(Buffer.alloc(${TITLE_LENGTH}, "A").toString(), () => expect(1).toBe(2));
+      test(Buffer.alloc(${TITLE_LENGTH}, "B").toString(), () => expect(1).toBe(2));`,
     "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
   });
   await using proc = Bun.spawn({
@@ -907,8 +908,17 @@ test("--parallel: back-to-back huge result lines drain in linear time without co
   // just under the 64MB frame cap, so no truncation), and ok.test.js's pass
   // survived on the other worker.
   expect(stderr).not.toContain("crashed");
-  expect(stderr).toContain("A".repeat(10_000));
-  expect(stderr).toContain("B".repeat(10_000));
+  // Each title must arrive as one contiguous run of exactly TITLE_LENGTH
+  // characters: a shorter run (dropped bytes) leaves indexOf at -1, and a
+  // longer run (duplicated bytes) puts the title's letter right after the
+  // first match. Checked via index math so a failure doesn't dump 60MB
+  // strings into the log.
+  for (const letter of ["A", "B"]) {
+    const title = Buffer.alloc(TITLE_LENGTH, letter).toString();
+    const start = stderr.indexOf(title);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(stderr[start + TITLE_LENGTH]).not.toBe(letter);
+  }
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("2 fail");
   expect(proc.signalCode).toBeNull();

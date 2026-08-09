@@ -3343,9 +3343,12 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
 
     auto interesting = [&](uintptr_t v, uintptr_t& base) -> const char* {
         base = 0;
-        if (liveCells.contains(v)) base = v;
-        else if (liveCells.contains(v & ~uintptr_t(0xF))) base = v & ~uintptr_t(0xF);
-        else if (v >= 8 && liveCells.contains(v - 8)) base = v - 8;
+        if (liveCells.contains(v))
+            base = v;
+        else if (liveCells.contains(v & ~uintptr_t(0xF)))
+            base = v & ~uintptr_t(0xF);
+        else if (v >= 8 && liveCells.contains(v - 8))
+            base = v - 8;
         if (!base) return nullptr;
         const char* cls = describe(base);
         if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
@@ -3362,7 +3365,8 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
         unsigned below = 0;
         size_t n = kBelowSpBytes / sizeof(uintptr_t);
         for (size_t i = 0; i < n; ++i) {
-            uintptr_t base; const char* cls = interesting(bunNapiDiagBelowSpCopy[i], base);
+            uintptr_t base;
+            const char* cls = interesting(bunNapiDiagBelowSpCopy[i], base);
             if (!cls) continue;
             ++below;
             uintptr_t* where = bunNapiDiagBelowSpFrom + i;
@@ -3377,7 +3381,8 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
         uintptr_t* limit = static_cast<uintptr_t*>(WTF::Thread::currentSingleton().stack().end());
         if (from < limit + 4096) from = limit + 4096;
         for (uintptr_t* w = from; w < sp; ++w) {
-            uintptr_t base; const char* cls = interesting(*w, base);
+            uintptr_t base;
+            const char* cls = interesting(*w, base);
             if (!cls) continue;
             ++belowNow;
             fprintf(stderr, "[napi-diag]   post-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((sp - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);

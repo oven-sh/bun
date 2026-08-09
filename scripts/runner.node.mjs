@@ -2613,6 +2613,17 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     filteredTests.push(...availableTests);
   }
 
+  // Diagnostics branch only: every darwin x64 shard runs napi.test.ts, four
+  // times, so a single build yields several samples from whichever hosts ran.
+  if (process.platform === "darwin" && process.arch === "x64" && !filters?.length) {
+    const napi = availableTests.find(t => t.replaceAll("\\", "/") === "napi/napi.test.ts");
+    if (napi) {
+      const rest = filteredTests.filter(t => t !== napi);
+      filteredTests.length = 0;
+      filteredTests.push(napi, napi, napi, napi, ...rest);
+    }
+  }
+
   // Run docker-backed tests (the prefixes the coordinator prestarts) last in
   // the shard: the coordinator kicks off `compose up` for their services when
   // the runner starts, but a cold mysqld/postgres takes ~10s to become

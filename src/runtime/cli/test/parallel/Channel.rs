@@ -108,12 +108,9 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(not(windows))]
 pub struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
-    /// Bytes at the front of `out` already accepted by the kernel. Tracking a
-    /// cursor instead of draining `out` after every partial write keeps the
-    /// backlog drain linear: the kernel accepts one send-buffer chunk per
-    /// writable event (8KB for macOS socketpairs), and a front-drain each time
-    /// would memmove the whole remaining backlog per chunk — quadratic, ~90s
-    /// of pure memmove for one 64MB frame on macOS x64.
+    /// Bytes at the front of `out` already written to the kernel. A cursor
+    /// rather than a per-write front-drain, which was quadratic in backlog
+    /// size (~90s for one 64MB frame over macOS's ~8KB socketpair buffers).
     out_head: Cell<usize>,
 }
 
@@ -472,9 +469,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     pending.clear();
                     head = 0;
                 } else if head >= pending.len() - head {
-                    // Compact only once the sent prefix is at least as large
-                    // as the unsent tail; each compaction is then charged to
-                    // the bytes it discards, keeping the total cost linear.
+                    // Sent prefix >= unsent tail: compacting now keeps the
+                    // total compaction cost linear in bytes sent.
                     pending.drain_front(head);
                     head = 0;
                 }

@@ -145,3 +145,75 @@ describe.skipIf(!isDebug && !isASAN)(
     }
   },
 );
+
+// ── fs jobs that own a descriptor ─────────────────────────────────────────
+//
+// Two legs the rows above cannot see, measured through the process-wide fd
+// table (worker threads share it with the parent):
+// - an fs.close job the pool reaches only after the worker's handle closed:
+//   the job owns the descriptor the caller handed over, so the close syscall
+//   must still happen even though the callback never can.
+// - an fs.open job whose completion is refused: the job owns the descriptor
+//   it opened and must close it instead of leaking it.
+// UV_THREADPOOL_SIZE=2 plus two stat completions parked by the gate pins the
+// pool, so the close jobs are provably still queued when the handle closes.
+
+const FD_LEAK_WORKERS: Record<string, string> = {
+  "fs.close jobs still queued when the handle closes close their fds": `
+    for (let i = 0; i < 8; i++) fs.stat(".", () => {});
+    const opened = [];
+    for (let i = 0; i < 8; i++) opened.push(fs.openSync(process.execPath, "r"));
+    for (const fd of opened) fs.close(fd, () => {});
+  `,
+  "fs.open results whose completion is refused close their fds": `
+    for (let i = 0; i < 8; i++) fs.open(process.execPath, "r", () => {});
+  `,
+};
+
+describe.skipIf(!isDebug && !isASAN)("fs jobs that own a descriptor release it when their worker is gone", () => {
+  for (const [name, body] of Object.entries(FD_LEAK_WORKERS)) {
+    test.concurrent.skipIf(isWindows)(
+      name,
+      async () => {
+        const hostSrc = `
+          const { Worker } = require("node:worker_threads");
+          const fs = require("node:fs");
+          const fdDir = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+          const fds = () => fs.readdirSync(fdDir).length;
+          const base = fds();
+          const w = new Worker(\`
+            const fs = require("node:fs");
+            ${body}
+            setImmediate(() => setImmediate(() => process.exit(0)));
+          \`, { eval: true });
+          w.on("exit", async () => {
+            // Refused jobs are released by pool threads shortly after the
+            // handle closes; poll the fd table back down to the baseline.
+            const deadline = Date.now() + 20_000;
+            let leaked;
+            while ((leaked = fds() - base) > 0 && Date.now() < deadline)
+              await new Promise(r => setTimeout(r, 50));
+            console.log(JSON.stringify({ leaked }));
+          });
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", hostSrc],
+          env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", BUN_DEBUG_TEST_WORKER_REFUSAL_GATE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        let leaked: unknown = "no output";
+        try {
+          leaked = JSON.parse(stdout.trim().split("\n").pop()!).leaked;
+        } catch {}
+        expect({
+          exitCode,
+          leaked,
+          detail: exitCode === 0 && leaked === 0 ? "" : stdout + stderr,
+        }).toEqual({ exitCode: 0, leaked: 0, detail: "" });
+      },
+      40_000,
+    );
+  }
+});

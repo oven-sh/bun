@@ -464,14 +464,12 @@ impl BlobExt for Blob {
 
             read_file::ReadFileUV::start::<Handler<'_, F>>(
                 // `bun_vm()` returns the live VM for this global; the event
-                // loop outlives any in-flight async fs request. `start<H>`
-                // takes the already-erased `*anyopaque` (caller casts); `H`
-                // (turbofish) supplies `Handler::run` for the callback.
+                // loop outlives any in-flight async fs request.
                 global.bun_vm().event_loop(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                handler.cast(),
+                handler,
             );
             return promise_value;
         }
@@ -482,7 +480,6 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                handler,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             // Create the Promise only after the store has been ref()'d.
@@ -492,7 +489,11 @@ impl BlobExt for Blob {
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            read_file::ReadFile::schedule(file_read, global);
+            read_file::ReadFile::schedule(
+                file_read,
+                read_file::ReadFileCompletionFns::of(handler),
+                global,
+            );
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -535,6 +536,20 @@ impl BlobExt for Blob {
                     // SAFETY: `c` is the `*mut H` passed by the caller and kept alive
                     // across the async read by contract; exclusive borrow scoped to the call.
                     H::on_read_bytes(unsafe { &mut *c }, result);
+                }
+                fn cancel(c: *mut H) {
+                    // The caller owns `H` and waits for exactly one `on_read_bytes`.
+                    let err = jsc::SystemError {
+                        code: BunString::static_("ECANCELED").into(),
+                        message: BunString::static_(
+                            "The file read did not complete before its thread stopped",
+                        )
+                        .into(),
+                        syscall: BunString::static_("read").into(),
+                        ..Default::default()
+                    };
+                    // SAFETY: as for `call`.
+                    H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)));
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -674,21 +689,22 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                NewInternalReadFileHandler::<C, F>::run,
-                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<C, F>::completion(ctx),
             );
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create_with_ctx(
+            let file_read = read_file::ReadFile::create(
                 self.store().expect("infallible: store present").clone(),
-                ctx.cast::<c_void>(),
-                NewInternalReadFileHandler::<C, F>::run,
                 self.offset.get(),
                 self.size.get(),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            read_file::ReadFile::schedule(file_read, global);
+            read_file::ReadFile::schedule(
+                file_read,
+                NewInternalReadFileHandler::<C, F>::completion(ctx),
+                global,
+            );
         }
     }
     fn get_content_type(&self) -> Option<ZigStringSlice> {
@@ -3809,6 +3825,8 @@ pub(crate) enum FormDataEntry<'a> {
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
 pub trait InternalReadFileFn<C> {
     fn call(ctx: *mut C, bytes: read_file::ReadFileResultType);
+    /// The read will never complete (its VM stopped first): do with `ctx` what its owner needs.
+    fn cancel(ctx: *mut C);
 }
 
 pub(crate) struct NewInternalReadFileHandler<C, F>(core::marker::PhantomData<(C, F)>);
@@ -3817,12 +3835,22 @@ impl<C, F> NewInternalReadFileHandler<C, F>
 where
     F: InternalReadFileFn<C>,
 {
-    /// Type-erased thunk: `handler` is the `*mut C` ctx that was passed into
-    /// `ReadFile`/`ReadFileUV` cast to `*mut c_void`.
-    pub(crate) fn run(handler: *mut c_void, bytes: read_file::ReadFileResultType) {
-        // SAFETY: every call site passes a `*mut C` round-tripped
-        // through `*mut c_void`; this is the inverse pointer cast.
-        F::call(handler.cast::<C>(), bytes);
+    /// The erased `(ctx, run, cancel)` a `ReadFile`/`ReadFileUV` carries for this handler.
+    pub(crate) fn completion(ctx: *mut C) -> read_file::ReadFileCompletionFns {
+        fn run<C, F: InternalReadFileFn<C>>(
+            ctx: *mut c_void,
+            bytes: read_file::ReadFileResultType,
+        ) {
+            F::call(ctx.cast::<C>(), bytes);
+        }
+        fn cancel<C, F: InternalReadFileFn<C>>(ctx: *mut c_void) {
+            F::cancel(ctx.cast::<C>());
+        }
+        read_file::ReadFileCompletionFns {
+            ctx: ctx.cast::<c_void>(),
+            run: run::<C, F>,
+            cancel: cancel::<C, F>,
+        }
     }
 }
 

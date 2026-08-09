@@ -3156,12 +3156,10 @@ fn map_dep_to_pkg(
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
-            // Rewrite the dependency only into the shape `Package::parse_dependency`
-            // would produce for it: an npm range becomes a workspace dependency
-            // only for a member version the range satisfies. A dependency the
-            // parser keeps npm-tagged (a wildcard on a versionless member) must
-            // keep its parsed tag here too, or every install diffs the loaded
-            // lockfile against the fresh parse and re-saves it unchanged.
+            // Only rewrite into the shape `Package::parse_dependency` would
+            // produce (a member version the range satisfies); otherwise the
+            // loaded root never matches a fresh parse and every install
+            // re-saves the unchanged lockfile.
             if dep.version.tag == DependencyVersionTag::Npm {
                 let npm = dep.version.npm();
                 let parse_would_rewrite = link_workspace_packages

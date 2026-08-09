@@ -2189,6 +2189,236 @@ test.concurrent("override for a workspace member's name does not apply to a memb
   expect(await exited).toBe(0);
 });
 
+// Version-less members link through the resolver's wildcard rule instead of the
+// parse-time rewrite, so their edges stay npm-tagged; the override exemption must
+// cover that flavor too or the same DependencyLoop returns.
+test.concurrent("override for a version-less workspace member's name does not displace the member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "*",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps" })),
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({ name: "bar", version: "1.0.0", dependencies: { "no-deps": "*" } }),
+    ),
+  ]);
+
+  const proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderrText).not.toContain("dependency loop");
+  expect(exitCode).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+  });
+  expect(await exists(join(packageDir, "node_modules", "bar", "node_modules", "no-deps"))).toBe(false);
+});
+
+test.concurrent("override for a workspace member's name does not apply to a catalog: dependency", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        catalog: {
+          "no-deps": "^1.0.0",
+        },
+        dependencies: {
+          "no-deps": "catalog:",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  const proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderrText).not.toContain("dependency loop");
+  expect(exitCode).toBe(0);
+  // the catalog range links the member, so the override does not displace it
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});
+
+// The exemption keys on the members of the current install, not on what the loaded
+// lockfile resolved: removing the member directory must hand the name back to the
+// override instead of failing on the stale workspace link forever.
+test.concurrent("removing the member migrates an exempted workspace: dependency to the override", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "workspace:*",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  let { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let stderrText = await stderr.text();
+  expect(stderrText).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  await rm(join(packageDir, "packages", "m"), { recursive: true, force: true });
+
+  // the stale lockfile no longer matches: frozen installs report it instead of
+  // failing on the missing workspace
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).toContain("lockfile had changes");
+  expect(stderrText).not.toContain("Workspace dependency");
+  expect(await exited).toBe(1);
+
+  // a plain install migrates the name to the override
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Workspace dependency");
+  expect(stderrText).toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+
+  // and converges
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).not.toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("removing the member migrates an exempted npm-range dependency to the override", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  let { exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let stderrText = await stderr.text();
+  expect(stderrText).not.toContain("dependency loop");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  await rm(join(packageDir, "packages", "m"), { recursive: true, force: true });
+
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(stderrText).toContain("lockfile had changes");
+  expect(await exited).toBe(1);
+
+  ({ exited, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  stderrText = await stderr.text();
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+});
+
 // A ranged `workspace:` dependency a present member cannot satisfy is rejected while
 // parsing package.json, before overrides are consulted, with or without this fix. The
 // override neither rescues it nor turns it into a resolution conflict.

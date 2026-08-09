@@ -688,18 +688,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
 
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>",
-        // is a workspaceOnly dependency, or links a present workspace member
+        // is a workspaceOnly dependency, or links a workspace member of this install
         if !dependency.behavior.is_workspace()
-            && !(dependency.version.tag == dependency::version::Tag::Workspace
-                && crate::lockfile::package_index::contains_workspace_package(
-                    &this.lockfile.package_index,
-                    this.lockfile.packages.items_resolution(),
-                    name_hash,
-                ))
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.npm().is_alias)
         {
-            if let Some(new) = this.lockfile.overrides.get(name_hash) {
+            if !links_workspace_member(this, &dependency.version, name, name_hash)
+                && let Some(new) = this.lockfile.overrides.get(name_hash)
+            {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
@@ -1912,6 +1908,60 @@ fn enqueue_local_tarball(
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
     unsafe { &raw mut (*task).threadpool_task }
+}
+
+/// Would this edge, absent overrides, resolve to a workspace member of the
+/// current install? Overrides skip such edges so they never displace a member
+/// link. Mirrors the linking rules: `Package::parse` rewrites satisfying npm
+/// ranges on versioned members to workspace links, and
+/// `get_or_put_resolved_package` links wildcard ranges through the root's
+/// workspace edges (`'resolve_from_workspace`). A `catalog:` edge links
+/// through whatever version the catalog materializes to. Ranges that do not
+/// link, and names whose member is missing from this run, stay overridable.
+fn links_workspace_member(
+    this: &PackageManager,
+    version: &dependency::Version,
+    name: SemverString,
+    name_hash: PackageNameHash,
+) -> bool {
+    let catalog_version;
+    let version = if version.tag == dependency::version::Tag::Catalog {
+        match this
+            .lockfile
+            .catalogs
+            .get(&this.lockfile, *version.catalog(), name)
+        {
+            Some(catalog_dep) => {
+                catalog_version = catalog_dep.version;
+                &catalog_version
+            }
+            None => return false,
+        }
+    } else {
+        version
+    };
+
+    match version.tag {
+        dependency::version::Tag::Workspace => this.lockfile.is_workspace_member_name(name_hash),
+        dependency::version::Tag::Npm => {
+            let npm = version.npm();
+            if npm.is_alias
+                || !this.options.link_workspace_packages
+                || !this.lockfile.is_workspace_member_name(name_hash)
+            {
+                return false;
+            }
+            if npm.version.is_star() {
+                return true;
+            }
+            let buf = this.lockfile.buffers.string_bytes.as_slice();
+            this.lockfile
+                .workspace_versions
+                .get(&name_hash)
+                .is_some_and(|workspace_version| npm.version.satisfies(*workspace_version, buf, buf))
+        }
+        _ => false,
+    }
 }
 
 fn update_name_and_name_hash_from_version_replacement(

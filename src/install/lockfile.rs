@@ -850,6 +850,23 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
+    /// Is this name a workspace member of the current install, i.e. does the
+    /// root package carry an injected workspace edge for it? Unlike
+    /// `workspace_paths` (which a `workspace:` dependency with no matching
+    /// member also registers in) and `package_index` (which can still hold a
+    /// member a loaded lockfile resolved before the member directory was
+    /// removed), the root's workspace edges are rebuilt from package.json on
+    /// every install.
+    pub(crate) fn is_workspace_member_name(&self, name_hash: PackageNameHash) -> bool {
+        let Some(root) = self.root_package() else {
+            return false;
+        };
+        root.dependencies
+            .get(self.buffers.dependencies.as_slice())
+            .iter()
+            .any(|dep| dep.behavior.is_workspace() && dep.name_hash == name_hash)
+    }
+
     /// Is this a direct dependency of the workspace the install is taking place in?
     pub(crate) fn is_root_dependency(
         &self,
@@ -2622,9 +2639,10 @@ pub mod package_index {
         }
     }
 
-    /// Does a package with this name exist with a workspace resolution?
-    /// `Lockfile.workspace_paths` is not equivalent: a `workspace:` dependency
-    /// registers its name there even when no member matches.
+    /// Does a package with this name exist with a workspace resolution? Used
+    /// by the bun.lock loader, where the loaded lockfile is the member set
+    /// being reproduced; the fresh resolver keys the same exemption on the
+    /// current install's members (`Lockfile::is_workspace_member_name`).
     pub(crate) fn contains_workspace_package(
         map: &Map,
         pkg_resolutions: &[Resolution],

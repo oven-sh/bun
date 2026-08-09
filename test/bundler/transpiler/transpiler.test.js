@@ -893,15 +893,15 @@ describe("Bun.Transpiler", () => {
       // A nested function establishes its own context, so these remain valid.
       exp(
         "function *f() { enum x { y = (function*() { yield 1 })() } }",
-        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
+        'function* f() {\n  let x;\n  ((x) => {\n    typeof (x["y"] = function* () {\n      yield 1;\n    }()) !== "string" && (x[x["y"]] = "y");\n  })(x ||= {});\n}',
       );
       exp(
         "async function f() { enum x { y = (async () => await 1)() } }",
-        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+        'async function f() {\n  let x;\n  ((x) => {\n    typeof (x["y"] = (async () => await 1)()) !== "string" && (x[x["y"]] = "y");\n  })(x ||= {});\n}',
       );
       exp(
         "enum x { y = (function() { return this })() }",
-        'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
+        'var x;\n((x) => {\n  typeof (x["y"] = function() {\n    return this;\n  }()) !== "string" && (x[x["y"]] = "y");\n})(x ||= {})',
       );
       // The enclosing context is restored after the body: sibling statements
       // keep their yield/await/super permissions.
@@ -976,7 +976,7 @@ function foo() {}
       ).toMatchInlineSnapshot(`
         "var ABC;
         ((ABC) => {
-          ABC[ABC["A"] = () => {}] = "A";
+          typeof (ABC["A"] = () => {}) !== "string" && (ABC[ABC["A"]] = "A");
         })(ABC ||= {});
         function foo() {}
         "

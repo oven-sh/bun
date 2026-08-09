@@ -63,6 +63,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
 
         if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
             RETURN_IF_EXCEPTION(scope, false);
+            this->cachedDataProvided = true;
             any = true;
         }
 
@@ -157,6 +158,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
 
     const bool produceCachedData = options.produceCachedData;
+    // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
+    const bool cachedDataProvided = options.cachedDataProvided;
     auto filename = options.filename;
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
@@ -166,7 +169,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
-    if (!cachedData.isEmpty()) {
+    if (cachedDataProvided) {
         JSC::ProgramExecutable* executable = script->cachedExecutable();
         if (!executable) {
             executable = script->createExecutable();

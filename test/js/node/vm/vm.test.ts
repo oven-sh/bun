@@ -919,6 +919,8 @@ test("rejects corrupted cachedData instead of crashing", async () => {
         variants.push(["flip@" + off, copy]);
       }
       variants.push(["extend", Buffer.concat([good, Buffer.from([0xde, 0xad])])]);
+      variants.push(["empty", Buffer.alloc(0)]);
+      variants.push(["zeros", Buffer.alloc(good.length)]);
       variants.push(["fill", Buffer.alloc(good.length, 0x2a)]);
       variants.push(["random", Buffer.from("fhqwhgads")]);
       return variants;
@@ -955,6 +957,9 @@ test("rejects corrupted cachedData instead of crashing", async () => {
       const intact = vm.compileFunction(source, params, { cachedData: good });
       assert.strictEqual(intact.cachedDataRejected, false);
       assert.strictEqual(intact(1), 1235);
+      const other = vm.compileFunction("return a + 1;", params, { cachedData: good });
+      assert.strictEqual(other.cachedDataRejected, true);
+      assert.strictEqual(other(1), 2);
       console.log("compileFunction ok");
     }
 
@@ -966,6 +971,9 @@ test("rejects corrupted cachedData instead of crashing", async () => {
           code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
         }, label);
       }
+      assert.throws(() => new vm.SourceTextModule("export const value = 5678;", { cachedData: good }), {
+        code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
+      });
       new vm.SourceTextModule(source, { cachedData: good });
       console.log("module ok");
     }

@@ -284,7 +284,8 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     TriState bytecodeAccepted = TriState::Indeterminate;
 
-    if (!options.cachedData.isEmpty()) {
+    // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
+    if (options.cachedDataProvided) {
         cachedBytecode = unwrapCachedData(sourceCode, std::span(options.cachedData));
         if (cachedBytecode) {
             SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
@@ -2167,6 +2168,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
 
         if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
             RETURN_IF_EXCEPTION(scope, false);
+            this->cachedDataProvided = true;
             any = true;
         }
 

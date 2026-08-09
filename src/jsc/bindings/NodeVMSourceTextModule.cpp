@@ -112,7 +112,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 
-    if (cachedData.isEmpty()) {
+    // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
+    if (cachedDataValue.isUndefined()) {
         return ptr;
     }
 

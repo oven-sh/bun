@@ -3268,12 +3268,51 @@ extern "C" size_t Bun__gc(void* vm, bool sync);
 // live cell, the root that marked it) to /tmp/bun-napi-diag-<pid>.json. Keyed
 // on a file rather than argv/env so the process under test is byte-for-byte
 // the same as the one that fails.
-static constexpr size_t kBelowSpBytes = 96 * 1024;
+static constexpr size_t kBelowSpBytes = 256 * 1024;
 static uintptr_t bunNapiDiagBelowSpCopy[kBelowSpBytes / sizeof(uintptr_t)];
 static uintptr_t* bunNapiDiagBelowSpFrom = nullptr;
 static void* bunNapiDiagLastStackTopBefore = nullptr;
+// Callee-saved registers as they were on entry to gc()'s host function: these
+// propagate unchanged into the collector and are part of the captured register
+// state that the conservative scan visits.
+static uintptr_t bunNapiDiagCalleeSaved[12];
+static const char* const bunNapiDiagCalleeSavedNames[12] = {
+#if CPU(X86_64)
+    "rbx", "rbp", "r12", "r13", "r14", "r15", "", "", "", "", "", ""
+#elif CPU(ARM64)
+    "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "fp", ""
+#else
+    "", "", "", "", "", "", "", "", "", "", "", ""
+#endif
+};
+#if CPU(X86_64)
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { \
+    asm volatile("movq %%rbx, %0" : "=m"(bunNapiDiagCalleeSaved[0])); \
+    asm volatile("movq %%rbp, %0" : "=m"(bunNapiDiagCalleeSaved[1])); \
+    asm volatile("movq %%r12, %0" : "=m"(bunNapiDiagCalleeSaved[2])); \
+    asm volatile("movq %%r13, %0" : "=m"(bunNapiDiagCalleeSaved[3])); \
+    asm volatile("movq %%r14, %0" : "=m"(bunNapiDiagCalleeSaved[4])); \
+    asm volatile("movq %%r15, %0" : "=m"(bunNapiDiagCalleeSaved[5])); \
+} while (0)
+#elif CPU(ARM64)
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { \
+    asm volatile("str x19, %0" : "=m"(bunNapiDiagCalleeSaved[0])); \
+    asm volatile("str x20, %0" : "=m"(bunNapiDiagCalleeSaved[1])); \
+    asm volatile("str x21, %0" : "=m"(bunNapiDiagCalleeSaved[2])); \
+    asm volatile("str x22, %0" : "=m"(bunNapiDiagCalleeSaved[3])); \
+    asm volatile("str x23, %0" : "=m"(bunNapiDiagCalleeSaved[4])); \
+    asm volatile("str x24, %0" : "=m"(bunNapiDiagCalleeSaved[5])); \
+    asm volatile("str x25, %0" : "=m"(bunNapiDiagCalleeSaved[6])); \
+    asm volatile("str x26, %0" : "=m"(bunNapiDiagCalleeSaved[7])); \
+    asm volatile("str x27, %0" : "=m"(bunNapiDiagCalleeSaved[8])); \
+    asm volatile("str x28, %0" : "=m"(bunNapiDiagCalleeSaved[9])); \
+    asm volatile("str x29, %0" : "=m"(bunNapiDiagCalleeSaved[10])); \
+} while (0)
+#else
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { } while (0)
+#endif
 
-__attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(JSC::VM& vm, JSC::CallFrame* callFrame)
+__attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAreTheRoots(JSC::VM& vm, JSC::CallFrame* callFrame)
 {
     // 1. Every live cell start address after the gc() that just ran.
     WTF::HashSet<uintptr_t> liveCells;
@@ -3299,6 +3338,7 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
         fprintf(stderr, "[napi-diag] VM scratch-buffer conservative roots: %zu; checkpoint OSR side state present: %d\n", vmRoots.size(), (int)vm.hasCheckpointOSRSideState());
         for (size_t i = 0; i < vmRoots.size(); ++i) {
             auto p = reinterpret_cast<uintptr_t>(vmRoots.roots()[i]);
+            if (p < 16 || p == UINTPTR_MAX) continue;
             fprintf(stderr, "[napi-diag]   vmroot %p %s\n", (void*)p, liveCells.contains(p) ? describe(p) : "(not a live cell start)");
         }
     }
@@ -3356,6 +3396,13 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
         return cls;
     };
 
+    // 4b. Callee-saved registers on entry to gc()'s host function.
+    for (int i = 0; i < 12; ++i) {
+        if (!bunNapiDiagCalleeSavedNames[i][0]) continue;
+        uintptr_t base; const char* cls = interesting(bunNapiDiagCalleeSaved[i], base);
+        fprintf(stderr, "[napi-diag]   callee-saved %s = %p%s%s\n", bunNapiDiagCalleeSavedNames[i], (void*)bunNapiDiagCalleeSaved[i], cls ? " -> " : "", cls ? cls : "");
+    }
+
     // 5. The dead region below gc()'s frame as it was BEFORE the collection
     //    (this is what the collector's own frames were laid over), and vm.lastStackTop
     //    at that moment (sanitizeStackForVM only zeroes [lastStackTop, sp)).
@@ -3392,7 +3439,7 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
     fflush(stderr);
 }
 
-static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm, JSC::CallFrame* callFrame)
+__attribute__((noinline)) static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm, JSC::CallFrame* callFrame)
 {
 #if OS(WINDOWS)
     return;
@@ -3443,6 +3490,7 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagCapture
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
+    BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED();
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
 #if !OS(WINDOWS)
     if (access("/tmp/bun-napi-diag-request", F_OK) == 0)

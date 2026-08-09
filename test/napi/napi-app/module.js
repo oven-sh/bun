@@ -1259,6 +1259,11 @@ nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
   addon.test();
 };
 
+nativeTests.test_async_cleanup_hook_tsfn_release = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_tsfn_release.node");
+  addon.start();
+};
+
 nativeTests.test_cleanup_hook_duplicates = () => {
   const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
   addon.test();

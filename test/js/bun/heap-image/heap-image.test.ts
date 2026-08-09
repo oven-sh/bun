@@ -200,7 +200,7 @@ test("full GC right after restore is not stalled by the builder's parked threads
   expect(code).toBe(0);
 }, 60000);
 
-test("timers: \"keep\" — timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers", async () => {
+test('timers: "keep" — timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers', async () => {
   using dir = tempDir("bun-image-keeptimers", {});
   const img = join(String(dir), "kt.img");
   const fixture = join(import.meta.dir, "keeptimers-fixture.js");

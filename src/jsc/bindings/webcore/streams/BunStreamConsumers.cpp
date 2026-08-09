@@ -327,8 +327,7 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         RETURN_IF_EXCEPTION(scope, false);
         if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
             size_t oldSize = bytes.size();
-            // UTF-8 expansion can overshoot the reserve, and Vector CRASH()es past
-            // INT32_MAX capacity; the try-variants keep both catchable.
+            // UTF-8 expansion can exceed the reserved estimate.
             if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return false;
@@ -720,8 +719,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return rope.substring(1);
         return rope;
     }
-    // estimatedLength only undercounts the result (binary sizes are exact, strings count
-    // UTF-16 units), so over the limit is final; Vector CRASH()es past INT32_MAX capacity.
+    // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
     const double estimatedLength = accumulator.estimatedLength;
     if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
         || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {

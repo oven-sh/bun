@@ -300,7 +300,10 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: caller contract; each raw-ptr reborrow ends before the
         // dispatches inside `read`/`deinit` run.
         unsafe {
-            for pipe in [&raw mut (*this).stdout_reader, &raw mut (*this).stderr_reader] {
+            for pipe in [
+                &raw mut (*this).stdout_reader,
+                &raw mut (*this).stderr_reader,
+            ] {
                 #[cfg(unix)]
                 if !(*pipe).ended && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
                     // Streams readable data through `on_read_chunk`; reaching

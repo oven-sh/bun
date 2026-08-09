@@ -424,6 +424,19 @@ PYEOF
   ok "V8 stub 已编译: $SHIM_DIR/v8_stub.o"
 }
 
+# ─── 阶段8b: 重新链接 (V8 stub 注入后必须重跑 link) ──────────────────────
+# phase_build 的 ninja link 发生在 stub 注入之前, 产物缺少 stub 符号,
+# 运行时报 "symbol not found" (v8::Array::New / CpuProfiler::CollectSample).
+# stub 注入 build.ninja 后重新 link, 解析 Rust napi 引用的 __1 符号.
+phase_relink() {
+  info "=== 重新链接 (V8 stub 生效) ==="
+  if ! ninja -C "$OUTDIR" -j1 bun 2>&1 | tee "$TMPDIR/build.log"; then
+    err "重新链接失败 (查看 $TMPDIR/build.log)"
+    return 1
+  fi
+  ok "重新链接完成"
+}
+
 # ─── 阶段9: 签名 ─────────────────────────────────────────────────────────
 phase_sign() {
   info "=== 签名最终产物 ==="
@@ -458,6 +471,7 @@ main() {
   phase_set_env
   phase_build
   phase_icu_shim
+  phase_relink
   phase_sign
 
   ok "全部完成! 运行: $OUTDIR/bun-ohos --version"

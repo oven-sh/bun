@@ -69,9 +69,25 @@ bun_output::define_scoped_log!(log, fs_watch, hidden);
 // `Platform::init` can be retried on a later `get()` without two threads
 // racing to allocate; `OnceLock` provides the Acquire/Release publish so the
 // FSEvents-thread reads in `on_fs_event` need no `unsafe`.
-static DEFAULT_MANAGER: std::sync::OnceLock<&'static PathWatcherManager> =
-    std::sync::OnceLock::new();
+// A manager made by the process that built a startup snapshot owns that process's inotify/kqueue fd and reader thread;
+// after a restore it is left behind (never freed: detached watchers may still point at it) and a new one is made.
+static DEFAULT_MANAGER: core::sync::atomic::AtomicPtr<PathWatcherManager> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static DEFAULT_MANAGER_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
+
+/// The manager belonging to this process, if one has been made since the last restore.
+fn current_manager() -> Option<&'static PathWatcherManager> {
+    use core::sync::atomic::Ordering;
+    let m = DEFAULT_MANAGER.load(Ordering::Acquire);
+    if m.is_null()
+        || DEFAULT_MANAGER_EPOCH.load(Ordering::Acquire) != bun_core::startup_snapshot::epoch()
+    {
+        return None;
+    }
+    // SAFETY: only ever set to a leaked `&'static PathWatcherManager`.
+    Some(unsafe { &*m })
+}
 
 // ────────────────────────────────────────────────────────────────────────────────
 // PathWatcherManager
@@ -152,15 +168,18 @@ impl PathWatcherManager {
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
         // lock a garbage `m.mutex`). `get()` runs once per `fs.watch()` call; the mutex is
         // uncontended after initialization.
+        use core::sync::atomic::Ordering;
         let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-        if let Some(&m) = DEFAULT_MANAGER.get() {
+        if let Some(m) = current_manager() {
             return Ok(m);
         }
 
         let m = Platform::init()?;
-        // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
-        // above, so this is the first publish; `set` cannot fail.
-        let _ = DEFAULT_MANAGER.set(m);
+        DEFAULT_MANAGER.store(
+            core::ptr::from_ref::<PathWatcherManager>(m).cast_mut(),
+            Ordering::Release,
+        );
+        DEFAULT_MANAGER_EPOCH.store(bun_core::startup_snapshot::epoch(), Ordering::Release);
         Ok(m)
     }
 
@@ -1299,7 +1318,7 @@ impl Darwin {
         // watcher already unlinked. Forming a reference here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else {
+        let Some(manager) = current_manager() else {
             return;
         };
         let _g = manager.mutex.lock_guard();
@@ -1321,7 +1340,7 @@ impl Darwin {
     fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else {
+        let Some(manager) = current_manager() else {
             return;
         };
         let _g = manager.mutex.lock_guard();

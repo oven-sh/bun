@@ -20,7 +20,6 @@ const hasSnapshots = (() => {
   return !probe.stderr.toString().includes("not available in this build");
 })();
 const snapshotTest = test.skipIf(!hasSnapshots);
-const darwinSnapshotTest = test.skipIf(!hasSnapshots || process.platform !== "darwin");
 
 for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   snapshotTest(`snapshot round-trip: ${fixture}`, async () => {
@@ -417,8 +416,8 @@ snapshotTest(
   60000,
 );
 
-darwinSnapshotTest(
-  "fs.watch works in a restored process even though the builder had an FSEvents loop",
+snapshotTest(
+  "fs.watch works in a restored process even though the builder had a watcher thread",
   async () => {
     using dir = tempDir("bun-snapshot-fswatch", { a: { ".keep": "" }, b: { ".keep": "" } });
     const img = join(String(dir), "w.snapshot");

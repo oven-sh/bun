@@ -495,22 +495,24 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    // Relaxed load: writes are serialized on the per-entry
-                    // mutex held above; Release store pairs with the Acquire
-                    // fast-path load in `kind()`/`symlink()`.
-                    existing.need_stat.store(
-                        existing.need_stat.load(Ordering::Relaxed)
-                            || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
-                        Ordering::Release,
-                    );
-                    // TODO: is this right?
-                    if Some(existing.cache().kind) != found_kind {
-                        // if found_kind is null, we have set need_stat above, so we
-                        // store an arbitrary kind
+                    let kind_changed = Some(existing.cache().kind) != found_kind;
+                    if kind_changed {
+                        // if found_kind is null, need_stat is published as true
+                        // below, so the arbitrary kind stored here only lasts
+                        // until the lazy stat fills in the real one
                         existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
                         existing.set_cache_symlink(Interned::EMPTY);
                     }
+                    // Relaxed load: writes are serialized on the per-entry
+                    // mutex held above. The Release store runs after the cache
+                    // writes and pairs with the Acquire fast-path load in
+                    // `kind()`/`symlink()`.
+                    existing.need_stat.store(
+                        existing.need_stat.load(Ordering::Relaxed)
+                            || found_kind.is_none()
+                            || kind_changed,
+                        Ordering::Release,
+                    );
                     break 'brk existing_ptr;
                 }
             }

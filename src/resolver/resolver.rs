@@ -3952,7 +3952,8 @@ impl<'a> Resolver<'a> {
                 &[b".ts", b".tsx", b".mts"]
             } else if ext == b".mjs"
                 && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                    || !strings::path_contains_node_modules_folder(resolved_dir_info.abs_path))
+                    || !(resolved_dir_info.is_node_modules()
+                        || resolved_dir_info.is_inside_node_modules()))
             {
                 &[b".mts"]
             } else {
@@ -5394,11 +5395,28 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        // Probe the listing in one `entries_mutex` critical section: a
-        // concurrent resolver at a newer generation rewrites the `DirEntry`'s
-        // map in place under that lock. The entry pointer stays valid after
-        // unlock (EntryStore-owned).
-        if let Some(lookup) = dir_info.get_entry(self.generation, &base[..]) {
+        // One `entries_mutex` critical section for the probe and the listing
+        // fd: a concurrent resolver at a newer generation rewrites the
+        // `DirEntry` in place under that lock. The entry pointer stays valid
+        // after unlock (EntryStore-owned). The fd gate matches
+        // `DirInfo::get_file_descriptor`.
+        let looked_up = {
+            let realfs = &mut Fs::FileSystem::instance().fs;
+            let _entries_lock = realfs.entries_mutex.lock_guard();
+            dir_info
+                .get_entries_ref_locked(self.generation)
+                .map(|entries| {
+                    (
+                        entries.get(&base[..]),
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            entries.fd
+                        } else {
+                            FD::INVALID
+                        },
+                    )
+                })
+        };
+        if let Some((Some(lookup), dirname_fd)) = looked_up {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
@@ -5432,7 +5450,7 @@ impl<'a> Resolver<'a> {
                             secondary: None,
                         },
                         package_json: Some(std::ptr::from_ref(package_json)),
-                        dirname_fd: dir_info.get_file_descriptor(),
+                        dirname_fd,
                         ..Default::default()
                     };
                     return MatchStatus::Success;
@@ -5443,7 +5461,7 @@ impl<'a> Resolver<'a> {
                         primary: Path::init(out_buf),
                         secondary: None,
                     },
-                    dirname_fd: dir_info.get_file_descriptor(),
+                    dirname_fd,
                     ..Default::default()
                 };
                 return MatchStatus::Success;

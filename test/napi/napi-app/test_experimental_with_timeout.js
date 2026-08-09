@@ -13,6 +13,13 @@ console.log('Test function returned');
 arr = null;
 global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
 console.log('GC #1 (synchronous, same stack) returned without crashing');
+if (process.env.NAPI_DIAG_SNAPSHOT) {
+  // Retaining paths of whatever survived GC #1. (Building the snapshot runs a
+  // GC of its own; if that one finalizes the objects we crash right here,
+  // which the test also reports.)
+  require('fs').writeFileSync(process.env.NAPI_DIAG_SNAPSHOT, Bun.generateHeapSnapshot('v8'));
+  console.log('wrote heap snapshot after GC #1 to ' + process.env.NAPI_DIAG_SNAPSHOT);
+}
 setImmediate(() => {
   global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);
   console.log('GC #2 (from a fresh event-loop turn) returned without crashing');
@@ -30,6 +37,7 @@ setImmediate(() => {
 `], {
   env: { 
     ...process.env,
+    NAPI_DIAG_SNAPSHOT: path.join(__dirname, 'napi-diag-' + process.pid + '.heapsnapshot'),
     // Diagnostics: one line per GC cycle on stderr (C:<n> = conservative roots visited).
     BUN_JSC_logGC: "2",
     BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",

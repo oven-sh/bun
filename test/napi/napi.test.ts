@@ -1329,6 +1329,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         bunProc.exited,
       ]);
 
+      // Diagnostics: if the child left heap snapshots behind (it only does so
+      // when GC #1 failed to finalize), upload them as build artifacts.
+      const diagDir = join(__dirname, "napi-app");
+      const snapshots = readdirSync(diagDir).filter(f => f.startsWith("napi-diag-") && f.endsWith(".heapsnapshot"));
+      if (snapshots.length) {
+        console.error("napi diagnostics: heap snapshots:", snapshots.map(f => `${f} (${statSync(join(diagDir, f)).size} bytes)`));
+        if (process.env.BUILDKITE) {
+          const up = spawnSync({
+            cmd: ["buildkite-agent", "artifact", "upload", "napi-diag-*.heapsnapshot"],
+            cwd: diagDir,
+            env: process.env,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          console.error("napi diagnostics: artifact upload exit", up.exitCode);
+        }
+      }
       // Checked first so a failure prints everything the wrapper and child wrote.
       // Diagnostics: also fail (and so print everything, including the GC log)
       // when the crash only happened on the second, event-loop-turn GC.

@@ -2473,6 +2473,7 @@ describe.concurrent("lazy property builders", () => {
          } catch (e) {
            console.log("caught:" + e.constructor.name);
          }
+         console.log("recovered:" + typeof Bun.env);
          console.log("alive");`,
       ],
       env: bunEnv,
@@ -2480,8 +2481,37 @@ describe.concurrent("lazy property builders", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const expected = isWindows ? "caught:TypeError\nalive\n" : "typeof:object\nalive\n";
+    // The second access returns the cached fallback object instead of throwing
+    // again or crashing.
+    const expected = isWindows
+      ? "caught:TypeError\nrecovered:object\nalive\n"
+      : "typeof:object\nrecovered:object\nalive\n";
     expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // constructStdioWriteStream and constructStdin have their own clear+report
+  // blocks (they don't go through callLazyProcessBuilder), so pin their
+  // deferred ordering too.
+  it("defers stdio builder failure reports until after the lookup", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.Symbol = 123;
+         const order = [];
+         process.on("uncaughtException", e => order.push("uncaught:" + e.constructor.name));
+         order.push("stdout:" + String(process.stdout));
+         order.push("stdin:" + String(process.stdin));
+         process.on("exit", () => console.log(order.join(",")));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("stdout:undefined,stdin:undefined,uncaught:TypeError,uncaught:TypeError\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

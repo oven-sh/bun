@@ -947,7 +947,7 @@ it("skips properties whose lazy initializer throws instead of leaving the except
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });
@@ -975,7 +975,7 @@ it("building an invalid-argument error message survives lazy initializers that t
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ok\n");
   expect(proc.signalCode).toBeNull();
 });

@@ -1907,7 +1907,10 @@ install_buildkite() {
 		return
 	fi
 
-	buildkite_version="3.114.0"
+	# 3.127.0 is the first release that sets BUILDKITE_JOB_TIMED_OUT (agent
+	# PR #3871), which .buildkite/hooks/pre-exit needs to annotate job-level
+	# timeouts; 3.127.1 is what the healthy darwin tart hosts already run.
+	buildkite_version="3.127.1"
 	case "$arch" in
 	aarch64)
 		buildkite_arch="arm64"

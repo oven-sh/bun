@@ -24,12 +24,14 @@ status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
 [ -n "${BUILDKITE_JOB_ID:-}" ] || exit 0
 
 # The agent's Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell
-# env (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
-# BUILDKITE_JOB_TIMED_OUT=true when the cancel came from the job's
-# timeout_in_minutes rather than a user. A job-level timeout is a real failure
-# the build surfaces with no annotation at all, so it proceeds to the
-# annotation below; a user/build cancel stays silent (a canceled build
-# annotating every running job is noise, not signal).
+# env (buildkite/agent@3ab8ab31, v3.94.0+), and since v3.127.0 (agent PR
+# #3871) additionally BUILDKITE_JOB_TIMED_OUT=true when the cancel came from
+# the job's timeout_in_minutes rather than a user. A job-level timeout is a
+# real failure the build surfaces with no annotation at all, so it proceeds to
+# the annotation below; a user/build cancel stays silent (a canceled build
+# annotating every running job is noise, not signal). On v3.94.0-v3.126.x
+# agents timeouts set only BUILDKITE_JOB_CANCELLED and remain silent here;
+# scripts/bootstrap.sh pins 3.127.1 so rebaked machines distinguish them.
 timed_out=""
 if [ "${BUILDKITE_JOB_TIMED_OUT:-}" = "true" ]; then
   timed_out=1
@@ -37,13 +39,10 @@ else
   if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
   # The exit-code fallback below is only needed while agents older than
   # v3.94.0 remain in the fleet (as of 2026-08: the linux queue=ci image and
-  # the darwin tart hosts sourdough/challah are on v3.87.0;
-  # scripts/bootstrap.sh already pins 3.114.0, those images just need
-  # rebaking). Those agents set neither variable above, so their job timeouts
-  # are indistinguishable from cancels and stay silent here. -1 is the posix
-  # agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT, both
-  # observed on cancel in build 76127. Delete this `case` once every agent is
-  # v3.94.0+.
+  # the darwin tart hosts sourdough/challah are on v3.87.0). Those agents set
+  # neither variable above. -1 is the posix agent-killed code, 3221225786 is
+  # Windows STATUS_CONTROL_C_EXIT, both observed on cancel in build 76127.
+  # Delete this `case` once every agent is v3.94.0+.
   case "$status" in -1|3221225786) exit 0 ;; esac
 fi
 
@@ -55,10 +54,13 @@ label="${BUILDKITE_LABEL:-${BUILDKITE_STEP_KEY:-job}}"
 job_url="${BUILDKITE_BUILD_URL:-}#${BUILDKITE_JOB_ID}"
 
 detail=""
+# macOS ships bash 3.2, which parses $'\n' inside "${var:+...}" as the literal
+# five characters; hoisting it keeps the join portable.
+nl=$'\n'
 # $1 = section name, $2 = content; empty content adds nothing.
 append_detail() {
   [ -n "$2" ] || return 0
-  detail+="${detail:+$'\n'}$1: $2"
+  detail+="${detail:+$nl}$1: $2"
 }
 
 # darwin tart agents redirect `tart run` to /tmp/{bk,sc}-<job-id>.log on the
@@ -86,7 +88,9 @@ if [ -n "$timed_out" ] && [ -n "$is_tart" ]; then
   if [ -x "$tart_bin" ]; then
     append_detail "tart list" "$("$tart_bin" list 2>&1 | head -c 2048 || true)"
   fi
-  leases="/var/db/dhcpd_leases"
+  # Overridable so the tests can point it at a fixture; linux/windows CI has
+  # no real leases file and the darwin tart guests are DHCP clients, not hosts.
+  leases="${PRE_EXIT_DHCPD_LEASES_FILE:-/var/db/dhcpd_leases}"
   if [ -r "$leases" ]; then
     append_detail "$leases" "$(wc -l <"$leases" 2>/dev/null | tr -d ' ') lines, tail: $(tail -c 2048 "$leases" 2>/dev/null || true)"
   fi

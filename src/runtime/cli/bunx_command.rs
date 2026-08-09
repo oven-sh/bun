@@ -1754,6 +1754,11 @@ impl BunxCommand {
                 PackageBinLookup::Found(destination) => {
                     let out = destination.as_bytes();
                     if Self::is_trusted_cached_binary(destination, uid) {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "running installed binary: {}",
+                            BStr::new(out)
+                        );
                         let stored = fs.dirname_store.append_slice(out)?;
                         Run::run_binary(
                             ctx,
@@ -1787,6 +1792,11 @@ impl BunxCommand {
                 PackageBinLookup::Found(destination) => {
                     let out = destination.as_bytes();
                     if Self::is_trusted_cached_binary(destination, uid) {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "running installed binary: {}",
+                            BStr::new(out)
+                        );
                         let stored = fs.dirname_store.append_slice(out)?;
                         Run::run_binary(
                             ctx,
@@ -1835,6 +1845,7 @@ impl BunxCommand {
             // attacker can race the install and plant a uid-mismatched entry.
             // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
+                bun_output::scoped_log!(bunx, "running installed binary: {}", BStr::new(out));
                 let stored = fs.dirname_store.append_slice(out)?;
                 Run::run_binary(
                     ctx,
@@ -1895,6 +1906,11 @@ impl BunxCommand {
                         let out: &[u8] = destination.as_bytes();
                         // Same TOCTOU hardening as the post-install probe above.
                         if Self::is_trusted_cached_binary(destination, uid) {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "running installed binary: {}",
+                                BStr::new(out)
+                            );
                             let stored = fs.dirname_store.append_slice(out)?;
                             Run::run_binary(
                                 ctx,

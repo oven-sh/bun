@@ -1028,7 +1028,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                     for (size_t base = 0; base < size; base += sizeof fbuf) {
                         size_t n = std::min(sizeof fbuf, size - base);
                         uintptr_t a0 = addr + base;
-                        uintptr_t page = a0 & ~(uintptr_t)16383;
+                        uintptr_t page = a0 & ~(uintptr_t)(getpagesize() - 1);
                         auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
                         if (r == snapshotRuns.begin()) break;
                         --r;
@@ -1252,7 +1252,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         {
             std::vector<int> disp(1);
             mach_vm_size_t cnt = 1;
-            if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & 0x8 /* dirty */)) {
+            if (mach_vm_page_range_query(mach_task_self(), (uintptr_t)cell & ~(pg - 1), pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS && !(disp[0] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED))) {
                 scanned++;
                 return IterationStatus::Continue;
             }
@@ -1635,7 +1635,6 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
                 return true; };
             mi_heap_visit_blocks(mi_heap_main(), true, visitLive, &live);
             if (freshHeap) mi_heap_visit_blocks(freshHeap, true, visitLive, &live);
-            (void)0;
             fprintf(stderr, "[memdebug] live malloc outside the snapshot (main + fresh heaps): %.1f MB in %zu blocks (snapshot-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.snapshotBytes / 1048576.0);
 
             { // The residue question: are the fresh arenas' pages empty-but-retained, or sparsely used? Per page (area), outside the snapshot.
@@ -1683,8 +1682,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
                 return true; };
                 mi_heap_visit_blocks(mi_heap_main(), false, visitArea, &areas);
                 if (freshHeap) mi_heap_visit_blocks(freshHeap, false, visitArea, &areas);
-                (void)0;
-                static const char* names[5] = { "empty", "<10%", "<25%", "<50%", ">=50%" };
+                    static const char* names[5] = { "empty", "<10%", "<25%", "<50%", ">=50%" };
                 fprintf(stderr, "[memdebug] fresh pages by utilization:");
                 for (int b = 0; b < 5; b++)
                     fprintf(stderr, "  %s: %zu pages / %.1f MB", names[b], areas.pages[b], areas.committed[b] / 1048576.0);

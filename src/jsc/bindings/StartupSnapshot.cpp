@@ -1051,7 +1051,7 @@ static uint64_t platformCpuFeatures()
     f |= (uint64_t)(c & ((1u << 0) | (1u << 9) | (1u << 19) | (1u << 20) | (1u << 23) | (1u << 25) | (1u << 28))); // sse3 ssse3 sse4.1 sse4.2 popcnt aes avx
     cpuid(7, 0);
     f |= (uint64_t)(b & ((1u << 3) | (1u << 5) | (1u << 8) | (1u << 16) | (1u << 17) | (1u << 30) | (1u << 31))) << 32; // bmi1 avx2 bmi2 avx512f avx512dq avx512bw avx512vl
-    f |= 1ull << 63; // "x86-64" tag
+    f |= 1ull << 30; // "x86-64" tag: a bit neither leaf uses (leaf 1 occupies 0-28, leaf 7 is shifted to 32-63)
 #elif CPU(ARM64)
 #if OS(DARWIN)
     const char* keys[] = { "hw.optional.arm.FEAT_AES", "hw.optional.arm.FEAT_SHA256", "hw.optional.arm.FEAT_CRC32", "hw.optional.arm.FEAT_LSE", "hw.optional.arm.FEAT_DotProd", "hw.optional.arm.FEAT_SHA3", "hw.optional.arm.FEAT_I8MM", "hw.optional.arm.FEAT_BF16", "hw.optional.arm.FEAT_SME", "hw.optional.arm.FEAT_SVE" };
@@ -1524,11 +1524,6 @@ static void snapshotRestoreAndRun(const char* path)
     }
     if (hdr.textBase != platformTextBase()) {
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] ASLR slide differs (snapshot text %llx vs ours %llx); booting normally\n", (unsigned long long)hdr.textBase, (unsigned long long)platformTextBase());
-        close(fd);
-        return;
-    }
-    if (false) {
-        if (snapshotVerbose()) fprintf(stderr, "[snapshot] %s was produced by a different build of this executable; booting normally\n", path);
         close(fd);
         return;
     }

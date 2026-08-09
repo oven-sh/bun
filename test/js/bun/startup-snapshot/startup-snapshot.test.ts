@@ -271,7 +271,7 @@ snapshotTest(
         stdout: "pipe",
         stderr: "pipe",
       });
-      await p.exited;
+      await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]); // drained together: a chatty build must not block on a full pipe
     }
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
@@ -351,8 +351,7 @@ snapshotTest(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const out = await p.stdout.text();
-      await p.exited;
+      const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
       expect(out).toContain('[js] build default: status=0 stdout="out\\n"');
     }
     await using p = Bun.spawn({
@@ -383,7 +382,7 @@ snapshotTest(
         stdout: "pipe",
         stderr: "pipe",
       });
-      await p.exited;
+      await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]); // drained together: a chatty build must not block on a full pipe
     }
     const runs: any[] = [];
     for (let i = 0; i < 2; i++) {
@@ -424,8 +423,7 @@ snapshotTest(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const out = await p.stdout.text();
-      await p.exited;
+      const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
       expect(JSON.parse(out.match(/\[js\] build (.*)/)![1]).size).toBeGreaterThan(0);
     }
     await using p = Bun.spawn({
@@ -502,7 +500,7 @@ snapshotTest(
         stdout: "pipe",
         stderr: "pipe",
       });
-      await p.exited;
+      await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]); // drained together: a chatty build must not block on a full pipe
     }
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],

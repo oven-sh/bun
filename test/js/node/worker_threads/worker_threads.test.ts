@@ -196,6 +196,70 @@ test("all worker_threads worker instance properties are present", async () => {
   await worker.terminate();
 });
 
+// JSC's Atomics.wait loop only exits on vm.hasTerminationRequest(), which used
+// to be set only at a JS safepoint on the waiting thread itself, so the
+// NeedTermination wakeup re-parked forever and terminate() never completed.
+test("terminate() interrupts a worker blocked in Atomics.wait", async () => {
+  const sab = new SharedArrayBuffer(4);
+  const ia = new Int32Array(sab);
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("node:worker_threads");
+     const ia = new Int32Array(workerData);
+     parentPort.postMessage("ready");
+     for (;;) Atomics.wait(ia, 0, 0);`,
+    { eval: true, workerData: sab },
+  );
+  await once(worker, "message");
+  // Atomics.notify returns how many agents it woke; spinning until it returns
+  // 1 proves the worker thread is parked inside Atomics.wait.
+  while (Atomics.notify(ia, 0, 1) === 0) {}
+  expect(await worker.terminate()).toBe(1);
+});
+
+// A worker's own exit (process.exit or an uncaught throw) joins its child
+// workers during teardown, so a grandchild parked in Atomics.wait must be
+// interruptible or the middle worker never finishes exiting and its parent
+// never receives 'exit'.
+test("process.exit() in a worker completes while its own child worker is parked in Atomics.wait", async () => {
+  using dir = tempDir("worker-nested-atomics-exit", {
+    "nested-fixture.mjs": `
+      import { Worker, parentPort, workerData } from "node:worker_threads";
+      const role = workerData?.role ?? "main";
+      if (role === "main") {
+        const child = new Worker(new URL(import.meta.url), { workerData: { role: "child" } });
+        child.on("message", m => console.log(m));
+        child.on("exit", code => console.log("child exit-event", code));
+      } else if (role === "child") {
+        const sab = new SharedArrayBuffer(4);
+        const ia = new Int32Array(sab);
+        const grand = new Worker(new URL(import.meta.url), { workerData: { role: "grand", sab } });
+        grand.on("message", () => {
+          // Spin until notify reports one woken agent: the grandchild is
+          // provably parked in the futex (it re-enters it right away).
+          while (Atomics.notify(ia, 0, 1) === 0) {}
+          parentPort.postMessage("child exiting");
+          process.exit(5);
+        });
+      } else {
+        parentPort.postMessage("parked");
+        const ia = new Int32Array(workerData.sab);
+        for (;;) Atomics.wait(ia, 0, 0);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "nested-fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("child exiting\nchild exit-event 5\n");
+  expect(exitCode).toBe(0);
+});
+
 test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url));
   expect(threadId).toBe(0);

@@ -289,8 +289,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         if (value.isString()) {
             String string = asString(value)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto utf8 = string.utf8();
-            appended = bytes.tryAppend(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+            appended = Bun::WebStreams::appendUTF8WithinStringLimit(string, bytes);
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
             if (!view->isDetached())
                 appended = bytes.tryAppend(view->span());
@@ -308,8 +307,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        auto utf8 = rope.utf8();
-        if (!bytes.tryAppend(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() })) [[unlikely]] {
+        if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
         }

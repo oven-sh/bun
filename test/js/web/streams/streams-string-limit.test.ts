@@ -78,4 +78,57 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
     `);
     expect(result).toEqual(threw);
   });
+
+  // WTF::String::utf8() aborts once its conversion needs more than INT32_MAX bytes of
+  // scratch (2x the length for 8-bit strings), so a mixed stream with a near-limit string
+  // chunk crashed in the encode even when the real UTF-8 total fit. The consumers now size
+  // and write through simdutf instead.
+  test(
+    "mixed chunks with a big ASCII string chunk resolve when the UTF-8 total fits",
+    async () => {
+      const result = await run(`
+        const big = Buffer.alloc(1200000000, "a").toString();
+        const rs = new ReadableStream({
+          start(c) {
+            c.enqueue(new Uint8Array([65]));
+            c.enqueue(big);
+            c.close();
+          },
+        });
+        try {
+          const text = await Bun.readableStreamToText(rs);
+          console.log("resolved", text.length);
+        } catch (e) {
+          console.log("threw", e.name, e.message);
+        }
+      `);
+      expect(result).toEqual({ stdout: "resolved 1200000001\n", stderr: "", exitCode: 0 });
+    },
+    60_000,
+  );
+
+  test(
+    "mixed chunks whose UTF-8 expansion passes the limit reject",
+    async () => {
+      const result = await run(`
+        // 1.2e9 U+00E9 chars: a Latin1 string whose UTF-8 form is 2.4e9 bytes.
+        const big = Buffer.alloc(1200000000, 233).toString("latin1");
+        const rs = new ReadableStream({
+          start(c) {
+            c.enqueue(new Uint8Array([65]));
+            c.enqueue(big);
+            c.close();
+          },
+        });
+        try {
+          const text = await Bun.readableStreamToText(rs);
+          console.log("resolved", text.length);
+        } catch (e) {
+          console.log("threw", e.name, e.message);
+        }
+      `);
+      expect(result).toEqual(threw);
+    },
+    60_000,
+  );
 });

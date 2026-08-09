@@ -283,6 +283,23 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
 }
 
+bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+{
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    if (!byteLength)
+        return true;
+    size_t oldSize = bytes.size();
+    // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
+    if (exceedsStringLimit(oldSize + byteLength) || !bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
+        return false;
+    size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
+    // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
+    ASSERT(written == byteLength);
+    if (written < byteLength) [[unlikely]]
+        bytes.shrink(oldSize + written);
+    return true;
+}
+
 // `obj[name](...args)` with `this` = obj.
 static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
 {
@@ -325,18 +342,9 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
     if (chunk.isString()) {
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
-            size_t oldSize = bytes.size();
-            // UTF-8 expansion can exceed the reserved estimate.
-            if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return false;
-            }
-            size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
-            // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
-            ASSERT(written == byteLength);
-            if (written < byteLength) [[unlikely]]
-                bytes.shrink(oldSize + written);
+        if (!appendUTF8WithinStringLimit(string, bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
         }
         return true;
     }
@@ -747,8 +755,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         WTF::String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        WTF::CString utf8 = rope.utf8();
-        if (!bytes.tryAppend(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() })) [[unlikely]] {
+        if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);
             return WTF::String();

@@ -1030,11 +1030,9 @@ impl JSGlobalObject {
     }
 
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        self.take_exception(proof)
-            .to_error()
-            .unwrap_or_else(|| {
-                panic!("Couldn't convert a JavaScript exception to an Error instance.");
-            })
+        self.take_exception(proof).to_error().unwrap_or_else(|| {
+            panic!("Couldn't convert a JavaScript exception to an Error instance.");
+        })
     }
 
     pub fn try_take_exception(&self) -> Option<JSValue> {

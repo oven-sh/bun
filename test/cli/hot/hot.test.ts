@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,114 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// The watcher thread walks the cached directory listing of a changed watched
+// directory, while FileSystemRouter.reload() and Bun.build() rewrite the same
+// listing in place on the JS/bundler threads. Skipped on Windows: the watcher
+// handles directory events there without touching the listing.
+it.skipIf(isWindows)(
+  "directory events race reload() and Bun.build() rewriting the same cached listing",
+  async () => {
+    const files: Record<string, string> = {
+      "main.ts": /* ts */ `
+        import "./pages/p1.tsx";
+        import "./pages/p2.tsx";
+        import path from "path";
+        const pagesDir = path.join(import.meta.dir, "pages");
+        const entrypoints: string[] = [];
+        for (let i = 1; i <= 20; i++) entrypoints.push(path.join(pagesDir, "p" + i + ".tsx"));
+        const router = new Bun.FileSystemRouter({
+          dir: pagesDir,
+          style: "nextjs",
+          fileExtensions: [".tsx"],
+        });
+        // The first build completes with generation 0 and the bundle thread
+        // then bumps its generation, so every later build's resolver re-reads
+        // the directory listing in place.
+        await Bun.build({ entrypoints, target: "bun", throw: false });
+        console.log("ready");
+        let matches = 0;
+        let buildsOk = true;
+        for (let round = 0; round < 30; round++) {
+          const builds = Array.from({ length: 4 }, () =>
+            Bun.build({ entrypoints, target: "bun", throw: false }),
+          );
+          for (let i = 0; i < 50; i++) {
+            router.reload();
+            const m = router.match("/p7");
+            if (m && m.filePath.endsWith("p7.tsx")) matches++;
+          }
+          const results = await Promise.all(builds);
+          buildsOk &&= results.every(r => r.success);
+        }
+        console.log("matches", matches, "builds-ok", buildsOk);
+        process.exit(0);
+      `,
+    };
+    for (let i = 1; i <= 20; i++) {
+      files[`pages/p${i}.tsx`] = `export default ${i};\n`;
+    }
+    using dir = tempDir("hot-direntry-race", files);
+
+    // --hot watches main.ts, the imported pages, and (through them) pages/
+    // itself as a directory. Run in a subprocess so a crash is observable as
+    // a signal instead of taking down the test runner.
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let stdout = "";
+    const ready = Promise.withResolvers<void>();
+    const stdoutDone = (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("ready\n")) ready.resolve();
+      }
+    })();
+    // If the fixture dies before printing "ready", unblock the wait so the
+    // assertions below report the crash instead of hanging.
+    const exited = proc.exited.then(code => {
+      ready.resolve();
+      return code;
+    });
+    await ready.promise;
+
+    // Churn pages/ from outside while the fixture's reload()/build() loops
+    // rewrite its cached listing: every write lands a directory event on the
+    // watcher thread, which then walks that listing. The churned names use a
+    // transpilable extension (so the walk visits them) but are never imported
+    // and are excluded by fileExtensions, so no reload fires and the
+    // fixture's counters stay deterministic.
+    let running = true;
+    void exited.finally(() => {
+      running = false;
+    });
+    let i = 0;
+    while (running) {
+      for (let k = 0; k < 4; k++, i++) {
+        writeFileSync(join(String(dir), "pages", `churn-${i % 32}.ts`), `export const v = ${i};\n`);
+      }
+      if (i % 64 === 0) {
+        rmSync(join(String(dir), "pages", `churn-${(i + 8) % 32}.ts`), { force: true });
+      }
+      await Bun.sleep(4);
+    }
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), exited]);
+    await stdoutDone;
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ready\nmatches 1500 builds-ok true\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  isDebug ? Infinity : 60_000,
 );

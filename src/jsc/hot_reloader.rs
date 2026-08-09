@@ -405,8 +405,14 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
+    /// Last cached listing seen for each watched directory, kept after
+    /// `bust_dir_cache` evicts the directory so later events can still
+    /// invalidate the per-file stat caches of its entries. The pointees are
+    /// cache-owned leaked `Box<DirEntry>`s (process lifetime), but their
+    /// `data` maps are rewritten in place under `entries_mutex`, so every
+    /// walk takes that lock (see `probe_entries_cache`).
     #[cfg(not(windows))]
-    pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
+    pub(crate) tombstones: StringHashMap<*mut Fs::DirEntry>,
 
     /// See [`HotReloaderCtx::reload_handle`].
     pub(crate) reload_handle: Option<crate::VmHandle>,
@@ -792,13 +798,40 @@ where
     }
 
     #[cfg(not(windows))]
-    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
+    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::DirEntry) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
     #[cfg(not(windows))]
-    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
+    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::DirEntry> {
         self.tombstones.get(key).copied()
+    }
+
+    /// Looks up `key` in the process-global directory-entry cache and, when a
+    /// listing is cached, returns the `DirEntry`'s stable address (`None` for
+    /// a cached read error).
+    ///
+    /// This runs on the watcher thread while resolver/bundler threads rewrite
+    /// the cache in place under `entries_mutex` (`read_directory`,
+    /// `entries_at`), so the probe takes that lock. The returned pointer is a
+    /// cache-owned leaked `Box<DirEntry>` and stays valid after the guard
+    /// drops; only the lookup itself is a critical section. Lock order: the
+    /// platform watcher holds `Watcher.mutex` around `on_file_update`, and
+    /// `Watcher.mutex` → `entries_mutex` is the established order
+    /// (`bust_dir_cache` takes it the same way); nothing acquires them in
+    /// reverse.
+    #[cfg(not(windows))]
+    fn probe_entries_cache(
+        rfs: &mut Fs::file_system::RealFS,
+        key: &[u8],
+    ) -> Option<*mut Fs::DirEntry> {
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries.get(key) {
+            Some(Fs::EntriesOption::Entries(existing)) => {
+                Some(std::ptr::from_mut::<Fs::DirEntry>(*existing))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
@@ -969,7 +1002,7 @@ where
                     #[cfg(not(windows))]
                     {
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
-                        let mut entries_option: Option<*mut Fs::EntriesOption> = None;
+                        let mut entries_option: Option<*mut Fs::DirEntry> = None;
 
                         // Note: the affected-name element type differs by
                         // platform (kqueue vs inotify). Split into two locals;
@@ -980,9 +1013,7 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                // SAFETY: hot-reload runs single-threaded on the JS thread;
-                                // no other live `&mut EntriesOption` for this key here.
-                                if let Some(existing) = rfs.entries.get(file_path) {
+                                if let Some(existing) = Self::probe_entries_cache(rfs, file_path) {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
@@ -1073,7 +1104,7 @@ where
                         };
 
                         if affected_len > 0 && !IS_KQUEUE {
-                            if let Some(existing) = rfs.entries.get(file_path) {
+                            if let Some(existing) = Self::probe_entries_cache(rfs, file_path) {
                                 self.put_tombstone(file_path, existing);
                                 entries_option = Some(existing);
                             } else if let Some(existing) = self.get_tombstone(file_path) {
@@ -1134,11 +1165,6 @@ where
                         }
 
                         if let Some(dir_ent) = entries_option {
-                            // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration. Shared access only —
-                            // `entries()` takes `&self` and per-entry mutation below goes
-                            // through the entry's own mutex + cells.
-                            let dir_ent = unsafe { &*dir_ent };
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1171,10 +1197,33 @@ where
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        if let Some(file_ent) = dir_ent.entries().get(changed_name)
-                                        {
+                                        // Walk the cached listing's `data`
+                                        // map under `entries_mutex`: resolver
+                                        // and bundler threads rewrite it in
+                                        // place under that lock
+                                        // (`entries_at_locked`), dropping the
+                                        // old bucket allocation, so an
+                                        // unlocked walk can read freed
+                                        // memory. The `*mut Entry` the lookup
+                                        // yields is EntryStore-owned (process
+                                        // lifetime) and stays valid after the
+                                        // guard drops.
+                                        let file_ent: Option<core::ptr::NonNull<Fs::Entry>> = {
+                                            let _entries_lock = rfs.entries_mutex.lock_guard();
+                                            // SAFETY: `dir_ent` is cache-owned
+                                            // (see `probe_entries_cache`); the
+                                            // shared borrow is confined to
+                                            // this statement, under the lock
+                                            // that serializes in-place
+                                            // rewrites.
+                                            let lookup = unsafe { (*dir_ent).get(changed_name) };
+                                            lookup.map(|l| core::ptr::NonNull::from(l.entry()))
+                                        };
+                                        if let Some(file_ent) = file_ent {
                                             // reset the file descriptor
-                                            let ent = file_ent.entry();
+                                            // SAFETY: EntryStore-owned slot;
+                                            // never freed.
+                                            let ent = unsafe { file_ent.as_ref() };
                                             {
                                                 // Every cached-`Entry` rewrite takes
                                                 // the per-entry mutex.

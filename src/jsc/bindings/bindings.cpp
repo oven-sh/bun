@@ -5173,18 +5173,26 @@ void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 // JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
 // pending (unless termination is currently deferred), whether or not the NeedTermination trap the
 // requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
+// The caller returns Err(Terminated) on the strength of it, so the exception this leaves behind is
+// a checked one: acknowledge it here rather than let the next scope constructed on this thread
+// (typically the module loader's) be the first to see it.
 [[ZIG_EXPORT(nothrow)]]
 void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;
-    if (vm.hasPendingTerminationException())
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.hasPendingTerminationException()) {
+        EXCEPTION_ASSERT(scope.exception());
         return;
+    }
     if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.notifyNeedTermination();
     if (vm.hasTerminationRequest())
         vm.throwTerminationException();
     else
         vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
+    // Pending now unless termination is deferred on this thread (then it lands when the deferral ends).
+    EXCEPTION_ASSERT(scope.exception() || !vm.hasPendingTerminationException());
 }
 
 // These may be called concurrently from another thread.

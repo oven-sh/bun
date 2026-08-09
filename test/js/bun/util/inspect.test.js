@@ -936,6 +936,12 @@ it("clears an exception thrown by a property get mid-walk", async () => {
   // pending aborted debug builds when the next lazy property's host callback
   // observed it.
   const fixture = `
+    // Warm lazy dependencies that cannot load once Symbol is clobbered, so the
+    // only failure left is the property-walk behavior this test covers:
+    // process.env (built by a JS builtin on Windows) and node:util (loaded on
+    // first use of the global util.inspect helper).
+    process.env.PATH;
+    require("node:util");
     globalThis.Symbol = 123;
     let thrown;
     try {
@@ -953,10 +959,9 @@ it("clears an exception thrown by a property get mid-walk", async () => {
     cmd: [bunExe(), "-e", fixture],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("ok\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
 });

@@ -8,6 +8,8 @@ use bun_collections::{HashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
+use bun_paths::resolve_path;
+use bun_resolver::fs::FileSystem;
 use bun_semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
 };
@@ -3397,18 +3399,29 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
                 // Mirror `Package::parse_dependency`: a root dependency on a
                 // folder other than this member's directory replaced the
-                // member's workspace dependency.
+                // member's workspace dependency. The stored dependency holds
+                // the raw `file:` literal (possibly absolute), so apply the
+                // same join + relativize it applied before comparing.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
                     lockfile.buffers.dependencies.as_slice()[off..]
                         .iter()
                         .any(|dep| {
-                            dep.name_hash == name_hash
-                                && dep.version.tag == DependencyVersionTag::Folder
-                                && !folder_path_is_workspace_path(
-                                    dep.version.folder().slice(bytes),
-                                    path,
-                                )
+                            if dep.name_hash != name_hash
+                                || dep.version.tag != DependencyVersionTag::Folder
+                            {
+                                return false;
+                            }
+                            let top = FileSystem::instance().top_level_dir();
+                            let mut abs_buf = bun_paths::path_buffer_pool::get();
+                            let joined =
+                                resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+                                    top,
+                                    &mut abs_buf[..],
+                                    &[dep.version.folder().slice(bytes)],
+                                );
+                            let relative = resolve_path::relative(top, joined);
+                            !folder_path_is_workspace_path(relative, path)
                         })
                 };
                 if overridden {

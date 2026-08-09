@@ -401,33 +401,40 @@ describe("workspace and file: dependency sharing a name", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true });
   });
 
-  test.concurrent("file: dependency naming the member's directory still links the member", async () => {
-    using ctx = await setupTest();
-    const { packageDir, env } = ctx;
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "sandbox",
-          version: "1.0.0",
-          workspaces: ["packages/*"],
-          dependencies: { alpha: "file:./packages/alpha" },
-        }),
-      ),
-      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "1.0.0" })),
-    ]);
+  test.concurrent.each(["relative", "absolute"])(
+    "%s file: dependency naming the member's directory still links the member",
+    async kind => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const literal = kind === "absolute" ? `file:${join(packageDir, "packages", "alpha")}` : "file:./packages/alpha";
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "sandbox",
+            version: "1.0.0",
+            workspaces: ["packages/*"],
+            dependencies: { alpha: literal },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "alpha", "package.json"),
+          JSON.stringify({ name: "alpha", version: "1.0.0" }),
+        ),
+      ]);
 
-    await runBunInstall(env, packageDir);
+      await runBunInstall(env, packageDir);
 
-    const lockfile = await file(join(packageDir, "bun.lock")).text();
-    expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
-    expect(lockfile).toContain(`"alpha": ["alpha@workspace:packages/alpha"]`);
-    expect(lockfile).not.toContain("alpha@file:");
-    expect(await file(join(packageDir, "node_modules", "alpha", "package.json")).json()).toEqual({
-      name: "alpha",
-      version: "1.0.0",
-    });
-  });
+      const lockfile = await file(join(packageDir, "bun.lock")).text();
+      expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
+      expect(lockfile).toContain(`"alpha": ["alpha@workspace:packages/alpha"]`);
+      expect(lockfile).not.toContain("alpha@file:");
+      expect(await file(join(packageDir, "node_modules", "alpha", "package.json")).json()).toEqual({
+        name: "alpha",
+        version: "1.0.0",
+      });
+    },
+  );
 
   test.concurrent("aliased file: dependency colliding with another member's name", async () => {
     using ctx = await setupTest();

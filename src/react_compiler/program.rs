@@ -498,10 +498,6 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateNoDerivedComputationsInEffects" => {
                 env_bool!(validate_no_derived_computations_in_effects, val)
             }
-            b"validateNoDerivedComputationsInEffectsExp"
-            | b"validateNoDerivedComputationsInEffects_exp" => {
-                env_bool!(validate_no_derived_computations_in_effects_exp, val)
-            }
             b"validateNoJsxInTryStatements" | b"validateNoJSXInTryStatements" => {
                 env_bool!(validate_no_jsx_in_try_statements, val)
             }

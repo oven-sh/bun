@@ -3913,19 +3913,16 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // The value must STAY in the visited map while the error printer
-            // runs: it re-enters this formatter for the error's properties
-            // (`cause` rendered inline, the `errors` array), and an error
-            // reachable from itself through those would otherwise recurse
-            // until the stack runs out (e.cause = e; e.errors = [e]).
+            // Deliberately left in the visited map: the printer re-enters
+            // this formatter for the error's `cause`/`errors` properties, and
+            // removing the value here let a self-referencing error recurse
+            // until stack overflow.
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
-            // `print_errorlike_object` returns unit and can leave a pending
-            // exception (e.g. the AggregateError branch swallows `for_each`
-            // failures); restore the JsResult contract for `?`-chaining
-            // callers.
+            // `print_errorlike_object` returns unit; surface a pending
+            // exception as Err for `?`-chaining callers.
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }

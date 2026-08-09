@@ -6398,13 +6398,9 @@ impl VirtualMachine {
                             global_ref.clear_exception();
                         }
                     } else if global_ref.has_exception() || formatter.failed {
-                        // Ok with the exception left pending, deliberately:
-                        // Err here would be cleared by
-                        // `print_error_from_maybe_private_data`, and callers
-                        // depend on the exception surviving (Bun.inspect
-                        // re-throws the stack-overflow RangeError;
-                        // `Formatter::print_error` converts it to Err(Thrown)
-                        // at the formatter boundary).
+                        // Deliberate Ok with the exception left pending: Err
+                        // would get cleared upstream, and Bun.inspect rethrows
+                        // the pending overflow.
                         return Ok(());
                     }
 

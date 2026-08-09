@@ -3461,7 +3461,6 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
         if payload.is_empty() {
@@ -3548,7 +3547,6 @@ impl H2FrameParser {
         }
         Some(stream)
     }
-
 
     fn to_writer(&self) -> DirectWriterStruct {
         DirectWriterStruct {

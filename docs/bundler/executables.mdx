@@ -373,7 +373,11 @@ What the runtime refreshes on its own in a restored process: `process.argv`, `pr
 
 While the image is being built, the runtime refuses to talk to the network, so nothing fetched during the build can end up frozen into the executable; set `BUN_IMAGE_ALLOW_LOCAL_IO=1` for the build run if startup legitimately reads files, runs helpers or binds local sockets. An image is only used when the executable is launched with the same arguments as the build run, on the same OS build (system libraries may move between reboots; that is handled), and when the `envGate` variables match; in every other case, and with `BUN_IMAGE=0`, the executable boots normally. The first launch inflates the image into `$XDG_CACHE_HOME/bun/images` (or `~/.cache/bun/images`).
 
-<Note>The saving is startup work: an app that builds a lot of state at startup starts in the time it takes to map a file, and the imaged state stays shared, file-backed and clean until written to. State that must be rebuilt per machine costs the same as before.</Note>
+<Note>
+  The saving is startup work: an app that builds a lot of state at startup starts in the time it takes to map a file,
+  and the imaged state stays shared, file-backed and clean until written to. State that must be rebuilt per machine
+  costs the same as before.
+</Note>
 
 ### What do these flags do?
 

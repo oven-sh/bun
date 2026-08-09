@@ -372,7 +372,8 @@ function compactPoolKeyPart(value) {
   if (typeof value === "string") return value.length > 1024 ? "h:" + value.length + ":" + Bun.hash(value) : value;
   if ($isArray(value)) {
     let total = 0;
-    for (let i = 0; i < value.length; i++) total += typeof value[i] === "string" ? value[i].length : (value[i]?.byteLength ?? 0);
+    for (let i = 0; i < value.length; i++)
+      total += typeof value[i] === "string" ? value[i].length : (value[i]?.byteLength ?? 0);
     if (total > 1024) return "h:" + total + ":" + Bun.hash(value.join("\n"));
   }
   return value;

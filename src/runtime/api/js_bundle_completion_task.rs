@@ -472,7 +472,7 @@ impl JSBundleCompletionTask {
                 // SAFETY: as above.
                 unsafe { &mut *self.env },
             ) {
-                Ok(outcome) => crate::cli::build_command::report_snapshot_step(&outcome),
+                Ok(bytes) => crate::cli::build_command::report_snapshot_step(bytes),
                 Err(message) => {
                     return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(&message)));
                 }

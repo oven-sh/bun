@@ -1991,8 +1991,21 @@ fn rewrite_executable(
     out_name: &[u8],
     env: &mut bun_dotenv::Loader,
 ) -> crate::Result<CompileResult> {
+    // The executable says which injector rewrites it; `bun build --snapshot` may be pointed at one built for another OS
+    // (it will then fail to run it, and say so, but the file must survive the attempt intact).
+    let mut target = CompileTarget::default();
+    let mut magic = [0u8; 4];
+    if let Ok(file) = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
+        && file.read(&mut magic).is_ok()
+    {
+        target.os = match &magic {
+            [0x7f, b'E', b'L', b'F'] => CompileTargetOs::Linux,
+            [b'M', b'Z', ..] => CompileTargetOs::Windows,
+            _ => CompileTargetOs::Mac,
+        };
+    }
     to_executable(
-        &CompileTarget::default(),
+        &target,
         &[],
         out_dir,
         b"",

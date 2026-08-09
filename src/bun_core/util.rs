@@ -4581,6 +4581,11 @@ impl SpawnStatus {
     pub fn is_ok(self) -> bool {
         self.code == 0
     }
+    /// Exit status as the spawner reports it (128 + signal for a signal death).
+    #[inline]
+    pub fn code(self) -> i32 {
+        self.code
+    }
 }
 
 // ── posix_spawn_bun FFI (canonical #[repr(C)] mirror) ─────────────────────

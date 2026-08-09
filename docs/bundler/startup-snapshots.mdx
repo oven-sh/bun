@@ -38,6 +38,10 @@ Bun.startupSnapshot.main(async () => {
 bun build --compile --bytecode --snapshot ./cli.ts --outfile fmt
 ```
 
+### WebAssembly
+
+A WebAssembly module compiled and instantiated before the snapshot is taken is in it, compiled code and linear memory included, so a tool built around a large wasm module (a compiler or formatter compiled to wasm) starts without compiling it. Code that JavaScriptCore compiles in the background while the program runs is included too, so exercising the module's main entry point once before the snapshot is taken (with representative input) puts the tiered-up code in the snapshot rather than leaving each launch to produce it again.
+
 ## Long-running programs
 
 A server or an interactive program keeps running after it starts, so its snapshot is taken at the point where startup is over. By default (`--snapshot`, or `--snapshot=auto`) the runtime decides: it evaluates the entry point, lets whatever that started run to completion, and takes the snapshot once nothing is pending. Timers that are still armed at that point survive, with their remaining time preserved across the restore. Nothing in the program has to change.
@@ -78,7 +82,7 @@ When the snapshot is written, the build prints which environment variables were 
 
 ## What the build may do
 
-While the snapshot is being taken, operations whose result would be frozen into every launch are refused: `fetch()` and other network use, `node:fs`, subprocesses, DNS and sockets throw an error saying so. In auto mode, a program that fails this way (or never becomes quiet) leaves the build with an ordinary executable, and the build prints what happened.
+While the snapshot is being taken, operations whose result would be frozen into every launch are refused: `fetch()` and other network use, `node:fs`, subprocesses, DNS and sockets throw an error saying so. If the program fails because of that, or never becomes quiet, no snapshot is taken and the build fails, saying what happened; the executable it built is left in place, so it can still be used or the step re-run with different settings.
 
 Programs that legitimately read their own files or run helpers while starting up can be allowed to:
 

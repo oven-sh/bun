@@ -208,16 +208,22 @@ impl ElfFile {
     /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
     /// `.got.plt` come after it, and expanding in-place would invalidate their
     /// absolute virtual addresses.
+    ///
+    /// The same function also re-injects into an executable produced by an earlier call (`bun build --snapshot` rewrites
+    /// the payload of an existing executable). The `.bun` header of such a file describes the appended block, not the
+    /// `BUN_COMPILED` slot the runtime reads, so every block ends with the slot's vaddr; the new block is appended after
+    /// the old one, which stays behind as dead file space, and the slot is repointed.
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
-        let bun_section_offset = bun_section.file_offset;
         let bun_section_vaddr = bun_section.vaddr;
         let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
-        let new_content_size: u64 = header_size + payload.len() as u64;
+        let trailer_size: u64 = size_of::<u64>() as u64;
+        let new_content_size: u64 = header_size + payload.len() as u64 + trailer_size;
         let aligned_new_size = align_up(new_content_size, page_size);
+        let compiled_slot_vaddr = self.compiled_slot_vaddr(&bun_section);
 
         // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
         // not "first writable": patchelf'd templates have an extra writable
@@ -355,12 +361,20 @@ impl ElfFile {
                 .fill(0);
         }
 
-        // Write the vaddr of the appended data at the ORIGINAL .bun section location
-        // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
-        // this vaddr (always non-zero), which the runtime dereferences as a pointer.
-        // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
+        // The block's trailer: where the `BUN_COMPILED` slot is, for the next rewrite of this file.
         write_u64_le(
-            &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
+            &mut self.data[usize::try_from(new_file_offset + header_size + payload.len() as u64)
+                .expect("int cast")..][..8],
+            compiled_slot_vaddr,
+        );
+
+        // Write the vaddr of the appended data into the `BUN_COMPILED` slot (the original .bun section's first word).
+        // At runtime, BUN_COMPILED.size is this vaddr (always non-zero), which the runtime dereferences as a pointer;
+        // non-standalone binaries have BUN_COMPILED.size = 0, meaning "no data". The slot is inside the RW segment at a
+        // fixed distance from its start, in this file and in every rewrite of it.
+        let compiled_slot_offset = rw_phdr.p_offset + (compiled_slot_vaddr - rw_phdr.p_vaddr);
+        write_u64_le(
+            &mut self.data[usize::try_from(compiled_slot_offset).expect("int cast")..][..8],
             new_vaddr,
         );
 
@@ -432,6 +446,29 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
+    /// vaddr of the `BUN_COMPILED` slot. In a clean template the `.bun` header describes the original section, whose
+    /// first word is the slot; in a file this function already wrote, it describes an appended `[size][payload][slot]`
+    /// block, recognizable by its size arithmetic, and the slot's vaddr is the block's trailer.
+    fn compiled_slot_vaddr(&self, bun_section: &BunSectionInfo) -> u64 {
+        let word = size_of::<u64>() as u64;
+        let off = bun_section.file_offset;
+        let Ok(off_usz) = usize::try_from(off) else {
+            return bun_section.vaddr;
+        };
+        if bun_section.size < 2 * word
+            || off_usz + usize::try_from(bun_section.size).unwrap_or(usize::MAX) > self.data.len()
+        {
+            return bun_section.vaddr;
+        }
+        let payload_len = read_u64_le(&self.data[off_usz..][..8]);
+        if payload_len.checked_add(2 * word) != Some(bun_section.size) {
+            return bun_section.vaddr;
+        }
+        read_u64_le(
+            &self.data[off_usz + usize::try_from(word + payload_len).expect("int cast")..][..8],
+        )
+    }
+
     /// Returns the file offset and section index of the `.bun` section.
     fn find_bun_section(&self, ehdr: Elf64_Ehdr) -> Result<BunSectionInfo, ElfError> {
         let shdr_size = size_of::<Elf64_Shdr>();
@@ -467,6 +504,7 @@ impl ElfFile {
                     return Ok(BunSectionInfo {
                         file_offset: shdr.sh_offset,
                         vaddr: shdr.sh_addr,
+                        size: shdr.sh_size,
                         section_index: u16::try_from(i).expect("int cast"),
                     });
                 }
@@ -501,6 +539,8 @@ struct BunSectionInfo {
     file_offset: u64,
     /// Virtual address of the .bun section (sh_addr).
     vaddr: u64,
+    /// Size of whatever the header currently describes (sh_size).
+    size: u64,
     /// Index of the .bun section in the section header table.
     section_index: u16,
 }
@@ -736,6 +776,10 @@ pub(crate) struct Elf64_Shdr {
 // --- byte helpers ---
 
 #[inline]
+fn read_u64_le(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"))
+}
+
 fn write_u64_le(bytes: &mut [u8], value: u64) {
     bytes[..8].copy_from_slice(&value.to_le_bytes());
 }

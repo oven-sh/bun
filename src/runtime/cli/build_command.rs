@@ -172,7 +172,7 @@ impl BuildCommand {
                 // SAFETY: `env` is a process-lifetime singleton.
                 unsafe { &mut *env_ptr },
             ) {
-                Ok(outcome) => report_snapshot_step(&outcome),
+                Ok(bytes) => report_snapshot_step(bytes),
                 Err(message) => {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
                     Global::exit(1);
@@ -998,7 +998,7 @@ impl BuildCommand {
                         // SAFETY: `env` is a process-lifetime singleton.
                         unsafe { &mut *env_ptr },
                     ) {
-                        Ok(outcome) => report_snapshot_step(&outcome),
+                        Ok(bytes) => report_snapshot_step(bytes),
                         Err(message) => {
                             Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
                             Global::exit(1);
@@ -1495,15 +1495,6 @@ pub(crate) fn collect_compile_assets(
     Ok(())
 }
 
-/// What the snapshot step did to the executable.
-pub(crate) enum SnapshotStepOutcome {
-    Embedded {
-        snapshot_bytes: usize,
-    },
-    /// Auto mode only: the app never became quiet (it printed what kept it busy); the executable is left as built.
-    KeptPlain,
-}
-
 /// The snapshot step: run `exe` once so it writes its snapshot, then embed that into `exe` in place. Works on an executable built
 /// just now (`--compile --snapshot`) or earlier (`--snapshot --outfile exe`, e.g. after cross-compiling elsewhere);
 /// re-running it replaces the previous snapshot. `exe` is resolved against `dir` when relative.
@@ -1513,7 +1504,7 @@ pub(crate) fn run_snapshot_step(
     mode: CompileSnapshot,
     io: CompileSnapshotIo,
     env: &mut bun_dotenv::Loader,
-) -> Result<SnapshotStepOutcome, Vec<u8>> {
+) -> Result<usize, Vec<u8>> {
     if !Bun__snapshotSupported() {
         return Err(b"startup snapshots are not available in this build of bun (macOS and glibc Linux; on macOS bun has to be built with mimalloc as the process allocator)".to_vec());
     }
@@ -1572,15 +1563,27 @@ pub(crate) fn run_snapshot_step(
         // Whatever happened, what is left on disk must be an ordinary executable again.
         let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         let _ = bun_sys::unlink(&snapshot_z);
-        return match (status, mode) {
-            (Err(e), _) => Err(format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e).into_bytes()),
-            (Ok(_), CompileSnapshot::Auto) => Ok(SnapshotStepOutcome::KeptPlain),
-            (Ok(_), _) => Err(format!(
-                "{} exited without taking a snapshot. In manual mode the app has to call Bun.startupSnapshot.take(); use --snapshot (auto) to have the runtime take it once startup drains.",
+        // The runtime exits 70 when the app would not become quiet, having printed what kept it busy; anything else
+        // non-zero is the app itself failing. Either way the flag asked for a snapshot and there is none: the build fails,
+        // and the executable is left as built.
+        const NOT_QUIET: i32 = 70;
+        return Err(match status {
+            Err(e) => format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e),
+            Ok(st) if st.code() == NOT_QUIET => format!(
+                "{} did not become quiet, so no snapshot was taken (see above for what kept it busy; --snapshot=manual lets the app call Bun.startupSnapshot.take() at a moment of its choosing)",
                 bstr::BStr::new(&exe_abs)
-            )
-            .into_bytes()),
-        };
+            ),
+            Ok(st) if !st.is_ok() => format!(
+                "{} exited with status {} while its snapshot was being taken (see its output above)",
+                bstr::BStr::new(&exe_abs),
+                st.code()
+            ),
+            Ok(_) => format!(
+                "{} exited without taking a snapshot: in manual mode the app has to call Bun.startupSnapshot.take() (or build with --snapshot for the runtime to take it once startup drains)",
+                bstr::BStr::new(&exe_abs)
+            ),
+        }
+        .into_bytes());
     }
     // The snapshot goes into the executable as it is: a launch maps the executable's own pages; nothing is unpacked anywhere.
     let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), &snapshot_path, bun_sys::O::RDONLY, 0)
@@ -1604,24 +1607,17 @@ pub(crate) fn run_snapshot_step(
         let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         return Err(message);
     }
-    Ok(SnapshotStepOutcome::Embedded {
-        snapshot_bytes: snapshot.len(),
-    })
+    Ok(snapshot.len())
 }
 
 unsafe extern "C" {
     safe fn Bun__snapshotSupported() -> bool;
 }
 
-pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {
-    match outcome {
-        SnapshotStepOutcome::Embedded { snapshot_bytes } => bun_core::prettyln!(
-            "<green>[snapshot]</r> embedded a {:.1} MB snapshot into the executable",
-            *snapshot_bytes as f64 / 1048576.0
-        ),
-        SnapshotStepOutcome::KeptPlain => bun_core::prettyln!(
-            "<yellow>[snapshot]</r> the app did not become quiet, so the executable was left without a snapshot (see above for what kept it busy; call Bun.startupSnapshot.take() yourself with --snapshot=manual to choose the moment)"
-        ),
-    }
+pub(crate) fn report_snapshot_step(snapshot_bytes: usize) {
+    bun_core::prettyln!(
+        "<green>[snapshot]</r> embedded a {:.1} MB snapshot into the executable",
+        snapshot_bytes as f64 / 1048576.0
+    );
     Output::flush();
 }

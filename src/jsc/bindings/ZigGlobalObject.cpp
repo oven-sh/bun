@@ -3411,7 +3411,11 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
     //     attributed to the frame that owns the slot. Then re-list the hits with
     //     the owning frame and a few neighbouring words.
     {
-        struct NativeFrame { uintptr_t* fp; const char* name; uintptr_t ret; };
+        struct NativeFrame {
+            uintptr_t* fp;
+            const char* name;
+            uintptr_t ret;
+        };
         WTF::Vector<NativeFrame, 128> chain;
         uintptr_t* fp = static_cast<uintptr_t*>(__builtin_frame_address(0));
         while (fp && fp < origin && chain.size() < 120) {
@@ -3427,18 +3431,27 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
         for (auto& f : chain)
             fprintf(stderr, "[napi-diag]   fp=%p (origin-0x%zx) ret=%p %s\n", (void*)f.fp, (size_t)((origin - f.fp) * sizeof(uintptr_t)), (void*)f.ret, f.name);
         for (uintptr_t* w = sp; w < origin; ++w) {
-            uintptr_t base; const char* cls = interesting(*w, base);
+            uintptr_t base;
+            const char* cls = interesting(*w, base);
             if (!cls) continue;
             // owning frame: the innermost chain entry whose fp is above w is the CALLEE boundary;
             // the slot belongs to the frame whose fp is the first one >= w.
-            const char* owner = "?"; uintptr_t* ownerFp = nullptr; const char* calleeName = "?";
+            const char* owner = "?";
+            uintptr_t* ownerFp = nullptr;
+            const char* calleeName = "?";
             for (size_t i = 0; i < chain.size(); ++i) {
-                if (chain[i].fp >= w) { ownerFp = chain[i].fp; owner = i + 1 < chain.size() ? chain[i + 1].name : "(outermost)"; calleeName = chain[i].name; break; }
+                if (chain[i].fp >= w) {
+                    ownerFp = chain[i].fp;
+                    owner = i + 1 < chain.size() ? chain[i + 1].name : "(outermost)";
+                    calleeName = chain[i].name;
+                    break;
+                }
             }
             fprintf(stderr, "[napi-diag]   HIT stack[%p] = %p -> %s @%p +%zu ; slot is in the frame of [%s] (fp=%p, fp-0x%zx), which had called [%s]\n",
                 (void*)w, (void*)*w, cls, (void*)base, bunNapiDiagLastOff, owner, (void*)ownerFp, ownerFp ? (size_t)((ownerFp - w) * sizeof(uintptr_t)) : (size_t)0, calleeName);
             fprintf(stderr, "[napi-diag]     neighbours:");
-            for (int d = -4; d <= 4; ++d) if (w + d >= sp && w + d < origin) fprintf(stderr, " [%+d]=%p", d, (void*)w[d]);
+            for (int d = -4; d <= 4; ++d)
+                if (w + d >= sp && w + d < origin) fprintf(stderr, " [%+d]=%p", d, (void*)w[d]);
             fprintf(stderr, "\n");
             // What is at the cell the word literally points into (base + off rounded to 16)?
             uintptr_t pointee = (*w) & ~uintptr_t(0xF);

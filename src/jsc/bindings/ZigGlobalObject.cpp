@@ -2543,7 +2543,17 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processEnvObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSValue map = Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner));
+            // On Windows the map is built by the windowsEnv builtin, which can
+            // throw when user code clobbered a global it depends on. A
+            // LazyProperty initializer must still set a value; leave the
+            // exception pending for the caller.
+            if (scope.exception() || !map || !map.isObject()) [[unlikely]] {
+                init.set(JSC::constructEmptyObject(init.owner));
+                return;
+            }
+            init.set(map.getObject());
         });
 
     m_processObject.initLater(

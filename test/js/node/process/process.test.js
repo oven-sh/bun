@@ -2384,3 +2384,72 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
+
+describe.concurrent("lazy property builders", () => {
+  // Lazy process properties are reified in the middle of a property lookup.
+  // When the builder throws (user code clobbered a global it depends on), the
+  // error must not be reported from inside the lookup: the uncaughtException
+  // machinery runs arbitrary JS, which reifies more static properties and
+  // transitions object structures under the in-progress prototype-chain walk
+  // (stale-Structure assert in debug builds). The report is deferred to a
+  // microtask, so the handler observes it after the statement completes.
+  it("defers a builder failure report until after the property lookup", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.Set = 123;
+         const order = [];
+         process.on("uncaughtException", e => order.push("uncaught:" + e.constructor.name));
+         order.push("before");
+         order.push("value:" + String(process.allowedNodeEnvironmentFlags));
+         order.push("after");
+         process.on("exit", () => console.log(order.join(",")));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("before,value:undefined,after,uncaught:TypeError\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows process.env is built by a JS builtin, so a clobbered global can
+  // fail it while another lazy property (Bun.$ evaluates shell.ts, which reads
+  // process.env) is being reified. The failed builder must leave a usable
+  // process.env behind, and the deferred report keeps the uncaughtException
+  // handler (which reifies more Bun properties here) from running while the
+  // Bun.$ prototype-chain walk is still on the stack.
+  it("survives a clobbered global breaking the env builder mid-walk", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.inspect;
+         process.on("uncaughtException", e => {
+           Bun.gc;
+           Bun.SHA1;
+           console.log("uncaught:" + e.constructor.name);
+         });
+         globalThis.Proxy = 123;
+         globalThis.Symbol = 123;
+         try {
+           Bun.$;
+         } catch (e) {
+           console.log("caught:" + e.constructor.name);
+         }
+         console.log("alive");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = isWindows ? "caught:TypeError\nalive\nuncaught:TypeError\n" : "caught:TypeError\nalive\n";
+    expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

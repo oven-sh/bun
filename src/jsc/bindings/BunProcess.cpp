@@ -10,6 +10,7 @@
 #include "bun_dependency_versions.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "JSCommonJSModule.h"
@@ -1777,9 +1778,27 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// Lazy PropertyCallback builders run while setUpStaticFunctionSlot /
+// reifyAllStaticProperties is reifying the property, i.e. in the middle of a
+// property lookup whose walk (JSObject::getPropertySlot) holds the object's
+// Structure*. Running the uncaught-exception machinery there re-enters JS,
+// which reifies further static properties and transitions structures under
+// the walk, tripping the stale-Structure assert in Structure::storedPrototype.
+// Queue the report as a microtask so it runs after the lookup completes.
+static void reportLazyPropertyBuilderException(JSC::JSGlobalObject* globalObject, JSC::Exception* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* report = JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, JSC::ImplementationVisibility::Private);
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, report, JSC::JSValue(exception) };
+    vm.queueMicrotask(WTF::move(task));
+}
+
 // Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
-// DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
-// reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
+// DeferTerminationForAWhile; a non-termination throw is cleared (and reported through
+// reportLazyPropertyBuilderException) so the worker's reifyAllStaticProperties
+// (node:worker_threads preload) doesn't leave a pending exception.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1787,7 +1806,7 @@ static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject,
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return jsUndefined();
     }
     return result;
@@ -2755,15 +2774,15 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     //      v8_use_snapshot: 1
     //    }
     // }
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Lazy property builder: a throw is cleared, not propagated
+    // (see callLazyProcessBuilder).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSArray* shareableBuiltins = JSC::constructEmptyArray(globalObject, nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return JSC::jsUndefined();
     }
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i18n_support"_s), JSC::jsNumber(1), 0);
@@ -2904,7 +2923,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return jsUndefined();
     }
 
@@ -2965,7 +2984,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return jsUndefined();
     }
     return result;
@@ -3200,13 +3219,13 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Lazy property builder: a throw is cleared, not propagated
+    // (see callLazyProcessBuilder).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue env = globalObject->processEnvObject();
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return JSC::jsUndefined();
     }
     return env;
@@ -4253,13 +4272,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Lazy property builder: a throw is cleared, not propagated
+    // (see callLazyProcessBuilder).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(processObject->globalObject(), exception);
+        reportLazyPropertyBuilderException(processObject->globalObject(), exception);
         return JSC::jsUndefined();
     }
     return array;
@@ -4388,8 +4407,8 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Lazy property builder: a throw is cleared, not propagated
+    // (see callLazyProcessBuilder).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
@@ -4397,14 +4416,14 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return JSC::jsUndefined();
     }
     auto* requireMap = globalObject->requireMap();
     JSValue mainModule = requireMap->get(globalObject, mainValue);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return JSC::jsUndefined();
     }
     return mainModule;
@@ -4428,13 +4447,13 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Lazy property builder: a throw is cleared, not propagated
+    // (see callLazyProcessBuilder).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        reportLazyPropertyBuilderException(globalObject, exception);
         return JSC::jsUndefined();
     }
     if (nextTickFunction && nextTickFunction.isObject()) {

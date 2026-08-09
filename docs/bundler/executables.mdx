@@ -382,8 +382,8 @@ While the image is being built, `fetch()` and other network use are refused, and
 <Warning>
   The image is a copy of the process's memory at the freeze, and it ships inside the executable: whatever the build
   process had read — environment variables, files, credentials — is in it. Build images in an environment that holds
-  nothing secret. A process started from an image also runs with address-space randomization disabled, because the
-  image has to map at fixed addresses.
+  nothing secret. A process started from an image also runs with address-space randomization disabled, because the image
+  has to map at fixed addresses.
 </Warning>
 
 <Note>

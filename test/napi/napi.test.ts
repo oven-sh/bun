@@ -1330,6 +1330,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ]);
 
       // Checked first so a failure prints everything the wrapper and child wrote.
+      // Diagnostics: also fail (and so print everything, including the GC log)
+      // when the crash only happened on the second, event-loop-turn GC.
+      expect(bunStdout + "\n---- stderr ----\n" + bunStderr).not.toContain("GC #1 (synchronous, same stack) returned without crashing");
       expect(bunStdout + "\n---- stderr ----\n" + bunStderr).toContain("TEST PASSED: Process crashed as expected");
       expect(bunStdout + bunStderr).toContain("Loading experimental module");
       expect(bunStdout + bunStderr).toContain("Created");

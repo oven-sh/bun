@@ -2,8 +2,8 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
-#include "HeapImage.h"
-#if BUN_HEAPIMAGE_TOOLING && BUN_HEAP_IMAGE_SUPPORTED
+#include "Snapshot.h"
+#if BUN_SNAPSHOT_TOOLING && BUN_SNAPSHOT_SUPPORTED
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
@@ -120,7 +120,7 @@ extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
-using namespace Bun::HeapImage;
+using namespace Bun::Snapshot;
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
@@ -419,7 +419,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
     JSC::JSLockHolder lock(vm);
     bool freeze = !getenv("BUN_FILESNAP_NOFREEZE");
     if (freeze)
-        vm.heap.freezeCurrentHeapAsImmortalImage();
+        vm.heap.freezeCurrentHeapAsImmortalSnapshot();
     else
         vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     mi_collect(true);
@@ -430,7 +430,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
         s_payloadPages.clear();
         s_pageSizeClass.clear();
         s_liveBlocks.clear();
-        imageRuns.clear();
+        snapshotRuns.clear();
         vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
             for (uintptr_t a = (uintptr_t)&h->block(); a < (uintptr_t)&h->block() + JSC::MarkedBlock::blockSize; a += pg)
                 s_cellPages.push_back(a);
@@ -551,7 +551,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
                 remapped += len;
                 runs++;
                 frozenRanges.push_back({ a, a + len });
-                imageRuns.push_back({ a, len, fileOff });
+                snapshotRuns.push_back({ a, len, fileOff });
             }
             fileOff += len;
             i = j;
@@ -582,7 +582,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
                     runs++;
                     extraBytes += len;
                     frozenRanges.push_back({ a, a + len });
-                    imageRuns.push_back({ a, len, fileOff });
+                    snapshotRuns.push_back({ a, len, fileOff });
                 }
                 fileOff += len;
             }
@@ -607,11 +607,11 @@ static void fileSnapshotHeap(JSC::VM& vm)
         bool f2 = it2 != frozenRanges.begin() && a2 < std::prev(it2)->second;
         fprintf(stderr, "[filesnap] post-switch probes landing in frozen ranges: mi_malloc %zu/64, fastMalloc %d\n", inFrozen, (int)f2);
     }
-    std::sort(imageRuns.begin(), imageRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
+    std::sort(snapshotRuns.begin(), snapshotRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
     std::sort(frozenRanges.begin(), frozenRanges.end());
-    imageFd = fd;
+    snapshotFd = fd;
     if (const char* prot = getenv("BUN_FILESNAP_PROTECT")) {
-        // Debug: make image blocks of one subspace read-only so the first writer faults with a backtrace.
+        // Debug: make snapshot blocks of one subspace read-only so the first writer faults with a backtrace.
         size_t n = 0;
         vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
             if (!h->block().isImmortal() || strcmp(h->subspace()->name(), prot)) return;
@@ -693,13 +693,13 @@ static void dumpDirtyMap(JSC::VM& vm)
         fprintf(stderr, "%s\n", rows[i].second.c_str());
 
     // Byte-level diff of dirty malloc-payload pages against the snapshot file: which blocks changed, and how.
-    if (imageFd >= 0 && !s_liveBlocks.empty()) {
+    if (snapshotFd >= 0 && !s_liveBlocks.empty()) {
         std::vector<uint8_t> orig(pg);
         size_t changedBytes = 0, dirtyPayloadPages = 0, pagesNoChange = 0;
         std::map<std::string, size_t> blockClass; // classification -> count
         std::map<uint32_t, std::pair<size_t, size_t>> bySize; // block size -> (changedBlocks, changedBytes)
         std::set<uintptr_t> changedBlocks;
-        for (auto& run : imageRuns) {
+        for (auto& run : snapshotRuns) {
             size_t n = run.len / pg;
             disp.assign(n, 0);
             mach_vm_size_t cnt = n;
@@ -709,7 +709,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 bool dirty = (disp[i] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[i] & VM_PAGE_QUERY_PAGE_COPIED);
                 if (!dirty || !pageIn(s_payloadPages, a)) continue;
                 dirtyPayloadPages++;
-                if (ipread(imageFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) continue;
+                if (ipread(snapshotFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) continue;
                 const uint8_t* cur = reinterpret_cast<const uint8_t*>(a);
                 bool any = false;
                 for (size_t off = 0; off < pg; off += 8) {
@@ -751,12 +751,12 @@ static void dumpDirtyMap(JSC::VM& vm)
                 uintptr_t a = b + off;
                 uintptr_t page = a & ~(pg - 1);
                 // find file offset for page
-                auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                if (r == imageRuns.begin()) continue;
+                auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == snapshotRuns.begin()) continue;
                 --r;
                 if (page >= r->start + r->len) continue;
                 uint64_t o;
-                if (ipread(imageFd, &o, 8, r->fileOff + (a - r->start)) != 8) continue;
+                if (ipread(snapshotFd, &o, 8, r->fileOff + (a - r->start)) != 8) continue;
                 if (memcmp(&o, (void*)a, 8)) {
                     cntw++;
                     if (first == SIZE_MAX) first = off;
@@ -774,10 +774,10 @@ static void dumpDirtyMap(JSC::VM& vm)
                 uintptr_t a = b + first;
                 uintptr_t page = a & ~(pg - 1);
                 uint64_t before = 0, after = *(uint64_t*)a;
-                auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                if (r != imageRuns.begin()) {
+                auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r != snapshotRuns.begin()) {
                     --r;
-                    if (page < r->start + r->len) ipread(imageFd, &before, 8, r->fileOff + (a - r->start));
+                    if (page < r->start + r->len) ipread(snapshotFd, &before, 8, r->fileOff + (a - r->start));
                 }
                 char sig[160];
                 snprintf(sig, sizeof sig, "sz%u +%zu n%zu", sz, first, cntw);
@@ -822,11 +822,11 @@ static void dumpDirtyMap(JSC::VM& vm)
             std::map<std::string, std::pair<size_t, size_t>> byClass; // class -> (changed, total)
             auto fileWordAt = [&](uintptr_t a, uint64_t& out) -> bool {
                 uintptr_t page = a & ~(pg - 1);
-                auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                if (r == imageRuns.begin()) return false;
+                auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == snapshotRuns.begin()) return false;
                 --r;
                 if (page >= r->start + r->len) return false;
-                return ipread(imageFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+                return ipread(snapshotFd, &out, 8, r->fileOff + (a - r->start)) == 8;
             };
             vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
                 if (!h->block().isImmortal()) return;
@@ -1005,11 +1005,11 @@ static void dumpDirtyMap(JSC::VM& vm)
             };
             std::function<bool(uintptr_t, uint64_t&)> fw = [&](uintptr_t a, uint64_t& out) -> bool {
                 uintptr_t page = a & ~(pg - 1);
-                auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                if (r == imageRuns.begin()) return false;
+                auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == snapshotRuns.begin()) return false;
                 --r;
                 if (page >= r->start + r->len) return false;
-                return ipread(imageFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+                return ipread(snapshotFd, &out, 8, r->fileOff + (a - r->start)) == 8;
             };
             char path[512];
             snprintf(path, sizeof path, "%s/payload-owners.%d.tsv", s_dir, getpid());
@@ -1019,7 +1019,7 @@ static void dumpDirtyMap(JSC::VM& vm)
             if (ctx.f) {
                 mi_prof_visit_live([](uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
                     Ctx* c = static_cast<Ctx*>(arg);
-                    // only blocks inside the frozen image
+                    // only blocks inside the frozen snapshot
                     uint64_t probe;
                     if (!(*c->fileWordAt)(addr, probe)) return true;
                     size_t changedWords = 0, firstOff = SIZE_MAX;
@@ -1028,12 +1028,12 @@ static void dumpDirtyMap(JSC::VM& vm)
                         size_t n = std::min(sizeof fbuf, size - base);
                         uintptr_t a0 = addr + base;
                         uintptr_t page = a0 & ~(uintptr_t)16383;
-                        auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-                        if (r == imageRuns.begin()) break;
+                        auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                        if (r == snapshotRuns.begin()) break;
                         --r;
                         if (a0 >= r->start + r->len) break;
                         n = std::min<size_t>(n, r->start + r->len - a0);
-                        if (ipread(imageFd, fbuf, n, r->fileOff + (a0 - r->start)) != (ssize_t)n) break;
+                        if (ipread(snapshotFd, fbuf, n, r->fileOff + (a0 - r->start)) != (ssize_t)n) break;
                         for (size_t off = 0; off + 8 <= n; off += 8)
                             if (memcmp(fbuf + off, (void*)(a0 + off), 8)) {
                                 changedWords++;
@@ -1050,7 +1050,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                 },
                     &ctx);
                 fclose(ctx.f);
-                fprintf(stderr, "[owners] wrote %s: %zu live sampled image blocks, %zu changed; loadaddr=%p\n", path, ctx.n, ctx.changed, (void*)_dyld_get_image_header(0));
+                fprintf(stderr, "[owners] wrote %s: %zu live sampled snapshot blocks, %zu changed; loadaddr=%p\n", path, ctx.n, ctx.changed, (void*)_dyld_get_image_header(0));
             }
         }
         fprintf(stderr, "[diffmap] changed blocks by block size (count, bytes changed):");
@@ -1138,7 +1138,7 @@ static void dumpNewPayload(JSC::VM& vm)
     mi_prof_visit_live([](uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
         Ctx* c = static_cast<Ctx*>(arg);
         auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(addr, UINTPTR_MAX));
-        if (it != frozenRanges.begin() && addr < std::prev(it)->second) return true; // image block
+        if (it != frozenRanges.begin() && addr < std::prev(it)->second) return true; // snapshot block
         c->n++;
         c->bytes += size;
         fprintf(c->f, "%zu\t1\t0\t", size); // same columns as payload-owners.tsv (size, changedWords, firstOff, frames)
@@ -1216,20 +1216,20 @@ static void dumpNewCells(JSC::VM& vm)
         fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
 
-static void dumpMutatedImageObjects(JSC::VM& vm)
+static void dumpMutatedSnapshotObjects(JSC::VM& vm)
 {
     JSC::JSLockHolder lock(vm);
-    if (imageFd < 0 || imageRuns.empty()) {
-        fprintf(stderr, "[mutated] no image\n");
+    if (snapshotFd < 0 || snapshotRuns.empty()) {
+        fprintf(stderr, "[mutated] no snapshot\n");
         return;
     }
     size_t pg = getpagesize();
     auto fileBytesAt = [&](uintptr_t a, void* out, size_t n) -> bool {
-        auto r = std::upper_bound(imageRuns.begin(), imageRuns.end(), a, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
-        if (r == imageRuns.begin()) return false;
+        auto r = std::upper_bound(snapshotRuns.begin(), snapshotRuns.end(), a, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+        if (r == snapshotRuns.begin()) return false;
         --r;
         if (a + n > r->start + r->len) return false;
-        return ipread(imageFd, out, n, r->fileOff + (a - r->start)) == (ssize_t)n;
+        return ipread(snapshotFd, out, n, r->fileOff + (a - r->start)) == (ssize_t)n;
     };
     struct Agg {
         size_t objects = 0, headerChanged = 0, butterflyPtrChanged = 0, inlineChanged = 0, butterflyContentsChanged = 0;
@@ -1300,12 +1300,12 @@ static void dumpMutatedImageObjects(JSC::VM& vm)
         rows.push_back({ a.objects, line });
     }
     std::sort(rows.begin(), rows.end(), std::greater<>());
-    fprintf(stderr, "[mutated] %zu imaged JS objects changed since restore (of %zu compared). By class {first properties}: count, what changed (cell header / butterfly pointer i.e. regrown / inline slots / butterfly contents)\n", changed, scanned);
+    fprintf(stderr, "[mutated] %zu snapshotted JS objects changed since restore (of %zu compared). By class {first properties}: count, what changed (cell header / butterfly pointer i.e. regrown / inline slots / butterfly contents)\n", changed, scanned);
     for (size_t i = 0; i < std::min<size_t>(rows.size(), 60); i++)
         fprintf(stderr, "%s\n", rows[i].second.c_str());
 }
 
-static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
+static void snapshotTrapHandler(int sig, siginfo_t* info, void* uctx)
 {
     uintptr_t a = (uintptr_t)info->si_addr;
     size_t pg = 16384;
@@ -1314,10 +1314,10 @@ static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
     bool ours = s_trapCap && it != frozenRanges.begin() && a < std::prev(it)->second;
     if (!ours) {
 #if OS(DARWIN) && CPU(ARM64)
-        { // not an image page: real crash. Dump a raw backtrace we can atos, then chain.
+        { // not a snapshot page: real crash. Dump a raw backtrace we can atos, then chain.
             ucontext_t* uc = (ucontext_t*)uctx;
             char line[96];
-            int n = snprintf(line, sizeof line, "[imagecrash] sig=%d addr=%lx pc=%llx lr=%llx frames:", sig, (unsigned long)a, (unsigned long long)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss), (unsigned long long)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss));
+            int n = snprintf(line, sizeof line, "[snapshotcrash] sig=%d addr=%lx pc=%llx lr=%llx frames:", sig, (unsigned long)a, (unsigned long long)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss), (unsigned long long)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss));
             write(2, line, n);
             uintptr_t fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
             for (int k = 0; k < 40 && fp && !(fp & 7); k++) {
@@ -1371,18 +1371,18 @@ static void imageTrapHandler(int sig, siginfo_t* info, void* uctx)
     }
 }
 
-static void imageTrapArm()
+static void snapshotTrapArm()
 {
     s_trapCap = 1 << 18;
     s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     struct sigaction sa {};
-    sa.sa_sigaction = imageTrapHandler;
+    sa.sa_sigaction = snapshotTrapHandler;
     sa.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGBUS, &sa, &s_prevBus);
     sigaction(SIGSEGV, &sa, &s_prevSegv);
     size_t n = 0;
-    const char* mode = getenv("BUN_IMAGE_TRAP");
+    const char* mode = getenv("BUN_SNAPSHOT_TRAP");
     if (mode && !strcmp(mode, "cells")) { // only MarkedBlock pages: syscalls never target them, so kernel-side EFAULTs can't derail the run
         for (uintptr_t page : s_cellPages)
             if (!mprotect((void*)page, 16384, PROT_READ)) n += 16384;
@@ -1390,14 +1390,14 @@ static void imageTrapArm()
         for (auto& r : frozenRanges) {
             if (!mprotect((void*)r.first, r.second - r.first, PROT_READ)) n += r.second - r.first;
         }
-    fprintf(stderr, "[imagetrap] armed: %.1fMB read-only (%s)\n", n / 1048576.0, mode);
+    fprintf(stderr, "[snapshottrap] armed: %.1fMB read-only (%s)\n", n / 1048576.0, mode);
 }
 
-static void imageTrapReport()
+static void snapshotTrapReport()
 {
     size_t n = std::min(s_trapCount.load(), s_trapCap);
     char path[512];
-    snprintf(path, sizeof path, "%s/imagetrap.%d.tsv", s_dir ? s_dir : "/tmp", getpid());
+    snprintf(path, sizeof path, "%s/snapshottrap.%d.tsv", s_dir ? s_dir : "/tmp", getpid());
     FILE* f = fopen(path, "w");
     if (!f) return;
     for (size_t i = 0; i < n; i++) {
@@ -1409,10 +1409,10 @@ static void imageTrapReport()
         fprintf(f, "\n");
     }
     fclose(f);
-    fprintf(stderr, "[imagetrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
+    fprintf(stderr, "[snapshottrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
 }
 
-void heapImageToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
+void snapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
 {
     s_cellPages.clear();
     s_payloadPages.clear();
@@ -1430,16 +1430,16 @@ void heapImageToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
     std::vector<uintptr_t> tmp;
     std::set_difference(s_payloadPages.begin(), s_payloadPages.end(), s_cellPages.begin(), s_cellPages.end(), std::back_inserter(tmp));
     s_payloadPages.swap(tmp);
-    fprintf(stderr, "[image] cellPages=%.1fMB payloadPages=%.1fMB liveMallocBlocks=%zu\n", s_cellPages.size() * pg / 1048576.0, s_payloadPages.size() * pg / 1048576.0, s_liveBlocks.size());
+    fprintf(stderr, "[snapshot] cellPages=%.1fMB payloadPages=%.1fMB liveMallocBlocks=%zu\n", s_cellPages.size() * pg / 1048576.0, s_payloadPages.size() * pg / 1048576.0, s_liveBlocks.size());
 }
 
-void heapImageToolingArmTraps()
+void snapshotToolingArmTraps()
 {
-    if (getenv("BUN_IMAGE_TRAP"))
-        imageTrapArm();
-    else if (getenv("BUN_IMAGE_CRASHBT")) {
+    if (getenv("BUN_SNAPSHOT_TRAP"))
+        snapshotTrapArm();
+    else if (getenv("BUN_SNAPSHOT_CRASHBT")) {
         struct sigaction sa {};
-        sa.sa_sigaction = imageTrapHandler;
+        sa.sa_sigaction = snapshotTrapHandler;
         sa.sa_flags = SA_SIGINFO | SA_NODEFER;
         sigemptyset(&sa.sa_mask);
         sigaction(SIGBUS, &sa, &s_prevBus);
@@ -1447,7 +1447,7 @@ void heapImageToolingArmTraps()
     } // backtrace-only: frozenRanges stays as-is but nothing is protected
 }
 
-void heapImageToolingAfterRestore()
+void snapshotToolingAfterRestore()
 {
     const char* d = getenv("BUN_MEMDEBUG");
     s_dir = (d && *d) ? strdup(d) : nullptr; // the builder's pointer would point into its environment
@@ -1455,7 +1455,7 @@ void heapImageToolingAfterRestore()
         mi_prof_enable(64 * 1024); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
 }
 
-void heapImageToolingInstall()
+void snapshotToolingInstall()
 {
     s_dir = getenv("BUN_MEMDEBUG");
     if (!s_dir || !*s_dir) {
@@ -1469,13 +1469,13 @@ void heapImageToolingInstall()
     signal(SIGXCPU, memdebugSignal);
 }
 
-extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
+extern "C" void Bun__snapshotToolingTick(JSC::VM* vm)
 {
     int req = s_requested.exchange(0);
     bool fromCmdFile = false;
     if (!s_dir)
         return;
-    if (const char* at = getenv("BUN_IMAGE_OUT_AT_MS")) {
+    if (const char* at = getenv("BUN_SNAPSHOT_OUT_AT_MS")) {
         static bool doneImg = false;
         static auto startImg = std::chrono::steady_clock::now();
         if (!doneImg && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startImg).count() > atoi(at)) {
@@ -1508,7 +1508,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
             req = 6;
         else if (!strncmp(buf, "cellprofile", 11))
             req = 7;
-        else if (!strncmp(buf, "imagedump", 9))
+        else if (!strncmp(buf, "snapshottedump", 9))
             req = 8;
         else if (!strncmp(buf, "trapreport", 10))
             req = 9;
@@ -1561,7 +1561,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 6) {
-        Bun::HeapImage::recleanFrozenPages(*vm);
+        Bun::Snapshot::recleanFrozenPages(*vm);
         return;
     }
     if (req == 7) {
@@ -1571,7 +1571,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 9) {
-        imageTrapReport();
+        snapshotTrapReport();
         return;
     }
     if (req == 10) {
@@ -1579,7 +1579,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 13) {
-        dumpMutatedImageObjects(*vm);
+        dumpMutatedSnapshotObjects(*vm);
         return;
     }
     if (req == 11) {
@@ -1591,7 +1591,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 8) {
-        Bun__requestSnapshot(vm, getenv("BUN_IMAGE_OUT") ? getenv("BUN_IMAGE_OUT") : "/tmp/bun.img"); // unwinds JS via termination; the run loop takes it at top level and exits
+        Bun__requestSnapshot(vm, getenv("BUN_SNAPSHOT_OUT") ? getenv("BUN_SNAPSHOT_OUT") : "/tmp/bun.snapshot"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;
     }
     if (req == 3) {
@@ -1610,23 +1610,23 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
         mi_collect(true);
         fprintf(stderr, "[memdebug] full GC done; purge_delay=%ld purge_decommits=%ld arena_reserve=%ldKiB\n", mi_option_get(mi_option_purge_delay), mi_option_get(mi_option_purge_decommits), mi_option_get(mi_option_arena_reserve));
         mi_arenas_print(); // per-arena slice maps: what the fresh arenas still hold after everything freeable was freed
-        { // live bytes outside the image, as mimalloc sees them: the difference to the arenas' dirty pages is fragmentation
+        { // live bytes outside the snapshot, as mimalloc sees them: the difference to the arenas' dirty pages is fragmentation
             struct Live {
-                size_t bytes = 0, blocks = 0, imageBytes = 0;
+                size_t bytes = 0, blocks = 0, snapshotBytes = 0;
             } live;
             auto visitLive = [](const mi_heap_t*, const mi_heap_area_t*, void* block, size_t size, void* arg) {
                 auto* l = static_cast<Live*>(arg);
                 if (!block) return true;
                 auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair((uintptr_t)block, UINTPTR_MAX));
-                if (it != frozenRanges.begin() && (uintptr_t)block < std::prev(it)->second) { l->imageBytes += size; return true; }
+                if (it != frozenRanges.begin() && (uintptr_t)block < std::prev(it)->second) { l->snapshotBytes += size; return true; }
                 l->bytes += size; l->blocks++;
                 return true; };
             mi_heap_visit_blocks(mi_heap_main(), true, visitLive, &live);
             if (freshHeap) mi_heap_visit_blocks(freshHeap, true, visitLive, &live);
             (void)0;
-            fprintf(stderr, "[memdebug] live malloc outside the image (main + fresh heaps): %.1f MB in %zu blocks (image-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.imageBytes / 1048576.0);
+            fprintf(stderr, "[memdebug] live malloc outside the snapshot (main + fresh heaps): %.1f MB in %zu blocks (snapshot-resident live: %.1f MB)\n", live.bytes / 1048576.0, live.blocks, live.snapshotBytes / 1048576.0);
 
-            { // The residue question: are the fresh arenas' pages empty-but-retained, or sparsely used? Per page (area), outside the image.
+            { // The residue question: are the fresh arenas' pages empty-but-retained, or sparsely used? Per page (area), outside the snapshot.
                 struct Areas {
                     size_t committed[5] = {}, pages[5] = {}; // buckets: 0%, <10%, <25%, <50%, >=50% used
                     std::map<size_t, std::pair<size_t, size_t>> bySize; // block size -> (committed in pages under 25% used, live bytes there)
@@ -1638,7 +1638,7 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
                 auto* a = static_cast<Areas*>(arg);
                 uintptr_t start = (uintptr_t)area->blocks;
                 auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(start, UINTPTR_MAX));
-                if (it != frozenRanges.begin() && start < std::prev(it)->second) return true; // image page
+                if (it != frozenRanges.begin() && start < std::prev(it)->second) return true; // snapshot page
                 if (!area->committed) return true;
                 size_t live = area->used * area->full_block_size;
 #if OS(DARWIN)
@@ -1747,4 +1747,4 @@ extern "C" void Bun__heapImageToolingTick(JSC::VM* vm)
     }
 #endif
 }
-#endif // BUN_HEAPIMAGE_TOOLING
+#endif // BUN_SNAPSHOT_TOOLING

@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 const dir = process.env.WATCH_DIR;
-fs.watch(dir, () => {}); // builder-side watcher: puts a loop (and its CF thread) into the image
+fs.watch(dir, () => {}); // builder-side watcher: puts a loop (and its CF thread) into the snapshot
 process.on("restore", () => {
   const dir2 = process.env.WATCH_DIR2;
   const seen = [];
@@ -17,4 +17,4 @@ process.on("restore", () => {
     }
   }, 20);
 });
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel" }), 100);
+setTimeout(() => Bun.unsafe.snapshot({ timers: "cancel" }), 100);

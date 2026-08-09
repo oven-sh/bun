@@ -162,7 +162,7 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 static MAIN_THREAD_RUNTIME_STATE: core::sync::atomic::AtomicPtr<RuntimeState> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
-/// Experiment (heap image): install the image's main-thread RuntimeState on this thread.
+/// Snapshot: install the snapshot's main-thread RuntimeState on this thread.
 pub(crate) fn adopt_main_thread_runtime_state() {
     let state = MAIN_THREAD_RUNTIME_STATE.load(core::sync::atomic::Ordering::Acquire);
     RUNTIME_STATE.with(|c| c.set(state));
@@ -411,7 +411,7 @@ unsafe fn init_runtime_state(
         wake_ctx: None,
     }));
     RUNTIME_STATE.with(|c| c.set(state));
-    // Experiment (heap image): remember the main thread's state in a plain static so a restored process can re-seat the TLS.
+    // Snapshot: remember the main thread's state in a plain static so a restored process can re-seat the TLS.
     if MAIN_THREAD_RUNTIME_STATE
         .load(core::sync::atomic::Ordering::Relaxed)
         .is_null()

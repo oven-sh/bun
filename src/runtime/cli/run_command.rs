@@ -1494,9 +1494,9 @@ impl Run {
             }
         }
 
-        if bun_core::image::building() {
+        if bun_core::snapshot::building() {
             // SAFETY: the VM and its global object are live on this thread; nothing of the app has run yet.
-            unsafe { Bun__Process__useSharedEnvForImageBuild(vm.global) };
+            unsafe { Bun__Process__useSharedEnvForSnapshotBuild(vm.global) };
         }
         match vm.load_entry_point(entry) {
             Ok(promise) => {
@@ -1538,6 +1538,19 @@ impl Run {
                 }
             }
             Err(err) => entry_point_load_failed(vm, &err.into()),
+        }
+
+        // `--snapshot` (auto): the entry point has been evaluated; take the snapshot as soon as whatever it started has
+        // drained. An app that wants to choose the moment calls Bun.unsafe.snapshot() itself (manual mode).
+        if bun_core::snapshot::building()
+            && bun_core::env_var::BUN_SNAPSHOT_AUTO.get().unwrap_or(false)
+            && !bun_core::snapshot::snapshot_requested()
+        {
+            if let Some(out) = bun_core::env_var::BUN_SNAPSHOT_OUT.get() {
+                bun_core::snapshot::set_snapshot_timers(bun_core::snapshot::SnapshotTimers::Keep);
+                bun_core::snapshot::request_snapshot(out);
+                take_snapshot_and_exit(vm);
+            }
         }
 
         // don't run the GC if we don't actually need to
@@ -1657,16 +1670,16 @@ impl Run {
     }
 }
 
-// Experiment (heap image): a process restored from an image jumps here instead of loading an entry point.
-// The Rust `VirtualMachine`/event loop objects come from the image (heap); only thread-locals need re-seating.
+// Snapshot: a process restored from a snapshot jumps here instead of loading an entry point.
+// The Rust `VirtualMachine`/event loop objects come from the snapshot (heap); only thread-locals need re-seating.
 unsafe extern "C" {
-    fn Bun__imageDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char);
-    safe fn Bun__imageClearTerminationRequest(vm: &bun_jsc::VM);
-    safe fn Bun__imageUnwindJS(vm: &bun_jsc::VM);
+    fn Bun__snapshotDumpNow(vm: *mut bun_jsc::VM, path: *const ::core::ffi::c_char);
+    safe fn Bun__snapshotClearTerminationRequest(vm: &bun_jsc::VM);
+    safe fn Bun__snapshotUnwindJS(vm: &bun_jsc::VM);
 }
 
 /// `process.argv`/`Bun.argv` are derived from the live process argv whenever the script's arguments are exactly its
-/// tail (`bun [flags] entry a b`, compiled executables), so they follow the launch of a process restored from an image;
+/// tail (`bun [flags] entry a b`, compiled executables), so they follow the launch of a process restored from a snapshot;
 /// shapes that rearrange the arguments (`-e code a b` merges positionals back in, stdin mode prepends "-") keep the
 /// CLI's own list. Decided here, on the list the VM actually gets, not on an intermediate one.
 fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
@@ -1686,13 +1699,33 @@ fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
     bun_core::set_standalone_passthrough_offset(offset);
 }
 
-/// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the image from the top of the run loop.
+/// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the snapshot from the top of the run loop.
+/// Under BUN_SNAPSHOT_IO=local, everything the app touched on this machine before the freeze — the results are in the snapshot.
+fn print_local_io_audit() {
+    let audit = bun_core::snapshot::take_local_io_audit();
+    if audit.is_empty() {
+        return;
+    }
+    let uses: u32 = audit.iter().map(|(_, _, n)| n).sum();
+    bun_core::Output::print_errorln(format_args!(
+        "snapshot: {uses} local I/O operations ran before the freeze (allowed by BUN_SNAPSHOT_IO=local); whatever they produced is in the snapshot:"
+    ));
+    for (kind, site, count) in &audit {
+        bun_core::Output::print_errorln(format_args!(
+            "  {kind} x{count} from:\n{}",
+            bstr::BStr::new(site)
+        ));
+    }
+    bun_core::Output::flush();
+}
+
 pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> ! {
-    let Some(path) = bun_core::image::take_snapshot_request() else {
+    let Some(path) = bun_core::snapshot::take_snapshot_request() else {
         unreachable!()
     };
-    Bun__imageClearTerminationRequest(vm.jsc_vm()); // the request unwound JS with a termination; the quiesce below runs JS again
-    // Only a quiet process makes a sound image: let in-flight work finish (bounded), and refuse to dump over anything still pending.
+    bun_core::snapshot::set_snapshot_in_progress();
+    Bun__snapshotClearTerminationRequest(vm.jsc_vm()); // the request unwound JS with a termination; the quiesce below runs JS again
+    // Only a quiet process makes a sound snapshot: let in-flight work finish (bounded), and refuse to dump over anything still pending.
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_secs(
             bun_core::env_var::BUN_SNAPSHOT_QUIET_TIMEOUT
@@ -1700,7 +1733,7 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
                 .unwrap_or(15),
         );
     let cancel_timers =
-        bun_core::image::snapshot_timers() == bun_core::image::SnapshotTimers::Cancel;
+        bun_core::snapshot::snapshot_timers() == bun_core::snapshot::SnapshotTimers::Cancel;
     loop {
         if cancel_timers {
             // The app asked us to drop its (self-re-arming) timers; do it every round since draining runs JS that may arm more.
@@ -1735,15 +1768,16 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
     {
         let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
-        bun_core::image::SNAPSHOT_MONOTONIC[0]
+        bun_core::snapshot::SNAPSHOT_MONOTONIC[0]
             .store(now.sec, ::std::sync::atomic::Ordering::Relaxed);
-        bun_core::image::SNAPSHOT_MONOTONIC[1]
+        bun_core::snapshot::SNAPSHOT_MONOTONIC[1]
             .store(now.nsec, ::std::sync::atomic::Ordering::Relaxed);
     }
+    print_local_io_audit();
     let cpath = std::ffi::CString::new(path).unwrap();
     // SAFETY: main thread, VM live, no JS on the stack.
     unsafe {
-        Bun__imageDumpNow(
+        Bun__snapshotDumpNow(
             ::core::ptr::from_ref(vm.jsc_vm()).cast_mut(),
             cpath.as_ptr(),
         )
@@ -1751,7 +1785,7 @@ pub fn take_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine)
     bun_core::Global::exit(0);
 }
 
-/// What still ties this process to work in flight; the image is only written when this is empty.
+/// What still ties this process to work in flight; the snapshot is only written when this is empty.
 fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<String> {
     let mut out = Vec::new();
     let el = vm.event_loop_shared();
@@ -1778,7 +1812,8 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
     if !state.is_null() {
         // SAFETY: main-thread RuntimeState.
         let armed = unsafe { (*state).timer.active_timer_count };
-        if armed > 0 && bun_core::image::snapshot_timers() != bun_core::image::SnapshotTimers::Keep
+        if armed > 0
+            && bun_core::snapshot::snapshot_timers() != bun_core::snapshot::SnapshotTimers::Keep
         {
             out.push(format!("{armed} ref'd timers armed (setTimeout/setInterval/AbortSignal.timeout) — clear them before snapshotting"));
         }
@@ -1800,9 +1835,15 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::core::ffi::c_char) {
     // SAFETY: per the function contract.
-    let path = unsafe { ::core::ffi::CStr::from_ptr(path) }.to_string_lossy();
-    bun_core::image::request_snapshot(&path);
-    Bun__imageUnwindJS(vm); // termination trap: unwinds any running JS; the outermost `EventLoop::tick` then takes the snapshot
+    let path = unsafe { ::core::ffi::CStr::from_ptr(path) }.to_bytes();
+    bun_core::snapshot::request_snapshot(path);
+    unwind_for_snapshot(vm);
+}
+
+/// A snapshot has been requested: unwind whatever JS is running (termination trap) and wake the loop, whose outermost
+/// tick takes it.
+pub(crate) fn unwind_for_snapshot(vm: &bun_jsc::VM) {
+    Bun__snapshotUnwindJS(vm);
     // SAFETY: called on the JS thread; the main-thread VM, if any, outlives this call.
     let main = unsafe { bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr().as_mut() };
     if let Some(main) = main {
@@ -1811,40 +1852,40 @@ pub unsafe extern "C" fn Bun__requestSnapshot(vm: &bun_jsc::VM, path: *const ::c
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__imageSetBuilding(on: bool) {
-    bun_core::image::set_building(on);
+pub extern "C" fn Bun__snapshotSetBuilding(on: bool) {
+    bun_core::snapshot::set_building(on);
 }
 
 unsafe extern "C" {
-    fn Bun__Process__useSharedEnvForImageBuild(global: *mut bun_jsc::JSGlobalObject);
-    fn Bun__Process__reloadEnvAfterImageRestore(global: *mut bun_jsc::JSGlobalObject);
-    fn Bun__VM__refreshStackBoundsAfterImageRestore(vm: *mut bun_jsc::VM);
+    fn Bun__Process__useSharedEnvForSnapshotBuild(global: *mut bun_jsc::JSGlobalObject);
+    fn Bun__Process__reloadEnvAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
+    fn Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm: *mut bun_jsc::VM);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__imageAdoptMainThreadVM() {
+pub extern "C" fn Bun__snapshotAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
-    assert!(!vm_ptr.is_null(), "image has no main-thread VM");
-    bun_core::image::did_restore();
-    bun_threading::work_pool::WorkPool::did_restore_from_image();
+    assert!(!vm_ptr.is_null(), "snapshot has no main-thread VM");
+    bun_core::snapshot::did_restore();
+    bun_threading::work_pool::WorkPool::did_restore_from_snapshot();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     {
         // SAFETY: main-thread VM. Its cached stack top/limits are the builder's; refresh before anything can allocate JS objects (GC sanitizes the stack).
         let vm = unsafe { &mut *vm_ptr };
-        // SAFETY: `vm.jsc_vm` is the image's live JSC VM, now owned by this thread.
-        unsafe { Bun__VM__refreshStackBoundsAfterImageRestore(vm.jsc_vm) };
+        // SAFETY: `vm.jsc_vm` is the snapshot's live JSC VM, now owned by this thread.
+        unsafe { Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm.jsc_vm) };
         {
             let state = crate::jsc_hooks::runtime_state();
             if !state.is_null() {
                 let then = bun_core::Timespec {
-                    sec: bun_core::image::SNAPSHOT_MONOTONIC[0]
+                    sec: bun_core::snapshot::SNAPSHOT_MONOTONIC[0]
                         .load(::std::sync::atomic::Ordering::Relaxed),
-                    nsec: bun_core::image::SNAPSHOT_MONOTONIC[1]
+                    nsec: bun_core::snapshot::SNAPSHOT_MONOTONIC[1]
                         .load(::std::sync::atomic::Ordering::Relaxed),
                 };
                 let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                 // SAFETY: main thread; RuntimeState live; no JS on the stack.
-                unsafe { (*state).timer.rebase_after_image_restore(then, now) };
+                unsafe { (*state).timer.rebase_after_snapshot_restore(then, now) };
             }
         }
     }
@@ -1867,10 +1908,10 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         let vm = unsafe { &mut *vm_ptr };
         // SAFETY: `transpiler.env` is the process-lifetime loader; nothing else touches it during restore adoption.
         if let Some(env) = unsafe { vm.transpiler.env.as_mut() } {
-            let _ = env.reload_process_after_image_restore();
+            let _ = env.reload_process_after_snapshot_restore();
         }
         // SAFETY: FFI; rebuilds the JS `process.env` object from the (now current) loader map.
-        unsafe { Bun__Process__reloadEnvAfterImageRestore(vm.global) };
+        unsafe { Bun__Process__reloadEnvAfterSnapshotRestore(vm.global) };
     }
     {
         // SAFETY: main-thread VM; single-threaded at this point of restore.
@@ -1883,15 +1924,15 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
     unsafe {
         (*vm_ptr)
             .rare_data()
-            .forget_spawn_sync_event_loop_for_image_restore()
+            .forget_spawn_sync_event_loop_for_snapshot_restore()
     };
     // SAFETY: as above.
     unsafe {
         (*vm_ptr)
             .rare_data()
-            .forget_entropy_cache_for_image_restore()
+            .forget_entropy_cache_for_snapshot_restore()
     };
-    crate::dns_jsc::internal::flush_dns_cache_for_image_restore(); // answers in the image came from the builder's network
+    crate::dns_jsc::internal::flush_dns_cache_for_snapshot_restore(); // answers in the snapshot came from the builder's network
     #[cfg(target_os = "macos")]
     {
         // SAFETY: main-thread VM adopted above; single-threaded at this point of restore.
@@ -1899,9 +1940,9 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
         let loop_ = vm.uws_loop();
         if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
             // SAFETY: loop_ is the process-global uws loop.
-            let (rearmed, hung_up) = store.rearm_for_image(unsafe { &mut *loop_ });
+            let (rearmed, hung_up) = store.rearm_for_snapshot(unsafe { &mut *loop_ });
             bun_core::debug_warn!(
-                "[image] file polls: {} re-armed, {} hung up",
+                "[snapshot] file polls: {} re-armed, {} hung up",
                 rearmed,
                 hung_up
             );
@@ -1910,24 +1951,24 @@ pub extern "C" fn Bun__imageAdoptMainThreadVM() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__imageContinueEventLoop() -> ! {
+pub extern "C" fn Bun__snapshotContinueEventLoop() -> ! {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
-    assert!(!vm_ptr.is_null(), "image has no main-thread VM");
+    assert!(!vm_ptr.is_null(), "snapshot has no main-thread VM");
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
-    // SAFETY: `vm_ptr` is the image's main-thread VM, now installed for this thread.
+    // SAFETY: `vm_ptr` is the snapshot's main-thread VM, now installed for this thread.
     let vm = unsafe { &mut *vm_ptr };
     #[cfg(target_os = "macos")]
     if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
-        let n = store.dispatch_image_hangups();
+        let n = store.dispatch_snapshot_hangups();
         if n > 0 {
             bun_core::debug_warn!(
-                "[image] delivered {} hangups for fds that did not survive the restore",
+                "[snapshot] delivered {} hangups for fds that did not survive the restore",
                 n
             );
         }
     }
     // The 'restore' listeners just ran synchronously; continuations of anything that awaited them are microtasks and
-    // may be the only pending work (an image taken with every timer cancelled has nothing else). Run one tick
+    // may be the only pending work (a snapshot taken with every timer cancelled has nothing else). Run one tick
     // unconditionally so they execute and get the chance to make the loop alive again.
     vm.tick();
     while vm.is_event_loop_alive() {

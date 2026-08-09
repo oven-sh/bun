@@ -2351,9 +2351,9 @@ pub mod internal {
     static GLOBAL_CACHE: bun_threading::Guarded<GlobalCache> =
         bun_threading::Guarded::new(GlobalCache::new());
 
-    /// Heap-image restore: every cached answer was resolved on the builder's machine/network. Nothing is in flight at
+    /// snapshot restore: every cached answer was resolved on the builder's machine/network. Nothing is in flight at
     /// restore, so entries with no waiters are freed and the table emptied; the next lookup asks this machine's resolver.
-    pub fn flush_dns_cache_for_image_restore() {
+    pub fn flush_dns_cache_for_snapshot_restore() {
         let mut guard = global_cache().lock();
         let cache: &mut GlobalCache = &mut guard;
         for i in 0..cache.len {

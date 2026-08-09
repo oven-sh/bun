@@ -271,8 +271,8 @@ static consteval unsigned getWebKitBytecodeCacheVersion()
 }
 #undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
-extern "C" bool Bun__heapImageMode();
-extern "C" bool Bun__heapImageActive();
+extern "C" bool Bun__snapshotMode();
+extern "C" bool Bun__snapshotActive();
 extern "C" unsigned getJSCBytecodeCacheVersion()
 {
     return getWebKitBytecodeCacheVersion();
@@ -304,10 +304,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
-            if (const char* a = getenv("BUN_IMAGE_JIT_ADDR"))
+            if (const char* a = getenv("BUN_SNAPSHOT_JIT_ADDR"))
                 JSC::Options::jitMemoryReservationAddress() = strtoull(a, nullptr, 0);
-            else if (Bun__heapImageMode())
-                JSC::Options::jitMemoryReservationAddress() = 0x3c0000000ull; // heap images: JIT pool at a fixed VA
+            else if (Bun__snapshotMode())
+                JSC::Options::jitMemoryReservationAddress() = 0x3c0000000ull; // snapshots: JIT pool at a fixed VA
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;

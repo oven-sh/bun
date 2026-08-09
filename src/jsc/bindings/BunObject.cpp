@@ -1202,7 +1202,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
 } // namespace Zig
 
-// Heap-image restore: launch-derived lazy properties that were already reified into own properties on the Bun object
+// snapshot restore: launch-derived lazy properties that were already reified into own properties on the Bun object
 // get their value recomputed for this process (same callbacks as first access).
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
 {

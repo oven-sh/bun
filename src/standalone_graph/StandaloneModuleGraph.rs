@@ -45,8 +45,8 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
-    /// Embedded heap image (`--compile-image`): pointer into the mapped section + length; `(null, 0)` when absent.
-    pub image: (*const u8, usize),
+    /// Embedded snapshot (`--snapshot`): pointer into the mapped section + length; `(null, 0)` when absent.
+    pub snapshot: (*const u8, usize),
 }
 
 // We never want to hit the filesystem for these files
@@ -610,8 +610,8 @@ pub(crate) struct Offsets {
     pub entry_point_id: u32,
     pub compile_exec_argv_ptr: StringPointer,
     pub flags: Flags,
-    /// `--compile-image`: a raw, page-aligned heap image embedded after the modules (`{0,0}` when absent). Restore maps regions straight from the executable.
-    pub image: StringPointer,
+    /// `--snapshot`: a raw, page-aligned snapshot embedded after the modules (`{0,0}` when absent). Restore maps regions straight from the executable.
+    pub snapshot: StringPointer,
 }
 
 bitflags::bitflags! {
@@ -642,7 +642,7 @@ impl StandaloneModuleGraph {
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
-                image: (core::ptr::null(), 0),
+                snapshot: (core::ptr::null(), 0),
             });
         }
 
@@ -767,8 +767,8 @@ impl StandaloneModuleGraph {
             }
             .as_bytes(),
             flags: offsets.flags,
-            image: {
-                let ptr = offsets.image;
+            snapshot: {
+                let ptr = offsets.snapshot;
                 let (off, len) = (ptr.offset as usize, ptr.length as usize);
                 if len != 0 && off.checked_add(len).is_some_and(|end| end <= raw_len) {
                     // SAFETY: subrange of the mapped section, verified above; read-only.
@@ -781,17 +781,17 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// C++ (heap-image restore) asks: does this executable carry an embedded image, and where is it in memory? File offset is derived by the caller
-/// from the section mapping. Returns false when not a compiled executable or no image was embedded.
+/// C++ (snapshot restore) asks: does this executable carry an embedded snapshot, and where is it in memory? File offset is derived by the caller
+/// from the section mapping. Returns false when not a compiled executable or no snapshot was embedded.
 ///
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneEmbeddedImage(
+pub unsafe extern "C" fn Bun__standaloneEmbeddedSnapshot(
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> bool {
-    let Some((ptr, len)) = StandaloneModuleGraph::embedded_image_early() else {
+    let Some((ptr, len)) = StandaloneModuleGraph::embedded_snapshot_early() else {
         return false;
     };
     // SAFETY: per the function contract.
@@ -850,8 +850,8 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
-/// Page alignment for an embedded heap image inside the section payload (arm64 pages; also a multiple of x86-64's 4 KiB).
-pub const EMBEDDED_IMAGE_ALIGN: usize = 16 * 1024;
+/// Page alignment for an embedded snapshot inside the section payload (arm64 pages; also a multiple of x86-64's 4 KiB).
+pub const EMBEDDED_SNAPSHOT_ALIGN: usize = 16 * 1024;
 
 pub(crate) fn to_bytes(
     prefix: &[u8],
@@ -859,7 +859,7 @@ pub(crate) fn to_bytes(
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
-    image: Option<&[u8]>,
+    snapshot: Option<&[u8]>,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -907,8 +907,8 @@ pub(crate) fn to_bytes(
     string_builder.cap += 16;
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
-    if let Some(img) = image {
-        string_builder.cap += EMBEDDED_IMAGE_ALIGN + img.len(); // padding to a page boundary + the image
+    if let Some(img) = snapshot {
+        string_builder.cap += EMBEDDED_SNAPSHOT_ALIGN + img.len(); // padding to a page boundary + the snapshot
     }
 
     string_builder.allocate()?;
@@ -1130,15 +1130,15 @@ pub(crate) fn to_bytes(
     };
     let modules_ptr = string_builder.append_count(modules_as_bytes);
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
-    let image_ptr = match image {
+    let snapshot_ptr = match snapshot {
         Some(img) if !img.is_empty() => {
-            // The section starts EMBEDDED_IMAGE_ALIGN-aligned in the file with an 8-byte `BlobHeader.size` before payload offset 0, so align (8 + offset).
+            // The section starts EMBEDDED_SNAPSHOT_ALIGN-aligned in the file with an 8-byte `BlobHeader.size` before payload offset 0, so align (8 + offset).
             const BLOB_HEADER_BYTES: usize = size_of::<u64>();
-            let pad = (EMBEDDED_IMAGE_ALIGN
-                - ((BLOB_HEADER_BYTES + string_builder.len) % EMBEDDED_IMAGE_ALIGN))
-                % EMBEDDED_IMAGE_ALIGN;
+            let pad = (EMBEDDED_SNAPSHOT_ALIGN
+                - ((BLOB_HEADER_BYTES + string_builder.len) % EMBEDDED_SNAPSHOT_ALIGN))
+                % EMBEDDED_SNAPSHOT_ALIGN;
             if pad != 0 {
-                let zeros = [0u8; EMBEDDED_IMAGE_ALIGN];
+                let zeros = [0u8; EMBEDDED_SNAPSHOT_ALIGN];
                 let _ = string_builder.append(&zeros[..pad]);
             }
             string_builder.append_count(img)
@@ -1151,7 +1151,7 @@ pub(crate) fn to_bytes(
         compile_exec_argv_ptr,
         byte_count: string_builder.len,
         flags,
-        image: image_ptr,
+        snapshot: snapshot_ptr,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
@@ -1873,10 +1873,16 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
-/// `--compile-image` pass 2: the image was produced by an executable carrying `bytes` (pass 1) and holds pointers into that exact payload
+/// `--snapshot` pass 2: the snapshot was produced by an executable carrying `bytes` (pass 1) and holds pointers into that exact payload
 /// (module graph, sources, borrowed bytecode), so the graph bytes must be reused verbatim — only the trailer is rewritten and the page-aligned
-/// image appended after them.
-pub fn append_image_to_serialized(bytes: &[u8], image: &[u8]) -> Option<Vec<u8>> {
+/// snapshot appended after them.
+/// `min_len`: the executable being re-emitted already carries a payload of this size, and the Mach-O injector can only grow
+/// the segment; zero padding after the snapshot keeps the new payload at least as large (`byte_count` covers the padding).
+pub fn append_snapshot_to_serialized(
+    bytes: &[u8],
+    snapshot: &[u8],
+    min_len: usize,
+) -> Option<Vec<u8>> {
     if bytes.len() < size_of::<Offsets>() + TRAILER.len()
         || &bytes[bytes.len() - TRAILER.len()..] != TRAILER
     {
@@ -1887,17 +1893,22 @@ pub fn append_image_to_serialized(bytes: &[u8], image: &[u8]) -> Option<Vec<u8>>
     let mut offsets: Offsets =
         unsafe { core::ptr::read_unaligned(bytes[body_len..].as_ptr().cast::<Offsets>()) };
     const BLOB_HEADER_BYTES: usize = size_of::<u64>();
-    let pad = (EMBEDDED_IMAGE_ALIGN - ((BLOB_HEADER_BYTES + body_len) % EMBEDDED_IMAGE_ALIGN))
-        % EMBEDDED_IMAGE_ALIGN;
+    let pad = (EMBEDDED_SNAPSHOT_ALIGN
+        - ((BLOB_HEADER_BYTES + body_len) % EMBEDDED_SNAPSHOT_ALIGN))
+        % EMBEDDED_SNAPSHOT_ALIGN;
     let mut out =
-        Vec::with_capacity(body_len + pad + image.len() + size_of::<Offsets>() + TRAILER.len());
+        Vec::with_capacity(body_len + pad + snapshot.len() + size_of::<Offsets>() + TRAILER.len());
     out.extend_from_slice(&bytes[..body_len]);
     out.resize(body_len + pad, 0);
-    offsets.image = StringPointer {
+    offsets.snapshot = StringPointer {
         offset: (body_len + pad) as u32,
-        length: image.len() as u32,
+        length: snapshot.len() as u32,
     };
-    out.extend_from_slice(image);
+    out.extend_from_slice(snapshot);
+    let tail = size_of::<Offsets>() + TRAILER.len();
+    if out.len() + tail < min_len {
+        out.resize(min_len - tail, 0);
+    }
     offsets.byte_count = out.len();
     // SAFETY: Offsets is repr(C) POD.
     out.extend_from_slice(unsafe {
@@ -1907,12 +1918,12 @@ pub fn append_image_to_serialized(bytes: &[u8], image: &[u8]) -> Option<Vec<u8>>
     Some(out)
 }
 
-/// Embed a heap image into an *existing* compiled executable (what `--compile-image` pass 2 does, for build pipelines that use the
+/// Embed a snapshot into an *existing* compiled executable (what `--snapshot` pass 2 does, for build pipelines that use the
 /// `Bun.build({compile})` API): recover the exact section payload from the file (`[body][Offsets][TRAILER]`), append the page-aligned
-/// image, and re-emit through the normal inject/sign path with `exe_path` as the template.
-pub fn embed_image_into_executable(
+/// snapshot, and re-emit through the normal inject/sign path with `exe_path` as the template.
+pub fn embed_snapshot_into_executable(
     exe_path: &[u8],
-    image: &[u8],
+    snapshot: &[u8],
     out_dir: Fd,
     out_name: &[u8],
     env: &mut bun_dotenv::Loader,
@@ -1951,16 +1962,41 @@ pub fn embed_image_into_executable(
             bstr::BStr::new(exe_path)
         )));
     }
-    if offsets.image.length != 0 {
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "{} already has an embedded image",
-            bstr::BStr::new(exe_path)
-        )));
-    }
     let payload = &file[opos - offsets.byte_count..tpos + TRAILER.len()];
-    let Some(new_payload) = append_image_to_serialized(payload, image) else {
+    let previous_payload_len = if offsets.snapshot.length != 0 {
+        payload.len()
+    } else {
+        0
+    };
+    // Re-running the snapshot step replaces the snapshot: rebuild the snapshot-less form (body, then a cleared Offsets) and append to that.
+    let stripped: Vec<u8>;
+    let payload: &[u8] = if offsets.snapshot.length != 0 {
+        let body_end = offsets.snapshot.offset as usize;
+        if body_end > offsets.byte_count {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "corrupt snapshot offsets in {}",
+                bstr::BStr::new(exe_path)
+            )));
+        }
+        let mut cleared = offsets;
+        cleared.snapshot = StringPointer::default();
+        cleared.byte_count = body_end;
+        let mut out = Vec::with_capacity(body_end + size_of::<Offsets>() + TRAILER.len());
+        out.extend_from_slice(&payload[..body_end]);
+        // SAFETY: Offsets is repr(C) POD.
+        out.extend_from_slice(unsafe {
+            core::slice::from_raw_parts((&raw const cleared).cast::<u8>(), size_of::<Offsets>())
+        });
+        out.extend_from_slice(TRAILER);
+        stripped = out;
+        &stripped
+    } else {
+        payload
+    };
+    let Some(new_payload) = append_snapshot_to_serialized(payload, snapshot, previous_payload_len)
+    else {
         return Ok(CompileResult::fail_fmt(format_args!(
-            "could not append image"
+            "could not append snapshot"
         )));
     };
     drop(file);
@@ -1977,7 +2013,6 @@ pub fn embed_image_into_executable(
         Some(exe_path),
         Flags::default(),
         Some(&new_payload),
-        None,
     )
 }
 
@@ -1994,7 +2029,6 @@ pub fn to_executable(
     self_exe_path: Option<&[u8]>,
     flags: Flags,
     prebuilt_payload: Option<&[u8]>,
-    serialized_out: Option<&mut Vec<u8>>,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
@@ -2018,10 +2052,6 @@ pub fn to_executable(
             }
         }
     };
-    if let Some(out) = serialized_out {
-        out.clear();
-        out.extend_from_slice(&bytes);
-    }
     if bytes.is_empty() {
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
     }
@@ -2274,9 +2304,9 @@ pub fn to_executable(
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
-    /// Heap-image restore runs long before the graph is constructed: locate the section, read the trailer `Offsets`, and report the
-    /// embedded image's in-memory location (the section is mapped as part of the executable). `None` if not compiled / no image.
-    pub fn embedded_image_early() -> Option<(*const u8, usize)> {
+    /// snapshot restore runs long before the graph is constructed: locate the section, read the trailer `Offsets`, and report the
+    /// embedded snapshot's in-memory location (the section is mapped as part of the executable). `None` if not compiled / no snapshot.
+    pub fn embedded_snapshot_early() -> Option<(*const u8, usize)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -2300,7 +2330,10 @@ impl StandaloneModuleGraph {
                     .cast::<Offsets>(),
             )
         };
-        let (off, ilen) = (offsets.image.offset as usize, offsets.image.length as usize);
+        let (off, ilen) = (
+            offsets.snapshot.offset as usize,
+            offsets.snapshot.length as usize,
+        );
         if ilen == 0 || off.checked_add(ilen).is_none_or(|end| end > len) {
             return None;
         }

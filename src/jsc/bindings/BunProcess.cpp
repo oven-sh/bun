@@ -3197,9 +3197,9 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
     return JSC::jsString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
-// Heap-image restore: process.env holds the builder's environment; rebuild it from the reloaded loader map.
+// snapshot restore: process.env holds the builder's environment; rebuild it from the reloaded loader map.
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject*);
-extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* lexicalGlobalObject)
+extern "C" void Bun__Process__reloadEnvAfterSnapshotRestore(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -3210,10 +3210,10 @@ extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* le
         (void)scope.tryClearException();
         return;
     }
-    // Images built by `bun` make process.env a store-backed view first, so the contents can change under every reference
-    // the app holds; only an image built some other way needs the object itself replaced.
+    // Snapshots built by `bun` make process.env a store-backed view first, so the contents can change under every reference
+    // the app holds; only a snapshot built some other way needs the object itself replaced.
     JSObject* process = globalObject->processObject();
-    if (!Bun::refillSharedEnvAfterImageRestore(globalObject, fresh.getObject())) {
+    if (!Bun::refillSharedEnvAfterSnapshotRestore(globalObject, fresh.getObject())) {
         globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
         process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
     }

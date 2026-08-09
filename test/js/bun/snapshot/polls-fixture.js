@@ -1,4 +1,4 @@
-// Built with stdin = a pipe the builder never reads to EOF (a FilePoll on fd 0 is in the image) and after one DNS lookup
+// Built with stdin = a pipe the builder never reads to EOF (a FilePoll on fd 0 is in the snapshot) and after one DNS lookup
 // (dns_sd's per-process shared connection). Restored with a fresh stdin pipe: the poll must follow the new fd, and
 // nothing may be delivered before 'restore'.
 const events = [];
@@ -14,4 +14,4 @@ process.on("restore", async () => {
   process.exit(0);
 });
 await Bun.dns.lookup("localhost").catch(() => {});
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "keep" }), 100);
+setTimeout(() => Bun.unsafe.snapshot({ timers: "keep" }), 100);

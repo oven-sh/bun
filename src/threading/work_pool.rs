@@ -153,10 +153,10 @@ impl WorkPool {
         }
     }
 
-    /// Called once right after an image restore, before any task is scheduled.
-    pub fn did_restore_from_image() {
+    /// Called once right after a snapshot restore, before any task is scheduled.
+    pub fn did_restore_from_snapshot() {
         if let Some(pool) = POOL.get() {
-            pool.forget_threads_after_image_restore();
+            pool.forget_threads_after_snapshot_restore();
         }
     }
 

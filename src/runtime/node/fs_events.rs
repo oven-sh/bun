@@ -94,7 +94,7 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-/// The process's FSEvents loop, or one left behind by a heap-image builder (its `epoch` then differs from the current one:
+/// The process's FSEvents loop, or one left behind by a snapshot builder (its `epoch` then differs from the current one:
 /// the CF thread it names never existed in this process, so `watch()` makes a fresh loop and the old one is left inert).
 static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
 
@@ -105,7 +105,7 @@ fn current_default_loop() -> Option<&'static FSEventsLoop> {
     }
     // SAFETY: only ever set to a leaked `&'static FSEventsLoop`.
     let l: &'static FSEventsLoop = unsafe { &*p };
-    (l.epoch == bun_core::image::epoch()).then_some(l)
+    (l.epoch == bun_core::snapshot::epoch()).then_some(l)
 }
 
 #[cfg(unix)]
@@ -286,7 +286,7 @@ fn init_core_services() -> CoreServices {
 }
 
 pub struct FSEventsLoop {
-    /// `bun_core::image::epoch()` when this loop (and its CF thread) was created.
+    /// `bun_core::snapshot::epoch()` when this loop (and its CF thread) was created.
     epoch: u32,
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
@@ -431,7 +431,7 @@ impl FSEventsLoop {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
-            epoch: bun_core::image::epoch(),
+            epoch: bun_core::snapshot::epoch(),
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             mutex: Mutex::new(),
@@ -503,8 +503,8 @@ impl FSEventsLoop {
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
-        if self.epoch != bun_core::image::epoch() {
-            return; // this loop's CF thread belonged to the process that built the image
+        if self.epoch != bun_core::snapshot::epoch() {
+            return; // this loop's CF thread belonged to the process that built the snapshot
         }
         let cf = CoreFoundation::get();
         let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
@@ -958,7 +958,7 @@ pub(crate) fn watch(
     ))
 }
 
-/// Heap-image build: join the CF thread before memory is frozen; the restored process makes a new loop on its first `watch()`.
+/// snapshot build: join the CF thread before memory is frozen; the restored process makes a new loop on its first `watch()`.
 #[cfg(target_os = "macos")]
 pub(crate) fn shutdown_for_snapshot() {
     close_and_wait();

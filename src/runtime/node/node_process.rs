@@ -28,7 +28,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 }
 
 /// The script's own arguments. When the CLI recorded where they start in argv (compiled executables and the plain
-/// `bun entry a b` shape), they are read from the live process argv — recomputed after a heap-image restore —
+/// `bun entry a b` shape), they are read from the live process argv — recomputed after a snapshot restore —
 /// otherwise from the CLI's parsed passthrough. Entries borrow process-lifetime storage.
 pub(crate) fn passthrough_argv(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Vec<&[u8]> {
     let offset = bun_core::standalone_passthrough_offset();

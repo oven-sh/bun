@@ -1,25 +1,25 @@
-//! Heap-image (snapshot) process state: are we building an image, and which restore epoch are we in.
+//! Snapshot process state: are we building a snapshot, and which restore epoch are we in.
 use core::sync::atomic::{AtomicU32, Ordering};
 
-// One epoch for the whole process (Rust, C++ and vendored C): the exported `bun_image_epoch` symbol, defined here.
+// One epoch for the whole process (Rust, C++ and vendored C): the exported `bun_snapshot_epoch` symbol, defined here.
 #[unsafe(no_mangle)]
-pub static bun_image_epoch: AtomicU32 = AtomicU32::new(0);
+pub static bun_snapshot_epoch: AtomicU32 = AtomicU32::new(0);
 static BUILDING: AtomicU32 = AtomicU32::new(0);
 
-/// 0 in a normally booted process; bumped each time this process resumed from an image.
+/// 0 in a normally booted process; bumped each time this process resumed from a snapshot.
 #[inline]
 pub fn epoch() -> u32 {
-    bun_image_epoch.load(Ordering::Acquire)
+    bun_snapshot_epoch.load(Ordering::Acquire)
 }
 #[inline]
 pub fn restored() -> bool {
     epoch() != 0
 }
-/// Called once per restore (the C++ restore sequence has already bumped `bun_image_epoch`).
+/// Called once per restore (the C++ restore sequence has already bumped `bun_snapshot_epoch`).
 pub fn did_restore() {
     BUILDING.store(0, Ordering::Release);
 }
-/// True while this process is producing an image: OS resources created now will not exist when the image runs.
+/// True while this process is producing a snapshot: OS resources created now will not exist when the snapshot runs.
 #[inline]
 pub fn building() -> bool {
     BUILDING.load(Ordering::Acquire) != 0
@@ -28,12 +28,12 @@ pub fn set_building(on: bool) {
     BUILDING.store(on as u32, Ordering::Release);
 }
 
-/// A `Once` whose "done" state belongs to a process epoch: work that created OS state (threads, fds, ports) re-runs after an image restore.
-pub struct ImageOnce {
+/// A `Once` whose "done" state belongs to a process epoch: work that created OS state (threads, fds, ports) re-runs after a snapshot restore.
+pub struct SnapshotOnce {
     done_epoch: AtomicU32, // epoch+1 in which it last ran; 0 = never
     lock: std::sync::Mutex<()>,
 }
-impl ImageOnce {
+impl SnapshotOnce {
     pub const fn new() -> Self {
         Self {
             done_epoch: AtomicU32::new(0),
@@ -58,7 +58,7 @@ impl ImageOnce {
 }
 
 /// A lazily computed value derived from this process's launch context (argv, environment, cwd, uid, terminal…).
-/// It is recomputed after a heap-image restore: the value in the image belongs to the process that built it.
+/// It is recomputed after a snapshot restore: the value in the snapshot belongs to the process that built it.
 /// Use this — not `Once`/`OnceLock`/`static mut` — for anything read from the OS at startup and cached.
 pub struct ProcessDerived<T: 'static> {
     epoch_plus_one: AtomicU32,
@@ -94,10 +94,56 @@ impl<T: 'static> ProcessDerived<T> {
     }
 }
 
+/// What the process building a snapshot may touch on the machine it is built on. Network use is refused either way: its
+/// answers would be frozen into every launch. `Local` (BUN_SNAPSHOT_IO=local) lets the app read its files, run helpers, bind
+/// local sockets and resolve names — each use is recorded and reported when the snapshot is written, so what got baked in
+/// can be audited.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IoPolicy {
+    Strict,
+    Local,
+    /// BUN_SNAPSHOT_IO=network: the network too — its answers are frozen into every launch — still recorded and reported.
+    Network,
+}
+pub fn io_policy() -> IoPolicy {
+    match crate::env_var::BUN_SNAPSHOT_IO.get() {
+        Some(b"local") => IoPolicy::Local,
+        Some(b"network") => IoPolicy::Network,
+        _ => IoPolicy::Strict,
+    }
+}
+/// Whether the policy admits an operation of this class, which the gate then records.
+pub fn io_allowed(kind: &str) -> bool {
+    let local_class = matches!(kind, "node:fs" | "Bun.spawn" | "Bun.listen" | "dns");
+    match io_policy() {
+        IoPolicy::Strict => false,
+        IoPolicy::Local => local_class,
+        IoPolicy::Network => true,
+    }
+}
+
+/// Local I/O performed while building, keyed by (kind, JS call site) -> count. Only ever touched on the JS thread of the builder.
+static LOCAL_IO_AUDIT: std::sync::Mutex<Vec<(&'static str, Vec<u8>, u32)>> =
+    std::sync::Mutex::new(Vec::new());
+pub fn note_local_io(kind: &'static str, site: Vec<u8>) {
+    let mut audit = LOCAL_IO_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = audit.iter_mut().find(|(k, s, _)| *k == kind && *s == site) {
+        entry.2 += 1;
+    } else {
+        audit.push((kind, site, 1));
+    }
+}
+/// The audit, most frequent first; empty unless the build did local I/O.
+pub fn take_local_io_audit() -> Vec<(&'static str, Vec<u8>, u32)> {
+    let mut audit = std::mem::take(&mut *LOCAL_IO_AUDIT.lock().unwrap_or_else(|e| e.into_inner()));
+    audit.sort_by_key(|entry| core::cmp::Reverse(entry.2));
+    audit
+}
+
 static SNAPSHOT_REQUESTED: AtomicU32 = AtomicU32::new(0);
-static SNAPSHOT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-/// Ask the main run loop to leave JS entirely and take the image at top level (caller then unwinds via a termination exception).
-pub fn request_snapshot(path: &str) {
+static SNAPSHOT_PATH: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+/// Ask the main run loop to leave JS entirely and take the snapshot at top level (caller then unwinds via a termination exception).
+pub fn request_snapshot(path: &[u8]) {
     *SNAPSHOT_PATH.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_owned());
     SNAPSHOT_REQUESTED.store(1, Ordering::Release);
 }
@@ -105,7 +151,16 @@ pub fn request_snapshot(path: &str) {
 pub fn snapshot_requested() -> bool {
     SNAPSHOT_REQUESTED.load(Ordering::Acquire) != 0
 }
-pub fn take_snapshot_request() -> Option<String> {
+static SNAPSHOT_IN_PROGRESS: AtomicU32 = AtomicU32::new(0);
+/// Set once the runtime has started draining the process for the snapshot; a `Bun.unsafe.snapshot()` call from then on only
+/// contributes its options.
+pub fn set_snapshot_in_progress() {
+    SNAPSHOT_IN_PROGRESS.store(1, Ordering::Release);
+}
+pub fn snapshot_in_progress() -> bool {
+    SNAPSHOT_IN_PROGRESS.load(Ordering::Acquire) != 0
+}
+pub fn take_snapshot_request() -> Option<Vec<u8>> {
     if SNAPSHOT_REQUESTED.swap(0, Ordering::AcqRel) == 0 {
         return None;
     }
@@ -138,7 +193,7 @@ pub fn snapshot_timers() -> SnapshotTimers {
     }
 }
 
-/// Monotonic (sec, nsec) at the moment the image was frozen; lives in __DATA so the restored process can compute how far its own clock is from it.
+/// Monotonic (sec, nsec) at the moment the snapshot was frozen; lives in __DATA so the restored process can compute how far its own clock is from it.
 pub static SNAPSHOT_MONOTONIC: [core::sync::atomic::AtomicI64; 2] = [
     core::sync::atomic::AtomicI64::new(0),
     core::sync::atomic::AtomicI64::new(0),

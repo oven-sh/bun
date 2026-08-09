@@ -731,15 +731,15 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    /// Heap-image restore: pre-drawn random bytes in the image would be replayed by every restored process.
-    pub fn forget_entropy_cache_for_image_restore(&mut self) {
+    /// snapshot restore: pre-drawn random bytes in the snapshot would be replayed by every restored process.
+    pub fn forget_entropy_cache_for_snapshot_restore(&mut self) {
         self.entropy_cache = None;
     }
 
-    /// Heap-image restore: the isolated spawnSync loop (if the builder ever spawnSync'd) wraps the builder's kqueue/epoll fd; forget it so the next spawnSync makes one here.
-    pub fn forget_spawn_sync_event_loop_for_image_restore(&mut self) {
+    /// snapshot restore: the isolated spawnSync loop (if the builder ever spawnSync'd) wraps the builder's kqueue/epoll fd; forget it so the next spawnSync makes one here.
+    pub fn forget_spawn_sync_event_loop_for_snapshot_restore(&mut self) {
         if let Some(stale) = self.spawn_sync_event_loop_.take() {
-            Box::leak(stale); // its fds belong to the process that built the image; Drop here would close unrelated fds of ours
+            Box::leak(stale); // its fds belong to the process that built the snapshot; Drop here would close unrelated fds of ours
         }
     }
 

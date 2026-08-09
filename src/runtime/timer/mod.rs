@@ -1240,7 +1240,7 @@ impl All {
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias.
     /// Timers armed before a heap snapshot carry absolute CLOCK_MONOTONIC deadlines of the building process; shift them by (now - then).
-    pub(crate) unsafe fn rebase_after_image_restore(
+    pub(crate) unsafe fn rebase_after_snapshot_restore(
         &mut self,
         then: bun_core::Timespec,
         now: bun_core::Timespec,

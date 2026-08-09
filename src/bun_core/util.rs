@@ -3546,9 +3546,9 @@ pub fn fast_random() -> u64 {
     static SEED: AtomicU64 = AtomicU64::new(0);
     static SEED_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     fn random_seed() -> u64 {
-        let epoch = crate::image::epoch();
+        let epoch = crate::snapshot::epoch();
         if SEED_EPOCH.swap(epoch, O::Relaxed) != epoch {
-            SEED.store(0, O::Relaxed); // seed cached by the image builder: draw a fresh one here
+            SEED.store(0, O::Relaxed); // seed cached by the snapshot builder: draw a fresh one here
         }
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
@@ -3572,10 +3572,10 @@ pub fn fast_random() -> u64 {
         static PRNG: Cell<Option<(u32, rand::DefaultPrng)>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let epoch = crate::image::epoch();
+        let epoch = crate::snapshot::epoch();
         let mut prng = match p.take() {
             Some((e, prng)) if e == epoch => prng,
-            _ => rand::DefaultPrng::init(random_seed()), // first use, or first use since a heap-image restore (the imaged stream is the builder's)
+            _ => rand::DefaultPrng::init(random_seed()), // first use, or first use since a snapshot restore (the snapshotd stream is the builder's)
         };
         let v = prng.next_u64();
         p.set(Some((epoch, prng)));
@@ -3733,14 +3733,15 @@ pub use bun_alloc::secure_zero;
 // `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
-// Launch-context derived (recomputed after a heap-image restore — see `image::ProcessDerived`).
-static ARGV_STORAGE: crate::image::ProcessDerived<Vec<ZBox>> = crate::image::ProcessDerived::new();
+// Launch-context derived (recomputed after a snapshot restore — see `snapshot::ProcessDerived`).
+static ARGV_STORAGE: crate::snapshot::ProcessDerived<Vec<ZBox>> =
+    crate::snapshot::ProcessDerived::new();
 struct ArgvView(RacyCell<&'static [&'static ZStr]>);
 // SAFETY: the view is written during single-threaded startup / restore adoption only (see `set_argv`).
 unsafe impl Sync for ArgvView {}
 // SAFETY: as above; the view holds only `'static` data.
 unsafe impl Send for ArgvView {}
-static ARGV: crate::image::ProcessDerived<ArgvView> = crate::image::ProcessDerived::new();
+static ARGV: crate::snapshot::ProcessDerived<ArgvView> = crate::snapshot::ProcessDerived::new();
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
@@ -3769,7 +3770,7 @@ pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c
     OS_ARGV.store(argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
 }
 
-/// The raw launch inputs `main` received. A heap-image restore overlays this crate's statics with the builder's,
+/// The raw launch inputs `main` received. A snapshot restore overlays this crate's statics with the builder's,
 /// so the restore sequence reads these before the overlay and hands them back after (`bun_launch_context_*`).
 #[repr(C)]
 pub struct LaunchContext {
@@ -3880,7 +3881,7 @@ pub fn compile_exec_argc() -> usize {
 }
 /// For a `--compile`d executable: index in `argv()` where the user's own arguments begin (0 = not standalone).
 /// Everything JS sees as "its" argv (`process.argv.slice(2)`, `Bun.argv`) is derived from `argv()[offset..]`, so it
-/// follows the launch context of the current process (see `image::ProcessDerived`).
+/// follows the launch context of the current process (see `snapshot::ProcessDerived`).
 static PASSTHROUGH_OFFSET: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 pub fn set_standalone_passthrough_offset(offset: usize) {

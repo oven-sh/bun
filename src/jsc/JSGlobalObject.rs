@@ -312,32 +312,52 @@ impl JSGlobalObject {
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
-    /// I/O whose result would be baked into a heap image (network, subprocesses, files) is disabled while one is being built.
-    pub fn throw_disabled_in_snapshot_error_if_needed(&self, what: &str) -> Result<(), JsError> {
-        if !bun_core::image::building() {
+    /// I/O whose result would be baked into a snapshot is refused while one is being built. Under `IoPolicy::Local`,
+    /// what only touches this machine (files, subprocesses, local listeners, the resolver) is allowed and recorded for the
+    /// report the snapshot writer prints; network use is refused regardless.
+    pub fn throw_disabled_in_snapshot_error_if_needed(
+        &self,
+        what: &'static str,
+    ) -> Result<(), JsError> {
+        if !bun_core::snapshot::building() {
             return Ok(());
         }
-        // An app imaging its fully booted state legitimately reads its own files, runs helpers and binds local sockets
-        // (which it re-binds after restore); what must never happen is talking to the network, whose answers would be
-        // frozen into the image. BUN_IMAGE_ALLOW_LOCAL_IO permits the former and keeps the latter fatal.
-        if matches!(what, "node:fs" | "Bun.spawn" | "Bun.listen")
-            && bun_core::env_var::BUN_IMAGE_ALLOW_LOCAL_IO
-                .get()
-                .unwrap_or(false)
+        if bun_core::snapshot::io_allowed(what) {
+            bun_core::snapshot::note_local_io(what, self.current_call_site_for_report());
+            return Ok(());
+        }
+        Err(self.throw_invalid_arguments(format_args!(
+            "{what} is not available while building a snapshot: its result would be frozen into every launch. Do it after restore (process.on('restore')), or allow it for the build with --snapshot-io, which reports every use"
+        )))
+    }
+
+    /// The innermost JS frames as an error stack would print them (source maps applied), for the build-time reports.
+    fn current_call_site_for_report(&self) -> Vec<u8> {
+        let err = self.create_error_instance(format_args!(""));
+        let Ok(Some(stack)) = err.get(self, "stack") else {
+            return Vec::new();
+        };
+        let Ok(stack) = stack.to_bun_string(self) else {
+            return Vec::new();
+        };
+        let utf8 = stack.to_utf8();
+        let mut site = Vec::new();
+        // Skip the message line; keep the four innermost frames.
+        for line in bun_core::strings::split(utf8.slice(), b"\n")
+            .skip(1)
+            .take(4)
         {
-            return Ok(());
-        }
-        if bun_core::env_var::BUN_IMAGE_IO_WARN.get().unwrap_or(false) {
-            let err = self
-                .create_error_instance(format_args!("[image] {what} while building a snapshot"));
-            if let Ok(Some(stack)) = err.get(self, "stack")
-                && let Ok(stack) = stack.to_bun_string(self)
-            {
-                Output::print_errorln(format_args!("{}", bstr::BStr::new(stack.to_utf8().slice())));
+            let line = line.trim_ascii();
+            if line.is_empty() {
+                continue;
             }
-            return Ok(());
+            if !site.is_empty() {
+                site.push(b'\n');
+            }
+            site.extend_from_slice(b"      ");
+            site.extend_from_slice(line);
         }
-        Err(self.throw_invalid_arguments(format_args!("{what} is disabled while building a snapshot; do it after restore (process.on('restore'))")))
+        site
     }
 
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {

@@ -183,6 +183,29 @@ impl ContextData {
 // (`bun_runtime::cli::command::create_context_data`), which depends on this
 // crate — a delegating fn here would invert the dependency.
 
+/// `--snapshot` / `compile.snapshot`: whether `bun build --compile` also runs the executable once and embeds a snapshot of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompileSnapshot {
+    #[default]
+    Off,
+    /// The runtime snapshots the process itself once startup work has drained; the app needs no code for this.
+    Auto,
+    /// The app decides when, by calling `Bun.unsafe.snapshot()`.
+    Manual,
+}
+
+/// `--snapshot-io` / `compile.snapshotIO`: what the app may touch on the build machine while its snapshot is taken.
+/// Network use is refused either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompileSnapshotIo {
+    #[default]
+    Strict,
+    /// Files, subprocesses, local sockets and the resolver are allowed; every use is listed when the snapshot is written.
+    Local,
+    /// Additionally the network: what it answered is frozen into every launch. Every use is listed.
+    Network,
+}
+
 pub struct BundlerOptions {
     pub outdir: Box<[u8]>,
     pub outfile: Box<[u8]>,
@@ -207,7 +230,8 @@ pub struct BundlerOptions {
     pub emit_dce_annotations: bool,
     pub output_format: bundle_enums::Format,
     pub bytecode: bool,
-    pub compile_image: bool,
+    pub compile_snapshot: CompileSnapshot,
+    pub compile_snapshot_io: CompileSnapshotIo,
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
@@ -262,7 +286,8 @@ impl Default for BundlerOptions {
             emit_dce_annotations: true,
             output_format: bundle_enums::Format::Esm,
             bytecode: false,
-            compile_image: false,
+            compile_snapshot: CompileSnapshot::Off,
+            compile_snapshot_io: CompileSnapshotIo::Strict,
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,

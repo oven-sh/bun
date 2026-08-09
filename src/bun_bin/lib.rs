@@ -169,9 +169,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         unsafe extern "C" {
-            fn Bun__heapImageInit();
+            fn Bun__snapshotInit();
         }
-        Bun__heapImageInit();
+        Bun__snapshotInit();
     }
 
     // Windows-only startup. Must run BEFORE the first libuv
@@ -203,14 +203,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
-    // Heap image: with stdio and Output ready, a process that has an image to map diverges here and never returns.
+    // Snapshot: with stdio and Output ready, a process that has a snapshot to map diverges here and never returns.
     #[cfg(unix)]
-    // SAFETY: single-threaded startup; the callee takes no arguments and either returns or continues the imaged process.
+    // SAFETY: single-threaded startup; the callee takes no arguments and either returns or continues the snapshotd process.
     unsafe {
         unsafe extern "C" {
-            fn Bun__imageMaybeRestore();
+            fn Bun__snapshotMaybeRestore();
         }
-        Bun__imageMaybeRestore();
+        Bun__snapshotMaybeRestore();
     }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.

@@ -315,9 +315,9 @@ impl Default for FilePoll {
     }
 }
 
-/// Outcome of `FilePoll::rearm_after_image_restore`.
+/// Outcome of `FilePoll::rearm_after_snapshot_restore`.
 #[cfg(target_os = "macos")]
-enum ImageRearm {
+enum SnapshotRearm {
     Untouched,
     Rearmed,
     HungUp,
@@ -325,15 +325,15 @@ enum ImageRearm {
 
 #[cfg(not(windows))]
 impl FilePoll {
-    /// Heap-image restore (`Store::rearm_for_image`): re-add this poll to the new kqueue if its fd still means the same
+    /// snapshot restore (`Store::rearm_for_snapshot`): re-add this poll to the new kqueue if its fd still means the same
     /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.
     #[cfg(target_os = "macos")]
-    fn rearm_after_image_restore(&mut self, loop_: &mut Loop) -> ImageRearm {
+    fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> SnapshotRearm {
         if self.fd == INVALID_FD
             || !self.flags.contains(Flags::WasEverRegistered)
             || self.flags.contains(Flags::Closed)
         {
-            return ImageRearm::Untouched;
+            return SnapshotRearm::Untouched;
         }
         let want = if self.flags.contains(Flags::PollReadable) {
             Flags::Readable
@@ -342,7 +342,7 @@ impl FilePoll {
         } else if self.flags.contains(Flags::PollProcess) {
             Flags::Process
         } else {
-            return ImageRearm::Untouched;
+            return SnapshotRearm::Untouched;
         };
         // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the
         // builder's numbers) and the controlling tty. Every other number is stale or parked on /dev/null.
@@ -361,14 +361,14 @@ impl FilePoll {
                 .register_with_fd(loop_, want, one_shot, self.fd)
                 .is_ok()
             {
-                return ImageRearm::Rearmed;
+                return SnapshotRearm::Rearmed;
             }
         } else {
             self.flags
                 .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
         }
         self.flags.insert(Flags::Hup);
-        ImageRearm::HungUp
+        SnapshotRearm::HungUp
     }
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -1372,17 +1372,17 @@ pub struct Store {
     hive: FilePollHive,
     pending_free_head: *mut FilePoll,
     pending_free_tail: *mut FilePoll,
-    /// Polls whose fd did not survive a heap-image restore; their hangups are delivered from the event loop once the
+    /// Polls whose fd did not survive a snapshot restore; their hangups are delivered from the event loop once the
     /// process is fully adopted and the app has heard 'restore', not from inside the restore itself.
     #[cfg(target_os = "macos")]
-    image_hangups: Vec<*mut FilePoll>,
+    snapshot_hangups: Vec<*mut FilePoll>,
 }
 
 #[cfg(not(windows))]
 impl Store {
-    /// Heap-image restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
+    /// snapshot restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
     #[cfg(target_os = "macos")]
-    pub fn rearm_for_image(&mut self, loop_: &mut Loop) -> (usize, usize) {
+    pub fn rearm_for_snapshot(&mut self, loop_: &mut Loop) -> (usize, usize) {
         let (mut rearmed, mut hung_up) = (0usize, 0usize);
         let mut polls: Vec<*mut FilePoll> = Vec::new();
         let mut it = self.hive.hive.used.iter_set();
@@ -1392,11 +1392,11 @@ impl Store {
         for poll_ptr in polls {
             // SAFETY: the slot is marked used in the hive and nothing runs concurrently during restore; the call is the
             // only access through this pointer.
-            match unsafe { (*poll_ptr).rearm_after_image_restore(loop_) } {
-                ImageRearm::Untouched => {}
-                ImageRearm::Rearmed => rearmed += 1,
-                ImageRearm::HungUp => {
-                    self.image_hangups.push(poll_ptr);
+            match unsafe { (*poll_ptr).rearm_after_snapshot_restore(loop_) } {
+                SnapshotRearm::Untouched => {}
+                SnapshotRearm::Rearmed => rearmed += 1,
+                SnapshotRearm::HungUp => {
+                    self.snapshot_hangups.push(poll_ptr);
                     hung_up += 1;
                 }
             }
@@ -1404,10 +1404,10 @@ impl Store {
         (rearmed, hung_up)
     }
 
-    /// Deliver the hangups collected by `rearm_for_image`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
+    /// Deliver the hangups collected by `rearm_for_snapshot`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
     #[cfg(target_os = "macos")]
-    pub fn dispatch_image_hangups(&mut self) -> usize {
-        let pending = core::mem::take(&mut self.image_hangups);
+    pub fn dispatch_snapshot_hangups(&mut self) -> usize {
+        let pending = core::mem::take(&mut self.snapshot_hangups);
         let mut delivered = 0usize;
         for poll_ptr in pending {
             // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free
@@ -1435,7 +1435,7 @@ impl Store {
             pending_free_head: ptr::null_mut(),
             pending_free_tail: ptr::null_mut(),
             #[cfg(target_os = "macos")]
-            image_hangups: Vec::new(),
+            snapshot_hangups: Vec::new(),
         }
     }
 

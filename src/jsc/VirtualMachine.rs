@@ -464,10 +464,10 @@ impl VMHolder {
     pub(crate) fn set_vm(vm: Option<*mut VirtualMachine>) {
         VM.set(vm)
     }
-    /// Experiment (heap image): install an existing VM (from the image's static) as this thread's VM.
+    /// Snapshot: install an existing VM (from the snapshot's static) as this thread's VM.
     pub(crate) fn adopt(vm: *mut VirtualMachine) {
         VM.set(Some(vm));
-        // SAFETY: `vm` is the image's live main-thread VM.
+        // SAFETY: `vm` is the snapshot's live main-thread VM.
         CACHED_GLOBAL_OBJECT.set(Some(unsafe { (*vm).global }));
     }
     #[inline(always)]
@@ -717,7 +717,7 @@ impl VirtualMachine {
     /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
     /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
     #[inline(always)]
-    /// Experiment (heap image): the main-thread VM recorded in a plain static (survives an image restore, unlike TLS).
+    /// Snapshot: the main-thread VM recorded in a plain static (survives a snapshot restore, unlike TLS).
     pub fn main_thread_vm_ptr() -> *mut VirtualMachine {
         MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire)
     }
@@ -1203,7 +1203,7 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
-            || bun_core::image::snapshot_requested() // keep turning until the outermost tick takes the snapshot
+            || bun_core::snapshot::snapshot_requested() // keep turning until the outermost tick takes the snapshot
     }
 
     pub fn wakeup(&mut self) {
@@ -2091,7 +2091,7 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
-    /// A snapshot was requested and the resulting termination reached the top of the event loop: quiesce and write the image (noreturn).
+    /// A snapshot was requested and the resulting termination reached the top of the event loop: quiesce and write the snapshot (noreturn).
     pub take_snapshot: fn(vm: *mut VirtualMachine) -> !,
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state

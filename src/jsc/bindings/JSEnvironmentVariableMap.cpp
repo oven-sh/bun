@@ -981,9 +981,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-// Heap image build: from here on `process.env` is a view over a store, so a restored process can swap the contents
-// underneath every reference the app captured, and reads before the freeze can be reported when the image is written.
-extern "C" void Bun__Process__useSharedEnvForImageBuild(JSC::JSGlobalObject* lexicalGlobalObject)
+// Snapshot build: from here on `process.env` is a view over a store, so a restored process can swap the contents
+// underneath every reference the app captured, and reads before the freeze can be reported when the snapshot is written.
+extern "C" void Bun__Process__useSharedEnvForSnapshotBuild(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     JSC::JSLockHolder lock(globalObject->vm());
@@ -992,8 +992,8 @@ extern "C" void Bun__Process__useSharedEnvForImageBuild(JSC::JSGlobalObject* lex
 }
 
 // Restore: refill the store from this process's environment (the loader has already been reloaded). Returns false when
-// process.env is not store-backed (an image built without the step above), and the caller replaces the object instead.
-bool refillSharedEnvAfterImageRestore(Zig::GlobalObject* globalObject, JSC::JSObject* freshEnvObject)
+// process.env is not store-backed (a snapshot built without the step above), and the caller replaces the object instead.
+bool refillSharedEnvAfterSnapshotRestore(Zig::GlobalObject* globalObject, JSC::JSObject* freshEnvObject)
 {
     auto* store = sharedEnvStoreFor(globalObject);
     if (!store)
@@ -1034,7 +1034,7 @@ void printEnvReadsBeforeSnapshot(Zig::GlobalObject* globalObject, const Vector<S
     if (names.isEmpty() && !enumerations)
         return;
     StringBuilder out;
-    out.append("snapshot: values read from process.env before the freeze are baked into the image; read them in a 'restore' listener or list them in envGate:"_s);
+    out.append("snapshot: values read from process.env before the freeze are baked into the snapshot; read them in a 'restore' listener or list them in envGate:"_s);
     if (enumerations) {
         out.append("\n  process.env was enumerated or copied "_s, enumerations, enumerations == 1 ? " time"_s : " times"_s, " (every variable)"_s);
         auto sites = store->enumerationSites();

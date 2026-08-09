@@ -1193,14 +1193,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    if bun_core::image::building() && url_type == URLType::Remote {
-        global_this.throw_disabled_in_snapshot_error_if_needed("fetch() to the network")?; // warn mode: logs a stack and lets it through
-    }
-    if bun_core::image::building()
+    if bun_core::snapshot::building()
         && url_type == URLType::Remote
-        && !bun_core::env_var::BUN_IMAGE_IO_WARN.get().unwrap_or(false)
+        && global_this
+            .throw_disabled_in_snapshot_error_if_needed("fetch")
+            .is_err()
     {
-        // Nothing that talks to the network may exist across a snapshot: abort the caller's signal (so its own timeout/cleanup runs) and reject before any tasklet, body stream or listener is created.
+        // Refused: the gate left its error thrown; a fetch() rejects instead. Abort the caller's signal so its own
+        // timeout/cleanup runs, and reject before any tasklet, body stream or listener is created.
+        global_this.clear_exception();
         if let Some(sig) = signal.take() {
             // SAFETY: `sig` came from `AbortSignal::ref_()` above; unref after signalling.
             unsafe {
@@ -1208,7 +1209,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 (*sig).unref();
             }
         }
-        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot; do it after restore"));
+        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot: its result would be frozen into every launch. Do it after restore (process.on('restore'))"));
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,

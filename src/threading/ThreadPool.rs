@@ -255,20 +255,20 @@ impl ThreadPool {
         )
     }
 
-    /// Heap-image snapshot: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
-    /// `forget_threads_after_image_restore` resets the state so the pool starts again on the other side.
+    /// snapshot snapshot: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
+    /// `forget_threads_after_snapshot_restore` resets the state so the pool starts again on the other side.
     pub fn stop_all_threads_for_snapshot(&self) {
         self.shutdown();
         self.join();
     }
 
-    /// Heap-image restore: the worker threads counted in `sync` belonged to the process that built the image. Forget them (queue and
+    /// snapshot restore: the worker threads counted in `sync` belonged to the process that built the snapshot. Forget them (queue and
     /// config stay) so the next `schedule`/`notify` spawns fresh workers here.
-    pub fn forget_threads_after_image_restore(&self) {
+    pub fn forget_threads_after_snapshot_restore(&self) {
         let sync = Sync::zero(); // pending, nothing spawned/idle/notified — regardless of what the build process left (it may have shut the pool down for the snapshot)
         self.sync.0.store(sync.0, Ordering::Release);
         self.threads.store(ptr::null_mut(), Ordering::Release);
-        self.idle_event.reset_after_image_restore();
+        self.idle_event.reset_after_snapshot_restore();
         self.notify(false); // if anything is queued, this spawns the first worker here
     }
 
@@ -1368,8 +1368,8 @@ impl Default for Event {
 }
 
 impl Event {
-    /// Waiter counts in `state` describe threads of the process that built the image.
-    fn reset_after_image_restore(&self) {
+    /// Waiter counts in `state` describe threads of the process that built the snapshot.
+    fn reset_after_snapshot_restore(&self) {
         self.state.store(Self::EMPTY, Ordering::Release);
     }
 }

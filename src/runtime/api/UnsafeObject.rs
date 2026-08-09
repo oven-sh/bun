@@ -15,38 +15,43 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
             ("snapshot", __jsc_host_snapshot, 1),
             ("snapshotState", __jsc_host_snapshot_state, 0),
-            ("recleanImagePages", __jsc_host_reclean_image_pages, 0),
-            ("embedImage", __jsc_host_embed_image, 3),
+            ("recleanSnapshotPages", __jsc_host_reclean_snapshot_pages, 0),
+            ("embedSnapshot", __jsc_host_embed_snapshot, 3),
         ],
     )
 }
 
-/// `Bun.unsafe.snapshot(path)`: the caller has quiesced the app; leave JS via an uncatchable termination and write a heap image
-/// from the top of the event loop, then exit. A process started from that image resumes in the event loop and gets
+/// `Bun.unsafe.snapshot(path)`: the caller has quiesced the app; leave JS via an uncatchable termination and write a snapshot
+/// from the top of the event loop, then exit. A process started from that snapshot resumes in the event loop and gets
 /// `process.emit("restore")` before its first tick. Never returns normally.
 #[bun_jsc::host_fn]
 fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [path, opts] = frame.arguments_as_array::<2>();
-    if !path.is_string() {
+    let [opts] = frame.arguments_as_array::<1>();
+    // Only a process that `bun build --snapshot` started to take the snapshot does anything here, so apps can call this
+    // unconditionally at the point in their startup they consider "ready".
+    if !bun_core::snapshot::building() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    if !opts.is_undefined_or_null() && !opts.is_object() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "snapshot(path, {{ timers, envGate }}) expects a file path"
+            "snapshot() takes an options object: {{ timers, envGate }}"
         )));
     }
     if opts.is_object() {
         if let Some(v) = opts.get(global, "timers")? {
             let mode = v.to_bun_string(global)?;
             let mode = if mode.eql_comptime("keep") {
-                bun_core::image::SnapshotTimers::Keep
+                bun_core::snapshot::SnapshotTimers::Keep
             } else if mode.eql_comptime("cancel") {
-                bun_core::image::SnapshotTimers::Cancel
+                bun_core::snapshot::SnapshotTimers::Cancel
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "snapshot: `timers` must be \"keep\" or \"cancel\""
                 )));
             };
-            bun_core::image::set_snapshot_timers(mode);
+            bun_core::snapshot::set_snapshot_timers(mode);
         }
-        // envGate: names of environment variables the imaged boot depended on. The image records their values (or
+        // envGate: names of environment variables the snapshotted boot depended on. The snapshot records their values (or
         // absence) at build time and is only restored by processes whose environment agrees; anything else boots normally.
         if let Some(names) = opts.get(global, "envGate")? {
             if !names.is_undefined_or_null() {
@@ -65,16 +70,19 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     joined.extend_from_slice(&name);
                     joined.push(0);
                 }
-                Bun__imageSetEnvGate(joined.as_ptr(), joined.len());
+                Bun__snapshotSetEnvGate(joined.as_ptr(), joined.len());
             }
         }
     }
-    let path = path.to_bun_string(global)?.to_owned_slice();
-    let cpath = std::ffi::CString::new(path)
-        .map_err(|_| global.throw_invalid_arguments(format_args!("path contains NUL")))?;
-    // SAFETY: `cpath` is NUL-terminated and outlives the call.
-    unsafe { crate::cli::run_command::Bun__requestSnapshot(global.vm(), cpath.as_ptr()) };
-    // Unwind every JS frame right now; the outermost EventLoop::tick sees the request and writes the image.
+    if bun_core::snapshot::snapshot_in_progress() {
+        return Ok(JSValue::UNDEFINED); // the runtime is already draining the process (auto mode, or an earlier call): the options above still apply
+    }
+    let Some(out) = bun_core::env_var::BUN_SNAPSHOT_OUT.get() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    bun_core::snapshot::request_snapshot(out);
+    crate::cli::run_command::unwind_for_snapshot(global.vm());
+    // Unwind every JS frame right now; the outermost EventLoop::tick sees the request and writes the snapshot.
     JSC__VM__throwTerminationExceptionNow(global);
     Err(jsc::JsError::Thrown)
 }
@@ -82,36 +90,36 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 unsafe extern "C" {
     safe fn JSC__VM__throwTerminationExceptionNow(global: &JSGlobalObject) -> JSValue;
     /// NUL-separated variable names; copied by the callee.
-    safe fn Bun__imageSetEnvGate(names: *const u8, len: usize);
+    safe fn Bun__snapshotSetEnvGate(names: *const u8, len: usize);
 }
 
-/// `Bun.unsafe.recleanImagePages()`: in a process restored from an image, hand pages whose contents drifted back to the
-/// image's bytes (transient writes: locks, refcounts) back to the clean file mapping. Cheap (~10ms); call when idle.
+/// `Bun.unsafe.recleanSnapshotPages()`: in a process restored from a snapshot, hand pages whose contents drifted back to the
+/// snapshot's bytes (transient writes: locks, refcounts) back to the clean file mapping. Cheap (~10ms); call when idle.
 #[bun_jsc::host_fn]
-fn reclean_image_pages(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    if bun_core::image::restored() {
-        Bun__imageRecleanPages(global.vm());
+fn reclean_snapshot_pages(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    if bun_core::snapshot::restored() {
+        Bun__snapshotRecleanPages(global.vm());
     }
     Ok(JSValue::UNDEFINED)
 }
 
 unsafe extern "C" {
-    safe fn Bun__imageRecleanPages(vm: &bun_jsc::VM);
+    safe fn Bun__snapshotRecleanPages(vm: &bun_jsc::VM);
 }
 
-/// `Bun.unsafe.snapshotState()` -> `{ building: boolean, epoch: number }` (epoch 0 = normal boot, N = resumed from an image N times).
+/// `Bun.unsafe.snapshotState()` -> `{ building: boolean, epoch: number }` (epoch 0 = normal boot, N = resumed from a snapshot N times).
 #[bun_jsc::host_fn]
 fn snapshot_state(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 2);
     obj.put(
         global,
         b"building",
-        JSValue::from(bun_core::image::building()),
+        JSValue::from(bun_core::snapshot::building()),
     );
     obj.put(
         global,
         b"epoch",
-        JSValue::js_number(bun_core::image::epoch() as f64),
+        JSValue::js_number(bun_core::snapshot::epoch() as f64),
     );
     Ok(obj)
 }
@@ -194,15 +202,15 @@ fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
     Ok(JSValue::UNDEFINED)
 }
 
-/// `Bun.unsafe.embedImage(exePath, imagePath, outPath?)`: what `bun build --compile --compile-image` does in its second pass, for build
-/// pipelines that compile via `Bun.build({ compile })`: embed a raw heap image (written by running the executable with `BUN_IMAGE_OUT`)
+/// `Bun.unsafe.embedSnapshot(exePath, snapshotPath, outPath?)`: what `bun build --compile --snapshot` does in its second pass, for build
+/// pipelines that compile via `Bun.build({ compile })`: embed a raw snapshot (written by running the executable with `BUN_SNAPSHOT_OUT`)
 /// into the compiled executable's section payload so the single file restores from itself. `outPath` defaults to overwriting `exePath`.
 #[bun_jsc::host_fn]
-fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn embed_snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [exe, img, out] = frame.arguments_as_array::<3>();
     if !exe.is_string() || !img.is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "embedImage(exePath, imagePath, outPath?) expects string paths"
+            "embedSnapshot(exePath, snapshotPath, outPath?) expects string paths"
         )));
     }
     let exe_path = exe.to_bun_string(global)?.to_owned_slice();
@@ -212,13 +220,13 @@ fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     } else {
         exe_path.clone()
     };
-    let image = match bun_sys::File::openat(bun_sys::Fd::cwd(), &img_path, bun_sys::O::RDONLY, 0)
+    let snapshot = match bun_sys::File::openat(bun_sys::Fd::cwd(), &img_path, bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())
     {
         Ok(b) => b,
         Err(e) => {
             return Err(global.throw_invalid_arguments(format_args!(
-                "embedImage: cannot read {}: {}",
+                "embedSnapshot: cannot read {}: {}",
                 bstr::BStr::new(&img_path),
                 e
             )));
@@ -232,7 +240,7 @@ fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
         Ok(fd) => fd,
         Err(e) => {
             return Err(global.throw_invalid_arguments(format_args!(
-                "embedImage: cannot open directory {}: {:?}",
+                "embedSnapshot: cannot open directory {}: {:?}",
                 bstr::BStr::new(dir),
                 e
             )));
@@ -241,12 +249,15 @@ fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     let vm = global.bun_vm();
     // SAFETY: process-lifetime loader owned by the VM.
     let env = unsafe { &mut *vm.transpiler.env };
-    match bun_standalone_graph::StandaloneModuleGraph::embed_image_into_executable(
-        &exe_path, &image, dir_fd, name, env,
+    match bun_standalone_graph::StandaloneModuleGraph::embed_snapshot_into_executable(
+        &exe_path, &snapshot, dir_fd, name, env,
     ) {
         Ok(bun_standalone_graph::StandaloneModuleGraph::CompileResult::Err(err)) => Err(global
-            .throw_invalid_arguments(format_args!("embedImage: {}", bstr::BStr::new(err.slice())))),
-        Ok(_) => Ok(JSValue::js_number(image.len() as f64)),
-        Err(e) => Err(global.throw_invalid_arguments(format_args!("embedImage: {}", e.name()))),
+            .throw_invalid_arguments(format_args!(
+                "embedSnapshot: {}",
+                bstr::BStr::new(err.slice())
+            ))),
+        Ok(_) => Ok(JSValue::js_number(snapshot.len() as f64)),
+        Err(e) => Err(global.throw_invalid_arguments(format_args!("embedSnapshot: {}", e.name()))),
     }
 }

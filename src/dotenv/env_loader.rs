@@ -121,7 +121,7 @@ pub struct Loader {
     pub quiet: bool,
 
     pub(crate) did_load_process: bool,
-    /// Keys that came from the OS environment (so a heap-image restore can drop the builder's and load this process's).
+    /// Keys that came from the OS environment (so a snapshot restore can drop the builder's and load this process's).
     process_keys: Vec<Box<[u8]>>,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
@@ -578,8 +578,8 @@ impl Loader {
         }
     }
 
-    /// Heap-image restore: the map holds the *builder's* environment. Drop those entries and load this process's environ.
-    pub fn reload_process_after_image_restore(&mut self) -> Result<(), AllocError> {
+    /// snapshot restore: the map holds the *builder's* environment. Drop those entries and load this process's environ.
+    pub fn reload_process_after_snapshot_restore(&mut self) -> Result<(), AllocError> {
         for key in core::mem::take(&mut self.process_keys) {
             self.map.remove(&key);
         }

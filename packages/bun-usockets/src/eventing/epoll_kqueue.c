@@ -1022,8 +1022,8 @@ int us_socket_get_error(struct us_socket_t *s) {
 #endif
 
 #ifdef LIBUS_USE_EPOLL
-/* Heap image restore (Linux): fresh epoll fd; the wakeup async is an eventfd-backed poll — give it a new eventfd and re-add it. */
-void us_loop_reinit_for_image(struct us_loop_t *loop) {
+/* Snapshot restore (Linux): fresh epoll fd; the wakeup async is an eventfd-backed poll — give it a new eventfd and re-add it. */
+void us_loop_reinit_for_snapshot(struct us_loop_t *loop) {
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
     loop->num_ready_polls = 0;
     loop->current_ready_poll = 0;
@@ -1041,9 +1041,9 @@ void us_loop_reinit_for_image(struct us_loop_t *loop) {
 
 #ifdef LIBUS_USE_KQUEUE
 #if defined(__APPLE__)
-/* Experiment (heap image restore): the loop struct came from another process; give it a fresh kqueue and
+/* Experiment (snapshot restore): the loop struct came from another process; give it a fresh kqueue and
  * re-create/re-register the wakeup mach port so us_wakeup_loop() works again. */
-void us_loop_reinit_for_image(struct us_loop_t *loop) {
+void us_loop_reinit_for_snapshot(struct us_loop_t *loop) {
     loop->fd = kqueue();
     loop->num_ready_polls = 0;
     loop->current_ready_poll = 0;

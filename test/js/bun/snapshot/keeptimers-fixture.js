@@ -10,4 +10,4 @@ process.on("restore", () => {
   console.log("[js] restored; waiting for ticks + stdin");
   setTimeout(() => console.log(`[js] post-restore timer fired; interval ticks since restore=${ticks}`), 500);   // created AFTER restore
 });
-setTimeout(() => { ticks = 0; Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, process.env.TIMERS ? { timers: process.env.TIMERS } : {}); }, 200);
+setTimeout(() => { ticks = 0; Bun.unsafe.snapshot(process.env.TIMERS ? { timers: process.env.TIMERS } : {}); }, 200);

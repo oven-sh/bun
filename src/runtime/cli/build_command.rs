@@ -9,7 +9,7 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-use bun_options_types::context::MacroOptions;
+use bun_options_types::context::{CompileSnapshot, CompileSnapshotIo, MacroOptions};
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd, FdExt as _};
@@ -138,6 +138,55 @@ impl BuildCommand {
             // resolver.opts is a distinct subset type; entry_points / IMRE live
             // only on the bundler-side options struct (resolver never reads them).
             this_transpiler.options.ignore_module_resolution_errors = true;
+        }
+
+        if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off
+            && ctx.args.entry_points.is_empty()
+        {
+            // The snapshot step by itself, on an executable built earlier (possibly cross-compiled elsewhere).
+            let exe: &[u8] = &ctx.bundler_options.outfile;
+            if exe.is_empty() {
+                Output::print_errorln(format_args!(
+                    "--snapshot without entrypoints takes the snapshot of an existing executable: pass it as --outfile"
+                ));
+                Global::exit(1);
+            }
+            let env_ptr = this_transpiler.env;
+            let exe_dir = match bun_core::dirname(exe) {
+                Some(parent) if !parent.is_empty() && parent != b"." => {
+                    match bun_sys::Dir::cwd().make_open_path(parent, Default::default()) {
+                        Ok(d) => d,
+                        Err(err) => {
+                            Output::err(err, "could not open {}", (bun_fmt::quote(parent),));
+                            Global::exit(1);
+                        }
+                    }
+                }
+                _ => bun_sys::Dir::cwd(),
+            };
+            match run_snapshot_step(
+                exe_dir.fd,
+                exe,
+                ctx.bundler_options.compile_snapshot,
+                ctx.bundler_options.compile_snapshot_io,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *env_ptr },
+            ) {
+                Ok(outcome) => report_snapshot_step(&outcome),
+                Err(message) => {
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
+                    Global::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off
+            && !ctx.bundler_options.compile
+        {
+            Output::print_errorln(format_args!(
+                "--snapshot needs --compile (or no entrypoints, to take the snapshot of an existing --outfile)"
+            ));
+            Global::exit(1);
         }
 
         // Note: clone the first entry point so `outfile` can borrow owned
@@ -899,32 +948,24 @@ impl BuildCommand {
                     }
                     flags
                 };
-                // Emits the executable. Pass 1 serializes the graph (bytes captured in `serialized`); pass 2 (--compile-image) reuses those exact
-                // bytes with the heap image appended — the image holds pointers into that payload, so it must not be re-serialized.
-                let mut serialized: Vec<u8> = Vec::new();
-                let emit_executable =
-                    |prebuilt: Option<&[u8]>, serialized_out: Option<&mut Vec<u8>>| {
-                        bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
-                            compile_target,
-                            output_files,
-                            root_dir.fd,
-                            &opt_public_path,
-                            outfile,
-                            // SAFETY: `env` is a process-lifetime singleton.
-                            unsafe { &mut *env_ptr },
-                            opt_output_format,
-                            &ctx.bundler_options.windows,
-                            ctx.bundler_options
-                                .compile_exec_argv
-                                .as_deref()
-                                .unwrap_or(b""),
-                            ctx.bundler_options.compile_executable_path.as_deref(),
-                            compile_flags,
-                            prebuilt,
-                            serialized_out,
-                        )
-                    };
-                let result = match emit_executable(None, Some(&mut serialized)) {
+                let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
+                    compile_target,
+                    output_files,
+                    root_dir.fd,
+                    &opt_public_path,
+                    outfile,
+                    // SAFETY: `env` is a process-lifetime singleton.
+                    unsafe { &mut *env_ptr },
+                    opt_output_format,
+                    &ctx.bundler_options.windows,
+                    ctx.bundler_options
+                        .compile_exec_argv
+                        .as_deref()
+                        .unwrap_or(b""),
+                    ctx.bundler_options.compile_executable_path.as_deref(),
+                    compile_flags,
+                    None,
+                ) {
                     Ok(r) => r,
                     Err(err) => {
                         Output::print_errorln(format_args!(
@@ -942,80 +983,25 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                if ctx.bundler_options.compile_image {
+                if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off {
                     if is_cross_compile {
                         Output::print_errorln(format_args!(
-                            "--compile-image needs to run the executable, so it can't be used when cross-compiling"
+                            "--snapshot has to run the executable, which a cross-compiled one can't do here. Build without it, then run `bun build --snapshot --outfile <exe>` on the target platform."
                         ));
                         Global::exit(1);
                     }
-                    // Pass 1 produced the executable; run it so the app snapshots itself, then re-emit with the image embedded.
-                    let img_path = write_heap_image_by_running(root_dir.fd, outfile);
-                    // What ships is the zstd frame the snapshot also wrote (~6x smaller); the executable inflates it into the
-                    // user's image cache on first launch. BUN_IMAGE_EMBED_RAW embeds the raw image instead, which restores by
-                    // mapping the executable itself and so needs no writable cache directory.
-                    let embed_raw = bun_core::env_var::BUN_IMAGE_EMBED_RAW
-                        .get()
-                        .unwrap_or(false);
-                    let mut zst_path = img_path.clone();
-                    zst_path.extend_from_slice(b".zst");
-                    let embed_path: &[u8] = if embed_raw { &img_path } else { &zst_path };
-                    let img = match bun_sys::File::openat(
-                        bun_sys::Fd::cwd(),
-                        embed_path,
-                        bun_sys::O::RDONLY,
-                        0,
-                    )
-                    .and_then(|f| f.read_to_end())
-                    {
-                        Ok(img) => img,
-                        Err(e) => {
-                            Output::print_errorln(format_args!(
-                                "--compile-image: could not read {}: {}",
-                                bstr::BStr::new(embed_path),
-                                e
-                            ));
+                    match run_snapshot_step(
+                        root_dir.fd,
+                        outfile,
+                        ctx.bundler_options.compile_snapshot,
+                        ctx.bundler_options.compile_snapshot_io,
+                        // SAFETY: `env` is a process-lifetime singleton.
+                        unsafe { &mut *env_ptr },
+                    ) {
+                        Ok(outcome) => report_snapshot_step(&outcome),
+                        Err(message) => {
+                            Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
                             Global::exit(1);
-                        }
-                    };
-                    let Some(payload) = bun_standalone_module_graph::StandaloneModuleGraph::append_image_to_serialized(&serialized, &img) else {
-                        Output::print_errorln(format_args!("--compile-image: internal error (serialized graph has no trailer)"));
-                        Global::exit(1);
-                    };
-                    match emit_executable(Some(&payload), None) {
-                        Ok(
-                            bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(
-                                err,
-                            ),
-                        ) => {
-                            Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
-                            Global::exit(1);
-                        }
-                        Err(err) => {
-                            Output::print_errorln(format_args!(
-                                "failed to embed heap image: {}",
-                                err.name()
-                            ));
-                            Global::exit(1);
-                        }
-                        Ok(_) => {
-                            bun_core::prettyln!(
-                                "<green>[image]</r> embedded {:.1} MB {} heap image into the executable",
-                                img.len() as f64 / 1048576.0,
-                                if embed_raw { "raw" } else { "compressed" }
-                            );
-                            // Development: keeping <exe>.img next to the executable lets a rebuilt image be dropped in without re-embedding.
-                            if !bun_core::env_var::BUN_IMAGE_KEEP_SIDECAR
-                                .get()
-                                .unwrap_or(false)
-                            {
-                                let _ = bun_sys::unlink(&bun_core::ZBox::from_vec_with_nul(
-                                    img_path.clone(),
-                                ));
-                                let _ = bun_sys::unlink(&bun_core::ZBox::from_vec_with_nul(
-                                    zst_path.clone(),
-                                ));
-                            }
                         }
                     }
                 }
@@ -1509,58 +1495,134 @@ pub(crate) fn collect_compile_assets(
     Ok(())
 }
 
-/// `--compile-image`: run the freshly built executable with `BUN_IMAGE_OUT=<exe>.img`; the app snapshots itself once idle.
-/// Returns the image path.
-fn write_heap_image_by_running(root_fd: bun_sys::Fd, outfile: &[u8]) -> Vec<u8> {
-    let exe: Vec<u8> = if outfile.first() == Some(&b'/') {
-        outfile.to_vec()
-    } else {
+/// What the snapshot step did to the executable.
+pub(crate) enum SnapshotStepOutcome {
+    Embedded {
+        snapshot_bytes: usize,
+        compressed: bool,
+    },
+    /// Auto mode only: the app never became quiet (it printed what kept it busy); the executable is left as built.
+    KeptPlain,
+}
+
+/// The snapshot step: run `exe` once so it writes its snapshot, then embed that into `exe` in place. Works on an executable built
+/// just now (`--compile --snapshot`) or earlier (`--snapshot --outfile exe`, e.g. after cross-compiling elsewhere);
+/// re-running it replaces the previous snapshot. `exe` is resolved against `dir` when relative.
+pub(crate) fn run_snapshot_step(
+    dir: bun_sys::Fd,
+    exe: &[u8],
+    mode: CompileSnapshot,
+    io: CompileSnapshotIo,
+    env: &mut bun_dotenv::Loader,
+) -> Result<SnapshotStepOutcome, Vec<u8>> {
+    // `dir` is the executable's directory (as for `to_executable`); only the file name of `exe` matters here.
+    let name = bun_paths::basename(exe);
+    let exe_abs: Vec<u8> = {
         let mut buf = bun_paths::PathBuffer::uninit();
-        let mut p = match bun_sys::get_fd_path(root_fd, &mut buf) {
+        let mut p = match bun_sys::get_fd_path(dir, &mut buf) {
             Ok(p) => p.to_vec(),
             Err(_) => b".".to_vec(),
         };
         p.push(b'/');
-        p.extend_from_slice(outfile);
+        p.extend_from_slice(name);
         p
     };
-    let mut img = exe.clone();
-    img.extend_from_slice(b".img");
+    let mut img = exe_abs.clone();
+    img.extend_from_slice(b".snapshot");
+    let img_z = bun_core::ZBox::from_vec_with_nul(img.clone());
     bun_core::prettyln!(
-        "<d>[image]</r> running {} to produce {}",
-        bstr::BStr::new(&exe),
-        bstr::BStr::new(&img)
+        "<d>[snapshot]</r> running {} once to take its snapshot",
+        bstr::BStr::new(&exe_abs)
     );
     Output::flush();
-    let img_z = bun_core::ZBox::from_vec_with_nul(img.clone());
-    // SAFETY: single-threaded CLI; both strings are NUL-terminated and outlive the call (setenv copies them).
-    unsafe { libc::setenv(c"BUN_IMAGE_OUT".as_ptr(), img_z.as_ptr(), 1) };
-    let status = bun_core::util::spawn_sync_inherit(&[exe.as_slice()]);
-    let written = bun_sys::stat(&img_z).map(|st| st.st_size.max(0) as u64);
-    match (status, written) {
-        (Ok(_), Ok(size)) => {
-            bun_core::prettyln!(
-                "<green>[image]</r> wrote {} ({:.1} MB)",
-                bstr::BStr::new(&img),
-                size as f64 / 1048576.0
-            );
-            img
+    // SAFETY: single-threaded CLI; the strings are NUL-terminated and setenv copies them.
+    unsafe {
+        libc::setenv(c"BUN_SNAPSHOT_OUT".as_ptr(), img_z.as_ptr(), 1);
+        if mode == CompileSnapshot::Auto {
+            libc::setenv(c"BUN_SNAPSHOT_AUTO".as_ptr(), c"1".as_ptr(), 1);
+        } else {
+            libc::unsetenv(c"BUN_SNAPSHOT_AUTO".as_ptr());
         }
-        (Ok(_), Err(_)) => {
-            Output::print_errorln(format_args!(
-                "--compile-image: {} exited without writing {} — does the app call Bun.unsafe.snapshot()?",
-                bstr::BStr::new(&exe),
-                bstr::BStr::new(&img)
-            ));
-            Global::exit(1);
-        }
-        (Err(e), _) => {
-            Output::print_errorln(format_args!(
-                "--compile-image: could not run {}: {:?}",
-                bstr::BStr::new(&exe),
-                e
-            ));
-            Global::exit(1);
-        }
+        match io {
+            CompileSnapshotIo::Local => {
+                libc::setenv(c"BUN_SNAPSHOT_IO".as_ptr(), c"local".as_ptr(), 1)
+            }
+            CompileSnapshotIo::Network => {
+                libc::setenv(c"BUN_SNAPSHOT_IO".as_ptr(), c"network".as_ptr(), 1)
+            }
+            CompileSnapshotIo::Strict => libc::unsetenv(c"BUN_SNAPSHOT_IO".as_ptr()),
+        };
     }
+    let status = bun_core::util::spawn_sync_inherit(&[exe_abs.as_slice()]);
+    // SAFETY: as above.
+    unsafe {
+        libc::unsetenv(c"BUN_SNAPSHOT_OUT".as_ptr());
+        libc::unsetenv(c"BUN_SNAPSHOT_AUTO".as_ptr());
+        libc::unsetenv(c"BUN_SNAPSHOT_IO".as_ptr());
+    }
+    if let Err(e) = status {
+        return Err(format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e).into_bytes());
+    }
+    if bun_sys::stat(&img_z).is_err() {
+        return match mode {
+            CompileSnapshot::Auto => Ok(SnapshotStepOutcome::KeptPlain),
+            _ => Err(format!(
+                "{} exited without writing a snapshot. In manual mode the app has to call Bun.unsafe.snapshot(); use --snapshot=auto to have the runtime take it once startup drains.",
+                bstr::BStr::new(&exe_abs)
+            )
+            .into_bytes()),
+        };
+    }
+    // What ships is the zstd frame the snapshot also wrote (~6x smaller); the executable inflates it into the user's snapshot
+    // cache on first launch. BUN_SNAPSHOT_EMBED_RAW embeds the raw snapshot, which restores by mapping the executable itself.
+    let embed_raw = bun_core::env_var::BUN_SNAPSHOT_EMBED_RAW
+        .get()
+        .unwrap_or(false);
+    let mut zst = img.clone();
+    zst.extend_from_slice(b".zst");
+    let zst_z = bun_core::ZBox::from_vec_with_nul(zst.clone());
+    let payload_path: &[u8] = if embed_raw { &img } else { &zst };
+    let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), payload_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+        .map_err(|e| {
+            format!("could not read {}: {}", bstr::BStr::new(payload_path), e).into_bytes()
+        })?;
+    let embedded =
+        bun_standalone_module_graph::StandaloneModuleGraph::embed_snapshot_into_executable(
+            &exe_abs, &snapshot, dir, name, env,
+        );
+    if !bun_core::env_var::BUN_SNAPSHOT_KEEP_SIDECAR
+        .get()
+        .unwrap_or(false)
+    {
+        let _ = bun_sys::unlink(&img_z);
+        let _ = bun_sys::unlink(&zst_z);
+    }
+    match embedded {
+        Ok(bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(err)) => {
+            Err(err.slice().to_vec())
+        }
+        Err(err) => Err(format!("failed to embed the snapshot: {}", err.name()).into_bytes()),
+        Ok(_) => Ok(SnapshotStepOutcome::Embedded {
+            snapshot_bytes: snapshot.len(),
+            compressed: !embed_raw,
+        }),
+    }
+}
+
+pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {
+    match outcome {
+        SnapshotStepOutcome::Embedded {
+            snapshot_bytes,
+            compressed,
+        } => bun_core::prettyln!(
+            "<green>[snapshot]</r> embedded a {:.1} MB {}snapshot into the executable",
+            *snapshot_bytes as f64 / 1048576.0,
+            if *compressed { "compressed " } else { "" }
+        ),
+        SnapshotStepOutcome::KeptPlain => bun_core::prettyln!(
+            "<yellow>[snapshot]</r> the app did not become quiet, so the executable was left without a snapshot (see above for what kept it busy; call Bun.unsafe.snapshot() yourself with --snapshot=manual to choose the moment)"
+        ),
+    }
+    Output::flush();
 }

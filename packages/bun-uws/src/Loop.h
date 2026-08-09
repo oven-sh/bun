@@ -110,7 +110,7 @@ private:
 public:
     /* Lazily initializes a per-thread loop and returns it.
      * Will automatically free all initialized loops at exit. */
-    /* Heap-image restore: this thread's TLS is fresh but the loop object lives on (in the image); make get() return it instead of creating a second loop. */
+    /* snapshot restore: this thread's TLS is fresh but the loop object lives on (in the snapshot); make get() return it instead of creating a second loop. */
     static void adoptForCurrentThread(Loop *loop) {
         getLazyLoop().loop = loop;
         getLazyLoop().cleanMe = false;

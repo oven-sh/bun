@@ -64,7 +64,7 @@ public:
         return out;
     }
 
-    // Heap image restore: the environment is the launching process's now; every view of this store sees it at once.
+    // Snapshot restore: the environment is the launching process's now; every view of this store sees it at once.
     void replaceAll(Vector<std::pair<String, String>>&& entries)
     {
         {
@@ -75,7 +75,7 @@ public:
             set(key, value);
     }
 
-    // While an image is being built, remember what the app read: values read before the freeze are baked into the image.
+    // While a snapshot is being built, remember what the app read: values read before the freeze are baked into the snapshot.
     void startRecordingReads() { m_recordReads = true; }
     bool isRecordingReads() const { return m_recordReads; }
     void noteRead(const String& key)

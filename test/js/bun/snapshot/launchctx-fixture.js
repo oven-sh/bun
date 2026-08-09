@@ -1,4 +1,4 @@
-// Everything derived from the launching process must reflect the process that RESTORED the image, not the one that built it.
+// Everything derived from the launching process must reflect the process that RESTORED the snapshot, not the one that built it.
 const os = require("os");
 const capturedEnv = process.env; // a reference held across the snapshot (dotenv-style code does this) must see the new environment too
 const copiedEnv = { ...process.env }; // a copy cannot; the build reports that it was made
@@ -7,4 +7,4 @@ function ctx() {
 }
 console.log("[js] build " + JSON.stringify(ctx()));
 process.on("restore", () => { console.log("[js] restored " + JSON.stringify(ctx())); process.exit(0); });
-setTimeout(() => Bun.unsafe.snapshot(process.env.BUN_IMAGE_OUT, { timers: "cancel" }), 50);
+setTimeout(() => Bun.unsafe.snapshot({ timers: "cancel" }), 50);

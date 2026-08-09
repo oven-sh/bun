@@ -3222,6 +3222,15 @@ declare module "bun" {
      * ```
      */
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
+    /**
+     * Snapshots (experimental; requires `compile`): after producing the executable, run it once and
+     * embed a snapshot of its started-up state, so later launches resume instead of booting. `true`
+     * takes the snapshot once startup work drains (`bun build --snapshot`); use `mode: "manual"` when
+     * the app calls `Bun.unsafe.snapshot()` itself, and `io` to let the build touch this machine
+     * (`"local"`: files, subprocesses, local sockets; `"network"`: the network too) — every use is
+     * reported when the snapshot is written. Default `io` is `"strict"`.
+     */
+    snapshot?: boolean | { mode?: "auto" | "manual"; io?: "strict" | "local" | "network" };
   }
 
   interface CompileBuildOptions {
@@ -4943,45 +4952,41 @@ declare module "bun" {
     function memoryFootprint(): number | undefined;
 
     /**
-     * Heap images (experimental). Freeze this process's heap into an image
-     * file once it goes quiet; later launches of the same executable resume
-     * from it instead of booting. Only meaningful in a process started with
-     * `BUN_IMAGE_OUT` set, which `bun build --compile --compile-image` does.
-     * Never returns: the process exits after writing the image, or with a
-     * message naming what kept it busy.
+     * Snapshots (experimental): the point in startup at which `bun build --compile --snapshot=manual`
+     * takes the snapshot of this process. In the process the build runs for that purpose it never
+     * returns — the process exits once the snapshot is written (or with a message naming what kept
+     * it busy). In every other process it returns immediately, so it can be called unconditionally.
+     * With `--snapshot` (auto) the runtime takes the snapshot itself once startup work has drained,
+     * and calling this only contributes the options.
      */
-    function snapshot(
-      path: string,
-      options?: {
-        /**
-         * What to do about timers still armed when the process goes quiet.
-         * `"keep"` re-bases them onto the restored process's clock; `"cancel"`
-         * drops them. By default armed timers keep the snapshot from being taken.
-         */
-        timers?: "keep" | "cancel";
-        /**
-         * Environment variables the imaged boot depended on. A launch whose
-         * values for these differ from the build's boots normally instead of
-         * resuming from the image.
-         */
-        envGate?: string[];
-      },
-    ): never;
+    function snapshot(options?: {
+      /**
+       * Timers still armed when the process goes quiet: `"keep"` lets them survive with their
+       * remaining time preserved across the restore; `"cancel"` drops them. By default (manual mode)
+       * armed timers keep the snapshot from being taken; auto mode keeps them.
+       */
+      timers?: "keep" | "cancel";
+      /**
+       * Environment variables the snapshotted startup depended on. A launch whose values for these
+       * differ from the build's boots normally instead of resuming from the snapshot.
+       */
+      envGate?: string[];
+    }): void;
 
     /**
-     * In a process resumed from an image: hand back to the shared image any
+     * In a process resumed from a snapshot: hand back to the shared snapshot any
      * page this process wrote and then restored to its original contents.
      * Cheap; call it once startup work has settled. A no-op elsewhere.
      */
-    function recleanImagePages(): void;
+    function recleanSnapshotPages(): void;
 
     /**
-     * Embed an image file into an executable produced by `bun build --compile`,
-     * writing the result to `outPath` (default: in place). This is the second
-     * pass of `--compile-image`, exposed for build pipelines that drive
-     * `Bun.build()` themselves.
+     * Embed a snapshot file into an executable produced by `bun build --compile`,
+     * writing the result to `outPath` (default: in place). `bun build --snapshot --outfile <exe>`
+     * does this after running the executable once; this is the embedding half alone, for build
+     * pipelines that run the executable themselves.
      */
-    function embedImage(exePath: string, imagePath: string, outPath?: string): void;
+    function embedSnapshot(exePath: string, snapshotPath: string, outPath?: string): void;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

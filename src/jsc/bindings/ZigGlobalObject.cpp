@@ -3268,6 +3268,11 @@ extern "C" size_t Bun__gc(void* vm, bool sync);
 // live cell, the root that marked it) to /tmp/bun-napi-diag-<pid>.json. Keyed
 // on a file rather than argv/env so the process under test is byte-for-byte
 // the same as the one that fails.
+static constexpr size_t kBelowSpBytes = 96 * 1024;
+static uintptr_t bunNapiDiagBelowSpCopy[kBelowSpBytes / sizeof(uintptr_t)];
+static uintptr_t* bunNapiDiagBelowSpFrom = nullptr;
+static void* bunNapiDiagLastStackTopBefore = nullptr;
+
 __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(JSC::VM& vm, JSC::CallFrame* callFrame)
 {
     // 1. Every live cell start address after the gc() that just ran.
@@ -3335,6 +3340,50 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
         fprintf(stderr, "[napi-diag]   stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((origin - w) * sizeof(uintptr_t)), (void*)v, cls, (void*)base);
     }
     fprintf(stderr, "[napi-diag] stack words pointing at Array/Object/Napi* cells: %u\n", hits);
+
+    auto interesting = [&](uintptr_t v, uintptr_t& base) -> const char* {
+        base = 0;
+        if (liveCells.contains(v)) base = v;
+        else if (liveCells.contains(v & ~uintptr_t(0xF))) base = v & ~uintptr_t(0xF);
+        else if (v >= 8 && liveCells.contains(v - 8)) base = v - 8;
+        if (!base) return nullptr;
+        const char* cls = describe(base);
+        if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
+            return nullptr;
+        return cls;
+    };
+
+    // 5. The dead region below gc()'s frame as it was BEFORE the collection
+    //    (this is what the collector's own frames were laid over), and vm.lastStackTop
+    //    at that moment (sanitizeStackForVM only zeroes [lastStackTop, sp)).
+    fprintf(stderr, "[napi-diag] vm.lastStackTop before gc: %p (gc frame ~%p; %s)\n", bunNapiDiagLastStackTopBefore, (void*)sp,
+        (uintptr_t)bunNapiDiagLastStackTopBefore < (uintptr_t)sp ? "DEEPER than gc frame: sanitize could zero below" : "not deeper: sanitize zeroed nothing below gc frame");
+    if (bunNapiDiagBelowSpFrom) {
+        unsigned below = 0;
+        size_t n = kBelowSpBytes / sizeof(uintptr_t);
+        for (size_t i = 0; i < n; ++i) {
+            uintptr_t base; const char* cls = interesting(bunNapiDiagBelowSpCopy[i], base);
+            if (!cls) continue;
+            ++below;
+            uintptr_t* where = bunNapiDiagBelowSpFrom + i;
+            fprintf(stderr, "[napi-diag]   pre-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p\n", (void*)where, (size_t)((sp - where) * sizeof(uintptr_t)), (void*)bunNapiDiagBelowSpCopy[i], cls, (void*)base);
+        }
+        fprintf(stderr, "[napi-diag] pre-gc words BELOW gc()'s frame pointing at Array/Object/Napi* cells: %u (region %p..%p)\n", below, (void*)bunNapiDiagBelowSpFrom, (void*)(bunNapiDiagBelowSpFrom + n));
+    }
+    // 6. Same region now (what the collector left).
+    {
+        unsigned belowNow = 0;
+        uintptr_t* from = sp - kBelowSpBytes / sizeof(uintptr_t);
+        uintptr_t* limit = static_cast<uintptr_t*>(WTF::Thread::currentSingleton().stack().end());
+        if (from < limit + 4096) from = limit + 4096;
+        for (uintptr_t* w = from; w < sp; ++w) {
+            uintptr_t base; const char* cls = interesting(*w, base);
+            if (!cls) continue;
+            ++belowNow;
+            fprintf(stderr, "[napi-diag]   post-gc below-sp[%p] (gcframe-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((sp - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);
+        }
+        fprintf(stderr, "[napi-diag] post-gc words BELOW gc()'s frame pointing at Array/Object/Napi* cells: %u\n", belowNow);
+    }
     fflush(stderr);
 }
 
@@ -3370,10 +3419,30 @@ static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm, JSC::CallFrame* callFrame)
 #endif
 }
 
+// Diagnostics: copy of the dead stack region below gc()'s frame taken before
+// the collection runs (see the statics above bunNapiDiagWhereAreTheRoots).
+__attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagCaptureBelowSp(JSC::VM& vm)
+{
+    volatile uintptr_t marker = 0;
+    uintptr_t* sp = const_cast<uintptr_t*>(&marker);
+    uintptr_t* from = sp - kBelowSpBytes / sizeof(uintptr_t);
+    uintptr_t* limit = static_cast<uintptr_t*>(WTF::Thread::currentSingleton().stack().end());
+    if (from < limit + 4096)
+        from = limit + 4096;
+    bunNapiDiagBelowSpFrom = from;
+    for (size_t i = 0; from + i < sp && i < kBelowSpBytes / sizeof(uintptr_t); ++i)
+        bunNapiDiagBelowSpCopy[i] = from[i];
+    bunNapiDiagLastStackTopBefore = vm.lastStackTop();
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     (JSC::JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
+#if !OS(WINDOWS)
+    if (access("/tmp/bun-napi-diag-request", F_OK) == 0)
+        bunNapiDiagCaptureBelowSp(JSC::getVM(global));
+#endif
     Bun__gc(globalObject->bunVM(), true);
     bunNapiDiagMaybeDumpHeap(JSC::getVM(global), callFrame);
     return JSValue::encode(jsUndefined());

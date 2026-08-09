@@ -796,10 +796,10 @@ impl FetchTasklet {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // Body.rs aliases its `Stopped<T>` to `JsResult<T>` for
-                // now; narrow back to the real `Stopped` here.
-                body.to_error_instance(err, &global_this)
-                    .map_err(|_| bun_jsc::Stopped)?;
+                // Erroring the body settles its promise and can throw: report a throw, stand down on a stop.
+                if let Err(e) = body.to_error_instance(err, &global_this) {
+                    bun_jsc::task::report_error_or_terminate(&global_this, e)?;
+                }
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the
@@ -900,12 +900,14 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // Body.rs aliases its `Stopped<T>` to `JsResult<T>` for
-                    // now; narrow back to the real `Stopped` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
-                        .map_err(|_| bun_jsc::Stopped)?;
+                    let body = unsafe { &mut *body };
+                    // Resolving the body settles its promise and can throw: report a throw, stand down
+                    // on a stop.
+                    if let Err(e) = BodyValue::resolve(&mut old, body, &self.global_this, headers) {
+                        bun_jsc::task::report_error_or_terminate(&self.global_this, e)?;
+                    }
                 }
             }
         }
@@ -1200,13 +1202,7 @@ impl FetchTasklet {
                     let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
                         Ok(v) => v,
                         Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                            }
-                            let check_result = global_object.try_take_exception().unwrap();
+                            let check_result = global_object.take_exception(e);
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
@@ -1220,13 +1216,7 @@ impl FetchTasklet {
                     let js_hostname: JSValue = match hostname.to_js(&global_object) {
                         Ok(v) => v,
                         Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                            }
-                            let hostname_err_result = global_object.try_take_exception().unwrap();
+                            let hostname_err_result = global_object.take_exception(e);
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
                             self.abort_task();

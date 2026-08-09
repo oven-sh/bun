@@ -55,11 +55,15 @@ impl IntoJsResult for Result<(), bun_jsc::Stopped> {
 /// are terminating => stand down, else report"): a uSockets callback returns `void`, so a pending
 /// exception has nowhere to propagate -- it is reported as uncaught here, on the JS thread this
 /// dispatch runs on, rather than left pending for whatever enters JS next; a stop just returns.
-#[cold]
+#[inline]
 fn fold(result: bun_jsc::JsResult<()>) {
-    if let Err(err) = result {
+    #[cold]
+    fn report(err: bun_jsc::JsError) {
         let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
         let _ = bun_jsc::task::report_error_or_terminate(global, err);
+    }
+    if let Err(err) = result {
+        report(err);
     }
 }
 

@@ -1907,7 +1907,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _socket: SocketType<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
-    ) {
+    ) -> JsResult<()> {
         debug!("Socket closed.");
         let _guard = this.ref_scope();
         // Ensure the socket pointer is updated.
@@ -1917,7 +1917,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
+        this.client_mut().on_close()
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -1952,13 +1952,18 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Handle socket timeout
     }
 
-    pub(crate) fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
+    pub(crate) fn on_data(
+        this: &JSValkeyClient,
+        socket: SocketType<SSL>,
+        data: &[u8],
+    ) -> JsResult<()> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Self::socket(socket);
 
         let _guard = this.ref_scope();
-        let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
+        let result = this.client_mut().on_data(data);
         this.update_poll_ref();
+        result
     }
 
     pub(crate) fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {

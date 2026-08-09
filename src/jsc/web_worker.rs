@@ -1218,6 +1218,11 @@ fn on_unhandled_rejection(
     if let Err(err) = format_result {
         error_instance = global_object.take_exception(err);
     }
+    // Formatting ran script; if this worker was stopped meanwhile (the gate closed, or what came back
+    // is its termination) there is no error to dispatch.
+    if error_instance.is_termination_exception() || !global_object.script_allowed() {
+        return;
+    }
     jsc::mark_binding();
     // We RETURN through
     // the live C++ frames after dispatching (see the note below), so the

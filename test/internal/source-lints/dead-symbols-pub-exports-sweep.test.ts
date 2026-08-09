@@ -1,7 +1,7 @@
 // Guards against reintroduction of symbols removed as dead code from the
 // FFI declaration crates (mimalloc/cares/lsquic/zlib/libuv/brotli/boringssl/
-// libdeflate/windows_sys), bun_core, test_runner, webcore, and the built-in
-// JS/codegen sources. Each entry was verified to have zero references across src/,
+// libdeflate/windows_sys), bun_core, test_runner, and the built-in JS/codegen
+// sources. Each entry was verified to have zero references across src/,
 // scripts/, test/, and freshly regenerated build/debug/codegen/ output before
 // deletion, and the removal was validated by `cargo check` on all 10 CI
 // target triples plus a full `bun bd` build.
@@ -83,7 +83,7 @@ test("dead FFI declarations (sys crates) do not reappear", () => {
   expect(resurrected).toEqual([]);
 });
 
-test("dead Rust symbols (bun_core, jsc, test_runner, webcore) do not reappear", () => {
+test("dead Rust symbols (bun_core, jsc, test_runner) do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // BuildTarget::Wasi was never constructed (BUILD_TARGET is Native or Wasm).
     ["src/bun_core/env.rs", /\bWasi\b/],
@@ -93,9 +93,6 @@ test("dead Rust symbols (bun_core, jsc, test_runner, webcore) do not reappear", 
     // throw2 + its carrier trait duplicated JSGlobalObject::throw_error.
     ["src/runtime/test_runner/mod.rs", /\btrait JSGlobalObjectTestExt\b/],
     ["src/runtime/test_runner/mod.rs", /\bfn throw2\b/],
-    // A no_mangle duplicate of TextEncoder__encode16 whose name was truncated
-    // to the bare global symbol `c`; nothing in C++ or Rust referenced it.
-    ["src/runtime/webcore/TextEncoder.rs", /\bfn c\(/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

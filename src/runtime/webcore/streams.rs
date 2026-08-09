@@ -760,12 +760,13 @@ impl StreamResult {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if VirtualMachine::get().is_shutting_down() {
+        if !global_this.script_allowed() {
             // `release()` frees `.owned`/`.owned_and_done` ByteLists and
             // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
-            // No value is produced for a VM that is going away: unwind; the boundary that settles the
-            // pull promise finds the gate closed and stands down.
+            // No value is produced for a VM that no longer runs script: unwind; the boundary that
+            // settles the pull promise finds the gate closed and stands down. (A self-exiting VM still
+            // running its exit handlers has the gate open and gets its value as usual.)
             return Err(jsc::JsError::Thrown);
         }
 

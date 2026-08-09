@@ -309,14 +309,15 @@ impl TopExceptionScope {
         }
     }
 
-    /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
-    /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
-    /// this function prints a trace of where it was thrown.
     /// A native/JS boundary got an empty value back (`unwound`) or a real one: an empty one must be
     /// explained by a pending exception or by the VM no longer allowing script (WebCore's
     /// `isTerminationException(returned) || isTerminatingExecution()`); a real one by neither.
     #[cfg(any(debug_assertions, bun_asan))]
-    pub(crate) fn assert_unwind_reason_matches(&mut self, global: &crate::JSGlobalObject, unwound: bool) {
+    pub(crate) fn assert_unwind_reason_matches(
+        &mut self,
+        global: &crate::JSGlobalObject,
+        unwound: bool,
+    ) {
         if unwound {
             // As below: `has_exception()` must actually be called for the C++ verifier.
             let has_exception = self.has_exception();
@@ -328,6 +329,9 @@ impl TopExceptionScope {
             self.assert_no_exception();
         }
     }
+    /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
+    /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
+    /// this function prints a trace of where it was thrown.
     #[cfg(any(debug_assertions, bun_asan))]
     pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
         if should_have_exception {

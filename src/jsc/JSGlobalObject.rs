@@ -981,15 +981,15 @@ impl JSGlobalObject {
     /// cleared the bit, so they are sound. New code must not
     /// pair this with a raw `extern "C"` throwing call — use the generated
     /// [`crate::cpp`] wrappers or [`top_scope!`](crate::top_scope) instead.
+    pub fn has_exception(&self) -> bool {
+        JSGlobalObject__hasException(self)
+    }
+
     /// Whether this VM still runs script (its stop gate is open) -- WebCore's `!isTerminatingExecution()`.
     /// For the folds at native/JS boundaries; see `VirtualMachine::script_allowed` for when else to read it.
     #[inline]
     pub fn script_allowed(&self) -> bool {
         self.bun_vm().script_allowed()
-    }
-
-    pub fn has_exception(&self) -> bool {
-        JSGlobalObject__hasException(self)
     }
 
     pub fn clear_exception(&self) {
@@ -1030,11 +1030,9 @@ impl JSGlobalObject {
     }
 
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        self.take_exception(proof)
-            .to_error()
-            .unwrap_or_else(|| {
-                panic!("Couldn't convert a JavaScript exception to an Error instance.");
-            })
+        self.take_exception(proof).to_error().unwrap_or_else(|| {
+            panic!("Couldn't convert a JavaScript exception to an Error instance.");
+        })
     }
 
     pub fn try_take_exception(&self) -> Option<JSValue> {

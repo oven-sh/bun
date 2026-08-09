@@ -627,7 +627,7 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     let mut scope_storage = core::mem::MaybeUninit::uninit();
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let r = to_js_host_setter_value(global, f().into_host_setter_return());
-    scope.assert_exception_presence_matches(!r);
+    scope.assert_unwind_reason_matches(global, !r);
     r
 }
 
@@ -648,7 +648,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
         }
         Err(_) => core::ptr::null_mut(),
     };
-    scope.assert_exception_presence_matches(ptr.is_null());
+    scope.assert_unwind_reason_matches(global, ptr.is_null());
     ptr
 }
 

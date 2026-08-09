@@ -1216,13 +1216,7 @@ fn on_unhandled_rejection(
         },
     );
     if let Err(err) = format_result {
-        match err {
-            JsError::Thrown => {}
-            JsError::OutOfMemory => {
-                let _ = global_object.throw_out_of_memory();
-            }
-        }
-        error_instance = global_object.try_take_exception().unwrap();
+        error_instance = global_object.take_exception(err);
     }
     jsc::mark_binding();
     // We RETURN through

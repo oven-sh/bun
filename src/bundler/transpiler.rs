@@ -766,19 +766,18 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                // Refresh the listing at our generation, then copy the
-                // basenames out under `entries_mutex`: concurrent resolvers
-                // rewrite the `DirEntry` map in place under that lock.
-                if dir_info.get_entries(self.resolver.generation).is_none() {
-                    return Ok(());
-                }
+                // Copy the listing's basenames out under `entries_mutex`,
+                // refreshing it at our generation in the same critical
+                // section: concurrent resolvers rewrite the `DirEntry` map in
+                // place under that lock, and `dot_env::Loader::load` does
+                // file I/O between probes.
                 let dir = {
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
                         .entries_mutex
                         .lock_guard();
-                    match dir_info.get_entries_const() {
-                        Some(entries) => DotEnvProbeKeys(
+                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                        Some(entries) => dot_env::DirEntryKeys(
                             entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
                         ),
                         None => return Ok(()),
@@ -814,16 +813,6 @@ impl<'a> Transpiler<'a> {
             self.options.disable_transpilation = true;
         }
         Ok(())
-    }
-}
-
-/// Basenames copied out of a cached `DirEntry` under `entries_mutex` so the
-/// dotenv loader can probe them without the lock (see `run_env_loader`).
-struct DotEnvProbeKeys(Vec<Box<[u8]>>);
-
-impl dot_env::DirEntryProbe for DotEnvProbeKeys {
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        self.0.iter().any(|k| **k == *query_lower)
     }
 }
 

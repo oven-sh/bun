@@ -599,11 +599,30 @@ impl DirEntry {
         Ok(())
     }
 
+    /// Debug-only contract check: every `.data` probe must run under
+    /// `entries_mutex`, because a stale-generation re-read
+    /// (`RealFS::entries_at_locked`) rewrites the `DirEntry` in place under
+    /// that lock and frees the old map's buckets. This assert turns the next
+    /// unlocked probe into a deterministic debug-build failure instead of a
+    /// rare segfault.
+    #[inline]
+    fn debug_assert_entries_mutex_held() {
+        debug_assert!(
+            crate::fs::FileSystem::instance()
+                .fs
+                .entries_mutex
+                .is_held_by_current_thread(),
+            "DirEntry.data probed without entries_mutex; a concurrent \
+             stale-generation re-read frees the map's buckets in place"
+        );
+    }
+
     // `query_` borrow is detached from the returned `Entry` lifetime so callers
     // can pass a slice into the same threadlocal buffer they then mutate. The
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+        Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
@@ -623,6 +642,7 @@ impl DirEntry {
         &'a self,
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
+        Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
         Some(EntryLookup {
             entry: result_ptr,
@@ -632,19 +652,13 @@ impl DirEntry {
 
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        Self::debug_assert_entries_mutex_held();
         self.data.contains_key(query_lower)
     }
 }
 
 // `data` drops itself and `dir` is interned in DirnameStore (see the comment
 // on `DirEntry::dir`). Body would be empty, so no `impl Drop`.
-
-impl bun_dotenv::DirEntryProbe for DirEntry {
-    #[inline]
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        DirEntry::has_comptime_query(self, query_lower)
-    }
-}
 
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {

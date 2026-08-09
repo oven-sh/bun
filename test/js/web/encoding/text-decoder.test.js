@@ -961,16 +961,19 @@ describe("TextDecoder.decode above the maximum string length", () => {
   // A zeroed input is all-ASCII, so the decoded string's length equals the
   // input length. 2**31 exceeds WTF::StringImpl's maximum length (2^31-1);
   // decode() used to return "" silently instead of throwing. The input is
-  // never written, so the 2 GiB Uint8Array stays untouched zero pages.
+  // never written (untouched zero pages) and the throw happens before the
+  // output string is allocated, so this runs in about a second even under
+  // debug + ASAN.
   it("throws ERR_STRING_TOO_LONG for a 2**31 byte ASCII input", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script("2 ** 31")],
       env: bunEnv,
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
-  }, 30_000); // scans 2 GiB of input; slow under debug + ASAN.
+  });
 
   // Same path, exercised cheaply via the synthetic allocation limit so the
   // guard is covered without a 2 GiB allocation.
@@ -978,8 +981,9 @@ describe("TextDecoder.decode above the maximum string length", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script("160 * 1024 * 1024")],
       env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: "134217728" },
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   });

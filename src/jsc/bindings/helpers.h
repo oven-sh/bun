@@ -28,8 +28,7 @@ extern "C" const char* Bun__errnoName(int);
 
 namespace Bun {
 namespace ERR {
-// Defined in ErrorCode.cpp; forward-declared here because ErrorCode.h cannot
-// be included from this header.
+// Forward declaration: ErrorCode.h transitively includes this header.
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 }
 }
@@ -260,12 +259,15 @@ static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 {
     auto wtfString = toStringCopy(str);
     if (wtfString.isNull() && str.len > 0) [[unlikely]] {
-        // toStringCopy returns a null string when the input is over the string
-        // length limit or when allocation fails; surface an error instead of
-        // silently returning an empty string.
         auto scope = DECLARE_THROW_SCOPE(global->vm());
         size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (str.len > maxLength) {
+        // For UTF-8 input `str.len` counts bytes, but the limit applies to the
+        // decoded UTF-16 length.
+        size_t decodedLength = str.len;
+        if (isTaggedUTF8Ptr(str.ptr) && str.len > maxLength) {
+            decodedLength = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+        }
+        if (decodedLength > maxLength) {
             Bun::ERR::STRING_TOO_LONG(scope, global);
         } else {
             JSC::throwOutOfMemoryError(global, scope);

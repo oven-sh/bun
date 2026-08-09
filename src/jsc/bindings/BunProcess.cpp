@@ -1778,8 +1778,6 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
-
 // Builders run inside a property lookup whose walk caches the object's
 // Structure*. Reporting synchronously runs the uncaught-exception machinery
 // (arbitrary JS) right there, transitioning structures under the walk, so

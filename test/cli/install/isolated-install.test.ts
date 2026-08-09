@@ -2687,3 +2687,65 @@ describe("hoist", () => {
     );
   });
 });
+
+// The isolated installer used to count every completed store entry on top of
+// every unique package, so a fresh install reported roughly double the number
+// of packages the hoisted linker reported for the same project.
+describe.concurrent("install summary", () => {
+  test("counts one install per package", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "summary-single-dep",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("1 package installed");
+  });
+
+  test("peer variants of one package count once", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    // `peer-deps@1.0.0` declares `peerDependencies: { "no-deps": "*" }`, so
+    // each workspace gets its own store entry of `peer-deps`. Three unique
+    // packages install: peer-deps@1.0.0, no-deps@1.0.0, and no-deps@1.1.0.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "summary-peer-variants",
+        workspaces: ["packages/*"],
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "pkg-a", "package.json"),
+      JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "pkg-b", "package.json"),
+      JSON.stringify({
+        name: "pkg-b",
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps": "1.0.0",
+          "no-deps": "1.1.0",
+        },
+      }),
+    );
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("3 packages installed");
+  });
+});

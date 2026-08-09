@@ -307,11 +307,16 @@ snapshotTest(
     expect(ticks).toBeLessThan(50); // not a burst of catch-up fires from un-rebased deadlines
     // The one-shot had ~1.5 s left at the freeze; it must still have ~1.5 s left after restore (an un-rebased deadline
     // would be long past and fire immediately). Upper bound is loose for slow (debug/ASAN) runners.
+    // The timer had 1700 ms minus however long the (possibly slow, loaded) builder took to reach take() left at the freeze;
+    // an un-rebased deadline would be long past and fire within a few ms of restore, which is what the lower bound rejects.
     const remaining = Number(/remaining-time timer fired (\d+)ms after restore/.exec(out)![1]);
-    expect(remaining).toBeGreaterThanOrEqual(1000);
+    expect(remaining).toBeGreaterThanOrEqual(400);
     expect(remaining).toBeLessThan(5000);
     p.terminal!.write("q");
-    expect(await p.exited).toBe(0);
+    // On failure the output says which half broke: no "stdin data" line means the keystroke never reached the kept stream;
+    // the line without an exit means process.exit() from its handler did not complete.
+    const exit = await Promise.race([p.exited, Bun.sleep(10_000).then(() => "no exit within 10s" as const)]);
+    expect(exit, out).toBe(0);
     expect(out).toContain('stdin data: "q"');
   },
   60000,

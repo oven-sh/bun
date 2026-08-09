@@ -3255,7 +3255,7 @@ extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObj
             }
         }
         // A stream whose fd is a terminal again is kept: the app's listeners stay attached, its poll was re-armed onto the
-        // re-seated fd, and only what the new terminal does not carry over (size, raw mode) is re-applied.
+        // re-seated fd; the size is the new terminal's.
         if (wasTerminal && bun_stdio_tty[stream.fd]) {
             auto* object = existing.getObject();
 #if !OS(WINDOWS)
@@ -3265,15 +3265,6 @@ extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObj
                 object->putDirect(vm, Identifier::fromString(vm, "rows"_s), jsNumber(size.ws_row));
             }
 #endif
-            if (stream.fd == 0 && object->get(globalObject, Identifier::fromString(vm, "isRaw"_s)).isTrue()) {
-                JSValue setRawMode = object->get(globalObject, Identifier::fromString(vm, "setRawMode"_s));
-                if (!scope.exception() && setRawMode.isCallable()) {
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(true));
-                    JSC::call(globalObject, setRawMode, object, args, "setRawMode"_s);
-                }
-                (void)scope.tryClearException();
-            }
             continue;
         }
         process->putDirect(vm, ident, stream.construct(vm, process));

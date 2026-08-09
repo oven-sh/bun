@@ -422,7 +422,14 @@ impl RefCountedTimer {
         let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
         // field of the boxed `JSValkeyClient` (stable address until disarmed).
-        unsafe { VirtualMachine::timer_insert(vm, self.event_loop_timer.as_ptr()) };
+        unsafe {
+            VirtualMachine::timer_insert(
+                vm,
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            )
+        };
         if !self.ref_held.replace(true) {
             owner.ref_();
         }
@@ -1194,6 +1201,8 @@ impl JSValkeyClient {
             return;
         }
 
+        // No reconnecting on a VM that is exiting: its stop phase would only
+        // have to close the new socket again.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return;
@@ -1443,55 +1452,14 @@ impl JSValkeyClient {
             return;
         }
 
-        // During VM shutdown the event loop won't tick, so the deferred task below
-        // would never run; close inline (this_value is cleared, no JS re-entry).
-        if self.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            self.client_mut().close();
-            return;
-        }
-
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
-        struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop.
-            ctx: *const JSValkeyClient,
-            task: jsc::AnyTask::AnyTask,
-        }
-        impl Holder {
-            fn run(self_: *mut Holder) {
-                // SAFETY: allocated via heap::alloc below; reclaimed here.
-                let self_ = unsafe { bun_core::heap::take(self_) };
-                let ctx = self_.ctx;
-                // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
-                unsafe {
-                    (*ctx).client_mut().close();
-                    JSValkeyClient::deref(ctx.cast_mut());
-                }
-                // self_ dropped here (Box freed).
-            }
-        }
-        let holder = bun_core::heap::into_raw(Box::new(Holder {
+        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
             ctx: self.as_ctx_ptr(),
-            task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
-        // SAFETY: holder just allocated; closure captures nothing so it coerces
-        // to `fn(*mut c_void) -> JsResult<()>`.
-        unsafe {
-            (*holder).task = jsc::AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>())),
-                callback: |p: *mut c_void| {
-                    Holder::run(p.cast::<Holder>());
-                    Ok(())
-                },
-            };
-        }
-
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
         unsafe {
-            (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&raw mut (*holder).task));
+            (*self.vm().event_loop()).enqueue_task(task);
         }
     }
 
@@ -2103,5 +2071,30 @@ impl Options {
         }
 
         Ok(this)
+    }
+}
+
+pub(crate) struct ValkeyDeferredClose {
+    ctx: *const JSValkeyClient,
+}
+
+impl ValkeyDeferredClose {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        let ctx = self.ctx;
+        // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
+        unsafe {
+            (*ctx).client_mut().close();
+            JSValkeyClient::deref(ctx.cast_mut());
+        }
+    }
+}
+
+impl bun_event_loop::Taskable for ValkeyDeferredClose {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
+    /// The deferred close is script-free bookkeeping; do it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        unsafe { bun_core::heap::take(this) }.run();
     }
 }

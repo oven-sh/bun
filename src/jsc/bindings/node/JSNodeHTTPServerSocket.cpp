@@ -6,6 +6,7 @@
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
 #include "JSSocketAddressDTO.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -400,6 +401,129 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
+/* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
+ * must replay before fresh reads (ordering) and not synchronously inside the resuming JS operation.
+ * Deferred as an event-loop task rooting the JS socket; reads resume once the spill drains without re-pausing. */
+template<bool SSL>
+static void replayNodeHttpPausedSpill(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    httpResponseData->nodeHttpSpillReplayScheduled = false;
+    /* Let the replay's own parse loop run; HTTP_NODE_READS_PAUSED stays set so
+     * fresh socket bytes cannot race ahead of the spill. */
+    httpResponseData->nodeHttpParkAtNextBoundary = false;
+    WTF::Vector<char> spill = std::exchange(httpResponseData->nodeHttpPausedSpill, {});
+    if (!spill.isEmpty()) {
+        /* The parser's post-padded fence writes two bytes past the logical end. */
+        size_t spillLength = spill.size();
+        spill.grow(spillLength + LIBUS_RECV_BUFFER_PADDING);
+        us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.mutableSpan().data(), (int)spillLength);
+        if (!returned || us_socket_is_closed(returned)) {
+            return;
+        }
+        socket = returned;
+        httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    }
+    if (httpResponseData->nodeHttpParkAtNextBoundary) {
+        /* A dispatch during the replay hit backpressure again and re-parked
+         * the rest; stay paused until the next resumable event. */
+        return;
+    }
+    if (httpResponseData->nodeHttpQueuedPipelinedCount > 0
+        || reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
+        /* The spill drained, but the pipeline has not: keep raw reads paused —
+         * the queue-drain / writable events re-enter the hook. */
+        return;
+    }
+    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+}
+
+template<bool SSL>
+static void onNodeHttpReadsResumable(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        /* Flood prevention owns the pause: outgoing backpressure holds everything (incidental
+         * resumes must not race fresh reads past the spill). Queued responses alone must NOT hold
+         * spill replay (their body may be in the spill — deadlock). Raw reads resume once both drain. */
+        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
+            return;
+        }
+        if (httpResponseData->nodeHttpPausedSpill.isEmpty()
+            && httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
+            return;
+        }
+    }
+    if (httpResponseData->nodeHttpPausedSpill.isEmpty()) {
+        httpResponseData->nodeHttpParkAtNextBoundary = false;
+        httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+        return;
+    }
+    if (httpResponseData->nodeHttpSpillReplayScheduled) {
+        return;
+    }
+    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+    if (!cell) {
+        /* No JS wrapper to root a task on; replay in place. Reads are still
+         * paused, so ordering holds. */
+        replayNodeHttpPausedSpill<SSL>(socket);
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(cell->globalObject());
+    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+    if (!scriptExecutionContext) {
+        replayNodeHttpPausedSpill<SSL>(socket);
+        return;
+    }
+    httpResponseData->nodeHttpSpillReplayScheduled = true;
+    JSC::Strong<JSNodeHTTPServerSocket> protectedSocket(globalObject->vm(), cell);
+    scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext&) {
+        auto* self = protectedSocket.get();
+        us_socket_t* sock = self->socket;
+        if (!sock || us_socket_is_closed(sock)) {
+            return;
+        }
+        if (self->is_ssl) {
+            replayNodeHttpPausedSpill<true>(sock);
+        } else {
+            replayNodeHttpPausedSpill<false>(sock);
+        }
+    });
+}
+
+/* Pause edge (JS-driven, after the caller paused the socket): mark the socket-level
+ * pause and tell the in-progress parse loop to park at the next request boundary. */
+template<bool SSL>
+static void onNodeHttpReadsPaused(us_socket_t* socket)
+{
+    auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    d->nodeHttpParkAtNextBoundary = true;
+    d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+}
+
+extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        onNodeHttpReadsPaused<true>(socket);
+    } else {
+        onNodeHttpReadsPaused<false>(socket);
+    }
+}
+
+extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
+{
+    if (ssl) {
+        onNodeHttpReadsResumable<true>(socket);
+    } else {
+        onNodeHttpReadsResumable<false>(socket);
+    }
+}
+
 template<bool SSL>
 static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose, bool hasMoreQueued)
 {
@@ -424,16 +548,11 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;
     }
-    if (!hasMoreQueued && httpResponseData->nodeHttpQueuedPipelinedCount == 0
-        && (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
-        // The pipeline backlog drained. Resume reading new requests only once
-        // the socket has no outgoing backpressure left (Node's flood
-        // prevention keeps the socket paused while responses back up);
-        // otherwise HttpContext::onWritable resumes after the drain.
-        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
-            httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-            reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
-        }
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        // A pipeline advance while flood-paused: the hook replays parked
+        // request bytes once outgoing backpressure has flushed, and resumes
+        // raw reads only after both the queue and the spill drain.
+        onNodeHttpReadsResumable<SSL>(socket);
     }
     return true;
 }
@@ -554,12 +673,20 @@ void JSNodeHTTPServerSocket::onClose()
         EnsureStillAliveScope ensureStillAlive(self);
 
         if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            // Notifying the responses runs script; it may leave an exception (a
+            // termination arriving meanwhile), and nothing is entered on top of one.
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             notifyResponsesOnClose(thisObject);
-
-            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-            if (auto* ptr = exception.get()) {
-                exception.clear();
+            if (!scope.exception()) {
+                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+                if (auto* ptr = exception.get()) {
+                    exception.clear();
+                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                }
+            } else if (!vm.hasPendingTerminationException()) {
+                auto* ptr = scope.exception();
+                scope.clearException();
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
             }
         }

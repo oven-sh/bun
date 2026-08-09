@@ -350,7 +350,6 @@ export default {
   Query,
   SQLQueryFlags,
   SQLQueryResultMode,
-  SQLQueryStatus,
 
   symbols: {
     _resolve,

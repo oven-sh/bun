@@ -296,7 +296,7 @@ impl Readable {
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
                 Self::pipe_detach(&pipe);
-                Ok(result)
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
@@ -309,12 +309,12 @@ impl Readable {
 
                 // Ownership of the mimalloc-backed buffer transfers to JSC
                 // (freed via `MarkedArrayBuffer_deallocator`).
-                Ok(jsc::MarkedArrayBuffer {
+                jsc::MarkedArrayBuffer {
                     buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
                     owns_buffer: true,
                     pinned: false,
                 }
-                .to_node_buffer(global))
+                .to_node_buffer(global)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

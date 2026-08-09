@@ -356,7 +356,7 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                buffer.to_node_buffer(ctx)
             }
         }
     }
@@ -1359,10 +1359,6 @@ pub struct VectorArrayBuffer {
 }
 
 impl VectorArrayBuffer {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        self.value
-    }
-
     /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
     /// Must run on the JS thread, exactly once, after the I/O completes.
     pub(crate) fn release(&mut self) {

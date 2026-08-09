@@ -272,7 +272,7 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -2170,9 +2170,8 @@ impl UpdateInteractiveCommand {
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);

@@ -128,6 +128,7 @@ function normalizeSSLMode(value: string): SSLMode {
   switch (value) {
     case "disable":
       return SSLMode.disable;
+    case "allow": // libpq value; both accept either outcome, so map to prefer
     case "prefer":
       return SSLMode.prefer;
     case "require":
@@ -144,7 +145,11 @@ function normalizeSSLMode(value: string): SSLMode {
     }
   }
 
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
+  throw $ERR_INVALID_ARG_VALUE(
+    "sslmode",
+    value,
+    "must be one of: disable, allow, prefer, require, verify-ca, verify-full",
+  );
 }
 
 export type { SQLHelper };
@@ -1503,22 +1508,6 @@ function parseSQLiteOptions(
   return sqliteOptions;
 }
 
-function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  return options.adapter === adapter;
-}
-
-function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
-  }
-}
-
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
@@ -1765,6 +1754,11 @@ function parseOptions(
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
+  if (sslMode === SSLMode.disable) {
+    // libpq honours PGSSLMODE as the default; a URL ?sslmode= below overrides it.
+    const envSslMode = adapter === "postgres" ? env.PG_SSLMODE || env.PGSSLMODE : undefined;
+    if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
+  }
 
   let url = _url;
 
@@ -1948,6 +1942,7 @@ function parseOptions(
   }
 
   tls ||= options.tls || options.ssl;
+  const explicitTls = tls;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -2044,7 +2039,7 @@ function parseOptions(
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, rejectUnauthorized, or a verify-* sslmode).
-  if (tls && sslMode === SSLMode.disable) {
+  if (explicitTls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
   }
 
@@ -2146,13 +2141,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 }
 
 export default {
-  parseDefinitelySqliteUrl,
-  isOptionsOfAdapter,
-  assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
-  buildDefinedColumnsAndQuery,
-  normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,
   getHelperCommandFromDetect,

@@ -199,6 +199,7 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
     #[inline]
@@ -255,6 +256,10 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn close(&mut self) {
         UpgradedDuplex__close(self)
+    }
+    #[inline]
+    pub(crate) fn abandon_js_side(&mut self) {
+        UpgradedDuplex__abandon_js_side(self)
     }
 }
 
@@ -415,6 +420,9 @@ pub mod fault_inject {
     /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
     /// epoll/kqueue).
     pub const POLL_START: c_int = 11;
+    /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
+    /// payload in the `on_session`/`on_keylog` dispatch.
+    pub const SESSION_BUFFER: c_int = 12;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -435,6 +443,8 @@ pub mod fault_inject {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear(syscall: c_int);
         pub safe fn us_fault_clear_all();
+        pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
+        -> c_int;
     }
 }
 pub use socket::{

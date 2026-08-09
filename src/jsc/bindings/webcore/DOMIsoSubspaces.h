@@ -23,7 +23,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatementConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteDatabaseSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSyncIterator;
@@ -99,6 +98,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCountQueuingStrategyConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStreamConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStreamConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForCompressionStreamConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForDecompressionStreamConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamPipeToOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForReadRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForReadIntoRequest;

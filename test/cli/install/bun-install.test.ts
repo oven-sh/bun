@@ -356,11 +356,12 @@ describe.concurrent("bun-install", () => {
       });
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  cache = false
-  registry = "http://${server.hostname}:${server.port}/"
-  `,
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://${server.hostname}:${server.port}/`,
+          },
+        }),
       );
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -796,6 +797,25 @@ describe.concurrent("bun-install", () => {
       crossOriginAuth: [null],
     });
     expect(stdout).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {
+    using dir = tempDir("install-silent-verbose", {
+      "package.json": JSON.stringify({ name: "app", dependencies: {} }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--silent"],
+      cwd: String(dir),
+      env: { ...env, RUNNER_DEBUG: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -3238,6 +3258,85 @@ describe.concurrent("bun-install", () => {
         version: "0.0.5",
         bin: {
           "baz-exec": "index.js",
+        },
+      });
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/33834
+  it("should resolve nested npm: alias to its registry target, not a same-named alias", async () => {
+    await withContext(defaultOpts, async ctx => {
+      // root aliases "baz" -> bar@0.0.2, and bar depends on "baz-old": "npm:baz@>=0.0.1".
+      // The nested alias must resolve to the real registry package baz, not back to bar.
+      const urls: string[] = [];
+      const manifests: Record<string, Record<string, object>> = {
+        bar: { "0.0.2": { dependencies: { "baz-old": "npm:baz@>=0.0.1" } } },
+        baz: { "0.0.3": { bin: { "baz-run": "index.js" } } },
+      };
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "").replaceAll("%2f", "/");
+        if (path.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, path)));
+        }
+        const versions: Record<string, object> = {};
+        let latest = "";
+        for (const [version, fields] of Object.entries(manifests[path] ?? {})) {
+          versions[version] = {
+            name: path,
+            version,
+            dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` },
+            ...fields,
+          };
+          latest = version;
+        }
+        return new Response(JSON.stringify({ name: path, versions, "dist-tags": { latest } }));
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "npm:bar@0.0.2",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        expect.stringContaining("+ baz@0.0.2"),
+        "",
+        "2 packages installed",
+      ]);
+      expect(exitCode).toBe(0);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz", "baz-old"]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+      expect(await file(join(ctx.package_dir, "node_modules", "baz-old", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.3",
+        bin: {
+          "baz-run": "index.js",
         },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -6756,11 +6855,12 @@ describe.concurrent("bun-install", () => {
 
       await writeFile(
         join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  frozenLockfile = true
-  registry = "${ctx.registry_url}"
-  `,
+        Bun.TOML.stringify({
+          install: {
+            frozenLockfile: true,
+            registry: ctx.registry_url,
+          },
+        }),
       );
 
       // change version of baz in package.json
@@ -8760,7 +8860,10 @@ describe.concurrent("bun-install", () => {
         `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
         async () => {
           await withContext(defaultOpts, async ctx => {
-            await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+            await writeFile(
+              join(ctx.package_dir, "bunfig.toml"),
+              Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+            );
 
             await writeFile(
               join(ctx.package_dir, "package.json"),
@@ -8804,7 +8907,10 @@ describe.concurrent("bun-install", () => {
       await withContext(defaultOpts, async ctx => {
         const regURL = "asdfghjklqwertyuiop";
 
-        await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+        );
 
         await writeFile(
           join(ctx.package_dir, "package.json"),
@@ -8843,7 +8949,10 @@ describe.concurrent("bun-install", () => {
     test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
       const regURL = "asdfghjklqwertyuiop";
 
-      await writeFile(join(ctx.package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+      await writeFile(
+        join(ctx.package_dir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+      );
 
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -8990,12 +9099,13 @@ describe.concurrent("bun-install", () => {
       await Promise.all([
         write(
           join(ctx.package_dir, "bunfig.toml"),
-          `
-  [install]
-  cache = false
-  registry = "${ctx.registry_url}"
-  saveTextLockfile = true
-  `,
+          Bun.TOML.stringify({
+            install: {
+              cache: false,
+              registry: ctx.registry_url,
+              saveTextLockfile: true,
+            },
+          }),
         ),
         write(
           join(ctx.package_dir, "package.json"),

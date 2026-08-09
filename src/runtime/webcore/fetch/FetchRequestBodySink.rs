@@ -5,7 +5,6 @@ use bun_sys::Error as SysError;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
-use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
@@ -57,7 +56,7 @@ pub struct FetchRequestBodySink {
     /// `on_reject_request_stream` / synchronous branches), which clears this to
     /// `None` first. `finalize` releases it as a fallback if that path never
     /// ran.
-    pub task: Option<BackRef<FetchTasklet>>,
+    pub task: Option<BackRef<FetchTasklet, bun_ptr::Mut>>,
     pub source: SourceHandle,
     pub high_water_mark: BlobSizeType,
     /// Shared pending drain promise for `write()` and `flush(true)`; resolved
@@ -315,5 +314,3 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
         self.done
     }
 }
-
-pub type FetchRequestBodySinkJSSink = JSSink<FetchRequestBodySink>;

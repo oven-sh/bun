@@ -165,10 +165,6 @@ pub(crate) struct Stringifier;
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
 
-    // pub fn save(this: &Lockfile) {
-    //     let _ = this;
-    // }
-
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
@@ -2347,14 +2343,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)),
                     );
                     return Err(ParseError::UnexpectedResolution);
-                }
-                Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
-                    log.add_error_fmt(
-                        source,
-                        item_loc(source, key_loc, res_info_idx),
-                        format_args!("Invalid package version: {}", bstr::BStr::new(res_str)),
-                    );
-                    return Err(ParseError::InvalidSemver);
                 }
             };
 

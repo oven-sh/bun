@@ -200,9 +200,10 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
-// Worker crashes are classified as panics by fatal signal, which Windows
-// never surfaces (a crash there is exit code 3, indistinguishable from
-// process.exit) — see is_panic_status. So this contract is POSIX-only.
+// POSIX classifies worker crashes as panics by fatal signal — see
+// is_panic_status. (On Windows a crash caught by Bun's crash handler exits
+// with code 3, indistinguishable from process.exit(3); the Windows
+// classification below works on raw NTSTATUS exit codes instead.)
 test.skipIf(isWindows)(
   "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
   async () => {
@@ -229,6 +230,80 @@ test.skipIf(isWindows)(
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("a test worker process crashed with");
     expect(stderr).toContain("Aborting");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
+// Windows delivers no signals: a native fault that bypasses Bun's crash
+// handler (__fastfail — UCRT abort(), Rust aborts in addons, /GS checks)
+// terminates the worker with the raw NTSTATUS as its exit code. The
+// coordinator must recognize that as a crash and abort the run like the
+// fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and carry
+// on as if the test had called process.exit(9).
+test.skipIf(!isWindows)(
+  "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and aborts",
+  async () => {
+    using dir = tempDir("parallel-ntstatus", {
+      // Hangs forever so its worker is still mid-file when the sibling
+      // crashes: the abort must terminate it (TerminateProcess) rather than
+      // wait for it, or the run would stall past the banner.
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      // A deliberate crash must not upload a report (see the POSIX test above).
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN, reported untruncated and in hex
+    expect(stderr).toContain("(worker crashed: exit code 0xC0000409)");
+    expect(stderr).toContain("a test worker process crashed with exit code 0xC0000409");
+    expect(stderr).toContain("Aborting");
+    // the hung sibling was torn down and accounted, not waited on
+    expect(stderr).toContain("aborted: sibling worker panicked");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
+// POSIX twin of the NTSTATUS test: fastfail resets the SIGABRT disposition
+// and raises it, so the worker dies by the raw signal with no crash-handler
+// banner, and the fatal-signal classification aborts the run.
+test.skipIf(isWindows)(
+  "--parallel: a worker dying of a raw SIGABRT (fastfail) aborts the run",
+  async () => {
+    using dir = tempDir("parallel-fastfail-posix", {
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      // A deliberate crash must not upload a report (see the POSIX test above).
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(worker crashed: SIGABRT)");
+    expect(stderr).toContain("a test worker process crashed with SIGABRT");
+    expect(stderr).toContain("Aborting");
+    expect(stderr).toContain("aborted: sibling worker panicked");
     expect(exitCode).not.toBe(0);
   },
   isASAN || isDebug ? 60_000 : 20_000,
@@ -1032,3 +1107,44 @@ test("--parallel: SIGTERM on coordinator kills workers and their grandchildren",
     } catch {}
   expect(outstanding).toEqual([]);
 }, 15000);
+
+test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {
+  const files: Record<string, string> = {
+    "shared.ts": `export let count = 0; export const bump = () => ++count;`,
+  };
+  for (const f of ["a", "b", "c"]) {
+    files[`${f}.test.ts`] =
+      `import {test,expect} from "bun:test"; import {bump} from "./shared"; test("${f}", () => { console.log("COUNT " + bump() + " G " + ((globalThis as any).__g ??= "${f}")); });`;
+  }
+  using dir = tempDir("parallel-no-isolate", files);
+  const run = async (...extra: string[]) => {
+    await using proc = Bun.spawn({
+      // Huge scale-up delay: one worker runs all three files, so sharing (or not) is observable.
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...extra],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = [...(stdout + stderr).matchAll(/COUNT (\d+) G (\w)/g)];
+    return { counts: m.map(x => x[1]), globals: new Set(m.map(x => x[2])).size, stdout, stderr, exitCode };
+  };
+
+  // Dispatch order across chunks isn't the point here; module state and globalThis are.
+  const isolated = await run();
+  expect(isolated.stdout).toContain("PARALLEL");
+  expect(isolated.counts).toEqual(["1", "1", "1"]);
+  expect(isolated.globals).toBe(3);
+  expect(isolated.stderr).toContain("3 pass");
+  expect(isolated.stderr).not.toContain("error:");
+  expect(isolated.exitCode).toBe(0);
+
+  const shared = await run("--no-isolate");
+  expect(shared.stdout).toContain("PARALLEL");
+  expect(shared.counts).toEqual(["1", "2", "3"]);
+  expect(shared.globals).toBe(1);
+  expect(shared.stderr).toContain("3 pass");
+  expect(shared.stderr).not.toContain("error:");
+  expect(shared.exitCode).toBe(0);
+});

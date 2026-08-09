@@ -800,7 +800,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_const_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
@@ -925,7 +925,22 @@ impl Task {
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
-                                                if err.get_errno() == sys::Errno::EXDEV {
+                                                // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                                if matches!(
+                                                    err.get_errno(),
+                                                    sys::Errno::EXDEV
+                                                        | sys::Errno::EACCES
+                                                        | sys::Errno::EPERM
+                                                ) {
+                                                    // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
+                                                    #[cfg(not(windows))]
+                                                    if let sys::Result::Err(err) =
+                                                        sys::set_file_offset(folder_dir, 0)
+                                                    {
+                                                        return Ok(Yield::failure(
+                                                            TaskError::LinkPackage(err),
+                                                        ));
+                                                    }
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -1331,7 +1346,13 @@ impl Task {
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
-                                        if err.get_errno() == sys::Errno::EXDEV {
+                                        // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                        if matches!(
+                                            err.get_errno(),
+                                            sys::Errno::EXDEV
+                                                | sys::Errno::EACCES
+                                                | sys::Errno::EPERM
+                                        ) {
                                             installer.supported_backend.store(
                                                 InstallMethod::Copyfile as u8,
                                                 Ordering::Relaxed,
@@ -1364,6 +1385,10 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
+                                // close the fd the failed hardlink attempt left behind
+                                if let Some(old) = cached_package_dir.take() {
+                                    old.close();
+                                }
                                 *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),

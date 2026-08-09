@@ -85,7 +85,6 @@ public:
 
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
-    void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
@@ -106,16 +105,16 @@ public:
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
 
     using Algorithm = Function<void(JSC::JSValue reason)>;
     uint32_t addAlgorithm(Algorithm&&);
     void removeAlgorithm(uint32_t);
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
-
-    bool isFollowingSignal() const { return !!m_followingSignal; }
 
     void throwIfAborted(JSC::JSGlobalObject&);
 
@@ -176,14 +175,6 @@ private:
             m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Dependent);
         }
     }
-    void setAborted(bool aborted)
-    {
-        if (aborted) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        }
-    }
     void setHasAbortEventListener(bool hasAbortEventListener)
     {
         if (hasAbortEventListener) {
@@ -215,7 +206,6 @@ private:
     // Strong-ref cycle leak.
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
-    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;

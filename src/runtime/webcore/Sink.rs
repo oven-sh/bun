@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, SourceHandle};
@@ -11,19 +12,6 @@ use bun_sys::{self as sys, Error as SysError};
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
-
-impl JSSink<ArrayBufferSink> {
-    /// Unprotects the controller cell stashed in `source` as `JSController`
-    /// and tells C++ to drop its back-pointer. Called from
-    /// `Body::ValueBufferer` Drop / reject paths.
-    // Renamed from `detach` to avoid colliding with the generic
-    // `JSSink<T: JsSinkAbi>::detach(source, global)` associated fn — Rust
-    // forbids same-name items across impl blocks for the same type even with
-    // different signatures (E0592).
-    pub(crate) fn detach_self(&mut self, global: &JSGlobalObject) {
-        JSSink::<ArrayBufferSink>::detach(&mut self.sink.source, global);
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSSink
@@ -191,12 +179,16 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
-        ptr: &mut T,
+        mut ptr: NonNull<T>,
     ) -> crate::webcore::jsc::JSValue
     where
         T: JsSinkType,
     {
         use crate::webcore::jsc::JSValue;
+        // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
+        // call; the pointer is only stashed in C++ `m_sinkPtr` and `source()` is
+        // read here synchronously.
+        let ptr = unsafe { ptr.as_mut() };
         // Pre-seed JSController(ZERO) so a sync drain's __controllerDetached can match-and-clear;
         // only install the real controller value if the placeholder survived.
         if let Some(src) = ptr.source() {
@@ -209,6 +201,22 @@ impl<T: JsSinkAbi> JSSink<T> {
             std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
             (&raw mut bits).cast::<*mut c_void>(),
         );
+        // `${name}__assignToStream` creates the JSReadable*SinkController with
+        // m_sinkPtr=ptr before calling into the stream pump. If the pump setup
+        // throws (e.g. a direct stream's `pull` getter), nothing ever calls
+        // end()/close() on the controller, so its destructor would run
+        // `${name}__finalize(m_sinkPtr)` after the caller has freed the sink.
+        // Detach it now while `ptr` is still live; the controller's later GC
+        // then sees m_sinkPtr==null and skips the native finalize.
+        if bits != 0 && result.to_error().is_some() {
+            if let Some(src) = ptr.source() {
+                *src = streams::SourceHandle::None;
+            }
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                streams::controller_abi::detach_ptr(JSValue::from_encoded(bits))
+            });
+            return result;
+        }
         if let Some(src) = ptr.source() {
             if matches!(*src, streams::SourceHandle::JSController(_)) {
                 *src = if bits != 0 {
@@ -285,6 +293,14 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
     }
+    /// Called from `js_controller_detached`: once per JS-pump controller, on
+    /// every detach path including its GC destructor. A sink co-owned by
+    /// another GC cell releases the controller's claim here (sweep order
+    /// between the two cells is unspecified, so neither destructor alone may
+    /// free it). Never free the allocation inline: the caller holds
+    /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
+    /// same frame; defer a last-owner free to the event loop.
+    fn controller_detached(&mut self) {}
     fn done(&self) -> bool {
         false
     }
@@ -571,6 +587,7 @@ impl<T: JsSinkType> JSSink<T> {
                 }
             }
         }
+        this.controller_detached();
     }
 
     /// `${abi_name}__close` body — called from
@@ -657,6 +674,120 @@ impl<T: JsSinkType> JSSink<T> {
     pub(crate) fn js_memory_cost(this: &T) -> usize {
         core::mem::size_of::<JSSink<T>>() + this.memory_cost()
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Native-transform → native-sink byte-write dispatch
+//
+// Replaces the generated per-sink `${name}__writeBytes` thunks + the C++
+// `JSSink__writeBytes` SinkID switch with a single Rust entry point that
+// routes through `SinkHandle::write`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Map a C++ `WebCore::SinkID` + erased `m_sinkPtr` to a [`SinkHandle`].
+///
+/// `ptr` is the `m_sinkPtr` stored on the JS wrapper (a `*mut JSSink<T>` for
+/// the `T` selected by `id`); `JSSink<T>` is `#[repr(transparent)]` over `T`,
+/// so the cast to `*mut T` is an address-preserving no-op.
+///
+/// # Safety
+/// `ptr` must be a live, properly-aligned pointer to the concrete sink type
+/// that `id` names (the same pointer the generated `${name}__*` thunks
+/// receive), valid for the lifetime of the returned handle.
+pub(crate) unsafe fn sink_handle_from_id(
+    id: u8,
+    ptr: NonNull<c_void>,
+) -> crate::webcore::SinkHandle {
+    use crate::webcore::SinkHandle;
+    // Mirrors `enum SinkID` in src/jsc/bindings/Sink.h.
+    const ARRAY_BUFFER_SINK: u8 = 0;
+    const FILE_SINK: u8 = 2;
+    const HTML_REWRITER_SINK: u8 = 3;
+    const HTTP_RESPONSE_SINK: u8 = 4;
+    const HTTPS_RESPONSE_SINK: u8 = 5;
+    const NETWORK_SINK: u8 = 6;
+    const H3_RESPONSE_SINK: u8 = 7;
+    const FETCH_REQUEST_BODY_SINK: u8 = 8;
+
+    let raw = ptr.as_ptr();
+    match id {
+        // SAFETY: caller contract — `raw` is a live `*mut ArrayBufferSink`.
+        ARRAY_BUFFER_SINK => SinkHandle::ArrayBuffer(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<ArrayBufferSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut FileSink`.
+        FILE_SINK => SinkHandle::FileSink(unsafe {
+            bun_ptr::BackRef::from_raw(raw.cast::<crate::webcore::file_sink::FileSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut RewriterPipe`.
+        HTML_REWRITER_SINK => SinkHandle::HTMLRewriter(unsafe {
+            bun_ptr::BackRef::from_raw(raw.cast::<crate::api::html_rewriter::RewriterPipe>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut HTTPResponseSink`.
+        HTTP_RESPONSE_SINK => SinkHandle::HttpResponse(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut HTTPSResponseSink`.
+        HTTPS_RESPONSE_SINK => SinkHandle::HttpsResponse(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPSResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut NetworkSink`.
+        NETWORK_SINK => SinkHandle::S3Upload(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::NetworkSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut H3ResponseSink`.
+        H3_RESPONSE_SINK => SinkHandle::H3Response(unsafe {
+            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::H3ResponseSink>())
+        }),
+        // SAFETY: caller contract — `raw` is a live `*mut FetchRequestBodySink`.
+        FETCH_REQUEST_BODY_SINK => SinkHandle::FetchRequestBody(unsafe {
+            bun_ptr::BackRef::from_raw_mut(
+                raw.cast::<crate::webcore::fetch::FetchRequestBodySink>(),
+            )
+        }),
+        // 1 (TextSink) and any unknown id → no native sink.
+        _ => SinkHandle::None,
+    }
+}
+
+/// Route a borrowed byte chunk from a native transform (`JSTransformStream`
+/// with `m_nativeSinkPtr` attached) into the concrete sink via
+/// [`SinkHandle::write`].
+///
+/// Return shape matches [`streams::result::Writable::to_js`] so
+/// `nativeSinkWriteIsBackpressure` reads a negative number / pending promise
+/// exactly as the previous `js_write_bytes` path produced. No
+/// [`JsSinkType::get_pending_error`] guard: every sink uses the trait-default
+/// `None`, so omitting it is behavior-preserving.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn Bun__NativeTransformSink__writeBytes(
+    sink_id: u8,
+    sink_ptr: *mut c_void,
+    global: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+) -> JSValue {
+    bun_core::mark_binding!();
+    let Some(sink_ptr) = NonNull::new(sink_ptr) else {
+        return JSValue::js_number(0.0);
+    };
+    if len == 0 || ptr.is_null() {
+        return JSValue::js_number(0.0);
+    }
+    // SAFETY: C++ caller passes a live `m_sinkPtr` of the type `sink_id`
+    // names, valid for the duration of this synchronous call.
+    let handle = unsafe { sink_handle_from_id(sink_id, sink_ptr) };
+    if handle.is_none() {
+        return JSValue::UNDEFINED;
+    }
+    // SAFETY: caller guarantees `[ptr, ptr+len)` is a live readable byte
+    // buffer for the duration of this call (a GC-kept `JSArrayBufferView` or
+    // a caller-owned scratch buffer).
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    handle
+        .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(slice)))
+        .to_js(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

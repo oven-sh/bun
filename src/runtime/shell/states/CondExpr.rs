@@ -340,6 +340,15 @@ impl CondExpr {
 // the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
+    /// A stat the pool finished whose result will not be applied: drop the
+    /// keep-alive and the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `do_stat` scheduled.
+        unsafe {
+            (*this).task.task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx

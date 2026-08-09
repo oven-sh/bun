@@ -8,6 +8,7 @@ const classes = [
   "H3ResponseSink",
   "NetworkSink",
   "FetchRequestBodySink",
+  "HTMLRewriterSink",
 ];
 
 function names(name) {
@@ -168,7 +169,7 @@ function header() {
                 static size_t memoryCost(void* sinkPtr);
 
                 ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
-                    : Base(vm, structure, sinkPtr, onDestroy)
+                    : Base(vm, structure, sinkPtr, SinkID::${name}, onDestroy)
                 {
                 }
 
@@ -207,19 +208,24 @@ class JSReadableSinkControllerBase : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 
+    DECLARE_INFO;
+
     void* wrapped() const { return m_sinkPtr; }
+    SinkID sinkId() const { return m_sinkId; }
 
     void* m_sinkPtr;
+    SinkID m_sinkId;
     mutable WriteBarrier<JSC::JSObject> m_onPull;
     mutable WriteBarrier<JSC::JSObject> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
     uintptr_t m_onDestroy { 0 };
 
 protected:
-    JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+    JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, SinkID sinkId, uintptr_t onDestroy)
         : Base(vm, structure)
     {
         m_sinkPtr = sinkPtr;
+        m_sinkId = sinkId;
         m_onDestroy = onDestroy;
     }
 };
@@ -300,6 +306,8 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+
+const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
 `;
   var templ = head;
 
@@ -526,8 +534,15 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
+    // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the
+    // destructor's teardown (onDestroy first so Subprocess clears its weak
+    // back-pointer, then __finalize) here instead, even if __close threw.
+    if (auto destroy = std::exchange(sink->m_onDestroy, 0)) {
+        Bun__onSinkDestroyed(destroy, ptr);
+    }
+    ${name}__finalize(ptr);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -1054,6 +1069,7 @@ function rustSink() {
     H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
     NetworkSink: "crate::webcore::streams::NetworkSink",
     FetchRequestBodySink: "crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink",
+    HTMLRewriterSink: "crate::api::html_rewriter::RewriterPipe",
   };
 
   const symbols: string[] = [];
@@ -1134,8 +1150,9 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
 `;
 
-    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
-    // C++ caller null-checks `m_sinkPtr` before calling.
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
+    // JS${name}::~JS${name} and from ${name}__doClose. C++ caller null-checks
+    // `m_sinkPtr` / `ptr` before calling.
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]

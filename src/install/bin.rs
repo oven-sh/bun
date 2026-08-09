@@ -736,10 +736,7 @@ pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, Pri
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    let name = match name
-        .iter()
-        .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
-    {
+    let name = match strings::last_index_of_any(name, b"/\\:") {
         Some(i) => &name[i + 1..],
         None => name,
     };
@@ -769,15 +766,14 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     // be a drive prefix (or an NTFS alternate-data-stream on the leading
     // segment) — reject it. Colons in later components are left alone so Unix
     // filenames containing `:` keep working.
-    if target
-        .split(|&b| b == b'/' || b == b'\\')
+    if strings::split_any(target, b"/\\")
         .next()
-        .is_some_and(|first| first.contains(&b':'))
+        .is_some_and(|first| strings::contains_char(first, b':'))
     {
         return true;
     }
     let mut depth: isize = 0;
-    for component in target.split(|&b| b == b'/' || b == b'\\') {
+    for component in strings::split_any(target, b"/\\") {
         match component {
             b"" | b"." => {}
             b".." => {
@@ -793,9 +789,7 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
 }
 
 fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
-    let mut components = target
-        .split(|&b| b == b'/' || b == b'\\')
-        .filter(|component| !component.is_empty());
+    let mut components = strings::tokenize_any(target, b"/\\");
     let Some(first) = components.next() else {
         return false;
     };
@@ -1454,10 +1448,19 @@ impl<'a> Linker<'a> {
     /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
     /// which has no `bin` field of its own).
     ///
-    /// Both candidates come from the root package's `bin` entry - its
+    /// All candidates come from the root package's `bin` entry - its
     /// value (`target`) and its key (`bin_name`):
     ///   1. `<package_dir>/<target>` - the path from the root `bin` field
     ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+    ///   3. `<package_dir>/<basename(target)>` - the target's filename at
+    ///      package root (`@anthropic-ai/claude-code-win32-x64` ships
+    ///      `claude.exe` at root while the root package's `bin` is
+    ///      `bin/claude.exe`)
+    ///   4. `<package_dir>/<bin_name>.exe` - esbuild ships `esbuild.exe` at
+    ///      the root of `@esbuild/win32-x64` while the root package's `bin`
+    ///      is the extensionless `bin/esbuild`. Not `#[cfg(windows)]`-gated
+    ///      so the redirect still resolves when cross-installing with
+    ///      `--os win32`.
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -1483,6 +1486,26 @@ impl<'a> Linker<'a> {
 
         if !bin_name.is_empty() {
             let at_root = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[bin_name]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        let target_basename = path::basename(target);
+        if !target_basename.is_empty() && target_basename.len() != target.len() {
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target_basename]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
+            let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
+            exe_name.extend_from_slice(bin_name);
+            exe_name.extend_from_slice(b".exe");
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[&exe_name]);
             if sys::exists(at_root.as_bytes()) {
                 return at_root;
             }

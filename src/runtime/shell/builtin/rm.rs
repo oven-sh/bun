@@ -580,7 +580,6 @@ impl JoinStyle {
 pub enum EntryKindHint {
     Idk,
     Dir,
-    File,
 }
 
 /// One per filepath argument; owns the root
@@ -918,7 +917,7 @@ impl ShellRmTask {
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
-            EntryKindHint::Idk | EntryKindHint::File => {
+            EntryKindHint::Idk => {
                 let mut vtable = RemoveFileVTable {
                     task: self,
                     child_of_dir: false,

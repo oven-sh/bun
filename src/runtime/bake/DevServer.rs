@@ -1925,32 +1925,6 @@ impl RequestEnsureRouteBundledCtx {
         }
     }
 
-    fn on_failure(&mut self) -> JsResult<()> {
-        // Reborrow via raw
-        // pointer so the failure slice and the `&mut DevServer` don't alias.
-        let route_bundle_index = self.route_bundle_index;
-        let failure = std::ptr::from_ref::<SerializedFailure>(
-            self.dev_mut()
-                .route_bundle_ptr(route_bundle_index)
-                .data
-                .framework()
-                .evaluate_failure
-                .as_ref()
-                .unwrap(),
-        );
-        // SAFETY: `failure` points into `route_bundles[i].data` which is not
-        // mutated by `send_serialized_failures`.
-        let failures = ::core::slice::from_ref(unsafe { &*failure });
-        let resp = self.resp;
-        self.dev_mut().send_serialized_failures(
-            DevResponse::Http(resp),
-            failures,
-            ErrorPageKind::Evaluation,
-            None,
-        )?;
-        Ok(())
-    }
-
     fn on_plugin_error(&mut self) -> JsResult<()> {
         self.resp.end(b"Plugin Error", false);
         Ok(())
@@ -1967,9 +1941,6 @@ impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
     }
     fn on_loaded(&mut self) -> JsResult<()> {
         Self::on_loaded(self)
-    }
-    fn on_failure(&mut self) -> JsResult<()> {
-        Self::on_failure(self)
     }
     fn on_plugin_error(&mut self) -> JsResult<()> {
         Self::on_plugin_error(self)
@@ -1988,7 +1959,6 @@ enum BundleQueueType {
 trait EnsureRouteCtx {
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()>;
     fn on_loaded(&mut self) -> JsResult<()>;
-    fn on_failure(&mut self) -> JsResult<()>;
     fn on_plugin_error(&mut self) -> JsResult<()>;
     fn to_dev_response(&mut self) -> DevResponse<'_>;
 }
@@ -2144,10 +2114,6 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 dev.route_bundle_ptr(route_bundle_index).server_state = route_bundle::State::Loaded;
                 state = route_bundle::State::Loaded;
                 continue 'sw;
-            }
-            route_bundle::State::EvaluationFailure => {
-                ctx.on_failure()?;
-                return Ok(());
             }
             route_bundle::State::Loaded => {
                 ctx.on_loaded()?;
@@ -2345,7 +2311,7 @@ fn check_route_failures(
         // `incremental_result.failures_added`; reborrow through raw ptr to
         // satisfy borrowck.
         let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
-        dev.send_serialized_failures(resp, failures, ErrorPageKind::Bundler, None)?;
+        dev.send_serialized_failures(resp, failures, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.
@@ -4678,7 +4644,6 @@ pub(super) fn finalize_bundle(
                     global,
                 }),
                 failures,
-                ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
                 // `take()` so the queued-request loop and the fallback below
                 // do not notify the inspector a second time for this bundle.
@@ -4713,7 +4678,6 @@ pub(super) fn finalize_bundle(
             dev.send_serialized_failures(
                 resp,
                 failures,
-                ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
                 inspector_agent_ptr.take().map(|p| unsafe { &*p }),
             )?;
@@ -5282,7 +5246,6 @@ impl DevServer {
                 route_bundle::UnresolvedIndex::Framework(route_index) => {
                     route_bundle::Data::Framework(route_bundle::Framework {
                         route_index,
-                        evaluate_failure: None,
                         cached_module_list: jsc::StrongOptional::empty(),
                         cached_client_bundle_url: jsc::StrongOptional::empty(),
                         cached_css_file_array: jsc::StrongOptional::empty(),
@@ -5327,13 +5290,6 @@ impl DevServer {
     }
 }
 
-#[derive(Copy, Clone)]
-enum ErrorPageKind {
-    /// Modules failed to bundle
-    Bundler,
-    /// Modules failed to evaluate
-    Evaluation,
-}
 
 impl DevServer {
     fn encode_serialized_failures(
@@ -5376,15 +5332,11 @@ impl DevServer {
         &mut self,
         resp: DevResponse,
         failures: &[SerializedFailure],
-        kind: ErrorPageKind,
         inspector_agent: Option<&BunFrontendDevServerAgent>,
     ) -> crate::Result<()> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 
-        let page_title = match kind {
-            ErrorPageKind::Bundler => "Build Failed",
-            ErrorPageKind::Evaluation => "Runtime Error",
-        };
+        let page_title = "Build Failed";
         write!(
             buf,
             concat!(
@@ -6473,36 +6425,6 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         Ok(())
     }
 
-    fn on_failure(&mut self) -> JsResult<()> {
-        let promise_response = PromiseResponse {
-            promise: self.ensure_promise(),
-            global: self.global,
-        };
-
-        // Note: split the route-bundle borrow off via raw pointer so the
-        // failure slice doesn't conflict with the `&mut DevServer` below.
-        let route_bundle_index = self.route_bundle_index;
-        let failure = std::ptr::from_ref::<SerializedFailure>(
-            self.dev_mut()
-                .route_bundle_ptr(route_bundle_index)
-                .data
-                .framework()
-                .evaluate_failure
-                .as_ref()
-                .unwrap(),
-        );
-        // SAFETY: `failure` points into `route_bundles[i].data` which is not
-        // mutated by `send_serialized_failures`.
-        let failures = ::core::slice::from_ref(unsafe { &*failure });
-        self.dev_mut().send_serialized_failures(
-            DevResponse::Promise(promise_response),
-            failures,
-            ErrorPageKind::Evaluation,
-            None,
-        )?;
-        Ok(())
-    }
-
     fn on_plugin_error(&mut self) -> JsResult<()> {
         let _ = self.ensure_promise();
         let global = self.global;
@@ -6527,9 +6449,6 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     }
     fn on_loaded(&mut self) -> JsResult<()> {
         PromiseEnsureRouteBundledCtx::on_loaded(self)
-    }
-    fn on_failure(&mut self) -> JsResult<()> {
-        PromiseEnsureRouteBundledCtx::on_failure(self)
     }
     fn on_plugin_error(&mut self) -> JsResult<()> {
         PromiseEnsureRouteBundledCtx::on_plugin_error(self)

@@ -40,8 +40,6 @@ pub struct PackageInstall<'a> {
     pub(crate) package_version: &'a [u8],
     pub(crate) patch: Option<Patch>,
 
-    // TODO: this is never read
-    pub(crate) file_count: u32,
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
 }
@@ -226,25 +224,20 @@ impl InstallResult {
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Step {
-    Copyfile,
     OpeningCacheDir,
     OpeningDestDir,
     CopyingFiles,
-    Linking,
     LinkingDependency,
-    Patching,
 }
 
 impl Step {
     /// "error: failed {s} for package"
     pub(crate) fn name(self) -> &'static [u8] {
         match self {
-            Step::Copyfile | Step::CopyingFiles => b"copying files from cache to destination",
+            Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
-            Step::Linking => b"linking bins",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
-            Step::Patching => b"patching dependency",
         }
     }
 }
@@ -1103,10 +1096,9 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
-        self.file_count = match copy(&subdir, &mut walker_) {
-            Ok(n) => n,
-            Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
-        };
+        if let Err(err) = copy(&subdir, &mut walker_) {
+            return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        }
 
         Ok(InstallResult::Success)
     }
@@ -1558,10 +1550,9 @@ impl<'a> PackageInstall<'a> {
             (),
         );
 
-        self.file_count = match result {
-            Ok(n) => n,
-            Err(err) => return InstallResult::fail(err, Step::CopyingFiles, None),
-        };
+        if let Err(err) = result {
+            return InstallResult::fail(err, Step::CopyingFiles, None);
+        }
 
         InstallResult::Success
     }
@@ -1744,27 +1735,24 @@ impl<'a> PackageInstall<'a> {
             (),
         );
 
-        self.file_count = match result {
-            Ok(n) => n,
-            Err(err) => {
-                #[cfg(windows)]
-                {
-                    if err == crate::Error::FailedToCopyFile {
-                        return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
-                    }
+        if let Err(err) = result {
+            #[cfg(windows)]
+            {
+                if err == crate::Error::FailedToCopyFile {
+                    return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
                 }
-                #[cfg(not(windows))]
-                {
-                    if err == crate::Error::NotSameFileSystem
-                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
-                    {
-                        return Err(err);
-                    }
-                }
-
-                return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
             }
-        };
+            #[cfg(not(windows))]
+            {
+                if err == crate::Error::NotSameFileSystem
+                    || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                {
+                    return Err(err);
+                }
+            }
+
+            return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        }
 
         Ok(InstallResult::Success)
     }
@@ -1954,26 +1942,23 @@ impl<'a> PackageInstall<'a> {
             &mut buf2[..],
         );
 
-        self.file_count = match result {
-            Ok(n) => n,
-            Err(err) => {
-                #[cfg(windows)]
-                {
-                    if err == crate::Error::FailedToCopyFile {
-                        return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
-                    }
+        if let Err(err) = result {
+            #[cfg(windows)]
+            {
+                if err == crate::Error::FailedToCopyFile {
+                    return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
                 }
-                #[cfg(not(windows))]
-                {
-                    if err == crate::Error::NotSameFileSystem
-                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
-                    {
-                        return Err(err);
-                    }
-                }
-                return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
             }
-        };
+            #[cfg(not(windows))]
+            {
+                if err == crate::Error::NotSameFileSystem
+                    || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                {
+                    return Err(err);
+                }
+            }
+            return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        }
 
         Ok(InstallResult::Success)
     }

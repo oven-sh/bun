@@ -736,7 +736,6 @@ impl CreateCommand {
                     }
                 }
             }
-            _ => unreachable!(),
         }
 
         node.end();
@@ -1708,7 +1707,6 @@ impl Default for Example {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ExampleTag {
-    Unknown,
     GithubRepository,
     Official,
     LocalFolder,

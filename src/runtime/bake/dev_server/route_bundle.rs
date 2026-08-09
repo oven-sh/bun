@@ -2,7 +2,6 @@
 
 use super::incremental_graph;
 use super::jsc;
-use super::serialized_failure::SerializedFailure;
 use super::source_map_store;
 use crate::bake::framework_router;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
@@ -21,7 +20,6 @@ pub enum State {
     Bundling,
     DeferredToNextBundle,
     PossibleBundlingFailures,
-    EvaluationFailure,
     Loaded,
 }
 
@@ -30,7 +28,6 @@ pub struct Framework {
     pub(crate) cached_module_list: jsc::StrongOptional,
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
     pub(crate) cached_css_file_array: jsc::StrongOptional,
-    pub(crate) evaluate_failure: Option<SerializedFailure>,
 }
 
 pub struct Html {
@@ -151,7 +148,6 @@ impl RouteBundle {
         match &self.data {
             Data::Framework(_) => {
                 // jsc.Strong.Optional children do not support memoryCost; not needed.
-                // .evaluate_failure is not owned.
             }
             Data::Html(html) => {
                 if let Some(text) = &html.bundled_html_text {

@@ -5169,7 +5169,7 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 // set pending: for a boundary that unwound because script is no longer allowed and wants the value a
 // termination would have carried.
 [[ZIG_EXPORT(nothrow)]]
-JSC::EncodedJSValue JSC__VM__terminationExceptionValue(JSC::VM* vm)
+JSC::EncodedJSValue JSC__VM__ensureTerminationException(JSC::VM* vm)
 {
     return JSC::JSValue::encode(vm->ensureTerminationException());
 }

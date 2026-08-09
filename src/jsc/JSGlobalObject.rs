@@ -1025,7 +1025,7 @@ impl JSGlobalObject {
                 !self.script_allowed(),
                 "A JavaScript exception was thrown, but it was cleared before it could be read."
             );
-            self.vm().termination_exception_value()
+            self.vm().ensure_termination_exception()
         })
     }
 

@@ -124,10 +124,11 @@ impl VM {
         crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
-    /// The VM's TerminationException value; nothing is thrown or set pending. For a boundary that unwound
-    /// because script is no longer allowed and needs the value a termination would have carried.
-    pub fn termination_exception_value(&self) -> crate::JSValue {
-        crate::cpp::JSC__VM__terminationExceptionValue(self)
+    /// `VM::ensureTerminationException()`: the VM's TerminationException value (allocated on first use);
+    /// nothing is thrown or set pending. For a boundary that unwound because script is no longer allowed
+    /// and needs the value a termination would have carried.
+    pub fn ensure_termination_exception(&self) -> crate::JSValue {
+        crate::cpp::JSC__VM__ensureTerminationException(self)
     }
 
     #[track_caller]

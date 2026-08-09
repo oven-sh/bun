@@ -1900,14 +1900,17 @@ pub mod dir_entry_accessor {
                     return Ok(None);
                 };
                 // BACKREF: ARENA — `*mut Entry` points into the EntryStore
-                // BSSList singleton ('static lifetime); `RealFS.entries_mutex`
-                // serializes access. `BackRef::from(NonNull)` + `Deref` keeps
-                // the read site safe.
+                // BSSList singleton ('static lifetime). This iterator holds a
+                // live `.data` iterator across calls, which `entries_mutex`
+                // cannot cover; it is only sound on the single-threaded CLI
+                // glob walk (`bun run --filter`), before any concurrent
+                // resolver exists to rewrite the map.
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: entries_mutex held; fs points at the process-global RealFS.
+                // SAFETY: fs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 let kind = unsafe { entry.kind(fs, true) };
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,

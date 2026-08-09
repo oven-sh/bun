@@ -687,9 +687,6 @@ impl Loader {
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
         match suffix {
             DotEnvFileSuffix::Development => {
                 self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?

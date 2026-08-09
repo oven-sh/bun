@@ -766,16 +766,26 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
+                // Refresh the listing at our generation (takes and releases
+                // `entries_mutex`), then copy the basenames out under the
+                // lock: `dot_env::Loader::load` probes the listing between
+                // file reads, and another resolver at a newer generation
+                // rewrites the `DirEntry` map in place under `entries_mutex`.
+                if dir_info.get_entries(self.resolver.generation).is_none() {
                     return Ok(());
+                }
+                let dir = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    match dir_info.get_entries_const() {
+                        Some(entries) => DotEnvProbeKeys(
+                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
+                        ),
+                        None => return Ok(()),
+                    }
                 };
-                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
-                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -789,7 +799,7 @@ impl<'a> Transpiler<'a> {
                 } else {
                     dot_env::DotEnvFileSuffix::Development
                 };
-                env.load(dir, &env_files, suffix, skip_default_env)?;
+                env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;
@@ -806,6 +816,17 @@ impl<'a> Transpiler<'a> {
             self.options.disable_transpilation = true;
         }
         Ok(())
+    }
+}
+
+/// Basenames copied out of a cached `DirEntry` under `entries_mutex` so
+/// `dot_env::Loader::load` can probe them without holding the lock across its
+/// file reads (see `run_env_loader`).
+struct DotEnvProbeKeys(Vec<Box<[u8]>>);
+
+impl dot_env::DirEntryProbe for DotEnvProbeKeys {
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        self.0.iter().any(|k| **k == *query_lower)
     }
 }
 

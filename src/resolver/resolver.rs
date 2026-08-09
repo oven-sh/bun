@@ -1665,98 +1665,99 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
-                if let Some(query) = entries.get(name.filename) {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    let symlink_path =
-                        unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                    if !symlink_path.is_empty() {
-                        path.set_realpath(symlink_path);
-                        if !result.file_fd.is_valid() {
-                            result.file_fd = query.entry().cache().fd;
-                        }
+            // Probe the listing in one `entries_mutex` critical section: a
+            // concurrent resolver at a newer generation rewrites this `DirEntry`'s
+            // map in place under that lock. The entry pointer stays valid after
+            // unlock (EntryStore-owned).
+            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `symlink()` is serialized on the per-entry mutex.
+                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                if !symlink_path.is_empty() {
+                    path.set_realpath(symlink_path);
+                    if !result.file_fd.is_valid() {
+                        result.file_fd = query.entry().cache().fd;
+                    }
 
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(path.text()),
-                                bstr::BStr::new(symlink_path)
-                            ));
-                        }
-                    } else if !dir.abs_real_path.is_empty() {
-                        // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path, query.entry().base()];
-                        let mut buf = bun_paths::PathBuffer::uninit();
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path.text()),
+                            bstr::BStr::new(symlink_path)
+                        ));
+                    }
+                } else if !dir.abs_real_path.is_empty() {
+                    // When the directory is a symlink, we don't need to call getFdPath.
+                    let parts = [dir.abs_real_path, query.entry().base()];
+                    let mut buf = bun_paths::PathBuffer::uninit();
 
-                        // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
-                        // length so `buf` can be re-borrowed for null-termination below.
-                        let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
+                    // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
+                    // length so `buf` can be re-borrowed for null-termination below.
+                    let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
 
-                        let store_fd = self.store_fd;
+                    let store_fd = self.store_fd;
 
-                        if !query.entry().cache().fd.is_valid() && store_fd {
-                            buf[out_len] = 0;
-                            // SAFETY: buf[out_len] == 0 written above
-                            let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                            // I/O errors propagate so `resolveAndAutoInstall` can
-                            // return them as `Result.Union.failure` — never
-                            // panic on EACCES/EMFILE/ELOOP here.
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<crate::Error>::into)?;
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = query.entry().mutex.lock_guard();
-                                query.entry().set_cache_fd(file);
-                            }
-                            Fs::FileSystem::set_max_fd(file.native());
-                        }
-
-                        // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                        // the closure captures only Copy values — keeps `self` and
-                        // `query.entry` reborrowable across the guard's lifetime.
-                        let need_close = self.fs_ref().fs.need_to_close_files();
-                        // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                        // the slot is reused (resolver mutex held). Capture as `BackRef`
-                        // (Copy, Deref) so the closure stays Copy-only while the read is
-                        // a safe `BackRef::get()` instead of a raw-ptr deref.
-                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                            core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                        );
-                        scopeguard::defer! {
-                            if need_close {
-                                let e = entry_ref.get();
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = e.mutex.lock_guard();
-                                let fd = e.cache().fd;
-                                if fd.is_valid() {
-                                    fd.close();
-                                    e.set_cache_fd(FD::INVALID);
-                                }
-                            }
-                        }
-
-                        let symlink =
-                            Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(symlink),
-                                bstr::BStr::new(path.text())
-                            ));
-                        }
+                    if !query.entry().cache().fd.is_valid() && store_fd {
+                        buf[out_len] = 0;
+                        // SAFETY: buf[out_len] == 0 written above
+                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
+                        // I/O errors propagate so `resolveAndAutoInstall` can
+                        // return them as `Result.Union.failure` — never
+                        // panic on EACCES/EMFILE/ELOOP here.
+                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                            .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = query.entry().mutex.lock_guard();
-                            query
-                                .entry()
-                                .set_cache_symlink(Interned::from_static(symlink));
+                            query.entry().set_cache_fd(file);
                         }
-                        if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = query.entry().cache().fd;
-                        }
-
-                        path.set_realpath(symlink);
+                        Fs::FileSystem::set_max_fd(file.native());
                     }
+
+                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
+                    // the closure captures only Copy values — keeps `self` and
+                    // `query.entry` reborrowable across the guard's lifetime.
+                    let need_close = self.fs_ref().fs.need_to_close_files();
+                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
+                    // the slot is reused (resolver mutex held). Capture as `BackRef`
+                    // (Copy, Deref) so the closure stays Copy-only while the read is
+                    // a safe `BackRef::get()` instead of a raw-ptr deref.
+                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
+                    );
+                    scopeguard::defer! {
+                        if need_close {
+                            let e = entry_ref.get();
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = e.mutex.lock_guard();
+                            let fd = e.cache().fd;
+                            if fd.is_valid() {
+                                fd.close();
+                                e.set_cache_fd(FD::INVALID);
+                            }
+                        }
+                    }
+
+                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(symlink),
+                            bstr::BStr::new(path.text())
+                        ));
+                    }
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = query.entry().mutex.lock_guard();
+                        query
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    if !result.file_fd.is_valid() && store_fd {
+                        result.file_fd = query.entry().cache().fd;
+                    }
+
+                    path.set_realpath(symlink);
                 }
             }
         }
@@ -3721,13 +3722,6 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
-                    Some(e) => e,
-                    None => {
-                        esm_resolution.status = Status::ModuleNotFound;
-                        return MatchStatus::NotFound;
-                    }
-                };
                 let extension_order: options::ExtOrder =
                     if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                         self.extension_order
@@ -3738,7 +3732,22 @@ impl<'a> Resolver<'a> {
                     };
 
                 let base = bun_paths::basename(abs_esm_path);
-                let entry_query = match entries.get(base) {
+                // One `entries_mutex` critical section for the probe and the
+                // listing fd: a concurrent resolver at a newer generation
+                // rewrites the `DirEntry` in place under that lock. The entry
+                // pointer stays valid after unlock (EntryStore-owned).
+                let looked_up = {
+                    let rfs = &mut Fs::FileSystem::instance().fs;
+                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                    resolved_dir_info
+                        .get_entries_ref_locked(self.generation)
+                        .map(|entries| (entries.get(base), entries.fd))
+                };
+                let Some((entry_lookup, dirname_fd)) = looked_up else {
+                    esm_resolution.status = Status::ModuleNotFound;
+                    return MatchStatus::NotFound;
+                };
+                let entry_query = match entry_lookup {
                     Some(q) => q,
                     None => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
@@ -3746,8 +3755,8 @@ impl<'a> Resolver<'a> {
 
                         if ends_with_star
                             && self.probe_wildcard_extensions(
-                                entries,
                                 resolved_dir_info,
+                                dirname_fd,
                                 package_json,
                                 base,
                                 extension_order,
@@ -3760,15 +3769,16 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
                     == Fs::file_system::EntryKind::Dir
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_wildcard_extensions(
-                            entries,
                             resolved_dir_info,
+                            dirname_fd,
                             package_json,
                             base,
                             extension_order,
@@ -3782,39 +3792,38 @@ impl<'a> Resolver<'a> {
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation)
-                            {
-                                let index = b"index";
-                                let buf = bufs!(load_as_file);
-                                buf[..index.len()].copy_from_slice(index);
-                                for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                    let ext: &[u8] = ext;
-                                    let file_name = &mut buf[0..index.len() + ext.len()];
-                                    file_name[index.len()..].copy_from_slice(ext);
-                                    let index_query = dir_entries.get(&file_name[..]);
-                                    if let Some(iq) = index_query {
-                                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                                        if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
-                                            == Fs::file_system::EntryKind::File
-                                        {
-                                            if let Some(debug) = self.debug_logs.as_mut() {
-                                                let mut ms =
-                                                    Vec::with_capacity(1 + file_name.len());
-                                                ms.push(b'/');
-                                                ms.extend_from_slice(&file_name[..]);
-                                                let parts =
-                                                    [package_json.name.as_ref(), package_subpath];
-                                                debug.add_note_fmt(format_args!(
-                                                    "The import {} is missing the suffix {}",
-                                                    bstr::BStr::new(ResolvePath::join(
-                                                        &parts,
-                                                        bun_paths::Platform::AUTO
-                                                    )),
-                                                    bstr::BStr::new(&ms)
-                                                ));
-                                            }
-                                            break;
+                            let index = b"index";
+                            let buf = bufs!(load_as_file);
+                            buf[..index.len()].copy_from_slice(index);
+                            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                                let ext: &[u8] = ext;
+                                let file_name = &mut buf[0..index.len() + ext.len()];
+                                file_name[index.len()..].copy_from_slice(ext);
+                                let index_query =
+                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                if let Some(iq) = index_query {
+                                    // SAFETY: rfs points at the process-global RealFS; the
+                                    // lazy-stat rewrite inside `kind()` is serialized on the
+                                    // per-entry mutex.
+                                    if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                        == Fs::file_system::EntryKind::File
+                                    {
+                                        if let Some(debug) = self.debug_logs.as_mut() {
+                                            let mut ms = Vec::with_capacity(1 + file_name.len());
+                                            ms.push(b'/');
+                                            ms.extend_from_slice(&file_name[..]);
+                                            let parts =
+                                                [package_json.name.as_ref(), package_subpath];
+                                            debug.add_note_fmt(format_args!(
+                                                "The import {} is missing the suffix {}",
+                                                bstr::BStr::new(ResolvePath::join(
+                                                    &parts,
+                                                    bun_paths::Platform::AUTO
+                                                )),
+                                                bstr::BStr::new(&ms)
+                                            ));
                                         }
+                                        break;
                                     }
                                 }
                             }
@@ -3848,7 +3857,7 @@ impl<'a> Resolver<'a> {
                         primary: Path::init_with_namespace(absolute_out_path, b"file"),
                         secondary: None,
                     },
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
@@ -3885,10 +3894,14 @@ impl<'a> Resolver<'a> {
     }
 
     /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
-    fn probe_wildcard_extensions<'e>(
+    ///
+    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
+    /// under `entries_mutex`; `dirname_fd` was captured under the caller's
+    /// critical section.
+    fn probe_wildcard_extensions(
         &mut self,
-        entries: &'e Fs::file_system::DirEntry,
         resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
         package_json: &PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
@@ -3904,8 +3917,11 @@ impl<'a> Resolver<'a> {
                 let ext: &[u8] = ext;
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
-                if let Some(ext_query) = entries.get(&file_name[..]) {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                if let Some(ext_query) =
+                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                {
+                    // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                    // rewrite inside `kind()` is serialized on the per-entry mutex.
                     if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
@@ -3917,8 +3933,8 @@ impl<'a> Resolver<'a> {
                             ));
                         }
                         self.build_wildcard_match(
-                            entries,
                             resolved_dir_info,
+                            dirname_fd,
                             package_json,
                             &ext_query,
                             out,
@@ -3936,7 +3952,7 @@ impl<'a> Resolver<'a> {
                 &[b".ts", b".tsx", b".mts"]
             } else if ext == b".mjs"
                 && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                    || !strings::path_contains_node_modules_folder(entries.dir))
+                    || !strings::path_contains_node_modules_folder(resolved_dir_info.abs_path))
             {
                 &[b".mts"]
             } else {
@@ -3950,8 +3966,11 @@ impl<'a> Resolver<'a> {
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
-                    if let Some(ts_query) = entries.get(&file_name[..]) {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                    if let Some(ts_query) =
+                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
@@ -3963,8 +3982,8 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
                             self.build_wildcard_match(
-                                entries,
                                 resolved_dir_info,
+                                dirname_fd,
                                 package_json,
                                 &ts_query,
                                 out,
@@ -3979,12 +3998,12 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    fn build_wildcard_match<'e>(
+    fn build_wildcard_match(
         &mut self,
-        entries: &'e Fs::file_system::DirEntry,
         resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
         package_json: &PackageJSON,
-        query: &crate::fs::EntryLookup<'e>,
+        query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
     ) {
         let abs_path: &[u8] = {
@@ -4013,7 +4032,7 @@ impl<'a> Resolver<'a> {
                 primary: Path::init_with_namespace(abs_path, b"file"),
                 secondary: None,
             },
-            dirname_fd: entries.fd,
+            dirname_fd,
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
@@ -5375,58 +5394,59 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
-            if let Some(lookup) = entries.get(&base[..]) {
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { lookup.entry().kind(rfs, self.store_fd) }
-                    == Fs::file_system::EntryKind::File
-                {
-                    let out_buf: &[u8] = {
-                        if lookup.entry().abs_path.is_empty() {
-                            let parts = [dir_info.abs_path, &base[..]];
-                            let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(out_buf_)
-                                    .expect("unreachable"),
-                            );
-                        }
-                        lookup.entry().abs_path.as_bytes()
-                    };
-
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "Found file: \"{}\"",
-                            bstr::BStr::new(out_buf)
-                        ));
+        // Probe the listing in one `entries_mutex` critical section: a
+        // concurrent resolver at a newer generation rewrites the `DirEntry`'s
+        // map in place under that lock. The entry pointer stays valid after
+        // unlock (EntryStore-owned).
+        if let Some(lookup) = dir_info.get_entry(self.generation, &base[..]) {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
+            if unsafe { lookup.entry().kind(rfs, self.store_fd) }
+                == Fs::file_system::EntryKind::File
+            {
+                let out_buf: &[u8] = {
+                    if lookup.entry().abs_path.is_empty() {
+                        let parts = [dir_info.abs_path, &base[..]];
+                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
+                        unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(out_buf_)
+                                .expect("unreachable"),
+                        );
                     }
+                    lookup.entry().abs_path.as_bytes()
+                };
 
-                    if let Some(package_json) = dir_info.package_json() {
-                        *out = MatchResult {
-                            path_pair: PathPair {
-                                primary: Path::init(out_buf),
-                                secondary: None,
-                            },
-                            package_json: Some(std::ptr::from_ref(package_json)),
-                            dirname_fd: dir_info.get_file_descriptor(),
-                            ..Default::default()
-                        };
-                        return MatchStatus::Success;
-                    }
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug
+                        .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
+                }
 
+                if let Some(package_json) = dir_info.package_json() {
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
+                        package_json: Some(std::ptr::from_ref(package_json)),
                         dirname_fd: dir_info.get_file_descriptor(),
                         ..Default::default()
                     };
                     return MatchStatus::Success;
                 }
+
+                *out = MatchResult {
+                    path_pair: PathPair {
+                        primary: Path::init(out_buf),
+                        secondary: None,
+                    },
+                    dirname_fd: dir_info.get_file_descriptor(),
+                    ..Default::default()
+                };
+                return MatchStatus::Success;
             }
         }
 

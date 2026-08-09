@@ -1180,7 +1180,10 @@ where
                                                 // the per-entry mutex.
                                                 let _entry_guard = ent.mutex.lock_guard();
                                                 ent.set_cache_fd(Fd::INVALID);
-                                                ent.need_stat.set(true);
+                                                ent.need_stat.store(
+                                                    true,
+                                                    core::sync::atomic::Ordering::Release,
+                                                );
                                             }
                                             path_string = ent.abs_path;
                                             file_hash = Watcher::get_hash(path_string.as_bytes());

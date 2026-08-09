@@ -1,3 +1,4 @@
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
@@ -136,8 +137,11 @@ impl Default for EntryCache {
 // `Entry::symlink` while callers hold a shared
 // `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
 // `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
-// rewrite of these `Cell`s across threads (the `unsafe impl Sync for Entry`
-// below opts back in under that external-locking discipline).
+// rewrite of these fields across threads (the `unsafe impl Sync for Entry`
+// below opts back in under that external-locking discipline). `need_stat`
+// is atomic because the `kind()`/`symlink()` fast path reads it without the
+// mutex: the Release store after the `cache` write paired with the Acquire
+// load is what publishes `cache` to those lock-free readers.
 pub struct Entry {
     pub(crate) cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
@@ -148,7 +152,7 @@ pub struct Entry {
     pub(crate) base_lowercase_: strings::StringOrTinyString,
 
     pub mutex: Mutex,
-    pub need_stat: core::cell::Cell<bool>,
+    pub need_stat: AtomicBool,
 
     pub abs_path: Interned,
 }
@@ -226,10 +230,10 @@ impl Entry {
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
     pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
-        if self.need_stat.get() {
+        if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
-            if self.need_stat.get() {
-                self.need_stat.set(false);
+            // Relaxed: every write happens under `mutex`, which we hold.
+            if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
                 // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
                 // only does syscalls + string interning, so the short `&mut` cannot alias.
@@ -240,8 +244,15 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => return self.cache().kind,
+                    Err(_) => {
+                        self.need_stat.store(false, Ordering::Release);
+                        return self.cache().kind;
+                    }
                 }
+                // Clear the flag only after the `cache` write: lock-free readers
+                // that observe `false` skip the mutex, so this Release store is
+                // what publishes `cache` to them.
+                self.need_stat.store(false, Ordering::Release);
             }
         }
         self.cache().kind
@@ -256,10 +267,10 @@ impl Entry {
         fs: *mut R,
         store_fd: bool,
     ) -> &'static [u8] {
-        if self.need_stat.get() {
+        if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
-            if self.need_stat.get() {
-                self.need_stat.set(false);
+            // Relaxed: every write happens under `mutex`, which we hold.
+            if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
                 // SAFETY: see the note on `Entry::kind`.
@@ -270,8 +281,13 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => return b"",
+                    Err(_) => {
+                        self.need_stat.store(false, Ordering::Release);
+                        return b"";
+                    }
                 }
+                // See `Entry::kind`: Release-publish `cache` before the flag clear.
+                self.need_stat.store(false, Ordering::Release);
             }
         }
         self.cache().symlink.as_bytes()
@@ -479,10 +495,14 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    existing.need_stat.set(
-                        existing.need_stat.get()
+                    // Relaxed load: writes are serialized on the per-entry
+                    // mutex held above; Release store pairs with the Acquire
+                    // fast-path load in `kind()`/`symlink()`.
+                    existing.need_stat.store(
+                        existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
                             || Some(existing.cache().kind) != found_kind,
+                        Ordering::Release,
                     );
                     // TODO: is this right?
                     if Some(existing.cache().kind) != found_kind {
@@ -536,7 +556,7 @@ impl DirEntry {
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
-                addr_of_mut!((*p).need_stat).write(core::cell::Cell::new(found_kind.is_none()));
+                addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

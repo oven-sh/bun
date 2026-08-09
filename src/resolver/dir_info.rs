@@ -238,25 +238,14 @@ impl DirInfo {
         }
     }
 
-    /// Shared-borrow variant of [`get_entries`](Self::get_entries) for the
-    /// read-only call sites (`.get()`, `.fd`, iteration). The `DirEntry` is a
-    /// slot in the BSSMap-backed `EntriesOptionMap` singleton (ARENA — process
-    /// lifetime), so a `&'static` reborrow of the `&'static mut` returned by
-    /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
-    /// `get_entries` + per-site raw deref whenever the caller only reads.
-    pub(crate) fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries_at(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
-    }
-
-    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
-    /// hold `entries_mutex` (the mutex is non-recursive); see
-    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
+    /// Shared-borrow variant of [`get_entries`](Self::get_entries) for call
+    /// sites that already hold `entries_mutex` (the mutex is non-recursive);
+    /// see [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked). The
+    /// `DirEntry` is a slot in the BSSMap-backed `EntriesOptionMap` singleton
+    /// (ARENA — process lifetime), so a `&'static` reborrow of the
+    /// `&'static mut` returned by `entries_at_locked` is sound and needs no
+    /// `unsafe` here. The `.data` map must only be probed/iterated while the
+    /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub(crate) fn get_entries_ref_locked(
         &self,
         generation: Generation,
@@ -266,6 +255,32 @@ impl DirInfo {
             .entries_at_locked(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
+    /// Generation-checked lookup of one basename in this directory's cached
+    /// listing, performed in a single `entries_mutex` critical section. A
+    /// concurrent resolver with a newer generation rewrites the `DirEntry` in
+    /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
+    /// drops the old `data` map's buckets), so probing the map after the lock
+    /// is released can walk freed buckets. The returned lookup wraps a raw
+    /// pointer into the process-lifetime `EntryStore`, which stays valid after
+    /// the lock is dropped.
+    pub(crate) fn get_entry(
+        &self,
+        generation: Generation,
+        query: &[u8],
+    ) -> Option<fs::EntryLookup<'static>> {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        // `MutexGuard` stores the mutex by raw pointer, so holding it does not
+        // keep `rfs` borrowed (same pattern as `RealFS::entries_at`).
+        let _lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries_at_locked(self.entries, generation)? {
+            fs::EntriesOption::Entries(entries) => {
+                let entries: &'static fs::DirEntry = entries;
+                entries.get(query)
+            }
             fs::EntriesOption::Err(_) => None,
         }
     }

@@ -31,11 +31,23 @@ function sourceIdentifier(source: Source): string | undefined {
     case "prebuilt":
       return source.identity;
     case "local":
+      // User-managed checkout: its git HEAD when it is a repository, else just "local", so
+      // consumers of BUN_VERSION_<macro> keep compiling and process.versions stays meaningful.
+      return localSourceIdentifier(source.path);
     case "in-tree":
-      // User-managed / in-tree — no pinned identifier independent of the
-      // bun commit. Callers that need a value use cfg.revision.
+      // In-tree — no pinned identifier independent of the bun commit. Callers that need a value
+      // use cfg.revision.
       return undefined;
   }
+}
+
+function localSourceIdentifier(path: string | undefined): string {
+  if (path) {
+    const proc = Bun.spawnSync({ cmd: ["git", "-C", path, "rev-parse", "HEAD"], stdout: "pipe", stderr: "ignore" });
+    const sha = proc.success ? proc.stdout.toString().trim() : "";
+    if (/^[0-9a-f]{40}$/.test(sha)) return sha + "-local";
+  }
+  return "local";
 }
 
 /**

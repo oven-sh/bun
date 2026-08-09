@@ -18,11 +18,10 @@ export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
 
-  source: () => ({
-    kind: "github-archive",
-    repo: "oven-sh/mimalloc",
-    commit: MIMALLOC_COMMIT,
-  }),
+  source: () =>
+    process.env.BUN_MIMALLOC_PATH
+      ? { kind: "local", path: process.env.BUN_MIMALLOC_PATH }
+      : { kind: "github-archive", repo: "oven-sh/mimalloc", commit: MIMALLOC_COMMIT },
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───

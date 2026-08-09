@@ -135,6 +135,7 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
         pull(c) {
           c.write(new Uint8Array(ab));
           ab.resize(2400000000);
+          console.log("resized", ab.byteLength);
           c.end();
         },
       });
@@ -145,6 +146,10 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
         console.log("threw", e.name, e.message);
       }
     `);
-    expect(result).toEqual(threw);
+    expect(result).toEqual({
+      stdout: "resized 2400000000\nthrew RangeError Out of memory\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

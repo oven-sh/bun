@@ -45,6 +45,8 @@ test("dead react_compiler symbols do not reappear", () => {
     ["src/react_compiler/lib.rs", /\bSymbolHost\b/],
     // Arena box alias with zero uses (HirVec is the one HIR actually uses).
     ["src/react_compiler/hir/mod.rs", /\bHirBox\b/],
+    // Type predicate whose only callers were in the removed _exp validation.
+    ["src/react_compiler/hir/mod.rs", /\bis_use_state_type\b/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });
@@ -94,6 +96,12 @@ test("dead h2_frame_parser inbound-path symbols do not reappear", () => {
     // \b does not match inside remote_used_window_size (underscore is a word
     // character), so this only catches the removed standalone fields.
     [file, /\bused_window_size\b/],
+    // Wire-format leftovers: the SETTINGS id newtype and the packed-layout
+    // artifacts lost their last consumer with the inbound path.
+    [file, /\bSettingsType\b/],
+    [file, /_header_table_size_type/],
+    // The removed decode() was the sole constructor of this error variant.
+    ["src/runtime/error.rs", /\bUnableToDecode\b/],
     // Wire-decode leftovers that escaped the dead_code lint (pub struct,
     // trait impls): the parser's own SettingsPayloadUnit copy and the
     // bytemuck impls whose only consumer was the removed write().

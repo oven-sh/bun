@@ -3320,9 +3320,12 @@ __attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(
     for (uintptr_t* w = sp; w < origin; ++w) {
         uintptr_t v = *w;
         uintptr_t base = 0;
-        if (liveCells.contains(v)) base = v;
-        else if (liveCells.contains(v & ~uintptr_t(0xF))) base = v & ~uintptr_t(0xF);
-        else if (v >= 8 && liveCells.contains(v - 8)) base = v - 8;
+        if (liveCells.contains(v))
+            base = v;
+        else if (liveCells.contains(v & ~uintptr_t(0xF)))
+            base = v & ~uintptr_t(0xF);
+        else if (v >= 8 && liveCells.contains(v - 8))
+            base = v - 8;
         if (!base) continue;
         const char* cls = describe(base);
         // Only report the interesting classes to keep the log readable.

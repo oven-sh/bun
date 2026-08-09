@@ -21,20 +21,22 @@ function consumeToText(streamSource: string): string {
   `;
 }
 
-async function run(script: string): Promise<{ stdout: string; exitCode: number }> {
+async function run(script: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  return { stdout, exitCode };
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 }
+
+const threw = { stdout: "threw RangeError Out of memory\n", stderr: "", exitCode: 0 };
 
 describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past 2^31-1", () => {
   test("queue-backed ReadableStream", async () => {
-    const { stdout, exitCode } = await run(
+    const result = await run(
       consumeToText(`new ReadableStream({
         start(c) {
           for (let i = 0; i < 3; i++) c.enqueue(new Uint8Array(n));
@@ -42,12 +44,11 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
         },
       })`),
     );
-    expect(stdout).toBe("threw RangeError Out of memory\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(threw);
   });
 
   test("direct ReadableStream", async () => {
-    const { stdout, exitCode } = await run(
+    const result = await run(
       consumeToText(`new ReadableStream({
         type: "direct",
         pull(c) {
@@ -56,12 +57,11 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
         },
       })`),
     );
-    expect(stdout).toBe("threw RangeError Out of memory\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(threw);
   });
 
   test("Response(stream).text()", async () => {
-    const { stdout, exitCode } = await run(`
+    const result = await run(`
       const n = 715827883;
       const rs = new ReadableStream({
         start(c) {
@@ -76,7 +76,6 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
         console.log("threw", e.name, e.message);
       }
     `);
-    expect(stdout).toBe("threw RangeError Out of memory\n");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual(threw);
   });
 });

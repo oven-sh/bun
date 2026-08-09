@@ -72,7 +72,9 @@ export const mimalloc: Dependency = {
 
     // Snapshots (src/jsc/bindings/Snapshot.cpp): executables carrying a snapshot get deterministic address hints from
     // their first allocation; a process building one (BUN_SNAPSHOT_OUT) keeps its heap at the base that becomes the snapshot.
-    defines.MI_HEAP_SNAPSHOT_BUILD_ENV = "BUN_SNAPSHOT_OUT"; // quoted into a C string literal by the builder
+    // Only where snapshots exist (Snapshot.h): the hook runs inside mimalloc's own initialization, before anything else.
+    const snapshots = cfg.darwin || cfg.linux;
+    if (snapshots) defines.MI_HEAP_SNAPSHOT_BUILD_ENV = "BUN_SNAPSHOT_OUT"; // quoted into a C string literal by the builder
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free
@@ -101,7 +103,7 @@ export const mimalloc: Dependency = {
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
       // Bare token as well: the name of the function (defined in c-bindings.cpp) mimalloc calls to learn whether this
       // executable carries a snapshot; see the MI_HEAP_SNAPSHOT_* note above.
-      "-DMI_HEAP_SNAPSHOT_HOST_FN=bun_is_compiled_executable",
+      ...(snapshots ? ["-DMI_HEAP_SNAPSHOT_HOST_FN=bun_is_compiled_executable"] : []),
     ];
 
     // TLS model: initial-exec for the static link into bun's executable

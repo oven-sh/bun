@@ -1188,9 +1188,11 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
     return pe_section_data;
 }
 
+// Snapshots do not exist on Windows; a mimalloc built with the hook would call this during its own initialization,
+// before the PE section can be looked at, so this answers without looking.
 extern "C" int bun_is_compiled_executable(void)
 {
-    return Bun__getStandaloneModuleGraphPELength() != 0;
+    return 0;
 }
 
 #endif

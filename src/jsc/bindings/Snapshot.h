@@ -15,8 +15,9 @@
 #if defined(__SANITIZE_ADDRESS__)
 #define BUN_SNAPSHOT_ASAN 1
 #endif
-// ASAN owns the fixed address ranges the snapshot heap and JIT pool are placed in.
-#if (OS(DARWIN) || (OS(LINUX) && !defined(__ANDROID__))) && !defined(BUN_SNAPSHOT_ASAN)
+// ASAN owns the fixed address ranges the snapshot heap and JIT pool are placed in. Linux support is glibc for now: the
+// musl build crashes while writing the snapshot and has not been debugged yet.
+#if (OS(DARWIN) || (OS(LINUX) && defined(__GLIBC__))) && !defined(BUN_SNAPSHOT_ASAN)
 #define BUN_SNAPSHOT_SUPPORTED 1
 #else
 #define BUN_SNAPSHOT_SUPPORTED 0

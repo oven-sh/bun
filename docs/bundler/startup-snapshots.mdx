@@ -9,7 +9,7 @@ A startup snapshot is a build-time optimization for [single-file executables](/b
 bun build --compile --snapshot ./app.ts --outfile myapp
 ```
 
-This is experimental. It is available on macOS and Linux.
+This is experimental. It is available on macOS and Linux (glibc).
 
 ## What it saves
 
@@ -128,7 +128,7 @@ The snapshot is embedded in the executable as it is, and a launch maps the execu
 
 - A launch that resumes from a snapshot runs with address-space layout randomization disabled, because the snapshot has to be mapped at the addresses it was taken at.
 - Native addons and `bun:ffi` libraries that keep state of their own, and worker threads that are alive when the snapshot is taken, are not supported.
-- macOS and Linux only. On other platforms `--snapshot` reports that it is unavailable.
+- macOS and glibc Linux only; on other platforms and builds `--snapshot` reports that it is unavailable.
 - Programs that were not written with the snapshot in mind may hold state of the kinds described above; the reports the build prints are the way to find it.
 
 ## Reference

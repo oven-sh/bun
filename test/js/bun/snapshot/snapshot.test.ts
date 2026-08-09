@@ -651,3 +651,14 @@ test.skipIf(!hasSnapshots)(
     expect(r.exitCode).toBe(0);
   },
 );
+
+test.skipIf(!hasSnapshots)("WebAssembly instantiated before the snapshot works after restore, including traps", () => {
+  using dir = tempDir("bun-snapshot-wasm", {});
+  const exe = join(String(dir), "tool");
+  const b = build(["--compile", "--snapshot", join(import.meta.dir, "wasm-fixture.js"), "--outfile", exe]);
+  expect(b.out).toContain("[snapshot] embedded");
+  expect(b.code).toBe(0);
+  const r = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: "pipe", stderr: "pipe" });
+  expect(r.stdout.toString()).toContain("[js] epoch=1 load(0)=7 out-of-bounds=RuntimeError"); // unfixed: the launch crashes on the trap
+  expect(r.exitCode).toBe(0);
+});

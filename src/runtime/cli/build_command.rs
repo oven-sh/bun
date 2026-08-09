@@ -1515,7 +1515,7 @@ pub(crate) fn run_snapshot_step(
     env: &mut bun_dotenv::Loader,
 ) -> Result<SnapshotStepOutcome, Vec<u8>> {
     if !Bun__snapshotSupported() {
-        return Err(b"startup snapshots are not available in this build of bun (macOS and Linux; on macOS bun has to be built with mimalloc as the process allocator)".to_vec());
+        return Err(b"startup snapshots are not available in this build of bun (macOS and glibc Linux; on macOS bun has to be built with mimalloc as the process allocator)".to_vec());
     }
     use bun_standalone_module_graph::StandaloneModuleGraph::{
         CompileResult, Flags, embed_snapshot_into_executable, set_snapshot_build_flags,

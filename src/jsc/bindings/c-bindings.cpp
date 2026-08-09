@@ -1188,4 +1188,9 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
     return pe_section_data;
 }
 
+extern "C" int bun_is_compiled_executable(void)
+{
+    return Bun__getStandaloneModuleGraphPELength() != 0;
+}
+
 #endif

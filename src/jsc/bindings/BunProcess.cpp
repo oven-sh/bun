@@ -1561,6 +1561,14 @@ static void installForwardSignalHandler(int signalNumber)
     sigaction(signalNumber, &action, nullptr);
 }
 
+extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
+{
+    Bun__ensureSignalHandler();
+    watchModeStickySignal = signalNumber;
+    installForwardSignalHandler(signalNumber);
+}
+#endif
+
 // Signal dispositions are kernel state: a process resumed from a snapshot has the listener table but none of the
 // handlers the build process installed for it.
 extern "C" void Bun__Process__reinstallSignalHandlersAfterSnapshotRestore()
@@ -1573,14 +1581,6 @@ extern "C" void Bun__Process__reinstallSignalHandlersAfterSnapshotRestore()
         installForwardSignalHandler(entry.key);
 #endif
 }
-
-extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
-{
-    Bun__ensureSignalHandler();
-    watchModeStickySignal = signalNumber;
-    installForwardSignalHandler(signalNumber);
-}
-#endif
 
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);

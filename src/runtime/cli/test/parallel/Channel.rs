@@ -108,9 +108,8 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(not(windows))]
 pub struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
-    /// Bytes at the front of `out` already written to the kernel. A cursor
-    /// rather than a per-write front-drain, which was quadratic in backlog
-    /// size (~90s for one 64MB frame over macOS's ~8KB socketpair buffers).
+    /// Bytes at the front of `out` already written to the kernel;
+    /// front-draining per partial write instead is quadratic in backlog size.
     out_head: Cell<usize>,
 }
 
@@ -469,8 +468,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     pending.clear();
                     head = 0;
                 } else if head >= pending.len() - head {
-                    // Sent prefix >= unsent tail: compacting now keeps the
-                    // total compaction cost linear in bytes sent.
+                    // Sent prefix caught up to the tail: compact (amortized linear).
                     pending.drain_front(head);
                     head = 0;
                 }

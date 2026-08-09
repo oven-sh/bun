@@ -3366,7 +3366,11 @@ function escapeXml(str) {
  * Only runs inside tart guests; bounded to 45s; never throws.
  */
 async function printTartSubnetDiagnostics() {
-  if (process.platform !== "darwin" || !/^tcp:\/\/192\.168\.64\.1:\d+$/.test(process.env["DOCKER_HOST"] ?? "")) {
+  const isTartGuest =
+    process.platform === "darwin" &&
+    (/-tart-/.test(process.env["BUILDKITE_AGENT_NAME"] ?? "") ||
+      /^tcp:\/\/192\.168\.64\.1:\d+$/.test(process.env["DOCKER_HOST"] ?? ""));
+  if (!isTartGuest) {
     return;
   }
   const work = async () => {
@@ -3401,8 +3405,13 @@ async function printTartSubnetDiagnostics() {
     alive.sort((a, b) => Number(a.split(".")[3]) - Number(b.split(".")[3]));
     console.log("[tart-net] alive:", alive.join(" "));
     console.log("[tart-net] arp after sweep:", sh("arp", "-an").replace(/\n/g, " ; "));
+    // Deliberately probe ssh on addresses nothing should hold (plus the
+    // gateway). If a banner comes back from an unowned address, packets are
+    // being delivered by segment/route rather than destination IP, and the
+    // banner identifies which VM currently captures them.
+    const bannerTargets = [...new Set([...alive, "192.168.64.1", "192.168.64.199", "192.168.64.250"])];
     await Promise.all(
-      alive.map(ip =>
+      bannerTargets.map(ip =>
         limit(async () => {
           const banner = await new Promise(resolve => {
             const socket = net.connect({ host: ip, port: 22 });

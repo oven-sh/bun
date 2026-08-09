@@ -67,7 +67,18 @@ overlapTest(
     const padding: Record<string, string> = {};
     for (let i = 0; i < 14; i++) padding[`SNAPSHOT_TEST_PAD_${i}`] = "x".repeat(96 * 1024); // 14 × 96 KB, each under Linux's 128 KB per-string limit
     const build = Bun.spawnSync({
-      cmd: [setarch!, arch, "-R", bunExe(), "build", "--compile", "--snapshot=manual", join(import.meta.dir, "smoke-fixture.js"), "--outfile", exe],
+      cmd: [
+        setarch!,
+        arch,
+        "-R",
+        bunExe(),
+        "build",
+        "--compile",
+        "--snapshot=manual",
+        join(import.meta.dir, "smoke-fixture.js"),
+        "--outfile",
+        exe,
+      ],
       env: { ...buildEnv, ...padding },
       stderr: "pipe",
       stdout: "pipe",

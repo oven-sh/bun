@@ -1561,6 +1561,19 @@ static void installForwardSignalHandler(int signalNumber)
     sigaction(signalNumber, &action, nullptr);
 }
 
+// Signal dispositions are kernel state: a process resumed from a snapshot has the listener table but none of the
+// handlers the build process installed for it.
+extern "C" void Bun__Process__reinstallSignalHandlersAfterSnapshotRestore()
+{
+#if !OS(WINDOWS)
+    if (!signalToContextIdsMap || signalToContextIdsMap->isEmpty())
+        return;
+    Bun__ensureSignalHandler();
+    for (auto& entry : *signalToContextIdsMap)
+        installForwardSignalHandler(entry.key);
+#endif
+}
+
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 {
     Bun__ensureSignalHandler();

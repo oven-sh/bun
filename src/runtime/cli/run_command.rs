@@ -1892,6 +1892,7 @@ unsafe extern "C" {
     fn Bun__Process__useSharedEnvForSnapshotBuild(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__Process__reloadEnvAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__Process__recreateStdioAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
+    safe fn Bun__Process__reinstallSignalHandlersAfterSnapshotRestore();
     safe fn bun_refresh_stdio_after_snapshot_restore();
     fn Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm: *mut bun_jsc::VM);
 }
@@ -1953,6 +1954,7 @@ pub extern "C" fn Bun__snapshotAdoptMainThreadVM() {
         vm.rare_data().forget_stdio_stores_for_snapshot_restore();
         // SAFETY: FFI; main-thread global, single-threaded at this point of restore.
         unsafe { Bun__Process__recreateStdioAfterSnapshotRestore(vm.global) };
+        Bun__Process__reinstallSignalHandlersAfterSnapshotRestore(); // process.on('SIGINT') etc. registered before the snapshot
     }
     {
         // SAFETY: main-thread VM; single-threaded at this point of restore.

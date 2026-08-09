@@ -201,7 +201,8 @@ test("dead C++/JS symbols do not reappear (committed tree)", () => {
   // C++ mirror of the pruned websocket ErrorCode variants: the enum entries
   // and their switch arms were unreachable (Rust never sent those
   // discriminants).
-  const wsErrorRe = /headers_too_large|compression_failed|expected_control_frame|protocol_error|proxy_connection_refused/;
+  const wsErrorRe =
+    /headers_too_large|compression_failed|expected_control_frame|protocol_error|proxy_connection_refused/;
   expect(headFile("src/jsc/bindings/webcore/WebSocketErrorCode.h")).not.toMatch(wsErrorRe);
   expect(headFile("src/jsc/bindings/webcore/WebSocket.cpp")).not.toMatch(wsErrorRe);
 });

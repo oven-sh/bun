@@ -108,10 +108,9 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // On Windows the env map is built by a JS builtin that can throw when user
-    // code clobbered a global it depends on. Return empty so reifyStaticProperty
-    // doesn't putDirect a value while the exception is pending (the lookup would
-    // report not-found after the structure already transitioned).
+    // The env map build can throw (Windows builds it in JS). Return empty like
+    // Bun.$: a non-empty value would be reified while the lookup reports
+    // not-found, staling the in-progress walk.
     JSObject* env = uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
     RETURN_IF_EXCEPTION(scope, {});
     return env;

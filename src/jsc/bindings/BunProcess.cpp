@@ -1780,13 +1780,10 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
-// Lazy PropertyCallback builders run while setUpStaticFunctionSlot /
-// reifyAllStaticProperties is reifying the property, i.e. in the middle of a
-// property lookup whose walk (JSObject::getPropertySlot) holds the object's
-// Structure*. Running the uncaught-exception machinery there re-enters JS,
-// which reifies further static properties and transitions structures under
-// the walk, tripping the stale-Structure assert in Structure::storedPrototype.
-// Queue the report as a microtask so it runs after the lookup completes.
+// Builders run inside a property lookup whose walk caches the object's
+// Structure*. Reporting synchronously runs the uncaught-exception machinery
+// (arbitrary JS) right there, transitioning structures under the walk, so
+// queue the report as a microtask instead.
 static void reportLazyPropertyBuilderException(JSC::JSGlobalObject* globalObject, JSC::Exception* exception)
 {
     auto& vm = JSC::getVM(globalObject);

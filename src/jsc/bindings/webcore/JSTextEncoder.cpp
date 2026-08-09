@@ -53,14 +53,13 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "BunClientData.h"
+#include "headers-handwritten.h"
 
 namespace WebCore {
 using namespace JSC;
 
 extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const Latin1Character* stringPtr, size_t stringLen);
 extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const char16_t* stringPtr, size_t stringLen);
-extern "C" size_t TextEncoder__encodeInto8(const Latin1Character* stringPtr, size_t stringLen, void* ptr, size_t len);
-extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
@@ -345,7 +344,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return {};
     }
 
-    size_t res = 0;
+    TextEncoderEncodeIntoResult res = {};
     if (!source->is8Bit()) {
         const auto span = source->span16();
         res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
@@ -356,8 +355,8 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 
     Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
     auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
-    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
+    result->putDirectOffset(vm, 0, JSC::jsNumber(res.read));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(res.written));
 
     return JSValue::encode(result);
 }

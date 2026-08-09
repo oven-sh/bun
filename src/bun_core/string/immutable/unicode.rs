@@ -448,8 +448,8 @@ pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     }
 
     EncodeIntoResult {
-        read: (buf_total - buf.len()) as u32,
-        written: (latin1_total - latin1.len()) as u32,
+        read: buf_total - buf.len(),
+        written: latin1_total - latin1.len(),
     }
 }
 
@@ -459,7 +459,6 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     for (out, &inp) in buf_[..len].iter_mut().zip(latin1_[..len].iter()) {
         *out = u16::from(inp);
     }
-    let len = len as u32;
     EncodeIntoResult {
         read: len,
         written: len,
@@ -1039,8 +1038,8 @@ fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bo
                 }
 
                 return EncodeIntoResult {
-                    read: utf16.len() as u32,
-                    written: result.count as u32,
+                    read: utf16.len(),
+                    written: result.count,
                 };
             }
         }
@@ -1140,8 +1139,8 @@ fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bo
     }
 
     EncodeIntoResult {
-        read: (utf16.len() - utf16_remaining.len()) as u32,
-        written: (buf_total - remaining.len()) as u32,
+        read: utf16.len() - utf16_remaining.len(),
+        written: buf_total - remaining.len(),
     }
 }
 

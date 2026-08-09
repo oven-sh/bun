@@ -425,7 +425,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             let filename: &[u16] = event.filename.slice();
             let convert_res =
                 strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
-            let eventpath_len = base_idx + convert_res.written as usize;
+            let eventpath_len = base_idx + convert_res.written;
 
             bun_core::scoped_log!(
                 watcher,

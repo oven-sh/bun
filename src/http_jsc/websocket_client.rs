@@ -964,7 +964,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let content_byte_len: usize = strings::element_length_utf16_into_utf8(utf16);
                 let mut buf = vec![0u8; content_byte_len];
                 let encode_result = strings::copy_utf16_into_utf8(&mut buf, utf16);
-                buf.truncate(encode_result.written as usize);
+                buf.truncate(encode_result.written);
                 utf8_storage = buf;
                 &utf8_storage
             }
@@ -976,7 +976,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 } else {
                     let mut buf = vec![0u8; content_byte_len];
                     let encode_result = strings::copy_latin1_into_utf8(&mut buf, latin1);
-                    buf.truncate(encode_result.written as usize);
+                    buf.truncate(encode_result.written);
                     utf8_storage = buf;
                     &utf8_storage
                 }
@@ -1829,7 +1829,7 @@ fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) 
     } else {
         // Latin-1 → UTF-8: raw Latin-1 bytes would fail `send_close_with_body`'s UTF-8 check.
         let result = strings::copy_latin1_into_utf8(cursor.get_mut(), reason.slice());
-        if (result.read as usize) < reason.slice().len() {
+        if result.read < reason.slice().len() {
             return None;
         }
         cursor.set_position(result.written as u64);
@@ -2341,20 +2341,20 @@ impl Copy<'_> {
         match self {
             Copy::Utf16(utf16) => {
                 let encoded = strings::copy_utf16_into_utf8_impl::<true>(parts.payload, utf16);
-                debug_assert_eq!(encoded.written as usize, content_byte_len);
-                debug_assert_eq!(encoded.read as usize, utf16.len());
+                debug_assert_eq!(encoded.written, content_byte_len);
+                debug_assert_eq!(encoded.read, utf16.len());
                 header
-                    .write_header(&mut parts.header, encoded.written as usize)
+                    .write_header(&mut parts.header, encoded.written)
                     .expect("unreachable");
                 Mask::fill_in_place(global_this, parts.mask, parts.payload);
             }
             Copy::Latin1(latin1) => {
                 let encoded = strings::copy_latin1_into_utf8(parts.payload, latin1);
-                debug_assert_eq!(encoded.written as usize, content_byte_len);
+                debug_assert_eq!(encoded.written, content_byte_len);
                 // latin1 can contain non-ascii
-                debug_assert_eq!(encoded.read as usize, latin1.len());
+                debug_assert_eq!(encoded.read, latin1.len());
                 header
-                    .write_header(&mut parts.header, encoded.written as usize)
+                    .write_header(&mut parts.header, encoded.written)
                     .expect("unreachable");
                 Mask::fill_in_place(global_this, parts.mask, parts.payload);
             }

@@ -44,8 +44,8 @@ unsafe extern "C" fn TextEncoder__encode8(
     };
     debug_assert!(array_buffer.len == utf8_len);
     let result = strings::copy_latin1_into_utf8(array_buffer.byte_slice_mut(), slice);
-    debug_assert!(result.written as usize == utf8_len);
-    debug_assert!(result.read as usize == slice.len());
+    debug_assert!(result.written == utf8_len);
+    debug_assert!(result.read == slice.len());
     uint8array
 }
 
@@ -69,8 +69,8 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         if result.read == 0 || result.written == 0 {
             return replacement_char_uint8_array(global_this);
         }
-        let written = result.written as usize;
-        debug_assert!(result.read as usize == slice.len());
+        let written = result.written;
+        debug_assert!(result.read == slice.len());
         let Ok(uint8array) = create_uninitialized_uint8_array(global_this, written) else {
             return JSValue::ZERO;
         };
@@ -99,7 +99,7 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     debug_assert!(array_buffer.len == need);
     let result =
         strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
-    if result.written as usize == need && result.read as usize == slice.len() {
+    if result.written == need && result.read == slice.len() {
         return uint8array;
     }
 
@@ -177,11 +177,11 @@ impl<'a> RopeStringEncoder<'a> {
             &mut this.buf[this.tail..],
             src,
         );
-        if result.read == u32::MAX && result.written == u32::MAX {
+        if result.read == usize::MAX && result.written == usize::MAX {
             it.stop = 1;
             this.any_non_ascii = true;
         } else {
-            this.tail += result.written as usize;
+            this.tail += result.written;
         }
     }
 
@@ -199,7 +199,7 @@ impl<'a> RopeStringEncoder<'a> {
             &mut this.buf[offset as usize..],
             src,
         );
-        if result.read == u32::MAX && result.written == u32::MAX {
+        if result.read == usize::MAX && result.written == usize::MAX {
             it.stop = 1;
             this.any_non_ascii = true;
         }
@@ -267,17 +267,12 @@ unsafe extern "C" fn TextEncoder__encodeInto16(
     input_len: usize,
     buf_ptr: *mut u8,
     buf_len: usize,
-) -> u64 {
+) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
     let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
-    let mut b = [0u8; 8];
-    b[..4].copy_from_slice(&result.read.to_ne_bytes());
-    b[4..].copy_from_slice(&result.written.to_ne_bytes());
-    u64::from_ne_bytes(b)
+    strings::copy_utf16_into_utf8(output, input)
 }
 
 /// # Safety
@@ -289,15 +284,10 @@ unsafe extern "C" fn TextEncoder__encodeInto8(
     input_len: usize,
     buf_ptr: *mut u8,
     buf_len: usize,
-) -> u64 {
+) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
     let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
-    let mut b = [0u8; 8];
-    b[..4].copy_from_slice(&result.read.to_ne_bytes());
-    b[4..].copy_from_slice(&result.written.to_ne_bytes());
-    u64::from_ne_bytes(b)
+    strings::copy_latin1_into_utf8(output, input)
 }

@@ -4695,3 +4695,49 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The reported byte count itself can be exactly 2**32: a UTF-16 source whose
+// UTF-8 encoding fills a MAX_LENGTH buffer. Buffer.write/TextEncoder.encodeInto
+// used to round-trip that count through uint32, reporting 0 even though every
+// byte was written. Needs ~10 GiB RSS (4 GiB destination + UTF-16 source).
+it.skipIf(os.totalmem() < 16 * 1024 ** 3)(
+  "Buffer.write/TextEncoder.encodeInto report a byte count of exactly 2**32 without uint32 wrap",
+  async () => {
+    const script = `
+      const N = 2 ** 32;
+      // 1431655765 three-byte chars (U+0800 -> E0 A0 80) + one ASCII char
+      // encode to exactly N UTF-8 bytes.
+      const str = "\\u0800".repeat((N - 1) / 3) + "a";
+      const buf = Buffer.alloc(N);
+      const out = {};
+      out.byteLength = Buffer.byteLength(str, "utf8");
+      out.write_ret = buf.write(str, 0, N, "utf8");
+      // subarray instead of indexing: 2**32 - 1 is not a valid array index.
+      out.tail = Array.from(buf.subarray(N - 3));
+      const res = new TextEncoder().encodeInto(str, buf);
+      out.encode_read = res.read;
+      out.encode_written = res.written;
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        byteLength: 4294967296,
+        write_ret: 4294967296,
+        tail: [0xa0, 0x80, 0x61],
+        encode_read: 1431655766,
+        encode_written: 4294967296,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+  // Two full 4.3 GB encode passes take ~1 min under a debug+ASAN build.
+  5 * 60 * 1000,
+);

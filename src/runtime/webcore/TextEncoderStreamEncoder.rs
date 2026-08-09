@@ -69,10 +69,10 @@ impl TextEncoderStreamEncoder {
             let result = unsafe {
                 bun_core::vec::fill_spare(buffer, 0, |spare| {
                     let r = strings::copy_latin1_into_utf8(spare, remain);
-                    (r.written as usize, r)
+                    (r.written, r)
                 })
             };
-            remain = &remain[result.read as usize..];
+            remain = &remain[result.read..];
 
             if result.written == 0 && result.read == 0 {
                 buffer.reserve(2);

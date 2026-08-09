@@ -3,7 +3,15 @@
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/HeapSnapshotBuilder.h"
 #include "JavaScriptCore/HeapProfiler.h"
+#include "JavaScriptCore/ConservativeRoots.h"
+#include "JavaScriptCore/HeapIterationScope.h"
+#include "JavaScriptCore/MarkedSpaceInlines.h"
+#include "JavaScriptCore/StackVisitor.h"
+#include <wtf/StackBounds.h>
+#include <wtf/Threading.h>
+#if !OS(WINDOWS)
 #include <unistd.h>
+#endif
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -3260,11 +3268,84 @@ extern "C" size_t Bun__gc(void* vm, bool sync);
 // live cell, the root that marked it) to /tmp/bun-napi-diag-<pid>.json. Keyed
 // on a file rather than argv/env so the process under test is byte-for-byte
 // the same as the one that fails.
-static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm)
+__attribute__((no_sanitize("address"))) static void bunNapiDiagWhereAreTheRoots(JSC::VM& vm, JSC::CallFrame* callFrame)
 {
+    // 1. Every live cell start address after the gc() that just ran.
+    WTF::HashSet<uintptr_t> liveCells;
+    {
+        JSC::HeapIterationScope scope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+            if (kind == JSC::HeapCell::JSCell)
+                liveCells.add(reinterpret_cast<uintptr_t>(cell));
+            return IterationStatus::Continue;
+        });
+    }
+    auto describe = [&](uintptr_t p) -> const char* {
+        return reinterpret_cast<JSC::JSCell*>(p)->className().characters();
+    };
+    fprintf(stderr, "[napi-diag] live JS cells: %u\n", liveCells.size());
+
+    // 2. VM-owned conservatively scanned buffers (Heap::gatherVMRoots).
+    {
+        JSC::ConservativeRoots vmRoots(vm.heap);
+#if ENABLE(DFG_JIT)
+        vm.gatherScratchBufferRoots(vmRoots);
+#endif
+        fprintf(stderr, "[napi-diag] VM scratch-buffer conservative roots: %zu; checkpoint OSR side state present: %d\n", vmRoots.size(), (int)vm.hasCheckpointOSRSideState());
+        for (size_t i = 0; i < vmRoots.size(); ++i) {
+            auto p = reinterpret_cast<uintptr_t>(vmRoots.roots()[i]);
+            fprintf(stderr, "[napi-diag]   vmroot %p %s\n", (void*)p, liveCells.contains(p) ? describe(p) : "(not a live cell start)");
+        }
+    }
+
+    // 3. JS/native frame layout, so stack hits can be attributed.
+    fprintf(stderr, "[napi-diag] frames (top first):\n");
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> IterationStatus {
+        auto name = visitor->functionName().utf8();
+        auto* cb = visitor->codeBlock();
+        fprintf(stderr, "[napi-diag]   frame callFrame=%p callerFrame=%p %s%s codeType=%d bc#%u regs=%d\n",
+            (void*)visitor->callFrame(), (void*)visitor->callerFrame(), name.data(),
+            visitor->isNativeFrame() ? " [native]" : "", cb ? (int)cb->codeType() : -1,
+            visitor->bytecodeIndex().offset(), cb ? (int)cb->numCalleeLocals() : -1);
+        return IterationStatus::Continue;
+    });
+
+    // 4. Words on this thread's machine stack, from here up to the origin,
+    //    that equal (or point 8 bytes into) a live cell.
+    volatile uintptr_t marker = 0;
+    uintptr_t* sp = const_cast<uintptr_t*>(&marker);
+    uintptr_t* origin = static_cast<uintptr_t*>(WTF::Thread::currentSingleton().stack().origin());
+    fprintf(stderr, "[napi-diag] scanning machine stack %p..%p (%zu words)\n", (void*)sp, (void*)origin, (size_t)(origin - sp));
+    unsigned hits = 0;
+    for (uintptr_t* w = sp; w < origin; ++w) {
+        uintptr_t v = *w;
+        uintptr_t base = 0;
+        if (liveCells.contains(v)) base = v;
+        else if (liveCells.contains(v & ~uintptr_t(0xF))) base = v & ~uintptr_t(0xF);
+        else if (v >= 8 && liveCells.contains(v - 8)) base = v - 8;
+        if (!base) continue;
+        const char* cls = describe(base);
+        // Only report the interesting classes to keep the log readable.
+        if (strcmp(cls, "Array") && strcmp(cls, "Object") && strcmp(cls, "NapiClass") && strcmp(cls, "NapiPrototype") && strcmp(cls, "NapiHandleScopeImpl"))
+            continue;
+        ++hits;
+        fprintf(stderr, "[napi-diag]   stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((origin - w) * sizeof(uintptr_t)), (void*)v, cls, (void*)base);
+    }
+    fprintf(stderr, "[napi-diag] stack words pointing at Array/Object/Napi* cells: %u\n", hits);
+    fflush(stderr);
+}
+
+static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm, JSC::CallFrame* callFrame)
+{
+#if OS(WINDOWS)
+    return;
+#else
     if (access("/tmp/bun-napi-diag-request", F_OK) != 0)
         return;
-    fprintf(stderr, "[napi-diag] gc() returned; building GC-debugging snapshot (runs another full GC)\n");
+    fprintf(stderr, "[napi-diag] gc() returned\n");
+    fflush(stderr);
+    bunNapiDiagWhereAreTheRoots(vm, callFrame);
+    fprintf(stderr, "[napi-diag] building GC-debugging snapshot (runs another full GC)\n");
     fflush(stderr);
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
@@ -3283,6 +3364,7 @@ static void bunNapiDiagMaybeDumpHeap(JSC::VM& vm)
         fprintf(stderr, "[napi-diag] could not open %s\n", path);
     }
     fflush(stderr);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionJsGc,
@@ -3290,7 +3372,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(global);
     Bun__gc(globalObject->bunVM(), true);
-    bunNapiDiagMaybeDumpHeap(JSC::getVM(global));
+    bunNapiDiagMaybeDumpHeap(JSC::getVM(global), callFrame);
     return JSValue::encode(jsUndefined());
 }
 

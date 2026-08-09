@@ -352,6 +352,9 @@ impl FilePoll {
             let one_shot =
                 self.flags.contains(Flags::OneShot) || self.flags.contains(Flags::NeedsRearm);
             self.flags.remove(Flags::NeedsRearm);
+            // Nothing is registered in this process's epoll/kqueue yet: registering must add, not modify.
+            self.flags
+                .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
             let one_shot = if one_shot {
                 OneShotFlag::OneShot
             } else {

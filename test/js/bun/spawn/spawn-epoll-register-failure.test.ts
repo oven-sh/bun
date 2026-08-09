@@ -104,62 +104,62 @@ async function runFixture(extraEnv: Record<string, string>) {
     env: { ...bunEnv, ...extraEnv },
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return JSON.parse(stdout.trim());
 }
 
-test.skipIf(!enabled)("kill() and exited work when pidfd epoll registration fails", async () => {
-  using dir = tempDir("epoll-fail", {});
-  const shim = await compileShim(String(dir));
+test.skipIf(!enabled)(
+  "kill() and exited work when pidfd epoll registration fails",
+  async () => {
+    using dir = tempDir("epoll-fail", {});
+    const shim = await compileShim(String(dir));
 
-  // Control: the fixture passes without fault injection.
-  expect(await runFixture({})).toEqual({
-    exited: 137,
-    signalCode: "SIGKILL",
-    killed: true,
-    alive: false,
-  });
+    // Control: the fixture passes without fault injection.
+    expect(await runFixture({})).toEqual({
+      exited: 137,
+      signalCode: "SIGKILL",
+      killed: true,
+      alive: false,
+    });
 
-  // With every pidfd epoll_ctl ADD/MOD failing, the signal must still be
-  // delivered and the exit must still be observed.
-  expect(await runFixture({ LD_PRELOAD: shim })).toEqual({
-    exited: 137,
-    signalCode: "SIGKILL",
-    killed: true,
-    alive: false,
-  });
-}, 15_000);
+    // With every pidfd epoll_ctl ADD/MOD failing, the signal must still be
+    // delivered and the exit must still be observed.
+    expect(await runFixture({ LD_PRELOAD: shim })).toEqual({
+      exited: 137,
+      signalCode: "SIGKILL",
+      killed: true,
+      alive: false,
+    });
+  },
+  15_000,
+);
 
-test.skipIf(!enabled)("exit is observed without kill when pidfd epoll registration fails", async () => {
-  using dir = tempDir("epoll-fail-exit", {});
-  const shim = await compileShim(String(dir));
+test.skipIf(!enabled)(
+  "exit is observed without kill when pidfd epoll registration fails",
+  async () => {
+    using dir = tempDir("epoll-fail-exit", {});
+    const shim = await compileShim(String(dir));
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const p = Bun.spawn(["sleep", "0.05"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const p = Bun.spawn(["sleep", "0.05"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
        let timer;
        const deadline = new Promise(resolve => { timer = setTimeout(() => resolve("never settled"), 3000); });
        const exited = await Promise.race([p.exited, deadline]);
        clearTimeout(timer);
        console.log(JSON.stringify({ exited, exitCode: p.exitCode }));`,
-    ],
-    env: { ...bunEnv, LD_PRELOAD: shim },
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(JSON.stringify({ exited: 0, exitCode: 0 }));
-  expect(exitCode).toBe(0);
-}, 15_000);
+      ],
+      env: { ...bunEnv, LD_PRELOAD: shim },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(JSON.stringify({ exited: 0, exitCode: 0 }));
+    expect(exitCode).toBe(0);
+  },
+  15_000,
+);

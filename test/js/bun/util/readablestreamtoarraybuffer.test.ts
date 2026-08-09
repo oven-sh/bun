@@ -99,10 +99,12 @@ for (const consumer of ["readableStreamToArrayBuffer", "readableStreamToBytes"])
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!hasEnoughMemory)(`${consumer} throws instead of aborting when mixed chunks exceed the 4 GiB ArrayBuffer maximum`, async () => {
-    // The inputs are never touched (zero pages on Linux; Windows still commits them,
-    // hence the memory gate) and the oversized result allocation fails fast.
-    const script = `
+  test.skipIf(!hasEnoughMemory)(
+    `${consumer} throws instead of aborting when mixed chunks exceed the 4 GiB ArrayBuffer maximum`,
+    async () => {
+      // The inputs are never touched (zero pages on Linux; Windows still commits them,
+      // hence the memory gate) and the oversized result allocation fails fast.
+      const script = `
       const n = 2200000000;
       let a, b;
       try {
@@ -127,18 +129,19 @@ for (const consumer of ["readableStreamToArrayBuffer", "readableStreamToBytes"])
         console.log("THREW RangeError=" + (e instanceof RangeError));
       }
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    if (stdout.trim() === "SKIP") return;
-    expect(stdout.trim()).toBe("THREW RangeError=true");
-    expect(proc.signalCode).toBe(null);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      if (stdout.trim() === "SKIP") return;
+      expect(stdout.trim()).toBe("THREW RangeError=true");
+      expect(proc.signalCode).toBe(null);
+      expect(exitCode).toBe(0);
+    },
+  );
 }
 
 // The string-encoding half of the mixed arm at scale: a single string chunk whose UTF-8

@@ -1334,7 +1334,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const diagDir = join(__dirname, "napi-app");
       const snapshots = readdirSync(diagDir).filter(f => f.startsWith("napi-diag-") && f.endsWith(".heapsnapshot"));
       if (snapshots.length) {
-        console.error("napi diagnostics: heap snapshots:", snapshots.map(f => `${f} (${statSync(join(diagDir, f)).size} bytes)`));
+        console.error(
+          "napi diagnostics: heap snapshots:",
+          snapshots.map(f => `${f} (${statSync(join(diagDir, f)).size} bytes)`),
+        );
         if (process.env.BUILDKITE) {
           const up = spawnSync({
             cmd: ["buildkite-agent", "artifact", "upload", "napi-diag-*.heapsnapshot"],

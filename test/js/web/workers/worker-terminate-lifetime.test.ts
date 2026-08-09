@@ -513,10 +513,10 @@ test(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: `survived ${cellRounds}`,
-      exitCode: 0,
       stderr: "",
+      exitCode: 0,
     });
   },
   timeout,

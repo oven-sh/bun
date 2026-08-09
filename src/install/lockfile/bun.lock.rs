@@ -2882,6 +2882,11 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 seen_deps.clear_retaining_capacity();
 
+                // `"<name>/<dep>"` keys belong to whichever package owns the
+                // root `<name>` entry; for a displaced member that is the
+                // npm package that replaced it.
+                let owns_name_node = pkg_map.get(workspace_name).copied() == Some(pkg_id);
+
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = _dep_id;
@@ -2889,22 +2894,31 @@ pub(crate) fn parse_into_binary_lockfile(
                     let dep_name = dep.name.slice(string_buf);
 
                     // A displaced member's node lives under its recorded
-                    // `packages` key (e.g. "beta/member"), so its own
-                    // dependency keys are "beta/member/dep", not
-                    // "member/dep".
+                    // `packages` key (e.g. "beta/member"). Walk that
+                    // placement up like hoisting would: "beta/member/dep",
+                    // then "beta/dep"; the bare "dep" probe below covers the
+                    // root level.
                     let nested_res_id = member_tree_keys.iter().find_map(|&(id, key)| {
                         if id != pkg_id {
                             return None;
                         }
-                        let needed = key.len() + 1 + dep_name.len();
-                        let buf_slice = &mut path_buf[..];
-                        if needed > buf_slice.len() {
-                            return None;
+                        let mut prefix = key;
+                        loop {
+                            let needed = prefix.len() + 1 + dep_name.len();
+                            let buf_slice = &mut path_buf[..];
+                            if needed <= buf_slice.len() {
+                                buf_slice[..prefix.len()].copy_from_slice(prefix);
+                                buf_slice[prefix.len()] = b'/';
+                                buf_slice[prefix.len() + 1..needed].copy_from_slice(dep_name);
+                                if let Some(&found) = pkg_map.get(&buf_slice[..needed]) {
+                                    return Some(found);
+                                }
+                            }
+                            match strings::last_index_of_char(prefix, b'/') {
+                                Some(i) => prefix = &prefix[..i as usize],
+                                None => return None,
+                            }
                         }
-                        buf_slice[..key.len()].copy_from_slice(key);
-                        buf_slice[key.len()] = b'/';
-                        buf_slice[key.len() + 1..needed].copy_from_slice(dep_name);
-                        pkg_map.get(&buf_slice[..needed]).copied()
                     });
 
                     let workspace_node_modules = {
@@ -2940,10 +2954,12 @@ pub(crate) fn parse_into_binary_lockfile(
                         None
                     };
                     let Some(res_id) = peer_res_id.or(nested_res_id).or_else(|| {
-                        pkg_map
-                            .get(workspace_node_modules)
-                            .or_else(|| pkg_map.get(dep_name))
-                            .copied()
+                        let by_name = if owns_name_node {
+                            pkg_map.get(workspace_node_modules)
+                        } else {
+                            None
+                        };
+                        by_name.or_else(|| pkg_map.get(dep_name)).copied()
                     }) else {
                         if dep.behavior.contains(Behavior::OPTIONAL) {
                             continue;

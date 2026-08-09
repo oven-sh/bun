@@ -655,6 +655,49 @@ describe("workspace and npm dependency sharing a name", () => {
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   });
 
+  test.concurrent("displaced member's dependency hoisted to root stays on the root version", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // registry two-range-deps@1.0.0 depends on no-deps@^1.0.0, which nests
+    // under it as "two-range-deps/no-deps" because the root pins
+    // no-deps@2.0.0; the member's own no-deps@2.0.0 hoists to the root.
+    // Reloading must not bind the member's dependency through the npm
+    // package's "two-range-deps/no-deps" key.
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "two-range-deps": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "two-range-deps", "package.json"),
+        JSON.stringify({ name: "two-range-deps", version: "9.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { "two-range-deps": "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(`"two-range-deps/no-deps": ["no-deps@1.`);
+    expect(lockfile).toContain(`"beta/two-range-deps": ["two-range-deps@workspace:packages/two-range-deps"]`);
+    expect(lockfile).not.toContain("beta/two-range-deps/no-deps");
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    // hoisted to the root: the member must not get its own nested copy
+    expect(await exists(join(packageDir, "packages", "two-range-deps", "node_modules", "no-deps"))).toBe(false);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
   test.concurrent("duplicate workspace keys in a hand-edited lockfile are rejected", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;

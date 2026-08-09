@@ -650,9 +650,8 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         &mut buf[..]
     }
     fn on_error(self_: &Channel<Owner>, _err: bun_sys::E) {
-        // Mirror the POSIX on_close path: detach the transport before
-        // signalling done so the owner can tell EOF apart from a protocol
-        // error (where the pipe is still attached).
+        // Mirror the POSIX on_close path: detach and destroy the pipe before
+        // signalling done.
         let p = self_.backend.pipe.replace(core::ptr::null_mut());
         if !p.is_null() {
             // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.

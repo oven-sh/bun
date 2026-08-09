@@ -525,15 +525,36 @@ test("local I/O during the build is refused by default (auto mode keeps the plai
   expect(s.code).toBe(0); // the build still produced a working (plain) executable
   expect(runExe(strict).stdout).toBe(""); // boots plainly: the fixture only prints when restored
   const local = join(String(dir), "local");
-  const l = build(["--compile", "--snapshot", "--snapshot-io=local", join(import.meta.dir, "io-fixture.js"), "--outfile", local]);
+  const l = build([
+    "--compile",
+    "--snapshot",
+    "--snapshot-io=local",
+    join(import.meta.dir, "io-fixture.js"),
+    "--outfile",
+    local,
+  ]);
   expect(l.out).toContain("local I/O operations ran before the freeze");
   expect(l.out).toMatch(/node:fs x1 from:\n\s+at readFileSync/); // attributed to the call site
   expect(l.out).toContain("[snapshot] embedded");
   expect(l.code).toBe(0);
   expect(runExe(local).stdout).toMatch(/restored, exe bytes \d+/);
   // The io option is meaningless without the snapshot step, and manual mode explains itself when the app never snapshots.
-  expect(build(["--compile", "--snapshot-io=local", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "x")]).out).toContain("only applies together with --snapshot");
-  const m = build(["--compile", "--snapshot=manual", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "manual")]);
+  expect(
+    build([
+      "--compile",
+      "--snapshot-io=local",
+      join(import.meta.dir, "auto-fixture.js"),
+      "--outfile",
+      join(String(dir), "x"),
+    ]).out,
+  ).toContain("only applies together with --snapshot");
+  const m = build([
+    "--compile",
+    "--snapshot=manual",
+    join(import.meta.dir, "auto-fixture.js"),
+    "--outfile",
+    join(String(dir), "manual"),
+  ]);
   expect(m.out).toContain("In manual mode the app has to call Bun.startupSnapshot.take()");
   expect(m.code).toBe(1);
 });
@@ -550,13 +571,25 @@ test("Bun.startupSnapshot.main(): the program runs after restore with each launc
     [[], "b"],
     [["--version"], "a"],
   ] as const) {
-    const r = Bun.spawnSync({ cmd: [exe, ...args], cwd: join(String(dir), cwd), env: { ...runEnv(), BUN_SNAPSHOT_VERBOSE: "1" }, stderr: "pipe", stdout: "pipe" });
+    const r = Bun.spawnSync({
+      cmd: [exe, ...args],
+      cwd: join(String(dir), cwd),
+      env: { ...runEnv(), BUN_SNAPSHOT_VERBOSE: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     expect(r.stderr.toString()).toContain("[snapshot] restored"); // any argv resumes from the snapshot
-    expect(r.stdout.toString()).toContain(`[js] main epoch=1 args=${JSON.stringify(args)} cwd=${cwd} table=5000 calls=1`);
+    expect(r.stdout.toString()).toContain(
+      `[js] main epoch=1 args=${JSON.stringify(args)} cwd=${cwd} table=5000 calls=1`,
+    );
     expect(r.exitCode).toBe(0);
   }
   // Without a snapshot, main() simply runs.
-  const plain = Bun.spawnSync({ cmd: [bunExe(), join(import.meta.dir, "main-fixture.js"), "p", "q"], env: bunEnv, stderr: "pipe", stdout: "pipe" });
+  const plain = Bun.spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "main-fixture.js"), "p", "q"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
   expect(plain.stdout.toString()).toContain('[js] main epoch=0 args=["p","q"]');
 });
-

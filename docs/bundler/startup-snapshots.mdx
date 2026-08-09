@@ -19,7 +19,7 @@ Whether it is worth it depends on how much your program does before it becomes u
 
 ## Command-line tools
 
-For a program that starts, does one job and exits, the requirement is that the job runs *after* the snapshot is restored, not while the modules are being loaded. Import everything at the top level and put the program itself in `Bun.startupSnapshot.main()`:
+For a program that starts, does one job and exits, the requirement is that the job runs _after_ the snapshot is restored, not while the modules are being loaded. Import everything at the top level and put the program itself in `Bun.startupSnapshot.main()`:
 
 ```ts cli.ts icon="/icons/typescript.svg"
 import { format } from "./formatter"; // the expensive part: this, and everything it imports, ends up in the snapshot
@@ -82,11 +82,11 @@ While the snapshot is being taken, operations whose result would be frozen into 
 
 Programs that legitimately read their own files or run helpers while starting up can be allowed to:
 
-| Setting | Allowed while the snapshot is taken |
-| --- | --- |
-| `--snapshot-io=strict` (default) | Nothing that touches the machine. |
-| `--snapshot-io=local` | Files, subprocesses, local sockets, name resolution. |
-| `--snapshot-io=network` | The above, and the network. What it answered is in the snapshot. |
+| Setting                          | Allowed while the snapshot is taken                              |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `--snapshot-io=strict` (default) | Nothing that touches the machine.                                |
+| `--snapshot-io=local`            | Files, subprocesses, local sockets, name resolution.             |
+| `--snapshot-io=network`          | The above, and the network. What it answered is in the snapshot. |
 
 With either of the last two, the build prints every operation it allowed, attributed to the code that performed it, so what went into the snapshot can be reviewed.
 
@@ -135,19 +135,19 @@ The snapshot is embedded in the executable as it is, and a launch maps the execu
 
 **`bun build`**
 
-| Flag | Meaning |
-| --- | --- |
-| `--snapshot`, `--snapshot=auto` | With `--compile`: run the executable once and embed its snapshot, taken when startup has drained. Without entrypoints: do this to the existing `--outfile`. |
-| `--snapshot=manual` | The same, but the program calls `Bun.startupSnapshot.take()` to say when. |
-| `--snapshot-io=strict\|local\|network` | What the program may do while the snapshot is taken (default `strict`). |
+| Flag                                   | Meaning                                                                                                                                                     |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--snapshot`, `--snapshot=auto`        | With `--compile`: run the executable once and embed its snapshot, taken when startup has drained. Without entrypoints: do this to the existing `--outfile`. |
+| `--snapshot=manual`                    | The same, but the program calls `Bun.startupSnapshot.take()` to say when.                                                                                   |
+| `--snapshot-io=strict\|local\|network` | What the program may do while the snapshot is taken (default `strict`).                                                                                     |
 
 **`Bun.startupSnapshot`**
 
-| | |
-| --- | --- |
-| `main(fn)` | The program. Called now in an ordinary launch, after the restore in a launch that resumes from a snapshot, and not at all in the run that takes the snapshot. |
-| `take(options?)` | Manual mode: take the snapshot now. `options.timers` is `"keep"` or `"cancel"`; `options.envGate` is a list of variable names. Returns immediately in every other process. |
-| `isBuildingSnapshot()` | `true` only in the run that takes the snapshot. |
-| `epoch()` | `0` in a launch that booted normally; otherwise the number of times this process has been resumed. |
-| `reclean()` | In a resumed launch, hand pages the program wrote and then restored to their original contents back to the shared snapshot. Optional; useful for programs that idle for a long time. |
-| `process.on("restore", fn)` | Runs first in every launch that resumes from a snapshot. |
+|                             |                                                                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `main(fn)`                  | The program. Called now in an ordinary launch, after the restore in a launch that resumes from a snapshot, and not at all in the run that takes the snapshot.                        |
+| `take(options?)`            | Manual mode: take the snapshot now. `options.timers` is `"keep"` or `"cancel"`; `options.envGate` is a list of variable names. Returns immediately in every other process.           |
+| `isBuildingSnapshot()`      | `true` only in the run that takes the snapshot.                                                                                                                                      |
+| `epoch()`                   | `0` in a launch that booted normally; otherwise the number of times this process has been resumed.                                                                                   |
+| `reclean()`                 | In a resumed launch, hand pages the program wrote and then restored to their original contents back to the shared snapshot. Optional; useful for programs that idle for a long time. |
+| `process.on("restore", fn)` | Runs first in every launch that resumes from a snapshot.                                                                                                                             |

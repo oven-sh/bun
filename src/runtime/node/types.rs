@@ -356,7 +356,7 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                buffer.to_node_buffer(ctx)
             }
         }
     }

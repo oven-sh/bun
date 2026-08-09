@@ -82,6 +82,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
+    crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).unregister();
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -685,6 +686,8 @@ impl UDPSocket {
         this.socket.set(if created.is_null() {
             None
         } else {
+            // Open: the VM's stop phase closes it if script never does.
+            crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).register();
             Some(created)
         });
 
@@ -787,7 +790,7 @@ impl UDPSocket {
         } else {
             this_value_
         };
-        let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
+        let callback = js::on_error_get_cached(this_value).unwrap_or_default();
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 
@@ -1667,11 +1670,22 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM's stop phase (script forbidden): close the uSockets socket, as
+    /// `close()` from script would; `on_close` unregisters and drops the keep-alive.
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
+        Self::close_socket(this);
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        Self::close_socket(this);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    fn close_socket(this: &Self) {
         if !this.closed.get() {
             let Some(socket) = this.socket.take() else {
-                return Ok(JSValue::UNDEFINED);
+                return;
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
@@ -1688,8 +1702,6 @@ impl UDPSocket {
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             uws::udp::Socket::opaque_mut(socket).close();
         }
-
-        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]

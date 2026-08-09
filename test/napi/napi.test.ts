@@ -610,6 +610,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
+    // A finalizer running while a worker's env drains its finalizers can
+    // register another (here: an external buffer with a finalize_cb). Bun runs
+    // that one in the same cleanup rather than leaving it behind the walk. Bun-
+    // only rather than same-output: node hands an external buffer's finalizer to
+    // the BackingStore deleter, not to the env's tracked references, so a buffer
+    // created during teardown dies with the isolate and node prints late=0.
+    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("worker exited with 0\nlate=1");
+      expect(exitCode).toBe(0);
+    });
+
     // A call that reports napi_closing consumes the calling thread's reference
     // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
     // it can drop the last one -- and then it must free it, or every worker that
@@ -1751,6 +1769,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("removing non-existent async cleanup hook should not crash", async () => {
       // Test that removing non-existent async hooks doesn't crash
       await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("hook handle stays valid until the addon removes it (#37201)", async () => {
+      // An async cleanup hook releases a threadsafe function whose finalizer
+      // then calls napi_remove_async_cleanup_hook; the handle must not be
+      // freed when the hook returns.
+      const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      // Pin the successful lifecycle, so matching Node on a shared failure
+      // (non-zero status in both) cannot pass. printf() via the Windows CRT
+      // emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async cleanup hook fired",
+        "released tsfn: status=0",
+        "tsfn finalize: removing async cleanup hook",
+        "async cleanup hook removed: status=0",
+      ]);
     });
   });
 

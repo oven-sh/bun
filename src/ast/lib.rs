@@ -566,6 +566,7 @@ impl Kind {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[repr(transparent)]
 pub struct Loc {
     pub start: i32,
 }

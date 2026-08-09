@@ -225,15 +225,15 @@ test.concurrent(
     var { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
 
-    var err = await stderr.text();
+    var [err, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
 
     const lockBefore = await file(join(packageDir, "bun.lock")).text();
     // the wildcard dependencies resolve to the workspace member, not the registry
@@ -242,15 +242,15 @@ test.concurrent(
     ({ stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     }));
 
-    err = await stderr.text();
+    [err, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
 
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockBefore);
   },

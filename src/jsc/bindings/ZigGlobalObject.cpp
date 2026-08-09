@@ -4,6 +4,7 @@
 #include "JavaScriptCore/HeapSnapshotBuilder.h"
 #include "JavaScriptCore/HeapProfiler.h"
 #include "JavaScriptCore/ConservativeRoots.h"
+#include "JavaScriptCore/MachineStackMarker.h"
 #include "JavaScriptCore/HeapIterationScope.h"
 #include "JavaScriptCore/MarkedSpaceInlines.h"
 #include "JavaScriptCore/StackVisitor.h"
@@ -3399,6 +3400,34 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
             return nullptr;
         return cls;
     };
+
+    // 4a. Every thread registered with this heap's MachineThreads (each one is
+    //     suspended and its registers + stack [sp, origin) conservatively
+    //     scanned by every collection). Report them, and any word anywhere in
+    //     their stack range that points at the interesting cells.
+    {
+        auto& machineThreads = vm.heap.machineThreads();
+        Locker locker { machineThreads.getLock() };
+        const auto& threads = machineThreads.threads(locker);
+        fprintf(stderr, "[napi-diag] threads registered with the heap: %u (current uid %u)\n", threads.size(), WTF::Thread::currentSingleton().uid());
+        for (auto& threadRef : threads) {
+            WTF::Thread& t = threadRef.get();
+            bool isCurrent = &t == &WTF::Thread::currentSingleton();
+            uintptr_t* lo = static_cast<uintptr_t*>(t.stack().end());
+            uintptr_t* hi = static_cast<uintptr_t*>(t.stack().origin());
+            fprintf(stderr, "[napi-diag]   thread uid=%u%s stack=%p..%p\n", t.uid(), isCurrent ? " [current]" : "", (void*)lo, (void*)hi);
+            if (isCurrent)
+                continue;
+            unsigned th = 0;
+            for (uintptr_t* w = lo + 512; w < hi; ++w) { // skip the guard-ish bottom
+                uintptr_t base; const char* cls = interesting(*w, base);
+                if (!cls) continue;
+                if (++th <= 40)
+                    fprintf(stderr, "[napi-diag]     other-thread stack[%p] (origin-0x%zx) = %p -> %s @%p\n", (void*)w, (size_t)((hi - w) * sizeof(uintptr_t)), (void*)*w, cls, (void*)base);
+            }
+            fprintf(stderr, "[napi-diag]     words on that thread's stack pointing at Array/Object/Napi* cells: %u\n", th);
+        }
+    }
 
     // 4b. Callee-saved registers on entry to gc()'s host function.
     for (int i = 0; i < 12; ++i) {

@@ -1514,23 +1514,9 @@ pub(crate) fn run_snapshot_step(
     io: CompileSnapshotIo,
     env: &mut bun_dotenv::Loader,
 ) -> Result<SnapshotStepOutcome, Vec<u8>> {
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = (dir, exe, mode, io, env);
-        return Err(b"startup snapshots are available on macOS and Linux only".to_vec());
+    if !Bun__snapshotSupported() {
+        return Err(b"startup snapshots are not available in this build of bun (macOS and Linux; on macOS bun has to be built with mimalloc as the process allocator)".to_vec());
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    run_snapshot_step_impl(dir, exe, mode, io, env)
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn run_snapshot_step_impl(
-    dir: bun_sys::Fd,
-    exe: &[u8],
-    mode: CompileSnapshot,
-    io: CompileSnapshotIo,
-    env: &mut bun_dotenv::Loader,
-) -> Result<SnapshotStepOutcome, Vec<u8>> {
     use bun_standalone_module_graph::StandaloneModuleGraph::{
         CompileResult, Flags, embed_snapshot_into_executable, set_snapshot_build_flags,
     };
@@ -1621,6 +1607,10 @@ fn run_snapshot_step_impl(
     Ok(SnapshotStepOutcome::Embedded {
         snapshot_bytes: snapshot.len(),
     })
+}
+
+unsafe extern "C" {
+    safe fn Bun__snapshotSupported() -> bool;
 }
 
 pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {

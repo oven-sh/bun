@@ -7,7 +7,16 @@
 #define BUN_SNAPSHOT_TOOLING 0
 #endif
 
-#if OS(DARWIN) || (OS(LINUX) && !defined(__ANDROID__))
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define BUN_SNAPSHOT_ASAN 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define BUN_SNAPSHOT_ASAN 1
+#endif
+// ASAN owns the fixed address ranges the snapshot heap and JIT pool are placed in.
+#if (OS(DARWIN) || (OS(LINUX) && !defined(__ANDROID__))) && !defined(BUN_SNAPSHOT_ASAN)
 #define BUN_SNAPSHOT_SUPPORTED 1
 #else
 #define BUN_SNAPSHOT_SUPPORTED 0

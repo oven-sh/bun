@@ -4,6 +4,10 @@
 #include "root.h"
 #include "Snapshot.h"
 #include "JSEnvironmentVariableMap.h"
+#if OS(DARWIN)
+#include <libproc.h>
+#endif
+#include <sys/time.h>
 // Snapshots are built and mapped on macOS and (glibc/musl) Linux; elsewhere the entry points exist so the rest of the runtime
 // links, and report the feature as absent.
 #if BUN_SNAPSHOT_SUPPORTED
@@ -169,6 +173,38 @@ static bool snapshotVerbose()
     return !!getenv("BUN_SNAPSHOT_VERBOSE"); // not cached: a value cached while the snapshot was written would be restored along with it
 }
 extern "C" bool Bun__snapshotActive() { return s_snapshotActive; }
+#if OS(DARWIN)
+extern "C" __attribute__((weak_import)) size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap); // absent when mimalloc is built without the zone override
+#endif
+// Whether this build of bun can take and restore snapshots at all. On macOS that needs mimalloc built as the process's
+// malloc (mi_malloc_zone_process_owned_ranges), which is a build-time option of bun itself.
+extern "C" bool Bun__snapshotSupported()
+{
+#if OS(DARWIN)
+    return mi_malloc_zone_process_owned_ranges != nullptr;
+#else
+    return true;
+#endif
+}
+
+// BUN_SNAPSHOT_VERBOSE timing: milliseconds since the process was exec'd (Darwin: the kernel's start time, which the re-exec keeps).
+static double snapshotMsSinceExec()
+{
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+#if OS(DARWIN)
+    struct proc_bsdinfo info;
+    if (proc_pidinfo(getpid(), PROC_PIDTBSDINFO, 0, &info, sizeof info) == sizeof info)
+        return (now.tv_sec - (double)info.pbi_start_tvsec) * 1000.0 + (now.tv_usec - (double)info.pbi_start_tvusec) / 1000.0;
+#endif
+    static struct timeval first = now;
+    return (now.tv_sec - first.tv_sec) * 1000.0 + (now.tv_usec - first.tv_usec) / 1000.0;
+}
+static void snapshotTimingMark(const char* what)
+{
+    if (snapshotVerbose())
+        fprintf(stderr, "[snapshot] t=%.2fms since exec: %s\n", snapshotMsSinceExec(), what);
+}
 
 extern "C" bool Bun__isCompiledExecutable();
 static void setSnapshotEnvDefaults()
@@ -652,7 +688,6 @@ static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap)
     return n;
 }
 #else
-extern "C" __attribute__((weak)) size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap); // absent when mimalloc is built without the zone override
 static size_t platformLinkerOwnedRanges(uint64_t (*out)[2], size_t cap) // Darwin: the malloc zone libsystem registered for this process (see alloc-override-zone.c)
 {
     if (!mi_malloc_zone_process_owned_ranges) return 0;
@@ -754,7 +789,6 @@ static uint64_t platformBuildId()
 }
 #elif OS(LINUX)
 extern "C" char __executable_start[];
-extern "C" char __data_start[], _edata[], __bss_start[], _end[];
 template<typename F> static void platformEnumerateRegions(F&& f)
 {
     FILE* maps = fopen("/proc/self/maps", "r");
@@ -784,9 +818,20 @@ static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>
 }
 template<typename F> static void platformDataSegments(F&& f)
 {
-    size_t pg = getpagesize();
-    uint64_t lo = (uint64_t)__data_start & ~(pg - 1), hi = ((uint64_t)_end + pg - 1) & ~(pg - 1);
-    f(lo, hi - lo); // .data + .bss (relro/.got would need dl_iterate_phdr; the writable PT_LOAD covers what we mutate)
+    // The main executable's writable PT_LOAD segments (.data, .bss, and the GOT: we link with -z norelro), page-rounded.
+    struct Ctx { F* f; } ctx { &f };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
+        if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
+        size_t pg = getpagesize();
+        for (int i = 0; i < info->dlpi_phnum; i++) {
+            const ElfW(Phdr)& ph = info->dlpi_phdr[i];
+            if (ph.p_type != PT_LOAD || !(ph.p_flags & PF_W)) continue;
+            uint64_t lo = (info->dlpi_addr + ph.p_vaddr) & ~(uint64_t)(pg - 1);
+            uint64_t hi = (info->dlpi_addr + ph.p_vaddr + ph.p_memsz + pg - 1) & ~(uint64_t)(pg - 1);
+            (*static_cast<Ctx*>(arg)->f)(lo, hi - lo);
+        }
+        return 0;
+    }, &ctx);
 }
 static void platformWriteJIT(void* dst, const void* src, size_t len)
 {
@@ -1339,6 +1384,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
 // Restore: called from Bun__snapshotMaybeRestore (very early in main) when BUN_SNAPSHOT_IN is set. Never returns.
 static void snapshotRestoreAndRun(const char* path)
 {
+    snapshotTimingMark("restore begins (after the re-exec, if any)");
 #if OS(DARWIN) || OS(LINUX)
     char filePath[4200];
     snprintf(filePath, sizeof filePath, "%s", path);
@@ -1786,6 +1832,7 @@ static void snapshotRestoreAndRun(const char* path)
     }
     if (useLibFixups && verbose) fprintf(stderr, "[snapshot] rebased %zu extern-library pointers\n", nFixups);
     if (snapshotVerbose()) fprintf(stderr, "[snapshot] restored %zu regions: %.1fMB mapped clean, %.1fMB __DATA copied\n", regions.size(), mapped / 1048576.0, copied / 1048576.0);
+    snapshotTimingMark("regions mapped and library pointers rebased");
     // From here on all globals/heap are the build process's. Adopt the snapshot's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;
     mainThread->adoptCurrentThreadForSnapshot();
@@ -1824,6 +1871,7 @@ static void snapshotRestoreAndRun(const char* path)
         Bun__startupSnapshotRunMain(globalObject); // the program registered with Bun.startupSnapshot.main(), if any
         if (exception) fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
+    snapshotTimingMark("runtime refreshed, 'restore' emitted and main() run; entering the event loop");
     Bun__snapshotContinueEventLoop(); // never returns
 #endif
 }
@@ -1839,6 +1887,7 @@ extern "C" int bun_is_compiled_executable(void);
 extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
 extern "C" bool Bun__snapshotMode() { return false; }
 extern "C" bool Bun__snapshotActive() { return false; }
+extern "C" bool Bun__snapshotSupported() { return false; }
 extern "C" void Bun__snapshotMaybeRestore() {}
 extern "C" void Bun__snapshotInit() {}
 extern "C" void Bun__snapshotSetEnvGate(const uint8_t*, size_t) {}

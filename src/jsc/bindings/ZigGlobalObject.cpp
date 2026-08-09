@@ -3286,30 +3286,34 @@ static const char* const bunNapiDiagCalleeSavedNames[12] = {
 #endif
 };
 #if CPU(X86_64)
-#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { \
-    asm volatile("movq %%rbx, %0" : "=m"(bunNapiDiagCalleeSaved[0])); \
-    asm volatile("movq %%rbp, %0" : "=m"(bunNapiDiagCalleeSaved[1])); \
-    asm volatile("movq %%r12, %0" : "=m"(bunNapiDiagCalleeSaved[2])); \
-    asm volatile("movq %%r13, %0" : "=m"(bunNapiDiagCalleeSaved[3])); \
-    asm volatile("movq %%r14, %0" : "=m"(bunNapiDiagCalleeSaved[4])); \
-    asm volatile("movq %%r15, %0" : "=m"(bunNapiDiagCalleeSaved[5])); \
-} while (0)
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED()                              \
+    do {                                                                  \
+        asm volatile("movq %%rbx, %0" : "=m"(bunNapiDiagCalleeSaved[0])); \
+        asm volatile("movq %%rbp, %0" : "=m"(bunNapiDiagCalleeSaved[1])); \
+        asm volatile("movq %%r12, %0" : "=m"(bunNapiDiagCalleeSaved[2])); \
+        asm volatile("movq %%r13, %0" : "=m"(bunNapiDiagCalleeSaved[3])); \
+        asm volatile("movq %%r14, %0" : "=m"(bunNapiDiagCalleeSaved[4])); \
+        asm volatile("movq %%r15, %0" : "=m"(bunNapiDiagCalleeSaved[5])); \
+    } while (0)
 #elif CPU(ARM64)
-#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { \
-    asm volatile("str x19, %0" : "=m"(bunNapiDiagCalleeSaved[0])); \
-    asm volatile("str x20, %0" : "=m"(bunNapiDiagCalleeSaved[1])); \
-    asm volatile("str x21, %0" : "=m"(bunNapiDiagCalleeSaved[2])); \
-    asm volatile("str x22, %0" : "=m"(bunNapiDiagCalleeSaved[3])); \
-    asm volatile("str x23, %0" : "=m"(bunNapiDiagCalleeSaved[4])); \
-    asm volatile("str x24, %0" : "=m"(bunNapiDiagCalleeSaved[5])); \
-    asm volatile("str x25, %0" : "=m"(bunNapiDiagCalleeSaved[6])); \
-    asm volatile("str x26, %0" : "=m"(bunNapiDiagCalleeSaved[7])); \
-    asm volatile("str x27, %0" : "=m"(bunNapiDiagCalleeSaved[8])); \
-    asm volatile("str x28, %0" : "=m"(bunNapiDiagCalleeSaved[9])); \
-    asm volatile("str x29, %0" : "=m"(bunNapiDiagCalleeSaved[10])); \
-} while (0)
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED()                            \
+    do {                                                                \
+        asm volatile("str x19, %0" : "=m"(bunNapiDiagCalleeSaved[0]));  \
+        asm volatile("str x20, %0" : "=m"(bunNapiDiagCalleeSaved[1]));  \
+        asm volatile("str x21, %0" : "=m"(bunNapiDiagCalleeSaved[2]));  \
+        asm volatile("str x22, %0" : "=m"(bunNapiDiagCalleeSaved[3]));  \
+        asm volatile("str x23, %0" : "=m"(bunNapiDiagCalleeSaved[4]));  \
+        asm volatile("str x24, %0" : "=m"(bunNapiDiagCalleeSaved[5]));  \
+        asm volatile("str x25, %0" : "=m"(bunNapiDiagCalleeSaved[6]));  \
+        asm volatile("str x26, %0" : "=m"(bunNapiDiagCalleeSaved[7]));  \
+        asm volatile("str x27, %0" : "=m"(bunNapiDiagCalleeSaved[8]));  \
+        asm volatile("str x28, %0" : "=m"(bunNapiDiagCalleeSaved[9]));  \
+        asm volatile("str x29, %0" : "=m"(bunNapiDiagCalleeSaved[10])); \
+    } while (0)
 #else
-#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() do { } while (0)
+#define BUN_NAPI_DIAG_CAPTURE_CALLEE_SAVED() \
+    do {                                     \
+    } while (0)
 #endif
 
 __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAreTheRoots(JSC::VM& vm, JSC::CallFrame* callFrame)
@@ -3399,7 +3403,8 @@ __attribute__((no_sanitize("address"), noinline)) static void bunNapiDiagWhereAr
     // 4b. Callee-saved registers on entry to gc()'s host function.
     for (int i = 0; i < 12; ++i) {
         if (!bunNapiDiagCalleeSavedNames[i][0]) continue;
-        uintptr_t base; const char* cls = interesting(bunNapiDiagCalleeSaved[i], base);
+        uintptr_t base;
+        const char* cls = interesting(bunNapiDiagCalleeSaved[i], base);
         fprintf(stderr, "[napi-diag]   callee-saved %s = %p%s%s\n", bunNapiDiagCalleeSavedNames[i], (void*)bunNapiDiagCalleeSaved[i], cls ? " -> " : "", cls ? cls : "");
     }
 

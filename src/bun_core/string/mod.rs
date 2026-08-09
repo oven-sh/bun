@@ -274,7 +274,7 @@ impl String {
     /// that calls `callback(ctx, buffer, len)` when the impl is destroyed.
     ///
     /// External strings are WTF strings whose bytes live elsewhere; `bytes` is
-    /// borrowed (not copied). If `bytes.len() >= max_length()`, `callback` is
+    /// borrowed (not copied). If `bytes.len() > max_length()`, `callback` is
     /// invoked immediately and a `dead` string is returned.
     ///
     /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
@@ -299,7 +299,7 @@ impl String {
         }
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
             return Self::DEAD;
         }
@@ -322,7 +322,7 @@ impl String {
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
-        // SAFETY: bytes describes a valid slice; len < max_length checked.
+        // SAFETY: bytes describes a valid slice; len <= max_length checked.
         let s = unsafe {
             BunString__createExternal(
                 bytes.as_ptr(),
@@ -336,11 +336,13 @@ impl String {
         s
     }
 
-    /// Max `WTF::StringImpl` length (in characters, not bytes).
-    /// Reads the process-wide [`STRING_ALLOCATION_LIMIT`] data slot.
+    /// Max `WTF::StringImpl` length (in characters, not bytes):
+    /// [`STRING_ALLOCATION_LIMIT`] clamped to [`WTF_STRING_MAX_LENGTH`].
     #[inline]
     pub fn max_length() -> usize {
-        STRING_ALLOCATION_LIMIT.load(Ordering::Relaxed)
+        STRING_ALLOCATION_LIMIT
+            .load(Ordering::Relaxed)
+            .min(WTF_STRING_MAX_LENGTH)
     }
 
     /// `bun.String.createStaticExternal` — wraps `bytes` in a
@@ -405,7 +407,7 @@ impl String {
         if bytes.is_empty() {
             return Self::EMPTY;
         }
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             return Self::DEAD;
         }
         // Do NOT call `into_boxed_slice()` — when `len < capacity` it issues a
@@ -424,7 +426,7 @@ impl String {
         if bytes.is_empty() {
             return Self::EMPTY;
         }
-        if bytes.len() >= Self::max_length() {
+        if bytes.len() > Self::max_length() {
             return Self::DEAD;
         }
         // See `create_external_globally_allocated_latin1` — avoid the
@@ -2100,6 +2102,10 @@ pub mod lexer_tables {
 /// `setSyntheticAllocationLimitForTesting` hook.
 #[unsafe(export_name = "Bun__stringSyntheticAllocationLimit")]
 pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as usize);
+
+/// Mirror of `WTF::StringImpl::MaxLength` (`INT32_MAX`), which C++ enforces
+/// with `RELEASE_ASSERT` in the `StringImplShape` constructors.
+pub const WTF_STRING_MAX_LENGTH: usize = i32::MAX as usize;
 
 // ──────────────────────────────────────────────────────────────────────────
 // move-in: printer (MOVE_DOWN ← `bun_js_printer`)

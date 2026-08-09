@@ -1649,7 +1649,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;
@@ -1684,7 +1684,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;

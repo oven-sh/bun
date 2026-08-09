@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { symlinkSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -771,4 +771,115 @@ describe.skipIf(!isWindows).each([
     },
     30000,
   );
+});
+
+describe("output timing", () => {
+  // A script is finished when its process has exited AND its output has reached
+  // EOF; treating the exit alone as "finished" drops output that hasn't been
+  // read yet (here: written by a child the script left behind).
+  test("output written after the script's shell exits is not dropped", async () => {
+    using dir = tempDir("filter-late-output", {
+      "package.json": JSON.stringify({
+        name: "ws-late",
+        workspaces: ["packages/*"],
+      }),
+      "packages/late/package.json": JSON.stringify({
+        name: "pkg-late",
+        scripts: {
+          go: `${bunExe()} late.js`,
+        },
+      }),
+      "packages/late/late.js": `
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(300); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        }).unref();
+        console.log("early-line");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
+      // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+      // bun SIGKILL the detached child on exit, defeating the late write.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("early-line");
+    expect(stdout).toContain("late-line");
+    expect(stdout).toContain("Exited with code 0");
+    // The exit status line is printed at finish, after the output has ended.
+    expect(stdout.indexOf("late-line")).toBeLessThan(stdout.indexOf("Exited with code 0"));
+    expect(exitCode).toBe(0);
+  });
+
+  // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe
+  // EOF would hang on the detached child that still holds go's stdout.
+  test.skipIf(isWindows)("SIGINT does not wait for a child holding the script's pipes", async () => {
+    using dir = tempDir("filter-abort-late", {
+      "package.json": JSON.stringify({
+        name: "ws-abort",
+        workspaces: ["packages/*"],
+      }),
+      "packages/bg/package.json": JSON.stringify({
+        name: "pkg-bg",
+        scripts: {
+          go: `${bunExe()} go.js`,
+        },
+      }),
+      "packages/bg/go.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
+        await Bun.sleep(15_000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-bg", "go"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // New session, so the group signal below cannot reach the test runner.
+      detached: true,
+    });
+    const ready = join(String(dir), "packages", "bg", "ready.txt");
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline || proc.exitCode !== null) {
+        proc.kill();
+        const [o, e] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+        throw new Error(`go never wrote ready.txt; stdout: ${o}stderr: ${e}`);
+      }
+      await Bun.sleep(10);
+    }
+    // Ctrl-C semantics: the terminal signals the foreground process group
+    // (bun run and the script), but not the detached grandchild.
+    const start = Date.now();
+    process.kill(-proc.pid, "SIGINT");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding grandchild so nothing outlives the test. Guard the
+    // pid: kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(ready).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    // 128 + SIGINT: go is killed by the signal and is the only script. stderr
+    // rides along so a regression surfaces it in the failure output.
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 130,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
+  });
 });

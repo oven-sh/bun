@@ -166,8 +166,7 @@ static bool s_snapshotActive = false; // set once this process is building a sna
 // A launch that resumes from its snapshot, or declines it and boots normally, says nothing unless asked (BUN_SNAPSHOT_VERBOSE=1).
 static bool snapshotVerbose()
 {
-    static const bool verbose = !!getenv("BUN_SNAPSHOT_VERBOSE");
-    return verbose;
+    return !!getenv("BUN_SNAPSHOT_VERBOSE"); // not cached: a value cached while the snapshot was written would be restored along with it
 }
 extern "C" bool Bun__snapshotActive() { return s_snapshotActive; }
 
@@ -261,7 +260,7 @@ static void reexecWithoutASLRIfSlid()
         argv.push_back(nullptr);
         execve("/proc/self/exe", argv.data(), environ);
     }
-    fprintf(stderr, "[snapshot] could not re-exec without ASLR; continuing (snapshot build/restore will not work)\n");
+    fprintf(stderr, "[snapshot] could not re-exec to pass the allocator settings through; continuing (snapshot build/restore will not work)\n");
 #endif
 }
 
@@ -456,7 +455,7 @@ extern "C" void Bun__snapshotDumpNow(JSC::VM* vm, const char* path)
     { // who else is alive right now? every one of them is a potential holder of some lock we are about to freeze
         thread_act_array_t threads;
         mach_msg_type_number_t count = 0;
-        if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+        if (snapshotVerbose() && task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
             fprintf(stderr, "[snapshot] %u threads at snapshot time:", count);
             for (mach_msg_type_number_t i = 0; i < count; i++) {
                 pthread_t pt = pthread_from_mach_thread_np(threads[i]);
@@ -1135,7 +1134,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         size_t fb = 0;
         for (auto& r : freeRanges)
             fb += r.second - r.first;
-        fprintf(stderr, "[snapshot] arena free ranges: %zu, %.1fMB\n", freeRanges.size(), fb / 1048576.0);
+        if (snapshotVerbose()) fprintf(stderr, "[snapshot] arena free ranges: %zu, %.1fMB\n", freeRanges.size(), fb / 1048576.0);
     }
     auto inFreeRange = [&](uintptr_t a) { auto it = std::upper_bound(freeRanges.begin(), freeRanges.end(), std::make_pair(a, UINTPTR_MAX)); return it != freeRanges.begin() && a < std::prev(it)->second; };
     std::vector<SnapshotRegion> regions;
@@ -1203,7 +1202,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         return;
     }
     SnapshotHeader hdr {};
-    memcpy(hdr.magic, "BUNIMG2", 8);
+    memcpy(hdr.magic, "BUNSNAP1", 8);
     hdr.textBase = platformTextBase();
     hdr.libsBase = platformLibsBase();
     hdr.spare[0] = platformBuildId();
@@ -1311,7 +1310,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                     last = pg;
                 }
             }
-            fprintf(stderr, "[snapshot] %zu extern-library fixups across %zu library segments, touching %zu 16K pages (%.1f MB dirtied at restore if libraries slid)\n", fixups.size(), libs.size(), pages, pages * 16384.0 / 1048576.0);
+            if (snapshotVerbose()) fprintf(stderr, "[snapshot] %zu extern-library fixups across %zu library segments, touching %zu 16K pages (%.1f MB dirtied at restore if libraries slid)\n", fixups.size(), libs.size(), pages, pages * 16384.0 / 1048576.0);
         }
     }
     for (auto& r : out) {
@@ -1365,7 +1364,7 @@ static void snapshotRestoreAndRun(const char* path)
     SnapshotHeader hdr;
     ipread(fd, &hdr, sizeof hdr, 0);
     if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)snapshotBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
-    if (memcmp(hdr.magic, "BUNIMG2", 8) || hdr.spare[0] != platformBuildId()) {
+    if (memcmp(hdr.magic, "BUNSNAP1", 8) || hdr.spare[0] != platformBuildId()) {
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] %s was not produced by this build of the executable; booting normally\n", path);
         close(fd);
         return;

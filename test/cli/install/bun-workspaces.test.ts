@@ -278,6 +278,214 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
+describe("workspace and file: dependency sharing a name", () => {
+  // A root `file:` dependency whose name matched a workspace member used to be
+  // placed next to the member in the root node_modules. bun.lock then
+  // contained the same "packages" key twice, every later install printed
+  // `Duplicate key "alpha" in object literal`, ignored the lockfile and
+  // re-resolved, and `--frozen-lockfile` always failed. The explicitly
+  // declared dependency now replaces the member's implicit workspace
+  // dependency, the same way an npm dependency overrides a same-name
+  // workspace on a version mismatch.
+
+  test.concurrent("root file: dependency wins and the lockfile round-trips", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { alpha: "file:./vendor/alpha" },
+        }),
+      ),
+      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha" })),
+      write(
+        join(packageDir, "vendor", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "2.0.0" }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"alpha": ["alpha@file:vendor/alpha"`);
+    expect(lockfile).not.toContain("alpha@workspace:");
+    expect(await file(join(packageDir, "node_modules", "alpha", "package.json")).json()).toEqual({
+      name: "alpha",
+      version: "2.0.0",
+    });
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("member referenced through workspace: still installs", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { alpha: "file:./vendor/alpha" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { alpha: "workspace:*" } }),
+      ),
+      write(
+        join(packageDir, "vendor", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "2.0.0" }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    // the root node_modules/alpha is the folder dependency; the member nests
+    // under beta instead of duplicating the root key
+    expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"alpha": ["alpha@file:vendor/alpha"`);
+    expect(lockfile).toContain(`"beta/alpha": ["alpha@workspace:packages/alpha"]`);
+    expect(await file(join(packageDir, "node_modules", "alpha", "package.json")).json()).toEqual({
+      name: "alpha",
+      version: "2.0.0",
+    });
+    expect(
+      await file(join(packageDir, "node_modules", "beta", "node_modules", "alpha", "package.json")).json(),
+    ).toEqual({
+      name: "alpha",
+      version: "1.0.0",
+    });
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("file: dependency folder depending back on the member", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { alpha: "file:./vendor/alpha" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "vendor", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "2.0.0", dependencies: { alpha: "workspace:*" } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"alpha": ["alpha@file:vendor/alpha"`);
+    expect(lockfile).toContain(`"alpha/alpha": ["alpha@workspace:packages/alpha"]`);
+    expect(lockfile).not.toContain("alpha/alpha/alpha");
+
+    const second = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(second.err).not.toContain("Saved lockfile");
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+
+  test.concurrent("file: dependency naming the member's directory still links the member", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { alpha: "file:./packages/alpha" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "1.0.0" }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"alpha": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"alpha": ["alpha@workspace:packages/alpha"]`);
+    expect(lockfile).not.toContain("alpha@file:");
+    expect(await file(join(packageDir, "node_modules", "alpha", "package.json")).json()).toEqual({
+      name: "alpha",
+      version: "1.0.0",
+    });
+  });
+
+  test.concurrent("aliased file: dependency colliding with another member's name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "sandbox",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { beta: "file:./vendor/alpha" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "beta", "package.json"),
+        JSON.stringify({ name: "beta", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "vendor", "alpha", "package.json"),
+        JSON.stringify({ name: "alpha", version: "2.0.0" }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile.match(/"beta": \[/g)).toHaveLength(1);
+    expect(lockfile).toContain(`"beta": ["alpha@file:vendor/alpha"`);
+    expect(lockfile).not.toContain("beta@workspace:");
+    expect(await file(join(packageDir, "node_modules", "beta", "package.json")).json()).toEqual({
+      name: "alpha",
+      version: "2.0.0",
+    });
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  });
+});
+
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

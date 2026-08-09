@@ -136,6 +136,7 @@ pub(crate) fn run_as_coordinator(
             alive: false,
             exit_status: None,
             reap_pending: false,
+            exiting: false,
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -531,6 +532,13 @@ impl<'a> WorkerLoop<'a> {
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
+        // `process.exit()` runs on_exit → cleanup hooks → VM teardown, and
+        // teardown closes this channel before the process dies. Announce the
+        // exit while the channel is still up so the coordinator lets the
+        // worker finish instead of treating the early EOF as a lost worker.
+        let global = vm.global();
+        vm.rare_data()
+            .push_cleanup_hook(global, core::ptr::null_mut(), announce_deliberate_exit);
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
         let wf = unsafe { &mut *WORKER_FRAME.get() };
@@ -668,6 +676,10 @@ pub(crate) fn run_as_worker(
     vm_ref.run_with_api_lock(|| wloop.begin());
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
+    // This path bypasses on_exit (no cleanup hooks), so announce the exit
+    // here: global_exit's teardown closes the channel before the process
+    // dies, and the coordinator must not mistake that EOF for a lost worker.
+    announce_deliberate_exit(core::ptr::null_mut());
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / junit_chunk / coverage_chunk.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
@@ -740,6 +752,25 @@ static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::
 static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
 // Lifetime note: stores an 'a-bound pointer as 'static; sound because the
 // pointee outlives all callers (process exits before it's dropped).
+
+/// Tell the coordinator a deliberate exit is in progress (`Kind::Exiting`),
+/// so the EOF it is about to see is teardown closing the channel, not a lost
+/// worker to SIGKILL. Runs as a VM cleanup hook on the `process.exit()` path
+/// and is called directly from `run_as_worker`'s normal tail.
+extern "C" fn announce_deliberate_exit(_: *mut core::ffi::c_void) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
+    // outlives all callers (process exits before it is dropped).
+    let cmds = unsafe { &mut *cmds_ptr };
+    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
+    let wf = unsafe { &mut *WORKER_FRAME.get() };
+    wf.begin(frame::Kind::Exiting);
+    cmds.send(wf.finish());
+    cmds.channel.flush();
+}
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI

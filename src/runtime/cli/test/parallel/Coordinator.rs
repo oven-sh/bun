@@ -515,6 +515,7 @@ impl<'a> Coordinator<'a> {
                     self.coverage_chunks.push(Box::<[u8]>::from(chunk));
                 }
             }
+            frame::Kind::Exiting => w.exiting = true,
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }

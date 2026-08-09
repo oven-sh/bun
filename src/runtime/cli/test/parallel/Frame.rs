@@ -29,6 +29,13 @@ pub enum Kind {
     /// str lcov — this worker's coverage data, sent at exit; the coordinator
     /// merges every worker's into the one report it writes.
     CoverageChunk,
+    /// (empty) worker → coordinator: a deliberate exit is in progress
+    /// (`process.exit()`, or the normal end-of-run path). VM teardown closes
+    /// the channel before the process dies — long before it under
+    /// BUN_DESTRUCT_VM_ON_EXIT/ASAN — so without this announcement the
+    /// coordinator would see EOF from a live process and treat the worker as
+    /// lost (SIGKILL, clobbering the real exit status).
+    Exiting,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +52,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::JunitChunk,
             8 => Kind::CoverageChunk,
+            9 => Kind::Exiting,
             _ => return Err(()),
         })
     }

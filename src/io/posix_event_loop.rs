@@ -316,7 +316,60 @@ impl Default for FilePoll {
 }
 
 #[cfg(not(windows))]
+/// Outcome of `FilePoll::rearm_after_image_restore`.
+#[cfg(target_os = "macos")]
+enum ImageRearm {
+    Untouched,
+    Rearmed,
+    HungUp,
+}
+
 impl FilePoll {
+    /// Heap-image restore (`Store::rearm_for_image`): re-add this poll to the new kqueue if its fd still means the same
+    /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.
+    #[cfg(target_os = "macos")]
+    fn rearm_after_image_restore(&mut self, loop_: &mut Loop) -> ImageRearm {
+        if self.fd == INVALID_FD
+            || !self.flags.contains(Flags::WasEverRegistered)
+            || self.flags.contains(Flags::Closed)
+        {
+            return ImageRearm::Untouched;
+        }
+        let want = if self.flags.contains(Flags::PollReadable) {
+            Flags::Readable
+        } else if self.flags.contains(Flags::PollWritable) {
+            Flags::Writable
+        } else if self.flags.contains(Flags::PollProcess) {
+            Flags::Process
+        } else {
+            return ImageRearm::Untouched;
+        };
+        // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the
+        // builder's numbers) and the controlling tty. Every other number is stale or parked on /dev/null.
+        // SAFETY: probing an integer fd.
+        let reseated = self.fd.native() <= 2 || unsafe { libc::isatty(self.fd.native()) } == 1;
+        if reseated {
+            let one_shot =
+                self.flags.contains(Flags::OneShot) || self.flags.contains(Flags::NeedsRearm);
+            self.flags.remove(Flags::NeedsRearm);
+            let one_shot = if one_shot {
+                OneShotFlag::OneShot
+            } else {
+                OneShotFlag::None
+            };
+            if self
+                .register_with_fd(loop_, want, one_shot, self.fd)
+                .is_ok()
+            {
+                return ImageRearm::Rearmed;
+            }
+        } else {
+            self.flags
+                .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
+        }
+        self.flags.insert(Flags::Hup);
+        ImageRearm::HungUp
+    }
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
         flags.remove(Flags::Readable);
@@ -1330,68 +1383,22 @@ impl Store {
     /// Heap-image restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
     #[cfg(target_os = "macos")]
     pub fn rearm_for_image(&mut self, loop_: &mut Loop) -> (usize, usize) {
-        let mut rearmed = 0usize;
-        let mut hung_up = 0usize;
+        let (mut rearmed, mut hung_up) = (0usize, 0usize);
         let mut polls: Vec<*mut FilePoll> = Vec::new();
         let mut it = self.hive.hive.used.iter_set();
         while let Some(i) = it.next() {
             polls.push(self.hive.hive.at(i as u16));
         }
-        for p in polls {
-            // SAFETY: slot is marked used in the hive; FilePoll is POD-ish and lives for the Store's lifetime.
-            let poll = unsafe { &mut *p };
-            if poll.fd == INVALID_FD
-                || !poll.flags.contains(Flags::WasEverRegistered)
-                || poll.flags.contains(Flags::Closed)
-            {
-                continue;
-            }
-            let want = if poll.flags.contains(Flags::PollReadable) {
-                Some(Flags::Readable)
-            } else if poll.flags.contains(Flags::PollWritable) {
-                Some(Flags::Writable)
-            } else if poll.flags.contains(Flags::PollProcess) {
-                Some(Flags::Process)
-            } else {
-                None
-            };
-            // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the builder's
-            // numbers) and the controlling tty. Every other number is stale or parked on /dev/null.
-            // SAFETY: probing an integer fd.
-            let reseated = poll.fd.native() <= 2 || unsafe { libc::isatty(poll.fd.native()) } == 1;
-            match (want, reseated) {
-                (Some(flag), true) => {
-                    let one_shot = poll.flags.contains(Flags::OneShot)
-                        || poll.flags.contains(Flags::NeedsRearm);
-                    poll.flags.remove(Flags::NeedsRearm);
-                    if poll
-                        .register_with_fd(
-                            loop_,
-                            flag,
-                            if one_shot {
-                                OneShotFlag::OneShot
-                            } else {
-                                OneShotFlag::None
-                            },
-                            poll.fd,
-                        )
-                        .is_ok()
-                    {
-                        rearmed += 1;
-                    } else {
-                        poll.flags.insert(Flags::Hup);
-                        self.image_hangups.push(p);
-                        hung_up += 1;
-                    }
-                }
-                (Some(_), false) => {
-                    poll.flags
-                        .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
-                    poll.flags.insert(Flags::Hup);
-                    self.image_hangups.push(p);
+        for poll_ptr in polls {
+            // SAFETY: the slot is marked used in the hive and nothing runs concurrently during restore; the call is the
+            // only access through this pointer.
+            match unsafe { (*poll_ptr).rearm_after_image_restore(loop_) } {
+                ImageRearm::Untouched => {}
+                ImageRearm::Rearmed => rearmed += 1,
+                ImageRearm::HungUp => {
+                    self.image_hangups.push(poll_ptr);
                     hung_up += 1;
                 }
-                _ => {}
             }
         }
         (rearmed, hung_up)
@@ -1402,16 +1409,21 @@ impl Store {
     pub fn dispatch_image_hangups(&mut self) -> usize {
         let pending = core::mem::take(&mut self.image_hangups);
         let mut delivered = 0usize;
-        for p in pending {
-            // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free list, which has not run yet.
-            let poll = unsafe { &mut *p };
-            if poll.fd == INVALID_FD
-                || poll.flags.contains(Flags::Closed)
-                || !poll.flags.contains(Flags::Hup)
-            {
+        for poll_ptr in pending {
+            // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free
+            // list, which has not run yet. `on_update` reaches the owner, which may close the poll, so it is a
+            // call-scoped access with nothing borrowed across it.
+            let still_hung_up = unsafe {
+                let poll = &*poll_ptr;
+                poll.fd != INVALID_FD
+                    && !poll.flags.contains(Flags::Closed)
+                    && poll.flags.contains(Flags::Hup)
+            };
+            if !still_hung_up {
                 continue;
             }
-            poll.on_update(0);
+            // SAFETY: as above.
+            unsafe { (*poll_ptr).on_update(0) };
             delivered += 1;
         }
         delivered

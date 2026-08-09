@@ -47,7 +47,10 @@ fn snapshot(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 let mut joined: Vec<u8> = Vec::new();
                 while let Some(name) = it.next()? {
                     let name = name.to_bun_string(global)?.to_owned_slice();
-                    if name.is_empty() || name.contains(&0) || name.contains(&b'=') {
+                    if name.is_empty()
+                        || bun_core::strings::contains_char(&name, 0)
+                        || bun_core::strings::contains_char(&name, b'=')
+                    {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "snapshot: envGate entries must be non-empty variable names"
                         )));
@@ -211,7 +214,7 @@ fn embed_image(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
             )));
         }
     };
-    let (dir, name) = match out_path.iter().rposition(|&c| c == b'/') {
+    let (dir, name) = match bun_core::strings::last_index_of_char(&out_path, b'/') {
         Some(i) => (&out_path[..i.max(1)], &out_path[i + 1..]),
         None => (&b"."[..], &out_path[..]),
     };

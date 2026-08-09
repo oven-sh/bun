@@ -2452,4 +2452,37 @@ describe.concurrent("lazy property builders", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // Bun.env shares the lazy env map. When its construction fails, the builder
+  // must return empty with the exception pending (like Bun.$) instead of
+  // handing reifyStaticProperty a value: putDirect would transition the Bun
+  // object's structure while the failed lookup is reported as not-found, and
+  // the in-progress walk would advance through a stale Structure*.
+  // Bun.inspect is pre-reified because the windowsEnv builtin reads
+  // Bun.inspect.custom while building the map, which transitions the Bun
+  // object mid-walk on its own; that separate bug is fixed in #37175.
+  it("Bun.env access with a broken env builder throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.inspect;
+         globalThis.Proxy = 123;
+         try {
+           console.log("typeof:" + typeof Bun.env);
+         } catch (e) {
+           console.log("caught:" + e.constructor.name);
+         }
+         console.log("alive");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = isWindows ? "caught:TypeError\nalive\n" : "typeof:object\nalive\n";
+    expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -212,7 +212,7 @@ static void dumpJSCHeap(JSC::VM& vm, FILE* f)
             n++;
             size_t is = ucb->instructions().sizeInBytes();
             auto& md = ucb->metadata();
-            size_t ms = md.allocatedSizeForDebug();
+            size_t ms = md.sizeInBytesForGC();
             if (ms) nHasMeta++;
             insn += is;
             meta += ms;

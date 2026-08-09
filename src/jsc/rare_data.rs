@@ -1121,6 +1121,17 @@ impl Drop for RareData {
 }
 
 impl RareData {
+    /// Snapshot restore: the Bun.stdin/stdout/stderr stores describe the builder's descriptors. They are left to the
+    /// snapshot (JS may still hold Blobs over them); the next use builds stores for this process's descriptors.
+    pub fn forget_stdio_stores_for_snapshot_restore(&mut self) {
+        self.stdin_store = None;
+        self.stdout_store = None;
+        self.stderr_store = None;
+        self.stdin_mode = 0;
+        self.stdout_mode = 0;
+        self.stderr_mode = 0;
+    }
+
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
     /// that loop; `Drop` calls it for every other owner. Idempotent.

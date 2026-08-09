@@ -133,6 +133,18 @@ pub fn note_local_io(kind: &'static str, site: Vec<u8>) {
         audit.push((kind, site, 1));
     }
 }
+static STDIO_NOTES: std::sync::Mutex<Vec<(i32, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
+/// While the snapshot is being taken: `process.stdin/stdout/stderr` was created. The stream is re-created at restore, but
+/// whatever the app derived from it before the snapshot (isTTY, color support) describes the build's descriptors.
+pub fn note_stdio_stream(fd: i32, site: Vec<u8>) {
+    STDIO_NOTES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((fd, site));
+}
+pub fn take_stdio_notes() -> Vec<(i32, Vec<u8>)> {
+    std::mem::take(&mut *STDIO_NOTES.lock().unwrap_or_else(|e| e.into_inner()))
+}
 /// The audit, most frequent first; empty unless the build did local I/O.
 pub fn take_local_io_audit() -> Vec<(&'static str, Vec<u8>, u32)> {
     let mut audit = std::mem::take(&mut *LOCAL_IO_AUDIT.lock().unwrap_or_else(|e| e.into_inner()));

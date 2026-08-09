@@ -513,6 +513,35 @@ impl Source {
             }
         }
     }
+
+    /// A process that resumed from a snapshot inherited the build's idea of its stdio (the flags in `bun_stdio_tty` have
+    /// already been recomputed for this process's descriptors by `bun_refresh_stdio_after_snapshot_restore`); rederive
+    /// what was computed from them and from the environment at startup.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn refresh_stdio_after_snapshot_restore() {
+        STDOUT_DESCRIPTOR_TYPE.reset_for_snapshot_restore();
+        STDERR_DESCRIPTOR_TYPE.reset_for_snapshot_restore();
+        LAZY_COLOR_DEPTH.reset_for_snapshot_restore();
+        let is_stdout_tty = stdio_tty_flag(1);
+        let is_stderr_tty = stdio_tty_flag(2);
+        if is_stdout_tty {
+            let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
+        }
+        if is_stderr_tty {
+            let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
+        }
+        let enable_color = if Self::is_force_color() {
+            Some(true)
+        } else if Self::is_no_color() {
+            Some(false)
+        } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
+            Some(true)
+        } else {
+            None
+        };
+        ENABLE_ANSI_COLORS_STDOUT.store(enable_color.unwrap_or(is_stdout_tty), Ordering::Relaxed);
+        ENABLE_ANSI_COLORS_STDERR.store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
+    }
 }
 
 // ── Source::WindowsStdio ──────────────────────────────────────────────────

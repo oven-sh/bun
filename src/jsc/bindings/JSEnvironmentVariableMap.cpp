@@ -789,7 +789,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
 }
 
 // The innermost few JS frames, formatted like an error stack (source maps applied), as the key a copy of process.env is reported under.
-static String callSiteForEnvReport(JSGlobalObject* lexicalGlobalObject)
+String snapshotReportCallSite(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = JSC::getVM(globalObject);
@@ -816,7 +816,7 @@ void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globa
     VM& vm = JSC::getVM(globalObject);
     if (auto* store = sharedEnvStoreFor(object)) {
         if (store->isRecordingReads()) [[unlikely]]
-            store->noteEnumeration(callSiteForEnvReport(globalObject));
+            store->noteEnumeration(snapshotReportCallSite(globalObject));
         for (const auto& key : store->keys())
             propertyNames.add(JSC::Identifier::fromString(vm, key));
     }

@@ -1702,13 +1702,31 @@ fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
 /// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the snapshot from the top of the run loop.
 /// Under BUN_SNAPSHOT_IO=local, everything the app touched on this machine before the freeze — the results are in the snapshot.
 fn print_local_io_audit() {
+    let stdio = bun_core::snapshot::take_stdio_notes();
+    if !stdio.is_empty() {
+        bun_core::Output::print_errorln(format_args!(
+            "snapshot: process.stdin/stdout/stderr were set up before the freeze; the streams are re-created at restore, but anything derived from them here (isTTY, color support) describes this build's descriptors, not the user's:"
+        ));
+        for (fd, site) in &stdio {
+            let name = match fd {
+                0 => "process.stdin",
+                1 => "process.stdout",
+                _ => "process.stderr",
+            };
+            bun_core::Output::print_errorln(format_args!(
+                "  {name} from:\n{}",
+                bstr::BStr::new(site)
+            ));
+        }
+    }
     let audit = bun_core::snapshot::take_local_io_audit();
     if audit.is_empty() {
+        bun_core::Output::flush();
         return;
     }
     let uses: u32 = audit.iter().map(|(_, _, n)| n).sum();
     bun_core::Output::print_errorln(format_args!(
-        "snapshot: {uses} local I/O operations ran before the freeze (allowed by BUN_SNAPSHOT_IO=local); whatever they produced is in the snapshot:"
+        "snapshot: {uses} local I/O operations ran before the freeze (allowed by --snapshot-io); whatever they produced is in the snapshot:"
     ));
     for (kind, site, count) in &audit {
         bun_core::Output::print_errorln(format_args!(
@@ -1856,9 +1874,25 @@ pub extern "C" fn Bun__snapshotSetBuilding(on: bool) {
     bun_core::snapshot::set_building(on);
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__snapshotIsBuilding() -> bool {
+    bun_core::snapshot::building()
+}
+
+/// # Safety
+/// `site` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__snapshotNoteStdioStream(fd: i32, site: *const u8, len: usize) {
+    // SAFETY: per the contract above.
+    let site = unsafe { ::core::slice::from_raw_parts(site, len) };
+    bun_core::snapshot::note_stdio_stream(fd, site.to_vec());
+}
+
 unsafe extern "C" {
     fn Bun__Process__useSharedEnvForSnapshotBuild(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__Process__reloadEnvAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
+    fn Bun__Process__recreateStdioAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
+    safe fn bun_refresh_stdio_after_snapshot_restore();
     fn Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm: *mut bun_jsc::VM);
 }
 
@@ -1912,6 +1946,13 @@ pub extern "C" fn Bun__snapshotAdoptMainThreadVM() {
         }
         // SAFETY: FFI; rebuilds the JS `process.env` object from the (now current) loader map.
         unsafe { Bun__Process__reloadEnvAfterSnapshotRestore(vm.global) };
+        // Descriptors 0-2 are this launch's, but everything derived from the builder's is in the snapshot: the tty/null flags
+        // and saved termios (C), colors (Output), the Bun.stdout/stderr/stdin stores, and any process.std* stream the app created.
+        bun_refresh_stdio_after_snapshot_restore();
+        bun_core::Output::Source::refresh_stdio_after_snapshot_restore();
+        vm.rare_data().forget_stdio_stores_for_snapshot_restore();
+        // SAFETY: FFI; main-thread global, single-threaded at this point of restore.
+        unsafe { Bun__Process__recreateStdioAfterSnapshotRestore(vm.global) };
     }
     {
         // SAFETY: main-thread VM; single-threaded at this point of restore.

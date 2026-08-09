@@ -2935,13 +2935,25 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return resultObject->getIndex(globalObject, 0);
 }
 
+extern "C" bool Bun__snapshotIsBuilding();
+extern "C" void Bun__snapshotNoteStdioStream(int fd, const uint8_t* site, size_t len);
+static void noteStdioStreamForSnapshotBuild(JSObject* processObject, int fd)
+{
+    if (!Bun__snapshotIsBuilding()) [[likely]]
+        return;
+    auto site = Bun::snapshotReportCallSite(processObject->globalObject()).utf8();
+    Bun__snapshotNoteStdioStream(fd, reinterpret_cast<const uint8_t*>(site.data()), site.length());
+}
+
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
+    noteStdioStreamForSnapshotBuild(processObject, 1);
     return constructStdioWriteStream(processObject->globalObject(), processObject, 1);
 }
 
 static JSValue constructStderr(VM& vm, JSObject* processObject)
 {
+    noteStdioStreamForSnapshotBuild(processObject, 2);
     return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
 }
 
@@ -2951,6 +2963,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
+    noteStdioStreamForSnapshotBuild(processObject, 0);
     auto* globalObject = processObject->globalObject();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
@@ -3199,6 +3212,27 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 
 // snapshot restore: process.env holds the builder's environment; rebuild it from the reloaded loader map.
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject*);
+// A process.stdin/stdout/stderr the app created while the snapshot was taken is a stream over the build's descriptors
+// (their kind decides the stream class and write mode); replace each one that exists with one over this launch's.
+extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSLockHolder lock(vm);
+    auto* process = globalObject->processObject();
+    struct { ASCIILiteral name; JSValue (*construct)(VM&, JSObject*); } streams[] = {
+        { "stdin"_s, constructStdin },
+        { "stdout"_s, constructStdout },
+        { "stderr"_s, constructStderr },
+    };
+    for (auto& stream : streams) {
+        auto ident = Identifier::fromString(vm, stream.name);
+        if (process->getDirect(vm, ident).isEmpty())
+            continue; // never created: the lazy property will build one for this launch on first use
+        process->putDirect(vm, ident, stream.construct(vm, process));
+    }
+}
+
 extern "C" void Bun__Process__reloadEnvAfterSnapshotRestore(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);

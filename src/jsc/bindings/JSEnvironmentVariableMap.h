@@ -83,3 +83,8 @@ bool refillSharedEnvAfterSnapshotRestore(Zig::GlobalObject*, JSC::JSObject* fres
 void printEnvReadsBeforeSnapshot(Zig::GlobalObject*, const Vector<WTF::String>& excludedNames);
 
 }
+
+namespace Bun {
+// The JS frames (up to 4) currently on the stack, one per line, for the reports the snapshot build prints.
+WTF::String snapshotReportCallSite(JSC::JSGlobalObject*);
+}

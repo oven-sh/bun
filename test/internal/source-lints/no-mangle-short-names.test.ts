@@ -29,7 +29,8 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 // within the next 9 lines (more attributes, doc comments, visibility,
 // `unsafe extern "C"` may sit in between). Group 1 is that in-between span,
 // group 2 the name.
-const SITE = /^[ \t]*#\[(?:unsafe\()?no_mangle\)?\]((?:[^\n]*\n){0,9}?[^\n]*?)\bfn[ \t]+(?:r#)?(\$?[A-Za-z_][A-Za-z0-9_]*)/gm;
+const SITE =
+  /^[ \t]*#\[(?:unsafe\()?no_mangle\)?\]((?:[^\n]*\n){0,9}?[^\n]*?)\bfn[ \t]+(?:r#)?(\$?[A-Za-z_][A-Za-z0-9_]*)/gm;
 
 function countLines(s: string): number {
   let n = 0;
@@ -101,9 +102,9 @@ test("the matcher handles the tricky attribute arrangements", () => {
 
   // A no_mangle static does not suppress a short no_mangle fn right after it,
   // and is not itself a violation (nor is the ordinary fn following it).
-  expect(
-    flag(`#[unsafe(no_mangle)]\nstatic X: u32 = 1;\n\n#[unsafe(no_mangle)]\nextern "C" fn ab() {}`),
-  ).toEqual(["f.rs:5: #[no_mangle] fn ab"]);
+  expect(flag(`#[unsafe(no_mangle)]\nstatic X: u32 = 1;\n\n#[unsafe(no_mangle)]\nextern "C" fn ab() {}`)).toEqual([
+    "f.rs:5: #[no_mangle] fn ab",
+  ]);
   expect(flag(`#[unsafe(no_mangle)]\nstatic X: u32 = 1;\n\nfn ab() {}`)).toEqual([]);
 
   // Raw identifiers export the symbol without `r#`; macro metavariables get

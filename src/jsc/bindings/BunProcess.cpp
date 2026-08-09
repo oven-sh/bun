@@ -1325,11 +1325,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    auto* process = globalObject->processObject();
-    auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
+    // Checked before processObject(): materializing the lazy Process opens a
+    // DeferTermination scope, which asserts if the termination exception is still
+    // pending once an entry-scope pop has cleared hasTerminationRequest.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
+    auto* process = globalObject->processObject();
+    auto& wrapped = process->wrapped();
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope

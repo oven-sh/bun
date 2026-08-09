@@ -455,3 +455,74 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: terminate() while dynamic import()s are in flight. The transpiler
+// store's completion drain reported the worker's pending TerminationException as
+// an uncaughtException instead of unwinding the tick loop, and
+// Bun__handleUncaughtException materialized the lazy process object before its
+// termination guard; the LazyProperty initializer opens a DeferTermination
+// scope, which trips ASSERT(vm.hasTerminationRequest()) in
+// VMTraps::deferTerminationSlow (the request bit is cleared on entry-scope exit
+// while Bun's termination exception stays pending) and SIGABRTs the whole
+// process. Release builds compile the assert out, so debug/ASAN only.
+test.skipIf(!isDebug && !isASAN)(
+  "terminate() while dynamic import() churn is in flight does not trip VMTraps::deferTerminationSlow",
+  async () => {
+    let mod = "for (let i = 0; i < 2000; i++);\nexport const id = 1;\n";
+    for (let i = 0; i < 60; i++) mod += `export const x${i} = ${i} + Math.random();\n`;
+    using dir = tempDir("dynimp-terminate", {
+      "mod.mjs": mod,
+      "w.mjs":
+        "let k = 0;\n" +
+        "while (true) {\n" +
+        "  await Promise.all(Array.from({ length: 8 }, () => import('./mod.mjs?v=' + k++)));\n" +
+        "  postMessage(k);\n" +
+        "}\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Three lanes of workers churning batches of 8 concurrent import()s of
+        // fresh specifiers; each worker is terminated a few ms after it reports
+        // a completed batch, so terminate() lands while completions are queued
+        // behind one another in the same tick. The unpatched build aborts
+        // within a few seconds.
+        const end = Date.now() + 25_000;
+        async function lane() {
+          while (Date.now() < end) {
+            await new Promise((resolve) => {
+              const w = new Worker("./w.mjs");
+              const batches = 1 + Math.floor(Math.random() * 3);
+              let seen = 0;
+              w.onerror = () => {};
+              w.onmessage = () => {
+                if (++seen === batches) {
+                  setTimeout(() => { w.terminate(); setTimeout(resolve, 5); }, Math.random() * 30);
+                }
+              };
+              // Safety valve if the worker wedges before reporting.
+              setTimeout(() => { w.terminate(); resolve(); }, 5000);
+            });
+          }
+        }
+        await Promise.all([lane(), lane(), lane()]);
+        console.log("PASS");
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

@@ -7,7 +7,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{Stopped, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, Stopped, StringJsc};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;

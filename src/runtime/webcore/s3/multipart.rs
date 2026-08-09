@@ -101,7 +101,7 @@ use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{Stopped, GlobalRef, JsCell};
+use bun_jsc::{GlobalRef, JsCell, Stopped};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;

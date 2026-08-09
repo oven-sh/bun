@@ -40,10 +40,7 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 /// back is the VM's termination (pending, or the gate already closed) -- stand the tick loop down.
 /// WebCore: `if (isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
 #[cold]
-pub fn report_error_or_terminate(
-    global: &JSGlobalObject,
-    proof: JsError,
-) -> Result<(), Stopped> {
+pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         return Err(Stopped);

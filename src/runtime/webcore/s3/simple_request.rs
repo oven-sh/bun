@@ -177,12 +177,7 @@ impl Callback {
         Ok(())
     }
 
-    fn not_found(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> Result<(), Stopped> {
+    fn not_found(&self, code: &[u8], message: &[u8], context: *mut c_void) -> Result<(), Stopped> {
         let err = S3Error { code, message };
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,

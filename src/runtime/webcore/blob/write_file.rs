@@ -1303,10 +1303,7 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(
-        handler: *mut c_void,
-        count: WriteFileResultType,
-    ) -> Result<(), Stopped> {
+    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> Result<(), Stopped> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in
         // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.

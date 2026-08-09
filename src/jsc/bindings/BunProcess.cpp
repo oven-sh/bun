@@ -3220,7 +3220,10 @@ extern "C" void Bun__Process__recreateStdioAfterSnapshotRestore(JSC::JSGlobalObj
     auto& vm = JSC::getVM(globalObject);
     JSC::JSLockHolder lock(vm);
     auto* process = globalObject->processObject();
-    struct { ASCIILiteral name; JSValue (*construct)(VM&, JSObject*); } streams[] = {
+    struct {
+        ASCIILiteral name;
+        JSValue (*construct)(VM&, JSObject*);
+    } streams[] = {
         { "stdin"_s, constructStdin },
         { "stdout"_s, constructStdout },
         { "stderr"_s, constructStderr },

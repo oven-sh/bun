@@ -367,18 +367,6 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
 
-// PEM bundles (custom CA lists) can be hundreds of KB; the pool key only needs identity, so hash long parts instead of embedding them per socket name.
-function compactPoolKeyPart(value) {
-  if (typeof value === "string") return value.length > 1024 ? "h:" + value.length + ":" + Bun.hash(value) : value;
-  if ($isArray(value)) {
-    let total = 0;
-    for (let i = 0; i < value.length; i++)
-      total += typeof value[i] === "string" ? value[i].length : (value[i]?.byteLength ?? 0);
-    if (total > 1024) return "h:" + total + ":" + Bun.hash(value.join("\n"));
-  }
-  return value;
-}
-
 /**
  * Gets a unique name for a set of options.
  */
@@ -410,10 +398,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   } = options;
 
   name += ":";
-  if (ca) name += compactPoolKeyPart(ca);
+  if (ca) name += ca;
 
   name += ":";
-  if (cert) name += compactPoolKeyPart(cert);
+  if (cert) name += cert;
 
   name += ":";
   if (clientCertEngine) name += clientCertEngine;
@@ -422,10 +410,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ciphers) name += ciphers;
 
   name += ":";
-  if (key) name += compactPoolKeyPart(key);
+  if (key) name += key;
 
   name += ":";
-  if (pfx) name += compactPoolKeyPart(pfx);
+  if (pfx) name += pfx;
 
   name += ":";
   if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
@@ -443,7 +431,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (secureProtocol) name += secureProtocol;
 
   name += ":";
-  if (crl) name += compactPoolKeyPart(crl);
+  if (crl) name += crl;
 
   name += ":";
   if (honorCipherOrder !== undefined) name += honorCipherOrder;

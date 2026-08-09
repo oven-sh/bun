@@ -1993,6 +1993,36 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
+unsafe extern "C" {
+    safe fn us_default_use_system_ca() -> i32;
+}
+
+impl VirtualMachine {
+    /// Whether TLS contexts created by this thread trust the system CAs by default: this thread's
+    /// explicit `--use-system-ca` / `--no-use-system-ca`, else the process default.
+    pub fn tls_use_system_ca(&self) -> bool {
+        self.use_system_ca
+            .unwrap_or_else(|| us_default_use_system_ca() != 0)
+    }
+
+    /// The same decision as the `use_system_ca` tri-state TLS options carry
+    /// (0 = process default, 1 = include, -1 = exclude).
+    pub fn tls_use_system_ca_option(&self) -> i32 {
+        match self.use_system_ca {
+            None => 0,
+            Some(true) => 1,
+            Some(false) => -1,
+        }
+    }
+
+    /// This thread's decision differs from the process default, so anything keyed on "the default
+    /// TLS context" (fetch's shared client context) must use a variant of its own.
+    pub fn tls_use_system_ca_differs_from_process(&self) -> bool {
+        self.use_system_ca
+            .is_some_and(|v| v != (us_default_use_system_ca() != 0))
+    }
+}
+
 /// The subset of a Worker's `execArgv` that bun acts on (node's per-Environment options).
 #[derive(Default)]
 pub struct WorkerExecArgv {

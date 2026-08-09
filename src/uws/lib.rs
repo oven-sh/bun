@@ -416,7 +416,11 @@ pub mod ssl_wrapper {
                             boring_sys::SSL_VERIFY_PEER,
                             Some(always_continue_verify),
                         );
-                        if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
+                        // Same roots variant the context was built with (its creator's
+                        // --use-system-ca decision is recorded on the SSL_CTX).
+                        if let Some(roots) = NonNull::new(us_get_shared_default_ca_store(
+                            us_ssl_ctx_use_system_ca(ctx.as_ptr()),
+                        )) {
                             let _ = boring_sys::SSL_set0_verify_cert_store(
                                 ssl.as_ptr(),
                                 roots.as_ptr(),
@@ -1225,7 +1229,9 @@ pub mod ssl_wrapper {
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
-        safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        safe fn us_get_shared_default_ca_store(use_system_ca: i32) -> *mut boring_sys::X509_STORE;
+        /// The system-CA decision an SSL_CTX built by usockets was created with.
+        fn us_ssl_ctx_use_system_ca(ctx: *mut boring_sys::SSL_CTX) -> i32;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

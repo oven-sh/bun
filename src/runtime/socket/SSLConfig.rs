@@ -152,6 +152,8 @@ impl SSLConfigFromJs for SSLConfig {
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
+        result.use_system_ca = vm.tls_use_system_ca_option();
+        result.requires_custom_request_ctx = vm.tls_use_system_ca_differs_from_process();
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.get() {
@@ -271,6 +273,8 @@ impl SSLConfigFromJs for SSLConfig {
 pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg.use_system_ca = vm.tls_use_system_ca_option();
+    cfg.requires_custom_request_ctx = vm.tls_use_system_ca_differs_from_process();
     cfg
 }
 

@@ -51,6 +51,10 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
+    /// Whether contexts built from this config trust the system CAs by default (node's
+    /// per-Environment --use-system-ca): 0 = process default, 1 = include, -1 = exclude. Stamped
+    /// from the creating VM; only matters when no `ca`/`ca_file_name` is given.
+    pub use_system_ca: i32,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
     /// context.
@@ -120,6 +124,7 @@ impl SSLConfig {
         requires_custom_request_ctx: false,
         is_using_default_ciphers: true,
         low_memory_mode: false,
+        use_system_ca: 0,
         cached_hash: AtomicU64::new(0),
     };
 
@@ -225,6 +230,7 @@ impl SSLConfig {
             ctx_opts.crl = crl.as_ptr();
             ctx_opts.crl_count = crl.len() as u32;
         }
+        ctx_opts.use_system_ca = self.use_system_ca;
 
         ctx_opts
     }
@@ -324,6 +330,9 @@ impl SSLConfig {
         if self.is_using_default_ciphers != other.is_using_default_ciphers {
             return false;
         }
+        if self.use_system_ca != other.use_system_ca {
+            return false;
+        }
         if self.low_memory_mode != other.low_memory_mode {
             return false;
         }
@@ -384,6 +393,7 @@ impl SSLConfig {
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
         hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
+        hasher.update(&self.use_system_ca.to_ne_bytes());
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
         let hash = if hash == 0 { 1 } else { hash };
@@ -483,6 +493,7 @@ impl Clone for SSLConfig {
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
+            use_system_ca: self.use_system_ca,
             cached_hash: AtomicU64::new(0),
         }
     }

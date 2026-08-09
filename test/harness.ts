@@ -87,7 +87,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   AGENT: "false",
 };
 
-const ciEnv = { ...bunEnv };
+export const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";

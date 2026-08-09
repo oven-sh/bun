@@ -1,10 +1,12 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "fs";
 import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  ciEnv,
+  isBuildKite,
   isASAN,
   isCI,
   isMacOS,
@@ -1338,16 +1340,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           "napi diagnostics: heap snapshots:",
           snapshots.map(f => `${f} (${statSync(join(diagDir, f)).size} bytes)`),
         );
-        if (process.env.BUILDKITE) {
+        if (isBuildKite) {
+          // harness strips BUILDKITE_* from process.env; ciEnv still has them.
           const up = spawnSync({
             cmd: ["buildkite-agent", "artifact", "upload", "napi-diag-*.heapsnapshot"],
             cwd: diagDir,
-            env: process.env,
+            env: ciEnv,
             stdout: "inherit",
             stderr: "inherit",
           });
           console.error("napi diagnostics: artifact upload exit", up.exitCode);
         }
+        for (const f of snapshots) rmSync(join(diagDir, f), { force: true });
       }
       // Checked first so a failure prints everything the wrapper and child wrote.
       // Diagnostics: also fail (and so print everything, including the GC log)

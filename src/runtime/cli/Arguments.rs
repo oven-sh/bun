@@ -1647,8 +1647,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // `bun build --snapshot --outfile app` (no entrypoints) is the snapshot step alone, on an executable built earlier.
         if opts.entry_points.is_empty()
             && !ctx.bundler_options.bake
-            && ctx.bundler_options.compile_snapshot
-                == bun_options_types::context::CompileSnapshot::Off
+            && ctx.bundler_options.compile_startup_snapshot
+                == bun_options_types::context::CompileStartupSnapshot::Off
         {
             bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
@@ -2054,9 +2054,9 @@ fn parse_build_command_options(
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(mode) = args.option(b"--snapshot") {
-        ctx.bundler_options.compile_snapshot = match mode {
-            b"" | b"auto" => bun_options_types::context::CompileSnapshot::Auto,
-            b"manual" => bun_options_types::context::CompileSnapshot::Manual,
+        ctx.bundler_options.compile_startup_snapshot = match mode {
+            b"" | b"auto" => bun_options_types::context::CompileStartupSnapshot::Auto,
+            b"manual" => bun_options_types::context::CompileStartupSnapshot::Manual,
             other => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --snapshot expects 'auto' or 'manual', got \"{}\"",
@@ -2067,17 +2067,18 @@ fn parse_build_command_options(
         };
     }
     if let Some(io) = args.option(b"--snapshot-io") {
-        if ctx.bundler_options.compile_snapshot == bun_options_types::context::CompileSnapshot::Off
+        if ctx.bundler_options.compile_startup_snapshot
+            == bun_options_types::context::CompileStartupSnapshot::Off
         {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: --snapshot-io only applies together with --snapshot"
             );
             Global::exit(1);
         }
-        ctx.bundler_options.compile_snapshot_io = match io {
-            b"strict" => bun_options_types::context::CompileSnapshotIo::Strict,
-            b"local" => bun_options_types::context::CompileSnapshotIo::Local,
-            b"network" => bun_options_types::context::CompileSnapshotIo::Network,
+        ctx.bundler_options.compile_startup_snapshot_io = match io {
+            b"strict" => bun_options_types::context::CompileStartupSnapshotIo::Strict,
+            b"local" => bun_options_types::context::CompileStartupSnapshotIo::Local,
+            b"network" => bun_options_types::context::CompileStartupSnapshotIo::Network,
             other => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --snapshot-io expects 'strict', 'local' or 'network', got \"{}\"",

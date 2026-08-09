@@ -1233,7 +1233,8 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    static INIT_ONCE: bun_core::snapshot::SnapshotOnce = bun_core::snapshot::SnapshotOnce::new();
+    static INIT_ONCE: bun_core::startup_snapshot::SnapshotOnce =
+        bun_core::startup_snapshot::SnapshotOnce::new();
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned

@@ -105,7 +105,7 @@ fn current_default_loop() -> Option<&'static FSEventsLoop> {
     }
     // SAFETY: only ever set to a leaked `&'static FSEventsLoop`.
     let l: &'static FSEventsLoop = unsafe { &*p };
-    (l.epoch == bun_core::snapshot::epoch()).then_some(l)
+    (l.epoch == bun_core::startup_snapshot::epoch()).then_some(l)
 }
 
 #[cfg(unix)]
@@ -286,7 +286,7 @@ fn init_core_services() -> CoreServices {
 }
 
 pub struct FSEventsLoop {
-    /// `bun_core::snapshot::epoch()` when this loop (and its CF thread) was created.
+    /// `bun_core::startup_snapshot::epoch()` when this loop (and its CF thread) was created.
     epoch: u32,
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
@@ -431,7 +431,7 @@ impl FSEventsLoop {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
-            epoch: bun_core::snapshot::epoch(),
+            epoch: bun_core::startup_snapshot::epoch(),
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             mutex: Mutex::new(),
@@ -503,7 +503,7 @@ impl FSEventsLoop {
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
-        if self.epoch != bun_core::snapshot::epoch() {
+        if self.epoch != bun_core::startup_snapshot::epoch() {
             return; // this loop's CF thread belonged to the process that built the snapshot
         }
         let cf = CoreFoundation::get();

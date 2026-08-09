@@ -222,17 +222,17 @@ pub mod js_bundler {
     }
 
     /// Top-level `snapshot: true | { mode?: "auto" | "manual", io?: "strict" | "local" | "network" }` (`bun build --snapshot`).
-    fn parse_snapshot_options(
+    fn parse_startup_snapshot_options(
         global_this: &JSGlobalObject,
         config: JSValue,
         this: &mut CompileOptions,
     ) -> JsResult<()> {
-        use bun_options_types::context::{CompileSnapshot, CompileSnapshotIo};
+        use bun_options_types::context::{CompileStartupSnapshot, CompileStartupSnapshotIo};
         let Some(value) = config.get_own(global_this, &BunString::static_str("snapshot"))? else {
             return Ok(());
         };
         if value.is_boolean() {
-            this.snapshot = CompileSnapshot::Auto;
+            this.snapshot = CompileStartupSnapshot::Auto;
             return Ok(());
         }
         if !value.is_object() {
@@ -240,13 +240,13 @@ pub mod js_bundler {
                 "snapshot must be true or an object: {{ mode?: \"auto\" | \"manual\", io?: \"strict\" | \"local\" | \"network\" }}"
             )));
         }
-        this.snapshot = CompileSnapshot::Auto;
+        this.snapshot = CompileStartupSnapshot::Auto;
         if let Some(mode) = value.get_own(global_this, &BunString::static_str("mode"))? {
             let mode = mode.to_bun_string(global_this)?;
             this.snapshot = if mode.eql_comptime("auto") {
-                CompileSnapshot::Auto
+                CompileStartupSnapshot::Auto
             } else if mode.eql_comptime("manual") {
-                CompileSnapshot::Manual
+                CompileStartupSnapshot::Manual
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "snapshot.mode must be \"auto\" or \"manual\""
@@ -256,11 +256,11 @@ pub mod js_bundler {
         if let Some(io) = value.get_own(global_this, &BunString::static_str("io"))? {
             let io = io.to_bun_string(global_this)?;
             this.snapshot_io = if io.eql_comptime("strict") {
-                CompileSnapshotIo::Strict
+                CompileStartupSnapshotIo::Strict
             } else if io.eql_comptime("local") {
-                CompileSnapshotIo::Local
+                CompileStartupSnapshotIo::Local
             } else if io.eql_comptime("network") {
-                CompileSnapshotIo::Network
+                CompileStartupSnapshotIo::Network
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "snapshot.io must be \"strict\", \"local\" or \"network\""
@@ -287,8 +287,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
-        pub(crate) snapshot: bun_options_types::context::CompileSnapshot,
-        pub(crate) snapshot_io: bun_options_types::context::CompileSnapshotIo,
+        pub(crate) snapshot: bun_options_types::context::CompileStartupSnapshot,
+        pub(crate) snapshot_io: bun_options_types::context::CompileStartupSnapshotIo,
     }
 
     impl Default for CompileOptions {
@@ -310,8 +310,8 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
-                snapshot: bun_options_types::context::CompileSnapshot::Off,
-                snapshot_io: bun_options_types::context::CompileSnapshotIo::Strict,
+                snapshot: bun_options_types::context::CompileStartupSnapshot::Off,
+                snapshot_io: bun_options_types::context::CompileStartupSnapshotIo::Strict,
             }
         }
     }
@@ -341,7 +341,7 @@ pub mod js_bundler {
                     return Ok(None);
                 };
                 if snapshot_requested {
-                    parse_snapshot_options(global_this, config, &mut this)?;
+                    parse_startup_snapshot_options(global_this, config, &mut this)?;
                 }
 
                 if compile_value.is_boolean() {

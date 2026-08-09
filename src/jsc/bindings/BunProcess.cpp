@@ -2947,14 +2947,14 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return resultObject->getIndex(globalObject, 0);
 }
 
-extern "C" bool Bun__snapshotIsBuilding();
-extern "C" void Bun__snapshotNoteStdioStream(int fd, const uint8_t* site, size_t len);
+extern "C" bool Bun__startupSnapshotIsBuilding();
+extern "C" void Bun__startupSnapshotNoteStdioStream(int fd, const uint8_t* site, size_t len);
 static void noteStdioStreamForSnapshotBuild(JSObject* processObject, int fd)
 {
-    if (!Bun__snapshotIsBuilding()) [[likely]]
+    if (!Bun__startupSnapshotIsBuilding()) [[likely]]
         return;
     auto site = Bun::snapshotReportCallSite(processObject->globalObject()).utf8();
-    Bun__snapshotNoteStdioStream(fd, reinterpret_cast<const uint8_t*>(site.data()), site.length());
+    Bun__startupSnapshotNoteStdioStream(fd, reinterpret_cast<const uint8_t*>(site.data()), site.length());
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)

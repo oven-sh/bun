@@ -96,11 +96,11 @@ impl<T: 'static> ProcessDerived<T> {
 pub enum IoPolicy {
     Strict,
     Local,
-    /// BUN_SNAPSHOT_IO=network: the network too — its answers are frozen into every launch — still recorded and reported.
+    /// BUN_STARTUP_SNAPSHOT_IO=network: the network too — its answers are frozen into every launch — still recorded and reported.
     Network,
 }
 pub fn io_policy() -> IoPolicy {
-    match crate::env_var::BUN_SNAPSHOT_IO.get() {
+    match crate::env_var::BUN_STARTUP_SNAPSHOT_IO.get() {
         Some(b"local") => IoPolicy::Local,
         Some(b"network") => IoPolicy::Network,
         _ => IoPolicy::Strict,
@@ -177,7 +177,7 @@ pub fn take_snapshot_request() -> Option<Vec<u8>> {
 /// What `Bun.startupSnapshot.take()` does about timers that are still armed when the process goes quiet.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum SnapshotTimers {
+pub enum StartupSnapshotTimers {
     /// Armed timers keep the process from being snapshotted (the default: the app is expected to clear them itself).
     Refuse = 0,
     /// Timers survive the snapshot; their deadlines are re-based onto the restoring process's clock.
@@ -186,14 +186,14 @@ pub enum SnapshotTimers {
     Cancel = 2,
 }
 static SNAPSHOT_TIMERS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-pub fn set_snapshot_timers(mode: SnapshotTimers) {
+pub fn set_snapshot_timers(mode: StartupSnapshotTimers) {
     SNAPSHOT_TIMERS.store(mode as u8, Ordering::Release);
 }
-pub fn snapshot_timers() -> SnapshotTimers {
+pub fn snapshot_timers() -> StartupSnapshotTimers {
     match SNAPSHOT_TIMERS.load(Ordering::Acquire) {
-        1 => SnapshotTimers::Keep,
-        2 => SnapshotTimers::Cancel,
-        _ => SnapshotTimers::Refuse,
+        1 => StartupSnapshotTimers::Keep,
+        2 => StartupSnapshotTimers::Cancel,
+        _ => StartupSnapshotTimers::Refuse,
     }
 }
 

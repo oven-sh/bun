@@ -20,7 +20,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [opts] = frame.arguments_as_array::<1>();
     // Apps call this unconditionally at their "ready" point; only the run `bun build --snapshot` started acts on it.
-    if !bun_core::snapshot::building() {
+    if !bun_core::startup_snapshot::building() {
         return Ok(JSValue::UNDEFINED);
     }
     if !opts.is_undefined_or_null() && !opts.is_object() {
@@ -32,15 +32,15 @@ fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if let Some(v) = opts.get(global, "timers")? {
             let mode = v.to_bun_string(global)?;
             let mode = if mode.eql_comptime("keep") {
-                bun_core::snapshot::SnapshotTimers::Keep
+                bun_core::startup_snapshot::StartupSnapshotTimers::Keep
             } else if mode.eql_comptime("cancel") {
-                bun_core::snapshot::SnapshotTimers::Cancel
+                bun_core::startup_snapshot::StartupSnapshotTimers::Cancel
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "take: `timers` must be \"keep\" or \"cancel\""
                 )));
             };
-            bun_core::snapshot::set_snapshot_timers(mode);
+            bun_core::startup_snapshot::set_snapshot_timers(mode);
         }
         // envGate: variables the snapshotted boot depended on; their build-time values travel with the snapshot and a launch that differs boots normally.
         if let Some(names) = opts.get(global, "envGate")? {
@@ -60,18 +60,18 @@ fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     joined.extend_from_slice(&name);
                     joined.push(0);
                 }
-                Bun__snapshotSetEnvGate(joined.as_ptr(), joined.len());
+                Bun__startupSnapshotSetEnvGate(joined.as_ptr(), joined.len());
             }
         }
     }
-    if bun_core::snapshot::snapshot_in_progress() {
+    if bun_core::startup_snapshot::snapshot_in_progress() {
         return Ok(JSValue::UNDEFINED); // the runtime is already draining the process (auto mode, or an earlier call): the options above still apply
     }
-    let Some(out) = bun_core::env_var::BUN_SNAPSHOT_OUT.get() else {
+    let Some(out) = bun_core::env_var::BUN_STARTUP_SNAPSHOT_OUT.get() else {
         return Ok(JSValue::UNDEFINED);
     };
-    bun_core::snapshot::request_snapshot(out);
-    crate::cli::run_command::unwind_for_snapshot(global.vm());
+    bun_core::startup_snapshot::request_snapshot(out);
+    crate::cli::run_command::unwind_for_startup_snapshot(global.vm());
     // Unwind every JS frame right now; the outermost EventLoop::tick sees the request and writes the snapshot.
     JSC__VM__throwTerminationExceptionNow(global);
     Err(jsc::JsError::Thrown)
@@ -80,32 +80,34 @@ fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 unsafe extern "C" {
     safe fn JSC__VM__throwTerminationExceptionNow(global: &JSGlobalObject) -> JSValue;
     /// NUL-separated variable names; copied by the callee.
-    safe fn Bun__snapshotSetEnvGate(names: *const u8, len: usize);
+    safe fn Bun__startupSnapshotSetEnvGate(names: *const u8, len: usize);
 }
 
 /// `reclean()`: in a restored process, pages whose bytes drifted back to the snapshot's go back to the clean file mapping (~10ms; call when idle).
 #[bun_jsc::host_fn]
 fn reclean(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    if bun_core::snapshot::restored() {
-        Bun__snapshotRecleanPages(global.vm());
+    if bun_core::startup_snapshot::restored() {
+        Bun__startupSnapshotRecleanPages(global.vm());
     }
     Ok(JSValue::UNDEFINED)
 }
 
 unsafe extern "C" {
-    safe fn Bun__snapshotRecleanPages(vm: &bun_jsc::VM);
+    safe fn Bun__startupSnapshotRecleanPages(vm: &bun_jsc::VM);
 }
 
 /// `Bun.startupSnapshot.isBuildingSnapshot()`: true only in the run `bun build --snapshot` makes to take the snapshot.
 #[bun_jsc::host_fn]
 fn is_building_snapshot(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::from(bun_core::snapshot::building()))
+    Ok(JSValue::from(bun_core::startup_snapshot::building()))
 }
 
 /// `Bun.startupSnapshot.epoch()`: 0 in a process that booted normally, N in one resumed from a snapshot (N counts restores).
 #[bun_jsc::host_fn]
 fn epoch(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(bun_core::snapshot::epoch() as f64))
+    Ok(JSValue::js_number(
+        bun_core::startup_snapshot::epoch() as f64
+    ))
 }
 
 /// `main(fn)`: run now in an ordinary launch; kept aside (not run) in the snapshot run; run after `'restore'` in a resumed launch, with that launch's argv/cwd/env/stdio.
@@ -117,7 +119,7 @@ fn main(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             "Bun.startupSnapshot.main() expects a function"
         )));
     }
-    if bun_core::snapshot::building() {
+    if bun_core::startup_snapshot::building() {
         VirtualMachine::get()
             .as_mut()
             .rare_data()

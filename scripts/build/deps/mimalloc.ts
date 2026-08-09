@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "a1050521d2145d94e7f6371fe7629f76ae9b8e04"; // oven-sh/mimalloc#13 (snapshot support); swap for the merge sha before landing
+const MIMALLOC_COMMIT = "018ddb26f900e48182038ed981a257ded96006aa"; // oven-sh/mimalloc#13 (snapshot support); swap for the merge sha before landing
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -70,11 +70,11 @@ export const mimalloc: Dependency = {
     if (override) defines.MI_MALLOC_OVERRIDE = true;
     if (osxZone) defines.MI_OSX_ZONE = 1;
 
-    // Snapshots (src/jsc/bindings/Snapshot.cpp): executables carrying a snapshot get deterministic address hints from
-    // their first allocation; a process building one (BUN_SNAPSHOT_OUT) keeps its heap at the base that becomes the snapshot.
+    // Snapshots (src/jsc/bindings/StartupSnapshot.cpp): executables carrying a snapshot get deterministic address hints from
+    // their first allocation; a process building one (BUN_STARTUP_SNAPSHOT_OUT) keeps its heap at the base that becomes the snapshot.
     // Only where snapshots exist (Snapshot.h): the hook runs inside mimalloc's own initialization, before anything else.
     const snapshots = cfg.darwin || cfg.linux;
-    if (snapshots) defines.MI_HEAP_SNAPSHOT_BUILD_ENV = "BUN_SNAPSHOT_OUT"; // quoted into a C string literal by the builder
+    if (snapshots) defines.MI_STARTUP_SNAPSHOT_BUILD_ENV = "BUN_STARTUP_SNAPSHOT_OUT"; // quoted into a C string literal by the builder
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free
@@ -102,8 +102,8 @@ export const mimalloc: Dependency = {
       // it can't go through DirectBuild.defines which would quote it.
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
       // Bare token as well: the name of the function (defined in c-bindings.cpp) mimalloc calls to learn whether this
-      // executable carries a snapshot; see the MI_HEAP_SNAPSHOT_* note above.
-      ...(snapshots ? ["-DMI_HEAP_SNAPSHOT_HOST_FN=bun_is_compiled_executable"] : []),
+      // executable carries a snapshot; see the MI_STARTUP_SNAPSHOT_* note above.
+      ...(snapshots ? ["-DMI_STARTUP_SNAPSHOT_HOST_FN=bun_is_compiled_executable"] : []),
     ];
 
     // TLS model: initial-exec for the static link into bun's executable

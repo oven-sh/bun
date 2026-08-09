@@ -1599,7 +1599,7 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     // allocator decides that once and hands out the same kind of bump hint it uses for its own reservations.
     static SNAPSHOT_HINT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
     let mut hint: *mut libc::c_void = core::ptr::null_mut();
-    if mimalloc::mi_heap_snapshot_hints_enabled() {
+    if mimalloc::mi_startup_snapshot_hints_enabled() {
         let _ = SNAPSHOT_HINT.compare_exchange(
             0,
             0x1f0_0000_0000,

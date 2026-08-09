@@ -1387,7 +1387,7 @@ fn body_mixin_get_blob(
 /// `global` is the live VM global.
 fn take_snapshot(vm: *mut VirtualMachine) -> ! {
     // SAFETY: main-thread VM handed over by `EventLoop::tick` at top level.
-    crate::cli::run_command::take_snapshot_and_exit(unsafe { &mut *vm })
+    crate::cli::run_command::take_startup_snapshot_and_exit(unsafe { &mut *vm })
 }
 
 unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {

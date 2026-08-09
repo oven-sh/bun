@@ -2,11 +2,10 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
-#include "Snapshot.h"
+#include "StartupSnapshot.h"
 #include "JSEnvironmentVariableMap.h"
-// Snapshots are built and mapped on macOS and (glibc/musl) Linux; elsewhere the entry points exist so the rest of the runtime
-// links, and report the feature as absent.
-#if BUN_SNAPSHOT_SUPPORTED
+// Supported platforms build the real thing; elsewhere the same entry points exist (so everything links) and report the feature as absent.
+#if BUN_STARTUP_SNAPSHOT_SUPPORTED
 #include <sys/time.h>
 #if OS(DARWIN)
 #include <libproc.h>
@@ -124,15 +123,15 @@ extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
-namespace Bun::Snapshot {
+namespace Bun::StartupSnapshot {
 std::vector<std::pair<uintptr_t, uintptr_t>> frozenRanges; // sorted [start,end)
 std::vector<FrozenRun> snapshotRuns;
 int snapshotFd = -1;
 ::mi_heap_s* freshHeap = nullptr;
 off_t snapshotBaseOff = 0;
 ssize_t ipread(int fd, void* buf, size_t n, off_t off) { return ::pread(fd, buf, n, off + snapshotBaseOff); }
-} // namespace Bun::Snapshot
-using namespace Bun::Snapshot;
+} // namespace Bun::StartupSnapshot
+using namespace Bun::StartupSnapshot;
 #if OS(DARWIN)
 #define OS_DARWIN_ONLY(x) x
 #else
@@ -143,22 +142,17 @@ static void* immap(void* addr, size_t len, int prot, int flags, int fd, off_t of
 
 static void snapshotRestoreAndRun(const char* path);
 extern "C" struct mach_header_64 _mh_execute_header;
-// Snapshots (building or restoring one) need the executable at its link-time address. If dyld slid us, replace this process
-// with an unslid copy of ourselves (macOS private posix_spawn flag) — same argv/env, no external launcher needed.
-// The allocator / JIT placement and JSC tiering options a snapshot depends on; applied (via the re-exec env) whenever a snapshot is built or used.
+// A snapshot needs the executable at its link address: if dyld slid us, re-exec ourselves unslid (macOS private posix_spawn flag), carrying the allocator/JIT settings in the env.
 extern "C" int bun_is_compiled_executable(void);
 extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
-extern "C" bool Bun__snapshotMode() { return bun_is_compiled_executable() || getenv("BUN_SNAPSHOT_IN") || getenv("BUN_SNAPSHOT_OUT"); }
-// Restore epoch, readable by any statically linked C/C++ (vendored libraries included): 0 in the process that boots normally or builds
-// a snapshot, N after the Nth restore. A lazily-initialised static that caches process/OS/CPU state keys its once-token on this
-// (`if (token != bun_snapshot_epoch + 1) { init(); token = bun_snapshot_epoch + 1; }`) instead of a plain bool.
-extern "C" uint32_t bun_snapshot_epoch; // defined (exported, unmangled) in bun_core::snapshot; std::atomic<u32> layout == uint32_t
+extern "C" bool Bun__startupSnapshotMode() { return bun_is_compiled_executable() || getenv("BUN_STARTUP_SNAPSHOT_IN") || getenv("BUN_STARTUP_SNAPSHOT_OUT"); }
+// Restore epoch (0 = booted normally or building; N after the Nth restore): statics caching process/OS/CPU state key their once-token on `epoch + 1` instead of a bool.
+extern "C" uint32_t bun_snapshot_epoch; // defined (exported, unmangled) in bun_core::startup_snapshot; std::atomic<u32> layout == uint32_t
 
 namespace bssl {
 void OPENSSL_cpuid_setup();
 }
-// CPU-dispatch latches in vendored code chose an implementation on the build machine. The header's feature-superset check makes those
-// choices valid here; re-probing lets a more capable CPU pick its best paths.
+// CPU-dispatch latches in vendored code chose paths on the build machine (valid here per the header's feature-superset check); re-probing lets a better CPU do better.
 static void snapshotReprobeCPUDispatch()
 {
     hwy::GetChosenTarget().DeInit(); // next HWY_DYNAMIC_DISPATCH re-detects
@@ -166,19 +160,18 @@ static void snapshotReprobeCPUDispatch()
     bssl::OPENSSL_cpuid_setup(); // refills OPENSSL_ia32cap_P / OPENSSL_armcap_P
 }
 
-static bool s_snapshotActive = false; // set once this process is building a snapshot or has restored one (decided in Bun__snapshotMaybeRestore, before VM init)
-// A launch that resumes from its snapshot, or declines it and boots normally, says nothing unless asked (BUN_SNAPSHOT_VERBOSE=1).
+static bool s_snapshotActive = false; // set once this process is building a snapshot or has restored one (decided in Bun__startupSnapshotMaybeRestore, before VM init)
+// A launch that resumes from its snapshot, or declines it and boots normally, says nothing unless asked (BUN_STARTUP_SNAPSHOT_VERBOSE=1).
 static bool snapshotVerbose()
 {
-    return !!getenv("BUN_SNAPSHOT_VERBOSE"); // not cached: a value cached while the snapshot was written would be restored along with it
+    return !!getenv("BUN_STARTUP_SNAPSHOT_VERBOSE"); // not cached: a value cached while the snapshot was written would be restored along with it
 }
-extern "C" bool Bun__snapshotActive() { return s_snapshotActive; }
+extern "C" bool Bun__startupSnapshotActive() { return s_snapshotActive; }
 #if OS(DARWIN) && defined(BUN_MIMALLOC_ZONE_OVERRIDE)
 extern "C" size_t mi_malloc_zone_process_owned_ranges(uintptr_t (*out)[2], size_t cap);
 #endif
-// Whether this build of bun can take and restore snapshots at all. On macOS that needs mimalloc registered as the process's
-// malloc zone, a build-time option of bun (BUN_MIMALLOC_OVERRIDE_DARWIN); official builds do not enable it yet.
-extern "C" bool Bun__snapshotSupported()
+// On macOS snapshots need mimalloc registered as the process malloc zone (BUN_MIMALLOC_OVERRIDE_DARWIN at build time), which official builds do not enable yet.
+extern "C" bool Bun__startupSnapshotSupported()
 {
 #if OS(DARWIN) && !defined(BUN_MIMALLOC_ZONE_OVERRIDE)
     return false;
@@ -187,7 +180,7 @@ extern "C" bool Bun__snapshotSupported()
 #endif
 }
 
-// BUN_SNAPSHOT_VERBOSE timing: milliseconds since the process was exec'd (Darwin: the kernel's start time, which the re-exec keeps).
+// BUN_STARTUP_SNAPSHOT_VERBOSE timing: milliseconds since the process was exec'd (Darwin: the kernel's start time, which the re-exec keeps).
 static double snapshotMsSinceExec()
 {
     struct timeval now;
@@ -209,43 +202,41 @@ static void snapshotTimingMark(const char* what)
 extern "C" bool Bun__isCompiledExecutable();
 static void setSnapshotEnvDefaults()
 {
-    bool building = getenv("BUN_SNAPSHOT_OUT");
+    bool building = getenv("BUN_STARTUP_SNAPSHOT_OUT");
     if (Bun__isCompiledExecutable() && !building)
         return; // compiled executables configure the allocator/JIT from BUN_COMPILED before main: nothing to pass through the environment
     setenv("MIMALLOC_DETERMINISTIC_HINT", "1", 0);
-    // Builder and restorer must not share addresses for their *own* early allocations: the builder's heap (the snapshot) starts at mimalloc's
-    // default 2TiB base; a process that is going to restore starts its ordinary early heap 64GiB higher so it never sits where snapshot regions go.
-    if (getenv("BUN_SNAPSHOT_OUT"))
+    // The builder's heap (= the snapshot) starts at mimalloc's 2TiB base; a restoring process puts its own early heap 64GiB higher so it never occupies snapshot addresses.
+    if (getenv("BUN_STARTUP_SNAPSHOT_OUT"))
         unsetenv("MIMALLOC_HINT_FLOOR");
     else
         setenv("MIMALLOC_HINT_FLOOR", "0x21000000000", 0);
-    setenv("BUN_SNAPSHOT_JIT_ADDR", "0x3c0000000", 0);
+    setenv("BUN_STARTUP_SNAPSHOT_JIT_ADDR", "0x3c0000000", 0);
 }
 static bool snapshotEnvIsSet()
 {
-    bool building = getenv("BUN_SNAPSHOT_OUT");
+    bool building = getenv("BUN_STARTUP_SNAPSHOT_OUT");
     if (Bun__isCompiledExecutable() && !building) return true; // compiled executables configure allocator/JIT from BUN_COMPILED before main: nothing to inject
-    return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_SNAPSHOT_JIT_ADDR") && (building || getenv("MIMALLOC_HINT_FLOOR"));
+    return getenv("MIMALLOC_DETERMINISTIC_HINT") && getenv("BUN_STARTUP_SNAPSHOT_JIT_ADDR") && (building || getenv("MIMALLOC_HINT_FLOOR"));
 }
 
 static void reexecWithoutASLRIfSlid()
 {
-    // Hard cap independent of the environment: the re-exec'd generation is tagged in argv[0] (survives env scrubbing),
-    // and a tagged process never re-execs again.
+    // The re-exec'd generation is tagged in argv[0] (survives env scrubbing) and never re-execs again, whatever the environment says.
     static constexpr const char* kReexecTag = " [snapshot-reexec]";
 #if OS(DARWIN)
     const bool alreadyReexeced = (*_NSGetArgv())[0] && strstr((*_NSGetArgv())[0], kReexecTag);
 #else
     const bool alreadyReexeced = false;
 #endif
-    if (getenv("BUN_SNAPSHOT_REEXECED") || alreadyReexeced)
+    if (getenv("BUN_STARTUP_SNAPSHOT_REEXECED") || alreadyReexeced)
         return;
     bool needEnv = !snapshotEnvIsSet();
 #if OS(DARWIN)
     constexpr uintptr_t linkBase = 0x100000000ull;
-    if (((uintptr_t)&_mh_execute_header == linkBase && !needEnv) || getenv("BUN_SNAPSHOT_REEXECED"))
+    if (((uintptr_t)&_mh_execute_header == linkBase && !needEnv) || getenv("BUN_STARTUP_SNAPSHOT_REEXECED"))
         return;
-    setenv("BUN_SNAPSHOT_REEXECED", "1", 1);
+    setenv("BUN_STARTUP_SNAPSHOT_REEXECED", "1", 1);
     setSnapshotEnvDefaults();
     char exe[4096];
     uint32_t len = sizeof exe;
@@ -266,13 +257,12 @@ static void reexecWithoutASLRIfSlid()
     posix_spawn(nullptr, exe, nullptr, &attr, nargv.data(), *_NSGetEnviron()); // SETEXEC: only returns on failure
     fprintf(stderr, "[snapshot] could not re-exec without ASLR; continuing slid (snapshot build/restore will not work)\n");
 #elif OS(LINUX)
-    // Linux: the executable is non-PIE (never slides) and system libraries may slide (extern-library fixups), so ASLR stays on;
-    // we only re-exec to get the allocator/JIT/JSC options into the environment before they are read at startup.
-    if (getenv("BUN_SNAPSHOT_REEXECED") || !needEnv)
+    // Linux: the executable is non-PIE and slid libraries are fixed up, so ASLR stays on; the re-exec only gets the allocator/JIT options into the env before startup reads them.
+    if (getenv("BUN_STARTUP_SNAPSHOT_REEXECED") || !needEnv)
         return;
-    setenv("BUN_SNAPSHOT_REEXECED", "1", 1);
+    setenv("BUN_STARTUP_SNAPSHOT_REEXECED", "1", 1);
     setSnapshotEnvDefaults();
-    setenv("BUN_SNAPSHOT_LIB_FIXUPS", "1", 0);
+    setenv("BUN_STARTUP_SNAPSHOT_LIB_FIXUPS", "1", 0);
     {
         extern char** environ;
         // argv: read our own cmdline
@@ -300,13 +290,18 @@ static void reexecWithoutASLRIfSlid()
 #endif
 }
 
-// `<executable>.snapshot` next to the binary is used automatically (BUN_SNAPSHOT=0 opts out; BUN_SNAPSHOT_IN overrides).
+// `<executable>.snapshot` next to the binary is used automatically (BUN_STARTUP_SNAPSHOT=0 opts out; BUN_STARTUP_SNAPSHOT_IN overrides).
 static uint64_t platformLibsBase();
 static uint64_t platformSystemLibsId();
 static uint64_t platformBuildId();
+// What a snapshot is valid for: this exact link of the executable, on a kernel with the page size its regions were cut to.
+static uint64_t snapshotEnvironmentId()
+{
+    return platformBuildId() ^ ((uint64_t)getpagesize() * 0x9E3779B97F4A7C15ull);
+}
 static bool snapshotOptedOut()
 {
-    const char* off = getenv("BUN_SNAPSHOT");
+    const char* off = getenv("BUN_STARTUP_SNAPSHOT");
     return off && (!strcmp(off, "0") || !strcmp(off, "false"));
 }
 static bool ownExecutablePath(char* exe, size_t cap)
@@ -336,14 +331,14 @@ static bool siblingSnapshotExists()
     return findSiblingSnapshot(path, sizeof path);
 }
 
-extern "C" bool Bun__standaloneEmbeddedSnapshot(const uint8_t** outPtr, size_t* outLen);
+extern "C" bool Bun__standaloneEmbeddedStartupSnapshot(const uint8_t** outPtr, size_t* outLen);
 static bool embeddedSnapshotExists()
 {
     if (snapshotOptedOut())
         return false;
     const uint8_t* p;
     size_t n;
-    return Bun__standaloneEmbeddedSnapshot(&p, &n);
+    return Bun__standaloneEmbeddedStartupSnapshot(&p, &n);
 }
 // "<own executable>@<file offset>" for a snapshot embedded in the __BUN/.bun section (in-memory pointer -> segment -> file offset).
 static bool findEmbeddedSnapshot(char* out, size_t cap)
@@ -352,7 +347,7 @@ static bool findEmbeddedSnapshot(char* out, size_t cap)
         return false;
     const uint8_t* p = nullptr;
     size_t n = 0;
-    if (!Bun__standaloneEmbeddedSnapshot(&p, &n)) return false;
+    if (!Bun__standaloneEmbeddedStartupSnapshot(&p, &n)) return false;
     char exe[4096];
     int64_t fileOff = -1;
     uintptr_t a = (uintptr_t)p;
@@ -416,38 +411,38 @@ static bool findEmbeddedSnapshot(char* out, size_t cap)
     return true;
 }
 
-extern "C" void Bun__snapshotMaybeRestore()
+extern "C" void Bun__startupSnapshotMaybeRestore()
 {
+    snapshotTimingMark(getenv("BUN_STARTUP_SNAPSHOT_REEXECED") ? "main reached (second generation)" : "main reached (first generation)");
     // Only compiled executables carry or sit next to snapshots; a plain `bun` takes part only when asked to through the environment.
-    if (!bun_is_compiled_executable() && !getenv("BUN_SNAPSHOT_IN") && !getenv("BUN_SNAPSHOT_OUT"))
+    if (!bun_is_compiled_executable() && !getenv("BUN_STARTUP_SNAPSHOT_IN") && !getenv("BUN_STARTUP_SNAPSHOT_OUT"))
         return;
     // No setenv()/heap use in a process that is about to restore: environ would be reallocated into memory the snapshot overlays.
-    bool wantSnapshot = getenv("BUN_SNAPSHOT_IN") || getenv("BUN_SNAPSHOT_OUT") || siblingSnapshotExists() || embeddedSnapshotExists();
+    bool wantSnapshot = getenv("BUN_STARTUP_SNAPSHOT_IN") || getenv("BUN_STARTUP_SNAPSHOT_OUT") || siblingSnapshotExists() || embeddedSnapshotExists();
     if (wantSnapshot)
         reexecWithoutASLRIfSlid(); // returns only once we are the unslid process with the snapshot env in place
     char path[4200] = "";
-    if (const char* in = getenv("BUN_SNAPSHOT_IN"))
+    if (const char* in = getenv("BUN_STARTUP_SNAPSHOT_IN"))
         snprintf(path, sizeof path, "%s", in); // explicit file (debugging / dev loop)
-    else if (!getenv("BUN_SNAPSHOT_OUT")) {
+    else if (!getenv("BUN_STARTUP_SNAPSHOT_OUT")) {
         if (!findSiblingSnapshot(path, sizeof path)) {
             path[0] = 0;
             findEmbeddedSnapshot(path, sizeof path);
         } // a sibling .snapshot (debugging), else the one embedded in this executable
     }
-    s_snapshotActive = path[0] || getenv("BUN_SNAPSHOT_OUT");
+    s_snapshotActive = path[0] || getenv("BUN_STARTUP_SNAPSHOT_OUT");
     if (path[0])
         snapshotRestoreAndRun(path); // returns only if the snapshot was declined (then we boot normally, still with snapshot-compatible options so a rebuild can snapshot)
 }
-extern "C" void Bun__snapshotSetBuilding(bool);
+extern "C" void Bun__startupSnapshotSetBuilding(bool);
 extern "C" void mi_prof_reinit_lock(void);
 extern "C" void mi_os_hint_floor(void*) noexcept;
 extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void snapshotDump(JSC::VM& vm, const char* path);
-// envGate (Bun.startupSnapshot.take() option): NUL-separated names, stored in the snapshot after the region data; hashed together with
-// their values so a launch whose environment differs in any of them declines the snapshot before touching it.
+// envGate (take() option): NUL-separated names stored after the region data, hashed with their values so a launch that differs in any of them declines before mapping anything.
 static std::string s_envGateNames;
-extern "C" void Bun__snapshotSetEnvGate(const uint8_t* names, size_t len) { s_envGateNames.assign((const char*)names, len); }
+extern "C" void Bun__startupSnapshotSetEnvGate(const uint8_t* names, size_t len) { s_envGateNames.assign((const char*)names, len); }
 static uint64_t envGateHash(const char* names, size_t len)
 {
     uint64_t h = 1469598103934665603ull;
@@ -464,9 +459,9 @@ static uint64_t envGateHash(const char* names, size_t len)
     }
     return h ? h : 1;
 }
-extern "C" void Bun__snapshotUnwindJS(JSC::VM* vm) { vm->notifyNeedTermination(); }
-extern "C" void Bun__snapshotClearTerminationRequest(JSC::VM* vm) { vm->clearHasTerminationRequest(); }
-extern "C" void Bun__snapshotDumpNow(JSC::VM* vm, const char* path)
+extern "C" void Bun__startupSnapshotUnwindJS(JSC::VM* vm) { vm->notifyNeedTermination(); }
+extern "C" void Bun__startupSnapshotClearTerminationRequest(JSC::VM* vm) { vm->clearHasTerminationRequest(); }
+extern "C" void Bun__startupSnapshotDumpNow(JSC::VM* vm, const char* path)
 {
     mi_scavenger_stop(); // joins mimalloc's background thread: nothing may hold allocator locks while we freeze
 #if OS(DARWIN)
@@ -534,18 +529,15 @@ extern "C" void Bun__snapshotDumpNow(JSC::VM* vm, const char* path)
     }
     snapshotDump(*vm, path);
 }
-extern "C" uint32_t Bun__standaloneSnapshotBuildFlags();
+extern "C" uint32_t Bun__standaloneStartupSnapshotBuildFlags();
 extern "C" void Bun__startupSnapshotRunMain(JSC::JSGlobalObject*);
 extern "C" bool Bun__startupSnapshotHasMain();
-// `bun build --snapshot` marks the executable it is about to run (Flags::TAKE_SNAPSHOT and friends in its payload). Such a run
-// takes the snapshot to `<own path>.snapshot` instead of starting the app for real. The marking is translated here, before
-// anything else looks, into the variables the rest of the runtime (and its re-exec without ASLR) is driven by; the app's own
-// environment and arguments are never involved.
+// `bun build --snapshot` marks the payload (Flags::TAKE_STARTUP_SNAPSHOT…); a marked run writes `<own path>.snapshot` instead of starting the app. Translated here into the runtime's internal variables, so the app's own env/argv are never involved.
 static void applySnapshotBuildMarking()
 {
-    if (!bun_is_compiled_executable() || getenv("BUN_SNAPSHOT_OUT"))
+    if (!bun_is_compiled_executable() || getenv("BUN_STARTUP_SNAPSHOT_OUT"))
         return;
-    uint32_t bits = Bun__standaloneSnapshotBuildFlags();
+    uint32_t bits = Bun__standaloneStartupSnapshotBuildFlags();
     if (!(bits & 1))
         return;
     char exe[4096];
@@ -561,26 +553,25 @@ static void applySnapshotBuildMarking()
 #endif
     char out[4096 + 16];
     snprintf(out, sizeof out, "%s.snapshot", exe);
-    setenv("BUN_SNAPSHOT_OUT", out, 1);
+    setenv("BUN_STARTUP_SNAPSHOT_OUT", out, 1);
     if (!(bits & 2))
-        setenv("BUN_SNAPSHOT_AUTO", "1", 1);
+        setenv("BUN_STARTUP_SNAPSHOT_AUTO", "1", 1);
     if (bits & 8)
-        setenv("BUN_SNAPSHOT_IO", "network", 1);
+        setenv("BUN_STARTUP_SNAPSHOT_IO", "network", 1);
     else if (bits & 4)
-        setenv("BUN_SNAPSHOT_IO", "local", 1);
+        setenv("BUN_STARTUP_SNAPSHOT_IO", "local", 1);
 }
 
-extern "C" void Bun__snapshotInit()
+extern "C" void Bun__startupSnapshotInit()
 {
     applySnapshotBuildMarking();
-    if (getenv("BUN_SNAPSHOT_OUT"))
-        Bun__snapshotSetBuilding(true); // building: network use is refused so the process can become quiet (see throw_disabled_in_snapshot_error_if_needed)
-    snapshotToolingInstall();
+    if (getenv("BUN_STARTUP_SNAPSHOT_OUT"))
+        Bun__startupSnapshotSetBuilding(true); // building: network use is refused so the process can become quiet (see throw_disabled_in_snapshot_error_if_needed)
+    startupSnapshotToolingInstall();
 }
 
-namespace Bun::Snapshot {
-// Snapshot pages this process wrote and then put back to their original bytes (refcounts, transient flags) are handed back to
-// the clean file mapping. Called by the application when it goes idle (Bun.startupSnapshot.reclean()).
+namespace Bun::StartupSnapshot {
+// Bun.startupSnapshot.reclean(): pages this process dirtied and then restored to their original bytes go back to the clean file mapping.
 void recleanFrozenPages(JSC::VM& vm)
 {
 #if OS(DARWIN)
@@ -621,23 +612,23 @@ void recleanFrozenPages(JSC::VM& vm)
             i = j;
         }
     }
-    if (getenv("BUN_SNAPSHOT_VERBOSE"))
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE"))
         fprintf(stderr, "[snapshot] reclean: %zu dirty snapshot pages, %zu were pristine and are file-backed again\n", dirty, remapped);
 #else
     UNUSED_PARAM(vm);
 #endif
 }
-} // namespace Bun::Snapshot
-extern "C" void Bun__snapshotRecleanPages(JSC::VM* vm) { Bun::Snapshot::recleanFrozenPages(*vm); }
+} // namespace Bun::StartupSnapshot
+extern "C" void Bun__startupSnapshotRecleanPages(JSC::VM* vm) { Bun::StartupSnapshot::recleanFrozenPages(*vm); }
 
 struct us_loop_t;
 extern "C" void us_loop_reinit_for_snapshot(struct us_loop_t*);
 extern "C" struct us_loop_t* uws_get_loop();
-extern "C" void Bun__snapshotContinueEventLoop();
+extern "C" void Bun__startupSnapshotContinueEventLoop();
 extern "C" void uws_adopt_loop_for_current_thread(struct us_loop_t*);
 void _mi_scavenger_forked_child(void); // C++-mangled (mimalloc is built as C++ here)
 void _mi_scavenger_start_if_forked(void);
-extern "C" void Bun__snapshotAdoptMainThreadVM();
+extern "C" void Bun__startupSnapshotAdoptMainThreadVM();
 struct BunLaunchContext {
     size_t argc;
     const char* const* argv;
@@ -646,13 +637,11 @@ extern "C" void bun_launch_context_capture(BunLaunchContext*);
 extern "C" void bun_launch_context_restore(const BunLaunchContext*);
 extern "C" void Bun__VM__refreshStackBoundsAfterSnapshotRestore(JSC::VM* vm)
 {
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] refreshing VM stack bounds: lastStackTop=%p thread stack=[%p,%p)\n", vm->lastStackTop(), WTF::Thread::currentSingleton().stack().end(), WTF::Thread::currentSingleton().stack().origin());
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] refreshing VM stack bounds: lastStackTop=%p thread stack=[%p,%p)\n", vm->lastStackTop(), WTF::Thread::currentSingleton().stack().end(), WTF::Thread::currentSingleton().stack().origin());
     vm->refreshStackBoundsAfterSnapshotRestore();
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] refreshed: lastStackTop=%p\n", vm->lastStackTop());
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] refreshed: lastStackTop=%p\n", vm->lastStackTop());
 }
-// "Snapshot-capable" = a `bun build --compile` executable (BUN_COMPILED, the __BUN/.bun section header, has a non-zero size in those and is
-// readable before main by anything statically linked) or explicitly requested via env. Drives deterministic allocator hints, the fixed JIT
-// pool address and (when a snapshot is actually built/used) the LLInt+DFG tier defaults — so a compiled app needs no environment for snapshots.
+// Snapshot-capable = a compiled executable (BUN_COMPILED is readable before main) or an explicit env request: drives the deterministic allocator hints and fixed JIT pool, so compiled apps need no environment.
 
 extern "C" char** environ;
 
@@ -820,21 +809,25 @@ static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>
         disp[i] = vec[i] & 1;
     return true;
 }
+extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr(); // the payload's vaddr; 0 outside a compiled executable
 template<typename F> static void platformDataSegments(F&& f)
 {
-    // The main executable's writable PT_LOAD segments (.data, .bss, and the GOT: we link with -z norelro), page-rounded.
+    // The writable PT_LOADs (.data/.bss/GOT: -z norelro), minus the payload the injector appended to the RW segment — that part is file-backed and identical in every launch.
     struct Ctx {
         F* f;
-    } ctx { &f };
+        uint64_t payload;
+    } ctx { &f, *Bun__getStandaloneModuleGraphELFVaddr() };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
         if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
+        auto& ctx = *static_cast<Ctx*>(arg);
         size_t pg = getpagesize();
         for (int i = 0; i < info->dlpi_phnum; i++) {
             const ElfW(Phdr) & ph = info->dlpi_phdr[i];
             if (ph.p_type != PT_LOAD || !(ph.p_flags & PF_W)) continue;
             uint64_t lo = (info->dlpi_addr + ph.p_vaddr) & ~(uint64_t)(pg - 1);
             uint64_t hi = (info->dlpi_addr + ph.p_vaddr + ph.p_memsz + pg - 1) & ~(uint64_t)(pg - 1);
-            (*static_cast<Ctx*>(arg)->f)(lo, hi - lo);
+            if (ctx.payload > lo && ctx.payload < hi) hi = ctx.payload & ~(uint64_t)(pg - 1);
+            if (hi > lo) (*ctx.f)(lo, hi - lo);
         }
         return 0;
     },
@@ -845,7 +838,7 @@ static void platformWriteJIT(void* dst, const void* src, size_t len)
     memcpy(dst, src, len);
     __builtin___clear_cache((char*)dst, (char*)dst + len);
 }
-static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable && r.anon && r.addr >= 0x3c0000000ull && r.addr < 0x400000000ull; } // BUN_SNAPSHOT_JIT_ADDR window
+static bool platformIsJITRegion(const PlatformRegion& r) { return r.executable && r.anon && r.addr >= 0x3c0000000ull && r.addr < 0x400000000ull; } // BUN_STARTUP_SNAPSHOT_JIT_ADDR window
 static uint64_t platformTextBase() { return (uint64_t)__executable_start; }
 static uint64_t platformLibsBase() { return (uint64_t)dlsym(RTLD_DEFAULT, "getpid"); } // libc's slide stands in for all system libs
 static uint64_t platformSystemLibsId() { return 0; } // Linux: per-library name+size matching in the fixup table is the identity
@@ -885,6 +878,25 @@ static uint64_t platformBuildId() // the ELF NT_GNU_BUILD_ID note (identity of t
     return ctx.id ? ctx.id : (uint64_t)((char*)etext - (char*)__executable_start);
 }
 #endif
+// Resident pool pages the allocator has actually handed out (freed pages are MADV_FREE'd and may still read as present); its occupancy is page-granular, hence two samples per page.
+static bool jitLivePages(uint64_t addr, uint64_t size, size_t pg, std::vector<int>& disp)
+{
+    if (!platformResidentPages(addr, size, disp)) return false;
+    Locker locker { JSC::ExecutableAllocator::singleton().getLock() };
+    for (size_t i = 0; i < disp.size(); i++)
+        if (disp[i] && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg)) && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg + pg / 2))) disp[i] = 0;
+    return true;
+}
+static size_t jitLivePageCount(size_t pg)
+{
+    size_t n = 0;
+    platformEnumerateRegions([&](const PlatformRegion& r) {
+        if (!platformIsJITRegion(r)) return;
+        std::vector<int> disp;
+        if (jitLivePages(r.addr, r.size, pg, disp)) n += std::count(disp.begin(), disp.end(), 1);
+    });
+    return n;
+}
 
 // Loaded system libraries as (base, end, nameHash): snapshot words pointing into them are recorded at dump and rebased at restore.
 struct PlatformLib {
@@ -972,7 +984,7 @@ static std::vector<PlatformLib> platformSystemLibs() // Darwin: every segment of
     return libs;
 }
 #endif
-struct SnapshotFixup {
+struct StartupSnapshotFixup {
     uint64_t addr;
     uint64_t lib;
 };
@@ -980,10 +992,9 @@ struct SnapshotFixupHeader {
     char magic[8];
     uint64_t nlibs;
     uint64_t nfixups;
-}; // then PlatformLib[nlibs] (base/end/nameHash as recorded), SnapshotFixup[nfixups]
+}; // then PlatformLib[nlibs] (base/end/nameHash as recorded), StartupSnapshotFixup[nfixups]
 
-// CPU feature word for the snapshot header: a snapshot may hold state that latched CPU-dependent code paths (SIMD dispatch tables in vendored
-// libraries), so it is only used on a CPU that has at least the features of the machine that built it.
+// Header CPU-feature word: latched SIMD dispatch in vendored code means a snapshot is only used on a CPU with at least the builder's features.
 static uint64_t platformCpuFeatures()
 {
     uint64_t f = 0;
@@ -1012,8 +1023,7 @@ static uint64_t platformCpuFeatures()
     return f;
 }
 
-// Invocation shape recorded in the snapshot: a snapshot is only valid for the argv it was built with (a compiled CLI's
-// subcommands / fast paths must boot normally, or a restored REPL would answer `exe some-subcommand`).
+// A snapshot taken after the program ran is only valid for the argv it ran with (or `exe subcommand` would get the restored REPL); see main() for the exemption.
 static uint64_t snapshotArgvKey()
 {
     uint64_t h = 1469598103934665603ull;
@@ -1054,7 +1064,7 @@ static uint64_t snapshotArgvKey()
     return h ^ ((uint64_t)(argc > 0 ? argc - 1 : 0) << 56) ^ 0x5a5a; // never 0
 }
 
-struct SnapshotHeader {
+struct StartupSnapshotHeader {
     char magic[8];
     uint64_t textBase;
     uint64_t vm;
@@ -1065,7 +1075,7 @@ struct SnapshotHeader {
     uint64_t libsBase;
     uint64_t spare[7];
 }; // 176 bytes; region table follows
-struct SnapshotRegion {
+struct StartupSnapshotRegion {
     uint64_t addr;
     uint64_t len;
     uint64_t fileOff;
@@ -1149,7 +1159,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                 if (auto* str = dynamicDowncast<JSC::JSString>(cell)) {
                     if (!str->isRope())
                         if (auto* impl = str->tryGetValueImpl()) {
-                            impl->settleLazyHeaderWritesForSnapshot();
+                            impl->settleLazyHeaderWritesForStartupSnapshot();
                             settledStrings++;
                         }
                 }
@@ -1160,36 +1170,39 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     if (auto* table = vm.atomStringTable())
         for (auto& packed : table->table())
             if (auto* impl = packed.get()) {
-                impl->settleLazyHeaderWritesForSnapshot();
+                impl->settleLazyHeaderWritesForStartupSnapshot();
                 settledStrings++;
             }
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] settled %zu StringImpl headers\n", settledStrings);
-    { // linked CodeBlocks, metadata (value profiles/ICs), UnlinkedCodeBlocks and JIT code are per-run hot state: measured 11-17MB cheaper to re-create them fresh than to dirty them in the snapshot
-        const char* dc = getenv("BUN_SNAPSHOT_DELETE_CODE"); // =0 keep all, =linked keep unlinked; default: drop everything
-        vm.completeAllJITPlansBeforeSnapshotSnapshot(); // drain in-flight DFG/FTL plans first: nothing compiles or installs code while we walk/delete/freeze (results are discarded below anyway)
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] settled %zu StringImpl headers\n", settledStrings);
+    {
+        // Compiled JS is per-run hot state: a long-running program is 11-17 MB/process lighter re-creating it, a main() tool starts 15-20% faster keeping it. BUN_STARTUP_SNAPSHOT_DELETE_CODE=0|linked overrides.
+        const char* dc = getenv("BUN_STARTUP_SNAPSHOT_DELETE_CODE");
+        vm.completeAllJITPlansBeforeStartupSnapshot();
         JSC::sanitizeStackForVM(vm);
-        if (dc && !strcmp(dc, "0")) {
+        bool keep = dc ? !strcmp(dc, "0") : Bun__startupSnapshotHasMain();
+        if (keep) {
         } else if (dc && !strcmp(dc, "linked"))
             vm.deleteAllLinkedCode(JSC::DeleteAllCodeIfNotCollecting);
         else
             vm.deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
     }
-    vm.heap.freezeCurrentHeapAsImmortalSnapshot(); // GC never writes snapshot blocks again (frozen marks = liveness, side remembered set)
+    vm.heap.freezeCurrentHeapAsImmortalStartupSnapshot(); // GC never writes snapshot blocks again (frozen marks = liveness, side remembered set)
     mi_option_set(mi_option_purge_delay, 0);
     mi_collect(true); // free spans get decommitted so "resident" below means "snapshot payload"
     size_t pg = getpagesize();
-    snapshotToolingIndexAtFreeze(vm, pg);
+    startupSnapshotToolingIndexAtFreeze(vm, pg);
     std::vector<std::pair<uintptr_t, uintptr_t>> freeRanges; // arena slices in no page: free memory, whatever the kernel says about residency
     mi_arenas_visit_free_ranges(mi_heap_main(), [](void* start, size_t size, void* arg) { static_cast<std::vector<std::pair<uintptr_t, uintptr_t>>*>(arg)->push_back({ (uintptr_t)start, (uintptr_t)start + size }); }, &freeRanges);
     std::sort(freeRanges.begin(), freeRanges.end());
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) {
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) {
         size_t fb = 0;
         for (auto& r : freeRanges)
             fb += r.second - r.first;
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] arena free ranges: %zu, %.1fMB\n", freeRanges.size(), fb / 1048576.0);
     }
     auto inFreeRange = [&](uintptr_t a) { auto it = std::upper_bound(freeRanges.begin(), freeRanges.end(), std::make_pair(a, UINTPTR_MAX)); return it != freeRanges.begin() && a < std::prev(it)->second; };
-    std::vector<SnapshotRegion> regions;
+    std::vector<StartupSnapshotRegion> regions;
+    size_t jitPagesAtScan = 0;
     // 1. anonymous writable regions we own (mimalloc arenas + page map, JSC/WTF OS allocations in the hint windows) + the JIT pool
     platformEnumerateRegions([&](const PlatformRegion& r) {
         uint64_t addr = r.addr, size = r.size;
@@ -1199,12 +1212,8 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         if (platformIsJITRegion(r)) {
             regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 3 }); // reservation, no data
             std::vector<int> disp;
-            if (platformResidentPages(addr, size, disp)) {
-                { // freed JIT pages are MADV_FREE'd and may still read as present; keep only pages the executable allocator has handed out
-                    Locker locker { JSC::ExecutableAllocator::singleton().getLock() };
-                    for (size_t i = 0; i < disp.size(); i++)
-                        if (disp[i] && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg)) && !JSC::ExecutableAllocator::singleton().isValidExecutableMemory(locker, (void*)(addr + i * pg + pg / 2))) disp[i] = 0;
-                }
+            if (jitLivePages(addr, size, pg, disp)) {
+                jitPagesAtScan += std::count(disp.begin(), disp.end(), 1);
                 for (size_t i = 0; i < disp.size();) {
                     if (!disp[i]) {
                         i++;
@@ -1217,7 +1226,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                     i = j;
                 }
             }
-            if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, r.pagesResident, r.pagesDirtied);
+            if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, r.pagesResident, r.pagesDirtied);
         } else if (ours && r.writable && !r.executable && r.anon && !r.isStack && !r.isMallocZone && !r.isGuard && !r.shared && (r.pagesResident > 0 || r.pagesDirtied > 0 || r.pagesSwapped > 0)) {
             regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
             std::vector<int> disp;
@@ -1236,14 +1245,14 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                 }
             } else
                 regions.back().kind = (uint64_t)tag << 8;
-            if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] region %llx+%llx tag=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, r.pagesResident, r.pagesDirtied);
+            if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] region %llx+%llx tag=%d resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, tag, r.pagesResident, r.pagesDirtied);
         }
     });
     // 2. main binary data segments (globals of Bun/JSC/WTF/mimalloc)
     platformDataSegments([&](uint64_t a, uint64_t len) { regions.push_back({ a, (len + pg - 1) & ~(uint64_t)(pg - 1), 0, 1 }); });
     // drop anon regions overlapping __DATA entries (region scan sees them as file-backed anyway) and our own stack
     uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
-    std::vector<SnapshotRegion> out;
+    std::vector<StartupSnapshotRegion> out;
     for (auto& r : regions) {
         if (r.kind == 0 && sp >= r.addr && sp < r.addr + r.len) continue;
         // Address-adjacent heap runs (and reservations) restore as one mapping; the enumeration yields them in address order.
@@ -1259,14 +1268,13 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         fprintf(stderr, "[snapshot] open %s failed\n", path);
         return;
     }
-    SnapshotHeader hdr {};
+    StartupSnapshotHeader hdr {};
     memcpy(hdr.magic, "BUNSNAP1", 8);
     hdr.textBase = platformTextBase();
     hdr.libsBase = platformLibsBase();
-    hdr.spare[0] = platformBuildId();
+    hdr.spare[0] = snapshotEnvironmentId();
     hdr.spare[2] = platformCpuFeatures();
-    // A program registered with Bun.startupSnapshot.main() has not run yet when the snapshot is taken, so the snapshot is
-    // valid for any invocation (0 = no argv check); otherwise it holds the state of this particular invocation.
+    // With main() registered the program has not run yet, so the snapshot fits any invocation (0 = no argv check); otherwise it holds this invocation's state.
     hdr.spare[3] = Bun__startupSnapshotHasMain() ? 0 : snapshotArgvKey();
     hdr.spare[4] = platformSystemLibsId();
     hdr.vm = (uint64_t)&vm;
@@ -1299,12 +1307,12 @@ static void snapshotDump(JSC::VM& vm, const char* path)
                 }
             if (src < 0) continue;
             hdr.reserved[2 + n++] = ((uint64_t)fd << 16) | ((uint64_t)(fl & 0xffff) << 4) | (uint64_t)(src + 1);
-            if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] tty fd %d (flags %x) <- std%d\n", fd, fl, src);
+            if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] tty fd %d (flags %x) <- std%d\n", fd, fl, src);
         }
     }
     hdr.nregions = out.size();
-    size_t tableOff = sizeof(SnapshotHeader);
-    size_t dataOff = (tableOff + out.size() * sizeof(SnapshotRegion) + pg - 1) & ~(pg - 1);
+    size_t tableOff = sizeof(StartupSnapshotHeader);
+    size_t dataOff = (tableOff + out.size() * sizeof(StartupSnapshotRegion) + pg - 1) & ~(pg - 1);
     size_t fileOff = dataOff, total = 0;
     for (auto& r : out) {
         size_t used = ((r.kind & 0xff) == 3 || (r.kind & 0xff) == 4) ? 0 : r.len;
@@ -1314,7 +1322,7 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     mi_arenas_freeze_pages(); // from here on nothing frees into a page that is going into the snapshot (this process's remaining frees are dropped too)
     { // extern-library fixups: words in the snapshot that point into a loaded system library get rebased at restore (lets libraries slide)
         std::vector<PlatformLib> libs = platformSystemLibs();
-        std::vector<SnapshotFixup> fixups;
+        std::vector<StartupSnapshotFixup> fixups;
         if (!libs.empty()) {
             uint64_t minB = UINT64_MAX, maxE = 0;
             for (auto& l : libs) {
@@ -1357,8 +1365,8 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         hdr.spare[1] = fixOff;
         pwrite(fd, &fh, sizeof fh, fixOff);
         pwrite(fd, libs.data(), libs.size() * sizeof(PlatformLib), fixOff + sizeof fh);
-        pwrite(fd, fixups.data(), fixups.size() * sizeof(SnapshotFixup), fixOff + sizeof fh + libs.size() * sizeof(PlatformLib));
-        if (getenv("BUN_SNAPSHOT_VERBOSE") || !fixups.empty()) {
+        pwrite(fd, fixups.data(), fixups.size() * sizeof(StartupSnapshotFixup), fixOff + sizeof fh + libs.size() * sizeof(PlatformLib));
+        if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE") || !fixups.empty()) {
             size_t pages = 0;
             uint64_t last = ~0ull;
             for (auto& f : fixups) {
@@ -1387,21 +1395,28 @@ static void snapshotDump(JSC::VM& vm, const char* path)
         hdr.spare[5] = (uint64_t)gateOff | ((uint64_t)s_envGateNames.size() << 40);
         hdr.spare[6] = envGateHash(s_envGateNames.data(), s_envGateNames.size());
     }
+    // Background compilers were quiesced before the walk; if code was installed anyway the snapshot points at code it lacks, and no snapshot beats that one.
+    if (size_t now = jitLivePageCount(pg); now != jitPagesAtScan) {
+        fprintf(stderr, "[snapshot] error: executable memory changed while the snapshot was being written (%zu pages live at the walk, %zu now): something was still compiling; not writing a snapshot\n", jitPagesAtScan, now);
+        close(fd);
+        unlink(path);
+        return;
+    }
     pwrite(fd, &hdr, sizeof hdr, 0);
-    pwrite(fd, out.data(), out.size() * sizeof(SnapshotRegion), tableOff);
+    pwrite(fd, out.data(), out.size() * sizeof(StartupSnapshotRegion), tableOff);
     close(fd);
     fprintf(stderr, "[snapshot] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
 #endif
 }
 
-// Restore: called from Bun__snapshotMaybeRestore (very early in main) when BUN_SNAPSHOT_IN is set. Never returns.
+// Restore: called from Bun__startupSnapshotMaybeRestore (very early in main) when BUN_STARTUP_SNAPSHOT_IN is set. Never returns.
 static void snapshotRestoreAndRun(const char* path)
 {
     snapshotTimingMark("restore begins (after the re-exec, if any)");
 #if OS(DARWIN) || OS(LINUX)
     char filePath[4200];
     snprintf(filePath, sizeof filePath, "%s", path);
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) {
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) {
         void* probe = malloc(64);
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] pre-restore heap probe=%p (expected >= 0x21000000000, above where snapshot regions go)\n", probe);
         free(probe);
@@ -1420,11 +1435,11 @@ static void snapshotRestoreAndRun(const char* path)
         fprintf(stderr, "[snapshot] cannot open %s\n", path);
         _exit(2);
     }
-    SnapshotHeader hdr;
+    StartupSnapshotHeader hdr;
     ipread(fd, &hdr, sizeof hdr, 0);
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)snapshotBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
-    if (memcmp(hdr.magic, "BUNSNAP1", 8) || hdr.spare[0] != platformBuildId()) {
-        if (snapshotVerbose()) fprintf(stderr, "[snapshot] %s was not produced by this build of the executable; booting normally\n", path);
+    if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] source %s base=%lld magic=%.7s nregions=%llu text=%llx libs=%llx build=%llx\n", filePath, (long long)snapshotBaseOff, hdr.magic, (unsigned long long)hdr.nregions, (unsigned long long)hdr.textBase, (unsigned long long)hdr.libsBase, (unsigned long long)hdr.spare[0]);
+    if (memcmp(hdr.magic, "BUNSNAP1", 8) || hdr.spare[0] != snapshotEnvironmentId()) {
+        if (snapshotVerbose()) fprintf(stderr, "[snapshot] %s was not produced by this build of the executable (or by one on a different page size); booting normally\n", path);
         close(fd);
         return;
     }
@@ -1437,13 +1452,13 @@ static void snapshotRestoreAndRun(const char* path)
             return;
         }
         if (envGateHash(names, gateLen) != hdr.spare[6]) {
-            if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] environment differs from the build in a gated variable; booting normally\n");
+            if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] environment differs from the build in a gated variable; booting normally\n");
             close(fd);
             return;
         }
     }
-    if (hdr.spare[3] && hdr.spare[3] != snapshotArgvKey() && !getenv("BUN_SNAPSHOT_IN")) {
-        if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] argv differs from the build invocation; booting normally\n");
+    if (hdr.spare[3] && hdr.spare[3] != snapshotArgvKey() && !getenv("BUN_STARTUP_SNAPSHOT_IN")) {
+        if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] argv differs from the build invocation; booting normally\n");
         close(fd);
         return;
     }
@@ -1472,20 +1487,20 @@ static void snapshotRestoreAndRun(const char* path)
     bool haveFixups = false;
     int64_t* libDelta = nullptr;
     size_t nLibDelta = 0;
-    SnapshotFixup* fixups = nullptr;
+    StartupSnapshotFixup* fixups = nullptr;
     size_t nFixups = 0;
     if (hdr.spare[1]) {
         SnapshotFixupHeader fh;
         if (ipread(fd, &fh, sizeof fh, hdr.spare[1]) == (ssize_t)sizeof fh && !memcmp(fh.magic, "BUNFIX3", 8) && fh.nlibs < 4096 && fh.nfixups < (1u << 24)) {
-            size_t bytes = (fh.nlibs * (sizeof(PlatformLib) + sizeof(int64_t)) + fh.nfixups * sizeof(SnapshotFixup) + 16383) & ~16383ull;
+            size_t bytes = (fh.nlibs * (sizeof(PlatformLib) + sizeof(int64_t)) + fh.nfixups * sizeof(StartupSnapshotFixup) + 16383) & ~16383ull;
             uint8_t* buf = (uint8_t*)mmap(nullptr, bytes ? bytes : 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
             PlatformLib* recorded = (PlatformLib*)buf;
             libDelta = (int64_t*)(recorded + fh.nlibs);
-            fixups = (SnapshotFixup*)(libDelta + fh.nlibs);
+            fixups = (StartupSnapshotFixup*)(libDelta + fh.nlibs);
             nLibDelta = fh.nlibs;
             nFixups = fh.nfixups;
             ipread(fd, recorded, fh.nlibs * sizeof(PlatformLib), hdr.spare[1] + sizeof fh);
-            ipread(fd, fixups, fh.nfixups * sizeof(SnapshotFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
+            ipread(fd, fixups, fh.nfixups * sizeof(StartupSnapshotFixup), hdr.spare[1] + sizeof fh + fh.nlibs * sizeof(PlatformLib));
             std::vector<PlatformLib> now = platformSystemLibs(); // heap use is fine up to here (before the overlay)
             // Libraries the builder loaded during its run (dlopen: CoreFoundation/CoreServices for fs.watch, libsqlite3, …) whose
             // initializers therefore never ran in this process. Their code is mapped either way (shared cache) and the snapshot's
@@ -1558,7 +1573,7 @@ static void snapshotRestoreAndRun(const char* path)
             }
         }
     }
-    bool fixupsWanted = haveFixups && !(getenv("BUN_SNAPSHOT_LIB_FIXUPS") && !strcmp(getenv("BUN_SNAPSHOT_LIB_FIXUPS"), "0")); // system libraries may slide between boots (Darwin: the dyld shared cache; Linux: ASLR per exec)
+    bool fixupsWanted = haveFixups && !(getenv("BUN_STARTUP_SNAPSHOT_LIB_FIXUPS") && !strcmp(getenv("BUN_STARTUP_SNAPSHOT_LIB_FIXUPS"), "0")); // system libraries may slide between boots (Darwin: the dyld shared cache; Linux: ASLR per exec)
     if (fixupsWanted && hdr.spare[4] && hdr.spare[4] != platformSystemLibsId()) {
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] %s was built against a different OS build (system library contents changed); booting normally\n", path);
         close(fd);
@@ -1575,9 +1590,9 @@ static void snapshotRestoreAndRun(const char* path)
         fprintf(stderr, "[snapshot] too many regions\n");
         _exit(2);
     }
-    SnapshotRegion* regionsBuf = (SnapshotRegion*)mmap(nullptr, (hdr.nregions * sizeof(SnapshotRegion) + 16383) & ~16383ull, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); // not heap, not __DATA: both get overlaid below
-    ipread(fd, regionsBuf, hdr.nregions * sizeof(SnapshotRegion), sizeof(SnapshotHeader));
-    std::span<SnapshotRegion> regions(regionsBuf, hdr.nregions);
+    StartupSnapshotRegion* regionsBuf = (StartupSnapshotRegion*)mmap(nullptr, (hdr.nregions * sizeof(StartupSnapshotRegion) + 16383) & ~16383ull, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); // not heap, not __DATA: both get overlaid below
+    ipread(fd, regionsBuf, hdr.nregions * sizeof(StartupSnapshotRegion), sizeof(StartupSnapshotHeader));
+    std::span<StartupSnapshotRegion> regions(regionsBuf, hdr.nregions);
     { // this process's own (pre-overlay) allocator must not place anything where the snapshot goes: push mimalloc's hint pointer above the snapshot
         uint64_t top = 0;
         for (auto& r : regions)
@@ -1606,7 +1621,7 @@ static void snapshotRestoreAndRun(const char* path)
     uint64_t linkerRanges[8][2];
     size_t nLinkerRanges = platformLinkerOwnedRanges(linkerRanges, 8);
     const bool deferDataCopy = useLibFixups || nLinkerRanges > 0; // words this process owns inside our data segments are skipped by the deferred copy
-    bool verbose = !!getenv("BUN_SNAPSHOT_VERBOSE");
+    bool verbose = !!getenv("BUN_STARTUP_SNAPSHOT_VERBOSE");
     for (auto& r : regions) {
         if (verbose) {
             fprintf(stderr, "[snapshot] restoring %llx+%llx kind=%llu tag=%llu\n", r.addr, r.len, r.kind & 0xff, r.kind >> 8);
@@ -1640,8 +1655,7 @@ static void snapshotRestoreAndRun(const char* path)
             continue;
         }
         if ((r.kind & 0xff) == 1) {
-            // Data segments of the running binary are copied last (below): once they are overwritten our GOT/stdio state is the builder's,
-            // so nothing may call into libc between that copy and the extern-library fixups.
+            // __DATA is copied last: from then until the extern-library fixups the GOT is the builder's, so nothing in between may call into libc.
             if (mprotect((void*)r.addr, r.len, PROT_READ | PROT_WRITE)) {
                 fprintf(stderr, "[snapshot] mprotect __DATA %llx failed errno %d\n", r.addr, errno);
                 _exit(3);
@@ -1701,7 +1715,7 @@ static void snapshotRestoreAndRun(const char* path)
         }
         if (useLibFixups)
             for (size_t k = 0; k < nFixups; k++) {
-                SnapshotFixup& f = fixups[k];
+                StartupSnapshotFixup& f = fixups[k];
                 bool linkerOwned = false;
                 for (size_t q = 0; q < nLinkerRanges; q++)
                     if (f.addr >= linkerRanges[q][0] && f.addr < linkerRanges[q][1]) {
@@ -1824,11 +1838,10 @@ static void snapshotRestoreAndRun(const char* path)
             mi_free(probe);
         }
     }
-    // The snapshot's scavenger thread died with the build process; without one, nothing sweeps this thread's heaps while it is
-    // parked, and everything the app frees after resuming stays resident. Same restart a fork child gets, done eagerly.
+    // The scavenger thread died with the build process; without it nothing sweeps parked heaps and frees stay resident — restart it as a fork child would.
     _mi_scavenger_start_if_forked();
-    snapshotToolingAfterRestore();
-    snapshotToolingArmTraps();
+    startupSnapshotToolingAfterRestore();
+    startupSnapshotToolingArmTraps();
     // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the snapshot's high-water mark.
     if (hdr.reserved[1]) {
         for (int i = 0; i < 1024; i++) {
@@ -1848,7 +1861,7 @@ static void snapshotRestoreAndRun(const char* path)
     snapshotTimingMark("regions mapped and library pointers rebased");
     // From here on all globals/heap are the build process's. Adopt the snapshot's main Thread object for this OS thread.
     WTF::Thread* mainThread = (WTF::Thread*)hdr.mainThread;
-    mainThread->adoptCurrentThreadForSnapshot();
+    mainThread->adoptCurrentThreadForStartupSnapshot();
     JSC::VM* vm = (JSC::VM*)hdr.vm;
     if (snapshotVerbose()) fprintf(stderr, "[snapshot] thread: snapshot main=%p currentSingleton=%p currentMayBeNull=%p apiLock owner=%p held=%d\n", mainThread, &WTF::Thread::currentSingleton(), WTF::Thread::currentMayBeNull(), vm->apiLock().ownerThread() ? vm->apiLock().ownerThread()->get() : nullptr, (int)vm->apiLock().currentThreadIsHoldingLock());
     JSC::JSGlobalObject* globalObject = (JSC::JSGlobalObject*)hdr.globalObject;
@@ -1856,12 +1869,12 @@ static void snapshotRestoreAndRun(const char* path)
     us_loop_reinit_for_snapshot(uws_get_loop());
     __atomic_add_fetch(&bun_snapshot_epoch, 1, __ATOMIC_ACQ_REL);
     snapshotReprobeCPUDispatch();
-    Bun__snapshotAdoptMainThreadVM();
+    Bun__startupSnapshotAdoptMainThreadVM();
     JSC::JSLockHolder restoreLock(*vm); // held until 'restore' has been emitted: releasing a JSLock drains microtasks, and snapshotted continuations must not run before the app hears about the restore
     vm->refreshStackBoundsAfterSnapshotRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     {
         JSC::JSLockHolder lock(*vm);
-        vm->didRestoreFromSnapshot();
+        vm->didRestoreFromStartupSnapshot();
         if (snapshotVerbose()) fprintf(stderr, "[snapshot] termination state: request=%d pendingTermException=%d exception=%p trapsNeedTermination=%d\n", (int)vm->hasTerminationRequest(), (int)vm->hasPendingTerminationException(), vm->exceptionForInspection(), (int)vm->traps().needHandling(JSC::VMTraps::NeedTermination));
         if (vm->hasPendingTerminationException() || vm->hasTerminationRequest()) {
             vm->clearHasTerminationRequest();
@@ -1878,18 +1891,17 @@ static void snapshotRestoreAndRun(const char* path)
         JSC::JSLockHolder lock(*vm);
         NakedPtr<JSC::Exception> exception;
         globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
-        // chdir('.') refreshes libc's idea of the cwd for code that cached it. Once the app's own startup work has settled, one full
-        // collection frees what that burst left behind and the reclean hands back the snapshot pages it only wrote transiently.
+        // chdir('.') refreshes libc's cached cwd; after the app's post-restore burst settles, one full GC plus a reclean hands back what it only touched transiently.
         JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.startupSnapshot.reclean(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
         Bun__startupSnapshotRunMain(globalObject); // the program registered with Bun.startupSnapshot.main(), if any
         if (exception) fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
     snapshotTimingMark("runtime refreshed, 'restore' emitted and main() run; entering the event loop");
-    Bun__snapshotContinueEventLoop(); // never returns
+    Bun__startupSnapshotContinueEventLoop(); // never returns
 #endif
 }
 
-#else // !BUN_SNAPSHOT_SUPPORTED
+#else // !BUN_STARTUP_SNAPSHOT_SUPPORTED
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1898,20 +1910,20 @@ class VM;
 }
 extern "C" int bun_is_compiled_executable(void);
 extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
-extern "C" bool Bun__snapshotMode() { return false; }
-extern "C" bool Bun__snapshotActive() { return false; }
-extern "C" bool Bun__snapshotSupported() { return false; }
-extern "C" void Bun__snapshotMaybeRestore() {}
-extern "C" void Bun__snapshotInit() {}
-extern "C" void Bun__snapshotSetEnvGate(const uint8_t*, size_t) {}
-extern "C" void Bun__snapshotRecleanPages(JSC::VM*) {}
+extern "C" bool Bun__startupSnapshotMode() { return false; }
+extern "C" bool Bun__startupSnapshotActive() { return false; }
+extern "C" bool Bun__startupSnapshotSupported() { return false; }
+extern "C" void Bun__startupSnapshotMaybeRestore() {}
+extern "C" void Bun__startupSnapshotInit() {}
+extern "C" void Bun__startupSnapshotSetEnvGate(const uint8_t*, size_t) {}
+extern "C" void Bun__startupSnapshotRecleanPages(JSC::VM*) {}
 extern "C" void Bun__VM__refreshStackBoundsAfterSnapshotRestore(JSC::VM*) {}
-extern "C" void Bun__snapshotUnwindJS(JSC::VM*) {}
-extern "C" void Bun__snapshotClearTerminationRequest(JSC::VM*) {}
-extern "C" void Bun__snapshotDumpNow(JSC::VM*, const char*)
+extern "C" void Bun__startupSnapshotUnwindJS(JSC::VM*) {}
+extern "C" void Bun__startupSnapshotClearTerminationRequest(JSC::VM*) {}
+extern "C" void Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
 {
     fprintf(stderr, "error: snapshots are not supported on this platform\n");
     exit(1);
 }
 
-#endif // BUN_SNAPSHOT_SUPPORTED
+#endif // BUN_STARTUP_SNAPSHOT_SUPPORTED

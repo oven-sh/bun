@@ -169,9 +169,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         unsafe extern "C" {
-            fn Bun__snapshotInit();
+            fn Bun__startupSnapshotInit();
         }
-        Bun__snapshotInit();
+        Bun__startupSnapshotInit();
     }
 
     // Windows-only startup. Must run BEFORE the first libuv
@@ -208,9 +208,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // SAFETY: single-threaded startup; the callee takes no arguments and either returns or continues the snapshotd process.
     unsafe {
         unsafe extern "C" {
-            fn Bun__snapshotMaybeRestore();
+            fn Bun__startupSnapshotMaybeRestore();
         }
-        Bun__snapshotMaybeRestore();
+        Bun__startupSnapshotMaybeRestore();
     }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.

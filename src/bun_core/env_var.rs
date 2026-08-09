@@ -87,14 +87,14 @@ new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
 new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
 new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
-new!(pub BUN_SNAPSHOT_VERBOSE: boolean, "BUN_SNAPSHOT_VERBOSE", {});
+new!(pub BUN_STARTUP_SNAPSHOT_VERBOSE: boolean, "BUN_STARTUP_SNAPSHOT_VERBOSE", {});
 // Set for the process `bun build --snapshot` runs to take the snapshot: what it may touch on this machine ("strict" unless "local"),
 // and whether the runtime takes the snapshot itself once startup drains (auto) or waits for Bun.startupSnapshot.take() (manual).
-new!(pub BUN_SNAPSHOT_OUT: string, "BUN_SNAPSHOT_OUT", {});
-new!(pub BUN_SNAPSHOT_IO: string, "BUN_SNAPSHOT_IO", {});
-new!(pub BUN_SNAPSHOT_AUTO: boolean, "BUN_SNAPSHOT_AUTO", {});
-new!(pub BUN_SNAPSHOT_KEEP_SIDECAR: boolean, "BUN_SNAPSHOT_KEEP_SIDECAR", {});
-new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
+new!(pub BUN_STARTUP_SNAPSHOT_OUT: string, "BUN_STARTUP_SNAPSHOT_OUT", {});
+new!(pub BUN_STARTUP_SNAPSHOT_IO: string, "BUN_STARTUP_SNAPSHOT_IO", {});
+new!(pub BUN_STARTUP_SNAPSHOT_AUTO: boolean, "BUN_STARTUP_SNAPSHOT_AUTO", {});
+new!(pub BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR: boolean, "BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR", {});
+new!(pub BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
@@ -361,7 +361,7 @@ pub(crate) mod kind {
             }
 
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::snapshot::epoch() {
+                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 let len = self.len_value.load(Ordering::Acquire);
@@ -387,7 +387,7 @@ pub(crate) mod kind {
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
                 self.epoch
-                    .store(crate::snapshot::epoch(), Ordering::Relaxed);
+                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
                 // The implementation is racy and allows two threads to both set the value at
                 // the same time, as long as the value they are setting is the same. This is
                 // difficult to write an assertion for since it requires the DEV path take a
@@ -448,7 +448,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::snapshot::epoch() {
+                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 // only ever stored from StoredType discriminants
@@ -472,7 +472,7 @@ pub(crate) mod kind {
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
                 self.epoch
-                    .store(crate::snapshot::epoch(), Ordering::Relaxed);
+                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
                 let Some(raw_env) = raw_env else {
                     self.value
                         .store(StoredType::NotSet as u8, Ordering::Relaxed);
@@ -587,7 +587,7 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
-                if self.epoch.load(Ordering::Relaxed) != crate::snapshot::epoch() {
+                if self.epoch.load(Ordering::Relaxed) != crate::startup_snapshot::epoch() {
                     return CacheOutput::Unknown;
                 }
                 match self.value.load(Ordering::Relaxed) {
@@ -603,7 +603,7 @@ pub(crate) mod kind {
             #[inline]
             pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
                 self.epoch
-                    .store(crate::snapshot::epoch(), Ordering::Relaxed);
+                    .store(crate::startup_snapshot::epoch(), Ordering::Relaxed);
                 let Some(raw_env) = raw_env else {
                     self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                     return None;

@@ -317,7 +317,7 @@ impl Default for FilePoll {
 
 /// Outcome of `FilePoll::rearm_after_snapshot_restore`.
 #[cfg(target_os = "macos")]
-enum SnapshotRearm {
+enum StartupSnapshotRearm {
     Untouched,
     Rearmed,
     HungUp,
@@ -328,12 +328,12 @@ impl FilePoll {
     /// snapshot restore (`Store::rearm_for_snapshot`): re-add this poll to the new kqueue if its fd still means the same
     /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.
     #[cfg(target_os = "macos")]
-    fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> SnapshotRearm {
+    fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> StartupSnapshotRearm {
         if self.fd == INVALID_FD
             || !self.flags.contains(Flags::WasEverRegistered)
             || self.flags.contains(Flags::Closed)
         {
-            return SnapshotRearm::Untouched;
+            return StartupSnapshotRearm::Untouched;
         }
         let want = if self.flags.contains(Flags::PollReadable) {
             Flags::Readable
@@ -342,7 +342,7 @@ impl FilePoll {
         } else if self.flags.contains(Flags::PollProcess) {
             Flags::Process
         } else {
-            return SnapshotRearm::Untouched;
+            return StartupSnapshotRearm::Untouched;
         };
         // Only fds the restore re-seated mean the same thing in this process: stdio (dup'd from the launcher onto the
         // builder's numbers) and the controlling tty. Every other number is stale or parked on /dev/null.
@@ -361,14 +361,14 @@ impl FilePoll {
                 .register_with_fd(loop_, want, one_shot, self.fd)
                 .is_ok()
             {
-                return SnapshotRearm::Rearmed;
+                return StartupSnapshotRearm::Rearmed;
             }
         } else {
             self.flags
                 .remove_all(Flags::PollReadable | Flags::PollWritable | Flags::PollProcess);
         }
         self.flags.insert(Flags::Hup);
-        SnapshotRearm::HungUp
+        StartupSnapshotRearm::HungUp
     }
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -1393,9 +1393,9 @@ impl Store {
             // SAFETY: the slot is marked used in the hive and nothing runs concurrently during restore; the call is the
             // only access through this pointer.
             match unsafe { (*poll_ptr).rearm_after_snapshot_restore(loop_) } {
-                SnapshotRearm::Untouched => {}
-                SnapshotRearm::Rearmed => rearmed += 1,
-                SnapshotRearm::HungUp => {
+                StartupSnapshotRearm::Untouched => {}
+                StartupSnapshotRearm::Rearmed => rearmed += 1,
+                StartupSnapshotRearm::HungUp => {
                     self.snapshot_hangups.push(poll_ptr);
                     hung_up += 1;
                 }

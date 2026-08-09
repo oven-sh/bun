@@ -3,9 +3,9 @@ import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // Snapshot round-trip: the fixture snapshots itself at idle, a fresh process restores it and continues.
-const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
+const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_STARTUP_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
 const buildEnv = env;
-const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
+const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_STARTUP_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
 // Support is a property of the build under test (platform, ASAN, and on macOS whether mimalloc is the process allocator):
 // the snapshot step says so up front, before it looks at the file.
 const hasSnapshots = (() => {
@@ -19,21 +19,23 @@ const hasSnapshots = (() => {
   });
   return !(probe.stderr.toString() + probe.stdout.toString()).includes("not available in this build");
 })();
+const snapshotTest = test.skipIf(!hasSnapshots);
+const darwinSnapshotTest = test.skipIf(!hasSnapshots || process.platform !== "darwin");
 
 for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
-  test.skipIf(!hasSnapshots)(`snapshot round-trip: ${fixture}`, async () => {
+  snapshotTest(`snapshot round-trip: ${fixture}`, async () => {
     using dir = tempDir("bun-snapshot", {});
     const img = join(String(dir), "app.snapshot");
     const build = Bun.spawnSync({
       cmd: [bunExe(), join(import.meta.dir, fixture)],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
       stderr: "pipe",
       stdout: "pipe",
     });
     expect(build.stderr.toString()).toContain("[snapshot] wrote");
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, fixture)],
-      env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -48,7 +50,7 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   });
 }
 
-test.skipIf(!hasSnapshots)(
+snapshotTest(
   "bun build --compile --snapshot embeds the snapshot; the single file restores from itself with no env",
   async () => {
     using dir = tempDir("bun-snapshot-compile", {});
@@ -80,7 +82,7 @@ test.skipIf(!hasSnapshots)(
     for (const run of [1, 2]) {
       await using proc = Bun.spawn({
         cmd: [exe],
-        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_SNAPSHOT_VERBOSE: "1" },
+        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_VERBOSE: "1" },
         stderr: "pipe",
         stdout: "pipe",
       });
@@ -99,13 +101,13 @@ test.skipIf(!hasSnapshots)(
     // Opt out boots normally.
     const plain = Bun.spawnSync({
       cmd: [exe],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_SNAPSHOT: "0" },
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT: "0" },
       stderr: "pipe",
       stdout: "pipe",
     });
     expect(plain.stdout.toString()).toContain("epoch 0");
     expect(plain.exitCode).toBe(0);
-    // Debugging: an explicit snapshot file still wins (BUN_SNAPSHOT_KEEP_SIDECAR keeps <exe>.snapshot next to it at build time).
+    // Debugging: an explicit snapshot file still wins (BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR keeps <exe>.snapshot next to it at build time).
     const dbg = join(String(dir), "dbg");
     const b2 = Bun.spawnSync({
       cmd: [
@@ -119,7 +121,7 @@ test.skipIf(!hasSnapshots)(
         "--outfile",
         dbg,
       ],
-      env: { ...bunEnv, BUN_SNAPSHOT_KEEP_SIDECAR: "1" },
+      env: { ...bunEnv, BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -127,7 +129,7 @@ test.skipIf(!hasSnapshots)(
     expect(Bun.file(dbg + ".snapshot").size).toBeGreaterThan(1024 * 1024);
     const viaFile = Bun.spawnSync({
       cmd: [dbg],
-      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_SNAPSHOT_IN: dbg + ".snapshot" },
+      env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, BUN_STARTUP_SNAPSHOT_IN: dbg + ".snapshot" },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -137,7 +139,7 @@ test.skipIf(!hasSnapshots)(
   60_000,
 );
 
-test("launch context (argv, env, cwd, HOME) comes from the restoring process, not the builder", async () => {
+snapshotTest("launch context (argv, env, cwd, HOME) comes from the restoring process, not the builder", async () => {
   using dir = tempDir("bun-snapshot-launchctx", {
     a: { ".keep": "" },
     b: { ".keep": "" },
@@ -149,7 +151,7 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture, "built-arg"],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, LAUNCH_MARKER: "builder", HOME: join(String(dir), "homeA") },
       cwd: join(String(dir), "a"),
       stdout: "pipe",
       stderr: "pipe",
@@ -165,7 +167,7 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
   }
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture, "restored-arg", "--flag"],
-    env: { ...restoreEnv, BUN_SNAPSHOT_IN: img, LAUNCH_MARKER: "restorer", HOME: join(String(dir), "homeB") },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, LAUNCH_MARKER: "restorer", HOME: join(String(dir), "homeB") },
     cwd: join(String(dir), "b"),
     stdout: "pipe",
     stderr: "pipe",
@@ -184,14 +186,14 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
   expect(code).toBe(0);
 }, 60000);
 
-test("full GC right after restore is not stalled by the builder's parked threads", async () => {
+snapshotTest("full GC right after restore is not stalled by the builder's parked threads", async () => {
   using dir = tempDir("bun-snapshot-gctime", {});
   const img = join(String(dir), "gct.snapshot");
   const fixture = join(import.meta.dir, "gctime-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -199,7 +201,7 @@ test("full GC right after restore is not stalled by the builder's parked threads
   }
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -212,14 +214,14 @@ test("full GC right after restore is not stalled by the builder's parked threads
   expect(code).toBe(0);
 }, 60000);
 
-test('timers: "keep" — timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers', async () => {
+snapshotTest('timers: "keep" — timers armed before the snapshot keep running after restore, re-based on the new clock; stdin still delivers', async () => {
   using dir = tempDir("bun-snapshot-keeptimers", {});
   const img = join(String(dir), "kt.snapshot");
   const fixture = join(import.meta.dir, "keeptimers-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, TIMERS: "keep" },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, TIMERS: "keep" },
       terminal: { cols: 80, rows: 24, data() {} },
     });
     await p.exited;
@@ -227,7 +229,7 @@ test('timers: "keep" — timers armed before the snapshot keep running after res
   let out = "";
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
     terminal: {
       cols: 80,
       rows: 24,
@@ -251,14 +253,14 @@ test('timers: "keep" — timers armed before the snapshot keep running after res
   expect(out).toContain('stdin data: "q"');
 }, 60000);
 
-test("spawnSync used before the snapshot still works after restore (isolated spawnSync loop is rebuilt)", async () => {
+snapshotTest("spawnSync used before the snapshot still works after restore (isolated spawnSync loop is rebuilt)", async () => {
   using dir = tempDir("bun-snapshot-spawnsync", {});
   const img = join(String(dir), "ss.snapshot");
   const fixture = join(import.meta.dir, "spawnsync-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, BUN_SNAPSHOT_IO: "local" },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "local" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -268,7 +270,7 @@ test("spawnSync used before the snapshot still works after restore (isolated spa
   }
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -279,14 +281,14 @@ test("spawnSync used before the snapshot still works after restore (isolated spa
   expect(code).toBe(0);
 }, 60000);
 
-test("random sources and time bases are fresh in every process restored from the same snapshot", async () => {
+snapshotTest("random sources and time bases are fresh in every process restored from the same snapshot", async () => {
   using dir = tempDir("bun-snapshot-rng", {});
   const img = join(String(dir), "rng.snapshot");
   const fixture = join(import.meta.dir, "rng-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -296,7 +298,7 @@ test("random sources and time bases are fresh in every process restored from the
   for (let i = 0; i < 2; i++) {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -316,14 +318,14 @@ test("random sources and time bases are fresh in every process restored from the
   expect(b.timeOrigin).toBeGreaterThanOrEqual(a.timeOrigin);
 }, 60000);
 
-test("DNS answers cached by the builder are not served after restore; keep-alive pool recovers", async () => {
+snapshotTest("DNS answers cached by the builder are not served after restore; keep-alive pool recovers", async () => {
   using dir = tempDir("bun-snapshot-dns", {});
   const img = join(String(dir), "dns.snapshot");
   const fixture = join(import.meta.dir, "dns-fixture.js");
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, BUN_SNAPSHOT_IO: "network" },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "network" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -333,7 +335,7 @@ test("DNS answers cached by the builder are not served after restore; keep-alive
   }
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -348,7 +350,7 @@ test("DNS answers cached by the builder are not served after restore; keep-alive
   expect(code).toBe(0);
 }, 60000);
 
-test.skipIf(process.platform !== "darwin")(
+darwinSnapshotTest(
   "restore: 'restore' precedes any poll delivery; a stdio poll follows the re-seated fd; dns works again",
   async () => {
     using dir = tempDir("bun-snapshot-polls", {});
@@ -357,7 +359,7 @@ test.skipIf(process.platform !== "darwin")(
     {
       await using p = Bun.spawn({
         cmd: [bunExe(), fixture],
-        env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, BUN_SNAPSHOT_IO: "local" },
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "local" },
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -366,7 +368,7 @@ test.skipIf(process.platform !== "darwin")(
     }
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...restoreEnv, BUN_SNAPSHOT_IN: img },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -385,7 +387,7 @@ test.skipIf(process.platform !== "darwin")(
   60000,
 );
 
-test.skipIf(process.platform !== "darwin")(
+darwinSnapshotTest(
   "fs.watch works in a restored process even though the builder had an FSEvents loop",
   async () => {
     using dir = tempDir("bun-snapshot-fswatch", { a: { ".keep": "" }, b: { ".keep": "" } });
@@ -394,7 +396,7 @@ test.skipIf(process.platform !== "darwin")(
     {
       await using p = Bun.spawn({
         cmd: [bunExe(), fixture],
-        env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, BUN_SNAPSHOT_IO: "local", WATCH_DIR: join(String(dir), "a") },
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "local", WATCH_DIR: join(String(dir), "a") },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -402,7 +404,7 @@ test.skipIf(process.platform !== "darwin")(
     }
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...restoreEnv, BUN_SNAPSHOT_IN: img, WATCH_DIR2: join(String(dir), "b") },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, WATCH_DIR2: join(String(dir), "b") },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -415,14 +417,14 @@ test.skipIf(process.platform !== "darwin")(
   60000,
 );
 
-test("envGate: the snapshot is only restored when the gated environment variables agree with the build", async () => {
+snapshotTest("envGate: the snapshot is only restored when the gated environment variables agree with the build", async () => {
   using dir = tempDir("bun-snapshot-envgate", {});
   const img = join(String(dir), "g.snapshot");
   const fixture = join(import.meta.dir, "envgate-fixture.js");
   {
     const b = Bun.spawnSync({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, UNGATED_VAR: "1" },
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, UNGATED_VAR: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -435,7 +437,7 @@ test("envGate: the snapshot is only restored when the gated environment variable
   const run = (extra: Record<string, string>) =>
     Bun.spawnSync({
       cmd: [bunExe(), fixture],
-      env: { ...restoreEnv, BUN_SNAPSHOT_IN: img, ...extra },
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, ...extra },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -457,7 +459,7 @@ function runExe(exe: string, extraEnv: Record<string, string> = {}) {
   return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), code: r.exitCode };
 }
 
-test("--snapshot (auto): an app with no snapshot call gets its snapshot once startup drains", () => {
+snapshotTest("--snapshot (auto): an app with no snapshot call gets its snapshot once startup drains", () => {
   using dir = tempDir("bun-snapshot-auto", {});
   const exe = join(String(dir), "app");
   const b = build(["--compile", "--snapshot", join(import.meta.dir, "auto-fixture.js"), "--outfile", exe]);
@@ -468,7 +470,7 @@ test("--snapshot (auto): an app with no snapshot call gets its snapshot once sta
   expect(r.code).toBe(0);
 });
 
-test("the snapshot step runs on its own against an executable built earlier, in place, and can be re-run", () => {
+snapshotTest("the snapshot step runs on its own against an executable built earlier, in place, and can be re-run", () => {
   using dir = tempDir("bun-snapshot-split", {});
   const exe = join(String(dir), "app");
   const compiled = build(["--compile", join(import.meta.dir, "auto-fixture.js"), "--outfile", exe]);
@@ -492,7 +494,7 @@ test("the snapshot step runs on its own against an executable built earlier, in 
   expect(build(["--snapshot", "--outfile", join(String(dir), "missing")]).out).toContain("could not read");
 });
 
-test("Bun.build({ snapshot }) is the flag's equivalent; it needs compile, and bad values are rejected up front", async () => {
+snapshotTest("Bun.build({ snapshot }) is the flag's equivalent; it needs compile, and bad values are rejected up front", async () => {
   using dir = tempDir("bun-snapshot-jsapi", {
     "build.ts": [
       "const [exe, entry] = process.argv.slice(2);",
@@ -528,14 +530,14 @@ test("Bun.build({ snapshot }) is the flag's equivalent; it needs compile, and ba
   expect(runExe(exe).stdout).toContain("[js] restored epoch 1");
 });
 
-test("local I/O during the build is refused by default (auto mode keeps the plain executable) and reported when allowed", () => {
+snapshotTest("local I/O during the build is refused by default (the build fails, the executable is left as built) and reported when allowed", () => {
   using dir = tempDir("bun-snapshot-io", {});
   const strict = join(String(dir), "strict");
   const s = build(["--compile", "--snapshot", join(import.meta.dir, "io-fixture.js"), "--outfile", strict]);
   expect(s.out).toContain("node:fs is not available while building a snapshot");
-  expect(s.out).toContain("left without a snapshot");
-  expect(s.code).toBe(0); // the build still produced a working (plain) executable
-  expect(runExe(strict).stdout).toBe(""); // boots plainly: the fixture only prints when restored
+  expect(s.out).toMatch(/exited with status \d+ while its snapshot was being taken/);
+  expect(s.code).not.toBe(0); // --snapshot was asked for and there is none
+  expect(runExe(strict).stdout).toBe(""); // what is left is the plain executable, which boots normally (the fixture only prints when restored)
   const local = join(String(dir), "local");
   const l = build([
     "--compile",
@@ -567,11 +569,11 @@ test("local I/O during the build is refused by default (auto mode keeps the plai
     "--outfile",
     join(String(dir), "manual"),
   ]);
-  expect(m.out).toContain("In manual mode the app has to call Bun.startupSnapshot.take()");
+  expect(m.out).toContain("in manual mode the app has to call Bun.startupSnapshot.take()");
   expect(m.code).toBe(1);
 });
 
-test("Bun.startupSnapshot.main(): the program runs after restore with each launch's own argv and cwd; a snapshot taken with it accepts any invocation", () => {
+snapshotTest("Bun.startupSnapshot.main(): the program runs after restore with each launch's own argv and cwd; a snapshot taken with it accepts any invocation", () => {
   using dir = tempDir("bun-snapshot-main", { "a/.keep": "", "b/.keep": "" });
   const exe = join(String(dir), "tool");
   const b = build(["--compile", "--snapshot", join(import.meta.dir, "main-fixture.js"), "--outfile", exe]);
@@ -586,7 +588,7 @@ test("Bun.startupSnapshot.main(): the program runs after restore with each launc
     const r = Bun.spawnSync({
       cmd: [exe, ...args],
       cwd: join(String(dir), cwd),
-      env: { ...runEnv(), BUN_SNAPSHOT_VERBOSE: "1" },
+      env: { ...runEnv(), BUN_STARTUP_SNAPSHOT_VERBOSE: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -606,8 +608,8 @@ test("Bun.startupSnapshot.main(): the program runs after restore with each launc
   expect(plain.stdout.toString()).toContain('[js] main epoch=0 args=["p","q"]');
 });
 
-test.skipIf(!hasSnapshots)(
-  "stdio set up before the snapshot is re-created for each launch's own descriptors",
+snapshotTest(
+  "stdio set up before the snapshot follows each launch's descriptors: replaced when their kind changed, kept and resized when a terminal is a terminal again",
   async () => {
     using dir = tempDir("bun-snapshot-stdio", {});
     const exe = join(String(dir), "tool");
@@ -615,30 +617,41 @@ test.skipIf(!hasSnapshots)(
     expect(b.out).toContain("process.stdin/stdout/stderr were set up before the freeze");
     expect(b.out).toMatch(/process\.stdout from:\n\s+at \/\$bunfs\/root\/tool:\d+:\d+/); // compiled modules are named after the executable
     expect(b.code).toBe(0);
-    // Launched with stdout redirected to a file: the write must land there (the snapshot's stream was over a pipe).
+    // pipe at build time -> file at launch: replaced (the build's stream silently lost these bytes before).
     const outFile = join(String(dir), "out.txt");
     const toFile = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: Bun.file(outFile), stderr: "pipe" });
-    expect(await Bun.file(outFile).text()).toBe("epoch=1 builtWithTTY=false nowTTY=false colors=false\n");
+    expect(await Bun.file(outFile).text()).toBe("epoch=1 builtWithTTY=false nowTTY=false colors=false sameObject=false columns=undefined\n");
     expect(toFile.exitCode).toBe(0);
-    // Launched on a terminal: both the re-created stream and Bun's own color decision follow this launch's descriptors.
-    let seen = "";
-    await using pty = Bun.spawn({
-      cmd: [exe],
-      env: { ...runEnv(), TERM: "xterm-256color" },
-      terminal: {
-        cols: 80,
-        rows: 24,
-        data(_t, d) {
-          seen += new TextDecoder().decode(d);
+    const onTerminal = async (cmd: string[], cols: number) => {
+      let seen = "";
+      await using proc = Bun.spawn({
+        cmd,
+        env: { ...runEnv(), TERM: "xterm-256color" },
+        terminal: {
+          cols,
+          rows: 24,
+          data(_t, d) {
+            seen += new TextDecoder().decode(d);
+          },
         },
-      },
-    });
-    await pty.exited;
-    expect(seen).toContain("epoch=1 builtWithTTY=false nowTTY=true colors=true");
+      });
+      await proc.exited;
+      return seen;
+    };
+    // pipe at build time -> terminal at launch: replaced by a terminal stream; Bun's own color decision follows the launch too.
+    expect(await onTerminal([exe], 80)).toContain("epoch=1 builtWithTTY=false nowTTY=true colors=true sameObject=false columns=80");
+    // terminal at build time -> terminal at launch: the object the app captured is kept, with this terminal's size.
+    const exe2 = join(String(dir), "tool2");
+    const built = await onTerminal(
+      [bunExe(), "build", "--compile", "--snapshot", join(import.meta.dir, "stdio-fixture.js"), "--outfile", exe2],
+      60,
+    );
+    expect(built).toMatch(/embedded a [\d.]+ MB snapshot/); // colored on a terminal, so not matched as one string
+    expect(await onTerminal([exe2], 100)).toContain("epoch=1 builtWithTTY=true nowTTY=true colors=true sameObject=true columns=100");
   },
 );
 
-test.skipIf(!hasSnapshots)(
+snapshotTest(
   "signal listeners registered before the snapshot are installed again in a restored launch",
   () => {
     using dir = tempDir("bun-snapshot-signal", {});
@@ -652,7 +665,7 @@ test.skipIf(!hasSnapshots)(
   },
 );
 
-test.skipIf(!hasSnapshots)("WebAssembly instantiated before the snapshot works after restore, including traps", () => {
+snapshotTest("WebAssembly instantiated before the snapshot works after restore, including traps", () => {
   using dir = tempDir("bun-snapshot-wasm", {});
   const exe = join(String(dir), "tool");
   const b = build(["--compile", "--snapshot", join(import.meta.dir, "wasm-fixture.js"), "--outfile", exe]);
@@ -662,3 +675,16 @@ test.skipIf(!hasSnapshots)("WebAssembly instantiated before the snapshot works a
   expect(r.stdout.toString()).toContain("[js] epoch=1 load(0)=7 out-of-bounds=RuntimeError"); // unfixed: the launch crashes on the trap
   expect(r.exitCode).toBe(0);
 });
+
+snapshotTest("wasm tier-up compilations in flight when the snapshot is taken are quiesced first", () => {
+  using dir = tempDir("bun-snapshot-wasm-tierup", {});
+  const exe = join(String(dir), "tool");
+  const b = build(["--compile", "--snapshot", join(import.meta.dir, "wasm-tierup-fixture.js"), "--outfile", exe]);
+  expect(b.out).not.toContain("executable memory changed while the snapshot was being written");
+  expect(b.out).toContain("[snapshot] embedded");
+  expect(b.code).toBe(0);
+  const r = Bun.spawnSync({ cmd: [exe], env: runEnv(), stdout: "pipe", stderr: "pipe" });
+  expect(r.stdout.toString()).toContain("[js] epoch=1 warmed=300000 sum=2000 bump=100001");
+  expect(r.exitCode).toBe(0);
+});
+

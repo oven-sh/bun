@@ -319,11 +319,11 @@ impl JSGlobalObject {
         &self,
         what: &'static str,
     ) -> Result<(), JsError> {
-        if !bun_core::snapshot::building() {
+        if !bun_core::startup_snapshot::building() {
             return Ok(());
         }
-        if bun_core::snapshot::io_allowed(what) {
-            bun_core::snapshot::note_local_io(what, self.current_call_site_for_report());
+        if bun_core::startup_snapshot::io_allowed(what) {
+            bun_core::startup_snapshot::note_local_io(what, self.current_call_site_for_report());
             return Ok(());
         }
         Err(self.throw_invalid_arguments(format_args!(

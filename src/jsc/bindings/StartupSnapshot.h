@@ -1,39 +1,39 @@
 #pragma once
-// Snapshots: Snapshot.cpp builds and restores them; SnapshotTooling.cpp holds the attribution commands used while
-// putting an application on a diet (dirty-page maps, censuses, write traps), compiled only with -DBUN_SNAPSHOT_TOOLING=1.
+// Snapshots: StartupSnapshot.cpp builds and restores them; StartupSnapshotTooling.cpp holds the attribution commands used while
+// putting an application on a diet (dirty-page maps, censuses, write traps), compiled only with -DBUN_STARTUP_SNAPSHOT_TOOLING=1.
 #include "root.h"
 
-#ifndef BUN_SNAPSHOT_TOOLING
-#define BUN_SNAPSHOT_TOOLING 0
+#ifndef BUN_STARTUP_SNAPSHOT_TOOLING
+#define BUN_STARTUP_SNAPSHOT_TOOLING 0
 #endif
 
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
-#define BUN_SNAPSHOT_ASAN 1
+#define BUN_STARTUP_SNAPSHOT_ASAN 1
 #endif
 #endif
 #if defined(__SANITIZE_ADDRESS__)
-#define BUN_SNAPSHOT_ASAN 1
+#define BUN_STARTUP_SNAPSHOT_ASAN 1
 #endif
 // ASAN owns the fixed address ranges the snapshot heap and JIT pool are placed in. Linux support is glibc for now: the
 // musl build crashes while writing the snapshot and has not been debugged yet.
-#if (OS(DARWIN) || (OS(LINUX) && defined(__GLIBC__))) && !defined(BUN_SNAPSHOT_ASAN)
-#define BUN_SNAPSHOT_SUPPORTED 1
+#if (OS(DARWIN) || (OS(LINUX) && defined(__GLIBC__))) && !defined(BUN_STARTUP_SNAPSHOT_ASAN)
+#define BUN_STARTUP_SNAPSHOT_SUPPORTED 1
 #else
-#define BUN_SNAPSHOT_SUPPORTED 0
+#define BUN_STARTUP_SNAPSHOT_SUPPORTED 0
 #endif
 
 namespace JSC {
 class VM;
 }
 
-#if BUN_SNAPSHOT_SUPPORTED
+#if BUN_STARTUP_SNAPSHOT_SUPPORTED
 #include <sys/types.h>
 #include <utility>
 #include <vector>
 struct mi_heap_s;
 
-namespace Bun::Snapshot {
+namespace Bun::StartupSnapshot {
 struct FrozenRun {
     uintptr_t start;
     size_t len;
@@ -50,15 +50,15 @@ void recleanFrozenPages(JSC::VM&);
 }
 #endif
 
-#if BUN_SNAPSHOT_TOOLING
-void snapshotToolingInstall();
-void snapshotToolingIndexAtFreeze(JSC::VM&, size_t pageSize);
-void snapshotToolingArmTraps();
-void snapshotToolingAfterRestore();
-extern "C" void Bun__snapshotToolingTick(JSC::VM*);
+#if BUN_STARTUP_SNAPSHOT_TOOLING
+void startupSnapshotToolingInstall();
+void startupSnapshotToolingIndexAtFreeze(JSC::VM&, size_t pageSize);
+void startupSnapshotToolingArmTraps();
+void startupSnapshotToolingAfterRestore();
+extern "C" void Bun__startupSnapshotToolingTick(JSC::VM*);
 #else
-inline void snapshotToolingInstall() {}
-inline void snapshotToolingIndexAtFreeze(JSC::VM&, size_t) {}
-inline void snapshotToolingArmTraps() {}
-inline void snapshotToolingAfterRestore() {}
+inline void startupSnapshotToolingInstall() {}
+inline void startupSnapshotToolingIndexAtFreeze(JSC::VM&, size_t) {}
+inline void startupSnapshotToolingArmTraps() {}
+inline void startupSnapshotToolingAfterRestore() {}
 #endif

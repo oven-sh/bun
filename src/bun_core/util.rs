@@ -3556,7 +3556,7 @@ pub fn fast_random() -> u64 {
     static SEED: AtomicU64 = AtomicU64::new(0);
     static SEED_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     fn random_seed() -> u64 {
-        let epoch = crate::snapshot::epoch();
+        let epoch = crate::startup_snapshot::epoch();
         if SEED_EPOCH.swap(epoch, O::Relaxed) != epoch {
             SEED.store(0, O::Relaxed); // seed cached by the snapshot builder: draw a fresh one here
         }
@@ -3582,7 +3582,7 @@ pub fn fast_random() -> u64 {
         static PRNG: Cell<Option<(u32, rand::DefaultPrng)>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let epoch = crate::snapshot::epoch();
+        let epoch = crate::startup_snapshot::epoch();
         let mut prng = match p.take() {
             Some((e, prng)) if e == epoch => prng,
             _ => rand::DefaultPrng::init(random_seed()), // first use, or first use since a snapshot restore (the snapshotd stream is the builder's)
@@ -3744,14 +3744,15 @@ pub use bun_alloc::secure_zero;
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
 // Launch-context derived (recomputed after a snapshot restore — see `snapshot::ProcessDerived`).
-static ARGV_STORAGE: crate::snapshot::ProcessDerived<Vec<ZBox>> =
-    crate::snapshot::ProcessDerived::new();
+static ARGV_STORAGE: crate::startup_snapshot::ProcessDerived<Vec<ZBox>> =
+    crate::startup_snapshot::ProcessDerived::new();
 struct ArgvView(RacyCell<&'static [&'static ZStr]>);
 // SAFETY: the view is written during single-threaded startup / restore adoption only (see `set_argv`).
 unsafe impl Sync for ArgvView {}
 // SAFETY: as above; the view holds only `'static` data.
 unsafe impl Send for ArgvView {}
-static ARGV: crate::snapshot::ProcessDerived<ArgvView> = crate::snapshot::ProcessDerived::new();
+static ARGV: crate::startup_snapshot::ProcessDerived<ArgvView> =
+    crate::startup_snapshot::ProcessDerived::new();
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,

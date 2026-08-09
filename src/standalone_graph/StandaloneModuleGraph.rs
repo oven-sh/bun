@@ -623,19 +623,19 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
         /// Stamped by `bun build --snapshot` into the executable it is about to run: that run writes `<own path>.snapshot` instead of starting the app; embedding clears them.
-        const TAKE_SNAPSHOT                 = 1 << 4;
-        const SNAPSHOT_MANUAL               = 1 << 5;
-        const SNAPSHOT_IO_LOCAL             = 1 << 6;
-        const SNAPSHOT_IO_NETWORK           = 1 << 7;
+        const TAKE_STARTUP_SNAPSHOT                 = 1 << 4;
+        const STARTUP_SNAPSHOT_MANUAL               = 1 << 5;
+        const STARTUP_SNAPSHOT_IO_LOCAL             = 1 << 6;
+        const STARTUP_SNAPSHOT_IO_NETWORK           = 1 << 7;
         // _padding: u24
     }
 }
 
 impl Flags {
-    pub const SNAPSHOT_BUILD_BITS: Flags = Flags::TAKE_SNAPSHOT
-        .union(Flags::SNAPSHOT_MANUAL)
-        .union(Flags::SNAPSHOT_IO_LOCAL)
-        .union(Flags::SNAPSHOT_IO_NETWORK);
+    pub const STARTUP_SNAPSHOT_BUILD_BITS: Flags = Flags::TAKE_STARTUP_SNAPSHOT
+        .union(Flags::STARTUP_SNAPSHOT_MANUAL)
+        .union(Flags::STARTUP_SNAPSHOT_IO_LOCAL)
+        .union(Flags::STARTUP_SNAPSHOT_IO_NETWORK);
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
@@ -798,11 +798,11 @@ impl StandaloneModuleGraph {
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneEmbeddedSnapshot(
+pub unsafe extern "C" fn Bun__standaloneEmbeddedStartupSnapshot(
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> bool {
-    let Some((ptr, len)) = StandaloneModuleGraph::embedded_snapshot_early() else {
+    let Some((ptr, len)) = StandaloneModuleGraph::embedded_startup_snapshot_early() else {
         return false;
     };
     // SAFETY: per the function contract.
@@ -815,8 +815,8 @@ pub unsafe extern "C" fn Bun__standaloneEmbeddedSnapshot(
 
 /// Bits: 1 = this run takes the snapshot, 2 = manual (the app calls take()), 4 = local I/O allowed, 8 = network allowed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__standaloneSnapshotBuildFlags() -> u32 {
-    StandaloneModuleGraph::snapshot_build_flags_early().bits() >> 4
+pub extern "C" fn Bun__standaloneStartupSnapshotBuildFlags() -> u32 {
+    StandaloneModuleGraph::startup_snapshot_build_flags_early().bits() >> 4
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -1891,7 +1891,7 @@ pub(crate) fn download_to_path(
 }
 
 /// The snapshot holds pointers into exactly these payload bytes, so they are reused verbatim with the snapshot appended page-aligned; `min_len` pads the result to the payload size already in the file, since the Mach-O injector can only grow.
-pub fn append_snapshot_to_serialized(
+pub fn append_startup_snapshot_to_serialized(
     bytes: &[u8],
     snapshot: &[u8],
     min_len: usize,
@@ -1913,7 +1913,7 @@ pub fn append_snapshot_to_serialized(
         Vec::with_capacity(body_len + pad + snapshot.len() + size_of::<Offsets>() + TRAILER.len());
     out.extend_from_slice(&bytes[..body_len]);
     out.resize(body_len + pad, 0);
-    offsets.flags.remove(Flags::SNAPSHOT_BUILD_BITS);
+    offsets.flags.remove(Flags::STARTUP_SNAPSHOT_BUILD_BITS);
     offsets.snapshot = StringPointer {
         offset: (body_len + pad) as u32,
         length: snapshot.len() as u32,
@@ -2013,8 +2013,8 @@ fn rewrite_executable(
     )
 }
 
-/// Mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot (`Flags::TAKE_SNAPSHOT`); only the trailer word changes.
-pub fn set_snapshot_build_flags(
+/// Mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot (`Flags::TAKE_STARTUP_SNAPSHOT`); only the trailer word changes.
+pub fn set_startup_snapshot_build_flags(
     exe_path: &[u8],
     flags: Flags,
     out_dir: Fd,
@@ -2026,8 +2026,10 @@ pub fn set_snapshot_build_flags(
         Err(failure) => return Ok(failure),
     };
     let mut offsets = exe.offsets;
-    offsets.flags.remove(Flags::SNAPSHOT_BUILD_BITS);
-    offsets.flags.insert(flags & Flags::SNAPSHOT_BUILD_BITS);
+    offsets.flags.remove(Flags::STARTUP_SNAPSHOT_BUILD_BITS);
+    offsets
+        .flags
+        .insert(flags & Flags::STARTUP_SNAPSHOT_BUILD_BITS);
     if offsets.flags == exe.offsets.flags {
         return Ok(CompileResult::Success);
     }
@@ -2043,8 +2045,8 @@ pub fn set_snapshot_build_flags(
     rewrite_executable(exe_path, &payload, out_dir, out_name, env)
 }
 
-/// Embed a snapshot into an existing compiled executable (replacing any previous one) and clear the `TAKE_SNAPSHOT` marking.
-pub fn embed_snapshot_into_executable(
+/// Embed a snapshot into an existing compiled executable (replacing any previous one) and clear the `TAKE_STARTUP_SNAPSHOT` marking.
+pub fn embed_startup_snapshot_into_executable(
     exe_path: &[u8],
     snapshot: &[u8],
     out_dir: Fd,
@@ -2087,7 +2089,8 @@ pub fn embed_snapshot_into_executable(
     } else {
         full
     };
-    let Some(new_payload) = append_snapshot_to_serialized(payload, snapshot, previous_payload_len)
+    let Some(new_payload) =
+        append_startup_snapshot_to_serialized(payload, snapshot, previous_payload_len)
     else {
         return Ok(CompileResult::fail_fmt(format_args!(
             "could not append snapshot"
@@ -2413,7 +2416,7 @@ impl StandaloneModuleGraph {
         Some((base.cast_const(), len, offsets))
     }
 
-    pub fn embedded_snapshot_early() -> Option<(*const u8, usize)> {
+    pub fn embedded_startup_snapshot_early() -> Option<(*const u8, usize)> {
         let (base, len, offsets) = Self::offsets_early()?;
         let (off, ilen) = (
             offsets.snapshot.offset as usize,
@@ -2426,10 +2429,10 @@ impl StandaloneModuleGraph {
         Some((unsafe { base.add(off) }, ilen))
     }
 
-    /// The `TAKE_SNAPSHOT` family of flags stamped by `bun build --snapshot`, or empty.
-    pub fn snapshot_build_flags_early() -> Flags {
+    /// The `TAKE_STARTUP_SNAPSHOT` family of flags stamped by `bun build --snapshot`, or empty.
+    pub fn startup_snapshot_build_flags_early() -> Flags {
         Self::offsets_early().map_or(Flags::empty(), |(_, _, offsets)| {
-            offsets.flags & Flags::SNAPSHOT_BUILD_BITS
+            offsets.flags & Flags::STARTUP_SNAPSHOT_BUILD_BITS
         })
     }
 

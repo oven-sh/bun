@@ -9,7 +9,7 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-use bun_options_types::context::{CompileSnapshot, CompileSnapshotIo, MacroOptions};
+use bun_options_types::context::{CompileStartupSnapshot, CompileStartupSnapshotIo, MacroOptions};
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd, FdExt as _};
@@ -140,7 +140,7 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
-        if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off
+        if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off
             && ctx.args.entry_points.is_empty()
         {
             // The snapshot step by itself, on an executable built earlier (possibly cross-compiled elsewhere).
@@ -164,15 +164,15 @@ impl BuildCommand {
                 }
                 _ => bun_sys::Dir::cwd(),
             };
-            match run_snapshot_step(
+            match run_startup_snapshot_step(
                 exe_dir.fd,
                 exe,
-                ctx.bundler_options.compile_snapshot,
-                ctx.bundler_options.compile_snapshot_io,
+                ctx.bundler_options.compile_startup_snapshot,
+                ctx.bundler_options.compile_startup_snapshot_io,
                 // SAFETY: `env` is a process-lifetime singleton.
                 unsafe { &mut *env_ptr },
             ) {
-                Ok(bytes) => report_snapshot_step(bytes),
+                Ok(bytes) => report_startup_snapshot_step(bytes),
                 Err(message) => {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
                     Global::exit(1);
@@ -180,7 +180,7 @@ impl BuildCommand {
             }
             return Ok(());
         }
-        if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off
+        if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off
             && !ctx.bundler_options.compile
         {
             Output::print_errorln(format_args!(
@@ -983,22 +983,22 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                if ctx.bundler_options.compile_snapshot != CompileSnapshot::Off {
+                if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off {
                     if is_cross_compile {
                         Output::print_errorln(format_args!(
                             "--snapshot has to run the executable, which a cross-compiled one can't do here. Build without it, then run `bun build --snapshot --outfile <exe>` on the target platform."
                         ));
                         Global::exit(1);
                     }
-                    match run_snapshot_step(
+                    match run_startup_snapshot_step(
                         root_dir.fd,
                         outfile,
-                        ctx.bundler_options.compile_snapshot,
-                        ctx.bundler_options.compile_snapshot_io,
+                        ctx.bundler_options.compile_startup_snapshot,
+                        ctx.bundler_options.compile_startup_snapshot_io,
                         // SAFETY: `env` is a process-lifetime singleton.
                         unsafe { &mut *env_ptr },
                     ) {
-                        Ok(bytes) => report_snapshot_step(bytes),
+                        Ok(bytes) => report_startup_snapshot_step(bytes),
                         Err(message) => {
                             Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
                             Global::exit(1);
@@ -1496,18 +1496,19 @@ pub(crate) fn collect_compile_assets(
 }
 
 /// The snapshot step: run `exe` (in `dir`) once so it writes its snapshot, then embed that in place; re-running replaces the previous snapshot.
-pub(crate) fn run_snapshot_step(
+pub(crate) fn run_startup_snapshot_step(
     dir: bun_sys::Fd,
     exe: &[u8],
-    mode: CompileSnapshot,
-    io: CompileSnapshotIo,
+    mode: CompileStartupSnapshot,
+    io: CompileStartupSnapshotIo,
     env: &mut bun_dotenv::Loader,
 ) -> Result<usize, Vec<u8>> {
-    if !Bun__snapshotSupported() {
+    if !Bun__startupSnapshotSupported() {
         return Err(b"startup snapshots are not available in this build of bun (macOS and glibc Linux; on macOS bun has to be built with mimalloc as the process allocator)".to_vec());
     }
     use bun_standalone_module_graph::StandaloneModuleGraph::{
-        CompileResult, Flags, embed_snapshot_into_executable, set_snapshot_build_flags,
+        CompileResult, Flags, embed_startup_snapshot_into_executable,
+        set_startup_snapshot_build_flags,
     };
     // `dir` is the executable's directory (as for `to_executable`); only the file name of `exe` matters here.
     let name = bun_paths::basename(exe);
@@ -1531,17 +1532,17 @@ pub(crate) fn run_snapshot_step(
         }
     };
     // The executable learns that (and how) it should take its snapshot from a marking in its payload; its env and argv belong to the app.
-    let mut marking = Flags::TAKE_SNAPSHOT;
-    if mode == CompileSnapshot::Manual {
-        marking |= Flags::SNAPSHOT_MANUAL;
+    let mut marking = Flags::TAKE_STARTUP_SNAPSHOT;
+    if mode == CompileStartupSnapshot::Manual {
+        marking |= Flags::STARTUP_SNAPSHOT_MANUAL;
     }
     match io {
-        CompileSnapshotIo::Strict => {}
-        CompileSnapshotIo::Local => marking |= Flags::SNAPSHOT_IO_LOCAL,
-        CompileSnapshotIo::Network => marking |= Flags::SNAPSHOT_IO_NETWORK,
+        CompileStartupSnapshotIo::Strict => {}
+        CompileStartupSnapshotIo::Local => marking |= Flags::STARTUP_SNAPSHOT_IO_LOCAL,
+        CompileStartupSnapshotIo::Network => marking |= Flags::STARTUP_SNAPSHOT_IO_NETWORK,
     }
     if let Some(message) = failed(
-        set_snapshot_build_flags(&exe_abs, marking, dir, name, env),
+        set_startup_snapshot_build_flags(&exe_abs, marking, dir, name, env),
         "could not prepare the executable",
     ) {
         return Err(message);
@@ -1558,7 +1559,7 @@ pub(crate) fn run_snapshot_step(
     let written = bun_sys::stat(&snapshot_z).is_ok();
     if status.is_err() || !written {
         // Whatever happened, what is left on disk must be an ordinary executable again.
-        let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         let _ = bun_sys::unlink(&snapshot_z);
         // 70 = the runtime gave up waiting for the app to become quiet (it printed why); anything else non-zero is the app failing. Either way there is no snapshot, so the build fails.
         const NOT_QUIET: i32 = 70;
@@ -1589,8 +1590,8 @@ pub(crate) fn run_snapshot_step(
     let embedded = snapshot
         .as_ref()
         .ok()
-        .map(|snapshot| embed_snapshot_into_executable(&exe_abs, snapshot, dir, name, env));
-    if !bun_core::env_var::BUN_SNAPSHOT_KEEP_SIDECAR
+        .map(|snapshot| embed_startup_snapshot_into_executable(&exe_abs, snapshot, dir, name, env));
+    if !bun_core::env_var::BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR
         .get()
         .unwrap_or(false)
     {
@@ -1599,17 +1600,17 @@ pub(crate) fn run_snapshot_step(
     let snapshot = snapshot?;
     let embedded = embedded.expect("embed ran when the snapshot was read");
     if let Some(message) = failed(embedded, "failed to embed the snapshot") {
-        let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         return Err(message);
     }
     Ok(snapshot.len())
 }
 
 unsafe extern "C" {
-    safe fn Bun__snapshotSupported() -> bool;
+    safe fn Bun__startupSnapshotSupported() -> bool;
 }
 
-pub(crate) fn report_snapshot_step(snapshot_bytes: usize) {
+pub(crate) fn report_startup_snapshot_step(snapshot_bytes: usize) {
     bun_core::prettyln!(
         "<green>[snapshot]</r> embedded a {:.1} MB snapshot into the executable",
         snapshot_bytes as f64 / 1048576.0

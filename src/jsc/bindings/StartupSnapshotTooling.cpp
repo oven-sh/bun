@@ -2,8 +2,8 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
-#include "Snapshot.h"
-#if BUN_SNAPSHOT_TOOLING && BUN_SNAPSHOT_SUPPORTED
+#include "StartupSnapshot.h"
+#if BUN_STARTUP_SNAPSHOT_TOOLING && BUN_STARTUP_SNAPSHOT_SUPPORTED
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
@@ -120,7 +120,7 @@ extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
-using namespace Bun::Snapshot;
+using namespace Bun::StartupSnapshot;
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
@@ -419,7 +419,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
     JSC::JSLockHolder lock(vm);
     bool freeze = !getenv("BUN_FILESNAP_NOFREEZE");
     if (freeze)
-        vm.heap.freezeCurrentHeapAsImmortalSnapshot();
+        vm.heap.freezeCurrentHeapAsImmortalStartupSnapshot();
     else
         vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     mi_collect(true);
@@ -1382,7 +1382,7 @@ static void snapshotTrapArm()
     sigaction(SIGBUS, &sa, &s_prevBus);
     sigaction(SIGSEGV, &sa, &s_prevSegv);
     size_t n = 0;
-    const char* mode = getenv("BUN_SNAPSHOT_TRAP");
+    const char* mode = getenv("BUN_STARTUP_SNAPSHOT_TRAP");
     if (mode && !strcmp(mode, "cells")) { // only MarkedBlock pages: syscalls never target them, so kernel-side EFAULTs can't derail the run
         for (uintptr_t page : s_cellPages)
             if (!mprotect((void*)page, 16384, PROT_READ)) n += 16384;
@@ -1412,7 +1412,7 @@ static void snapshotTrapReport()
     fprintf(stderr, "[snapshottrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * 16384 / 1048576.0, path);
 }
 
-void snapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
+void startupSnapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
 {
     s_cellPages.clear();
     s_payloadPages.clear();
@@ -1433,11 +1433,11 @@ void snapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)
     fprintf(stderr, "[snapshot] cellPages=%.1fMB payloadPages=%.1fMB liveMallocBlocks=%zu\n", s_cellPages.size() * pg / 1048576.0, s_payloadPages.size() * pg / 1048576.0, s_liveBlocks.size());
 }
 
-void snapshotToolingArmTraps()
+void startupSnapshotToolingArmTraps()
 {
-    if (getenv("BUN_SNAPSHOT_TRAP"))
+    if (getenv("BUN_STARTUP_SNAPSHOT_TRAP"))
         snapshotTrapArm();
-    else if (getenv("BUN_SNAPSHOT_CRASHBT")) {
+    else if (getenv("BUN_STARTUP_SNAPSHOT_CRASHBT")) {
         struct sigaction sa {};
         sa.sa_sigaction = snapshotTrapHandler;
         sa.sa_flags = SA_SIGINFO | SA_NODEFER;
@@ -1447,7 +1447,7 @@ void snapshotToolingArmTraps()
     } // backtrace-only: frozenRanges stays as-is but nothing is protected
 }
 
-void snapshotToolingAfterRestore()
+void startupSnapshotToolingAfterRestore()
 {
     const char* d = getenv("BUN_MEMDEBUG");
     s_dir = (d && *d) ? strdup(d) : nullptr; // the builder's pointer would point into its environment
@@ -1455,7 +1455,7 @@ void snapshotToolingAfterRestore()
         mi_prof_enable(64 * 1024); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
 }
 
-void snapshotToolingInstall()
+void startupSnapshotToolingInstall()
 {
     s_dir = getenv("BUN_MEMDEBUG");
     if (!s_dir || !*s_dir) {
@@ -1469,13 +1469,13 @@ void snapshotToolingInstall()
     signal(SIGXCPU, memdebugSignal);
 }
 
-extern "C" void Bun__snapshotToolingTick(JSC::VM* vm)
+extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
 {
     int req = s_requested.exchange(0);
     bool fromCmdFile = false;
     if (!s_dir)
         return;
-    if (const char* at = getenv("BUN_SNAPSHOT_OUT_AT_MS")) {
+    if (const char* at = getenv("BUN_STARTUP_SNAPSHOT_OUT_AT_MS")) {
         static bool doneImg = false;
         static auto startImg = std::chrono::steady_clock::now();
         if (!doneImg && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startImg).count() > atoi(at)) {
@@ -1561,7 +1561,7 @@ extern "C" void Bun__snapshotToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 6) {
-        Bun::Snapshot::recleanFrozenPages(*vm);
+        Bun::StartupSnapshot::recleanFrozenPages(*vm);
         return;
     }
     if (req == 7) {
@@ -1591,7 +1591,7 @@ extern "C" void Bun__snapshotToolingTick(JSC::VM* vm)
         return;
     }
     if (req == 8) {
-        Bun__requestSnapshot(vm, getenv("BUN_SNAPSHOT_OUT") ? getenv("BUN_SNAPSHOT_OUT") : "/tmp/bun.snapshot"); // unwinds JS via termination; the run loop takes it at top level and exits
+        Bun__requestSnapshot(vm, getenv("BUN_STARTUP_SNAPSHOT_OUT") ? getenv("BUN_STARTUP_SNAPSHOT_OUT") : "/tmp/bun.snapshot"); // unwinds JS via termination; the run loop takes it at top level and exits
         return;
     }
     if (req == 3) {
@@ -1747,4 +1747,4 @@ extern "C" void Bun__snapshotToolingTick(JSC::VM* vm)
     }
 #endif
 }
-#endif // BUN_SNAPSHOT_TOOLING
+#endif // BUN_STARTUP_SNAPSHOT_TOOLING

@@ -185,7 +185,7 @@ impl ContextData {
 
 /// `--snapshot` / `compile.snapshot`: whether `bun build --compile` also runs the executable once and embeds a snapshot of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CompileSnapshot {
+pub enum CompileStartupSnapshot {
     #[default]
     Off,
     /// The runtime snapshots the process itself once startup work has drained; the app needs no code for this.
@@ -197,7 +197,7 @@ pub enum CompileSnapshot {
 /// `--snapshot-io` / `compile.snapshotIO`: what the app may touch on the build machine while its snapshot is taken.
 /// Network use is refused either way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CompileSnapshotIo {
+pub enum CompileStartupSnapshotIo {
     #[default]
     Strict,
     /// Files, subprocesses, local sockets and the resolver are allowed; every use is listed when the snapshot is written.
@@ -230,8 +230,8 @@ pub struct BundlerOptions {
     pub emit_dce_annotations: bool,
     pub output_format: bundle_enums::Format,
     pub bytecode: bool,
-    pub compile_snapshot: CompileSnapshot,
-    pub compile_snapshot_io: CompileSnapshotIo,
+    pub compile_startup_snapshot: CompileStartupSnapshot,
+    pub compile_startup_snapshot_io: CompileStartupSnapshotIo,
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
@@ -286,8 +286,8 @@ impl Default for BundlerOptions {
             emit_dce_annotations: true,
             output_format: bundle_enums::Format::Esm,
             bytecode: false,
-            compile_snapshot: CompileSnapshot::Off,
-            compile_snapshot_io: CompileSnapshotIo::Strict,
+            compile_startup_snapshot: CompileStartupSnapshot::Off,
+            compile_startup_snapshot_io: CompileStartupSnapshotIo::Strict,
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,

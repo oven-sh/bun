@@ -1193,7 +1193,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    if bun_core::snapshot::building()
+    if bun_core::startup_snapshot::building()
         && url_type == URLType::Remote
         && global_this
             .throw_disabled_in_snapshot_error_if_needed("fetch")

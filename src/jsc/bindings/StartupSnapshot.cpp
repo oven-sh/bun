@@ -565,8 +565,13 @@ static void applySnapshotBuildMarking()
 extern "C" void Bun__startupSnapshotInit()
 {
     applySnapshotBuildMarking();
-    if (getenv("BUN_STARTUP_SNAPSHOT_OUT"))
-        Bun__startupSnapshotSetBuilding(true); // building: network use is refused so the process can become quiet (see throw_disabled_in_snapshot_error_if_needed)
+    if (getenv("BUN_STARTUP_SNAPSHOT_OUT")) {
+        if (!Bun__startupSnapshotSupported()) {
+            fprintf(stderr, "error: %s\n", "startup snapshots are not available in this build of bun (macOS with mimalloc as the process allocator, and glibc Linux)");
+            exit(1);
+        }
+        Bun__startupSnapshotSetBuilding(true);
+    }
     startupSnapshotToolingInstall();
 }
 
@@ -1914,7 +1919,13 @@ extern "C" bool Bun__startupSnapshotMode() { return false; }
 extern "C" bool Bun__startupSnapshotActive() { return false; }
 extern "C" bool Bun__startupSnapshotSupported() { return false; }
 extern "C" void Bun__startupSnapshotMaybeRestore() {}
-extern "C" void Bun__startupSnapshotInit() {}
+extern "C" void Bun__startupSnapshotInit()
+{
+    if (getenv("BUN_STARTUP_SNAPSHOT_OUT")) {
+        fprintf(stderr, "error: %s\n", "startup snapshots are not available in this build of bun (macOS with mimalloc as the process allocator, and glibc Linux)");
+        exit(1);
+    }
+}
 extern "C" void Bun__startupSnapshotSetEnvGate(const uint8_t*, size_t) {}
 extern "C" void Bun__startupSnapshotRecleanPages(JSC::VM*) {}
 extern "C" void Bun__VM__refreshStackBoundsAfterSnapshotRestore(JSC::VM*) {}

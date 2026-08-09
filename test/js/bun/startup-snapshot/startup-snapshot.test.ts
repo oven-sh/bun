@@ -6,18 +6,18 @@ import { join } from "path";
 const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_STARTUP_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
 const buildEnv = env;
 const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_STARTUP_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
-// Support is a property of the build under test (platform, ASAN, and on macOS whether mimalloc is the process allocator):
-// the snapshot step says so up front, before it looks at the file.
+// Support is a property of the build under test (platform, ASAN, and on macOS whether mimalloc is the process allocator); a
+// build that lacks it says so as soon as it is asked to take one.
 const hasSnapshots = (() => {
   if (!isLinux && !isMacOS) return false;
   using dir = tempDir("bun-snapshot-probe", {});
   const probe = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--snapshot", "--outfile", join(String(dir), "probe")],
-    env: bunEnv,
+    cmd: [bunExe(), "-e", ""],
+    env: { ...bunEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "probe.snapshot") },
     stderr: "pipe",
     stdout: "pipe",
   });
-  return !(probe.stderr.toString() + probe.stdout.toString()).includes("not available in this build");
+  return !probe.stderr.toString().includes("not available in this build");
 })();
 const snapshotTest = test.skipIf(!hasSnapshots);
 const darwinSnapshotTest = test.skipIf(!hasSnapshots || process.platform !== "darwin");

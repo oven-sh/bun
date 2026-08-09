@@ -711,11 +711,9 @@ impl Stringifier {
                     let dep = &deps_buf[dep_id as usize];
                     let dep_name = dep.name.slice(buf);
 
-                    // The entry key is also the tree path this package's own
-                    // dependencies resolve from. `find_resolution` must walk up
-                    // from it (not from the parent node's `relative_path`), the
-                    // same way the parser binds this entry's dependencies.
-                    // relative_path is empty string for root resolutions.
+                    // The entry key ("" relative_path for root resolutions) is
+                    // also the tree path this entry's dependencies resolve
+                    // from; `find_resolution` walks up from it like the parser.
                     entry_path_buf.clear();
                     entry_path_buf.extend_from_slice(relative_path);
                     if *depth != 0 {
@@ -1053,8 +1051,7 @@ impl Stringifier {
         optional_peers_buf: &mut Vec<String>,
         extern_strings: &[ExternalString],
         pkg_map: &PkgMap<()>,
-        // The package's own tree path (its `packages` key), which its
-        // dependencies resolve relative to; see `PkgMap::find_resolution`.
+        // The package's own tree path (its `packages` key).
         pkg_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
@@ -1231,8 +1228,7 @@ impl Stringifier {
         workspace_versions: &VersionHashMap,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
-        // The workspace package's own tree path ("" for the root package, the
-        // workspace name otherwise); its dependencies resolve relative to it.
+        // The workspace package's tree path ("" for the root package).
         pkg_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {

@@ -487,13 +487,9 @@ test.concurrent.each([
 test.concurrent(
   "migrated bun.lock with a nested-placed peer of a file: dependency round-trips --frozen-lockfile",
   async () => {
-    // gamma (a file: dependency of the root) has a regular peer dependency on
-    // delta, and delta's only placement is nested (workspace ws-a's file:
-    // dependency), never hoisted to the root. The migration writer records the
-    // placement as "gamma/delta" and must not also list delta in gamma's
-    // "optionalPeers": reloading would then treat the peer as optional, re-derive
-    // its resolution slot, drop the entry, and fail --frozen-lockfile on an
-    // unchanged tree.
+    // delta is a regular peer of gamma with only a nested placement ("gamma/delta").
+    // The migration writer must not also list it in "optionalPeers", or reloading
+    // drops the entry and --frozen-lockfile fails on an unchanged tree.
     await using testDir = tempDir("migrate-nested-peer-fixed-point", {
       "package.json": JSON.stringify({
         name: "sandbox",

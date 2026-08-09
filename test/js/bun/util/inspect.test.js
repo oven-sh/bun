@@ -928,3 +928,54 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("skips properties whose lazy initializer throws instead of leaving the exception pending", async () => {
+  // Overwriting the global Symbol breaks the lazily-initialized Bun.$ and
+  // Bun.sql properties (their module-scope code calls Symbol). Inspecting the
+  // Bun object reifies every property; a throwing initializer has to be
+  // skipped, not left as a pending exception, which aborts assert-enabled
+  // builds.
+  const code = `
+    Symbol++;
+    const out = Bun.inspect(Bun);
+    if (typeof out !== "string" || out.length === 0) throw new Error("empty inspect output");
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+it("building an invalid-argument error message survives lazy initializers that throw", async () => {
+  // Same walk reached through ERR_INVALID_ARG_VALUE rendering the received
+  // value: new CompressionStream(globalThis) inspects globalThis for its
+  // error message while the global Symbol is broken. Getters that report
+  // their failure can set a nonzero exit code, so only assert that execution
+  // gets past the constructor instead of aborting.
+  const code = `
+    Symbol++;
+    let caught;
+    try {
+      new CompressionStream(globalThis);
+    } catch (e) {
+      caught = e;
+    }
+    if (!caught) throw new Error("expected CompressionStream to throw");
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(proc.signalCode).toBeNull();
+});

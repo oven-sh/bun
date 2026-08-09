@@ -5,9 +5,9 @@
 // These tests run the hook with a stubbed `buildkite-agent` and assert which
 // exits annotate and what the annotation carries.
 import { expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, isWindows, tempDir } from "harness";
 
 // The hook is bash; on Windows CI it runs under Git Bash, but these tests
 // only need one posix lane to cover it. Each run is hermetic (own tempDir,

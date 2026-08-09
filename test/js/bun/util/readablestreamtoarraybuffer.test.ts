@@ -79,11 +79,15 @@ for (const consumer of ["readableStreamToArrayBuffer", "readableStreamToBytes"])
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     if (stdout.trim() === "SKIP") return;
-    expect(JSON.parse(stdout)).toEqual({
-      constructor: consumer === "readableStreamToBytes" ? "Uint8Array" : "ArrayBuffer",
-      byteLength: 2 * 1073741824 + 3,
-      markers: [0xaa, 0xab, 0x78, 0x79, 0x7a, 0xba, 0xbb],
-    });
+    // String comparison instead of JSON.parse: a crashed child diffs against "" here
+    // rather than failing with an unrelated parse error.
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        constructor: consumer === "readableStreamToBytes" ? "Uint8Array" : "ArrayBuffer",
+        byteLength: 2 * 1073741824 + 3,
+        markers: [0xaa, 0xab, 0x78, 0x79, 0x7a, 0xba, 0xbb],
+      }),
+    );
     expect(proc.signalCode).toBe(null);
     expect(exitCode).toBe(0);
   });

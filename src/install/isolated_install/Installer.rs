@@ -534,6 +534,20 @@ impl<'a> Installer<'a> {
                 break 'state (node_id, CompleteState::Skipped);
             }
 
+            // Check the package resolution as well as the edge: a workspace
+            // package may be reachable only through ordinary `workspace:`
+            // edges when a root dependency replaced the member's implicit
+            // workspace dependency. Workspace store tasks re-run on every
+            // install (the entry loop skips the on-disk freshness check for
+            // them), so counting one as a success would report installs
+            // forever on an already-converged tree.
+            let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
+            if self.lockfile().packages.slice().items_resolution()[pkg_id as usize].tag
+                == ResolutionTag::Workspace
+            {
+                break 'state (node_id, CompleteState::Skipped);
+            }
+
             break 'state (node_id, state);
         };
 

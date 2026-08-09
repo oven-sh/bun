@@ -1750,31 +1750,40 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
+                if workspace_path.is_some() {
+                    let satisfies = match workspace_version {
+                        Some(workspace_version) => dependency_version
                             .npm()
                             .version
-                            .satisfies(workspace_version, buf, buf);
+                            .satisfies(workspace_version, buf, buf),
+                        // A member without a version can only be used by a
+                        // wildcard range (`get_or_put_resolved_package`
+                        // applies the same rule when resolving).
+                        None => dependency_version.npm().version.is_star(),
+                    };
                     if pm.options.link_workspace_packages && satisfies {
-                        // `String::sliced` takes `&'a self`; bind the unwrapped
-                        // value so the borrow outlives the parse call.
-                        let wp = workspace_path.unwrap();
-                        let path = wp.sliced(buf);
-                        if let Some(mut dep) = dependency::parse_with_tag(
-                            external_alias.value,
-                            Some(external_alias.hash),
-                            path.slice,
-                            dependency::version::Tag::Workspace,
-                            &path,
-                            Some(&mut *log),
-                            Some(&mut *pm),
-                        ) {
-                            // Whole-struct move so `Drop` frees the old npm
-                            // chain; keep the existing `literal`.
-                            dep.literal = dependency_version.literal;
-                            dependency_version = dep;
+                        if workspace_version.is_some() {
+                            // `String::sliced` takes `&'a self`; bind the unwrapped
+                            // value so the borrow outlives the parse call.
+                            let wp = workspace_path.unwrap();
+                            let path = wp.sliced(buf);
+                            if let Some(mut dep) = dependency::parse_with_tag(
+                                external_alias.value,
+                                Some(external_alias.hash),
+                                path.slice,
+                                dependency::version::Tag::Workspace,
+                                &path,
+                                Some(&mut *log),
+                                Some(&mut *pm),
+                            ) {
+                                // Whole-struct move so `Drop` frees the old npm
+                                // chain; keep the existing `literal`.
+                                dep.literal = dependency_version.literal;
+                                dependency_version = dep;
+                            }
                         }
+                        // For a versionless member the dependency stays as-is;
+                        // resolution links it to the workspace package.
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
                         for dep in &mut package_dependencies[0..dependencies_count as usize] {

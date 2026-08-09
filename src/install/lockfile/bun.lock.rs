@@ -1604,6 +1604,10 @@ pub(crate) fn parse_into_binary_lockfile(
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
+    let link_workspace_packages = manager
+        .as_deref()
+        .is_none_or(|m| m.options.link_workspace_packages);
+
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         log.add_error(Some(source), root.loc, b"Missing lockfile version");
         return Err(ParseError::InvalidLockfileVersion);
@@ -2100,6 +2104,7 @@ pub(crate) fn parse_into_binary_lockfile(
             None,
             None,
             Some(&workspaces_obj),
+            link_workspace_packages,
         )?;
 
         let mut root_pkg = Package::default();
@@ -2126,6 +2131,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
+        let pkgs_expr_for_claims = root.get(b"packages");
         // snapshot the workspace-path handles up front so the loop
         // body can take `&mut *lockfile` (`parse_append_dependencies`,
         // `append_package_dedupe`) without conflicting with the
@@ -2168,6 +2174,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     None,
                     None,
                     None,
+                    link_workspace_packages,
                 )?;
 
                 pkg.dependencies = DependencySlice::new(off, len);
@@ -2187,17 +2194,26 @@ pub(crate) fn parse_into_binary_lockfile(
                 // there should be no duplicates
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(name)?;
-                if entry.found_existing {
-                    log.add_error_fmt(
-                        source,
-                        row.key_loc,
-                        format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
-                    );
-                    return Err(ParseError::InvalidWorkspaceObject);
-                }
+                // A root dependency that replaced this member's workspace
+                // dependency (`Package::parse_dependency`) owns the root
+                // `packages` key matching the member's name, and the member
+                // only appears nested under its dependents. Pre-claiming the
+                // name in `pkg_map` would falsely collide with that entry as
+                // a duplicate package path; the nested key still maps to this
+                // package through the resolution search further down.
+                if member_owns_packages_key(&pkgs_expr_for_claims, name, path) {
+                    let entry = pkg_map.get_or_put(name)?;
+                    if entry.found_existing {
+                        log.add_error_fmt(
+                            source,
+                            row.key_loc,
+                            format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
+                        );
+                        return Err(ParseError::InvalidWorkspaceObject);
+                    }
 
-                *entry.value_ptr = pkg_id;
+                    *entry.value_ptr = pkg_id;
+                }
 
                 workspace_pkgs_len += 1;
                 continue 'workspaces;
@@ -2521,6 +2537,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             Some(pkg_path),
                             Some(&bundled_pkgs),
                             None,
+                            link_workspace_packages,
                         )?;
 
                         pkg.dependencies = DependencySlice::new(off, len);
@@ -3153,6 +3170,33 @@ fn map_dep_to_pkg(
     }
 }
 
+/// A workspace member normally owns the root `packages` key matching its
+/// name. When a root dependency replaced the member's workspace dependency
+/// (`Package::parse_dependency`), that key holds the other package and the
+/// member only appears nested, so its name must not pre-claim the key.
+fn member_owns_packages_key(pkgs_expr: &Option<Expr>, name: &[u8], path: &[u8]) -> bool {
+    let Some(pkgs) = pkgs_expr else {
+        return true;
+    };
+    let Some(value) = pkgs.get(name) else {
+        return true;
+    };
+    if !value.is_array() {
+        return true;
+    }
+    let Some(first) = array_items(&value).first().and_then(|item| item.as_str()) else {
+        return true;
+    };
+    // a member's own entry is written as "<name>@workspace:<path>"
+    let Some(rest) = first.get(name.len() + 1..) else {
+        return false;
+    };
+    strings::has_prefix(first, name)
+        && first[name.len()] == b'@'
+        && strings::has_prefix(rest, b"workspace:")
+        && strings::eql(&rest[b"workspace:".len()..], path)
+}
+
 fn dependency_resolution_failure(
     dep: &Dependency,
     pkg_path: Option<&[u8]>,
@@ -3213,6 +3257,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
+    // Only meaningful when `IS_ROOT`.
+    link_workspace_packages: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
     // callers (none read the buf between calls) and also covers early-error exits.
@@ -3361,6 +3407,33 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .as_utf8_string_literal()
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
+
+                // A root dependency whose npm range cannot link this member
+                // replaced the member's workspace dependency when
+                // package.json was parsed (`Package::parse_dependency`);
+                // mirror it so the loaded lockfile produces the same root
+                // dependency list.
+                let overridden = {
+                    let bytes = lockfile.buffers.string_bytes.as_slice();
+                    let member_version = lockfile.workspace_versions.get(&name_hash).copied();
+                    lockfile.buffers.dependencies.as_slice()[off..].iter().any(|dep| {
+                        if dep.version.tag != DependencyVersionTag::Npm {
+                            return false;
+                        }
+                        let npm = dep.version.npm();
+                        if StringBuilder::string_hash(npm.name.slice(bytes)) != name_hash {
+                            return false;
+                        }
+                        let satisfies = match member_version {
+                            Some(version) => npm.version.satisfies(version, bytes, bytes),
+                            None => npm.version.is_star(),
+                        };
+                        !(link_workspace_packages && satisfies)
+                    })
+                };
+                if overridden {
+                    continue 'workspaces;
+                }
 
                 let dep = Dependency {
                     name: sbuf!(lockfile).append_with_hash(name, name_hash)?,

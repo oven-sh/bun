@@ -405,12 +405,10 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
-    /// Last cached listing seen for each watched directory, kept after
-    /// `bust_dir_cache` evicts the directory so later events can still
-    /// invalidate the per-file stat caches of its entries. The pointees are
-    /// cache-owned leaked `Box<DirEntry>`s (process lifetime), but their
-    /// `data` maps are rewritten in place under `entries_mutex`, so every
-    /// walk takes that lock (see `probe_entries_cache`).
+    /// Last cached listing seen per watched directory, kept after
+    /// `bust_dir_cache` evicts it so later events can still invalidate the
+    /// per-file stat caches. Lifetime and locking: see
+    /// [`Self::probe_entries_cache`].
     #[cfg(not(windows))]
     pub(crate) tombstones: StringHashMap<*mut Fs::DirEntry>,
 
@@ -807,19 +805,16 @@ where
         self.tombstones.get(key).copied()
     }
 
-    /// Looks up `key` in the process-global directory-entry cache and, when a
-    /// listing is cached, returns the `DirEntry`'s stable address (`None` for
-    /// a cached read error).
+    /// Looks up `key` in the process-global directory-entry cache and returns
+    /// the cached `DirEntry`'s stable address (`None` for a cached read
+    /// error).
     ///
-    /// This runs on the watcher thread while resolver/bundler threads rewrite
-    /// the cache in place under `entries_mutex` (`read_directory`,
-    /// `entries_at`), so the probe takes that lock. The returned pointer is a
-    /// cache-owned leaked `Box<DirEntry>` and stays valid after the guard
-    /// drops; only the lookup itself is a critical section. Lock order: the
-    /// platform watcher holds `Watcher.mutex` around `on_file_update`, and
-    /// `Watcher.mutex` → `entries_mutex` is the established order
-    /// (`bust_dir_cache` takes it the same way); nothing acquires them in
-    /// reverse.
+    /// Resolver and bundler threads rewrite the cache in place under
+    /// `entries_mutex` (`read_directory`, `entries_at`), so this watcher
+    /// thread takes that lock for every probe or `data`-map walk. The pointee
+    /// is a cache-owned leaked `Box<DirEntry>` (process lifetime), valid
+    /// after the guard drops. Lock order `Watcher.mutex` then `entries_mutex`
+    /// matches this thread's `bust_dir_cache`; nothing takes the reverse.
     #[cfg(not(windows))]
     fn probe_entries_cache(
         rfs: &mut Fs::file_system::RealFS,
@@ -1197,25 +1192,17 @@ where
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        // Walk the cached listing's `data`
-                                        // map under `entries_mutex`: resolver
-                                        // and bundler threads rewrite it in
-                                        // place under that lock
-                                        // (`entries_at_locked`), dropping the
-                                        // old bucket allocation, so an
-                                        // unlocked walk can read freed
-                                        // memory. The `*mut Entry` the lookup
-                                        // yields is EntryStore-owned (process
-                                        // lifetime) and stays valid after the
-                                        // guard drops.
+                                        // Locked `data`-map walk; see
+                                        // `probe_entries_cache`. The yielded
+                                        // `*mut Entry` is EntryStore-owned
+                                        // (process lifetime), so it may
+                                        // outlive the guard.
                                         let file_ent: Option<core::ptr::NonNull<Fs::Entry>> = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();
                                             // SAFETY: `dir_ent` is cache-owned
                                             // (see `probe_entries_cache`); the
                                             // shared borrow is confined to
-                                            // this statement, under the lock
-                                            // that serializes in-place
-                                            // rewrites.
+                                            // this statement, under the lock.
                                             let lookup = unsafe { (*dir_ent).get(changed_name) };
                                             lookup.map(|l| core::ptr::NonNull::from(l.entry()))
                                         };

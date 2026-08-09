@@ -1595,22 +1595,23 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
-    // SAFETY: anonymous private mapping — fd/offset ignored, `len` is non-zero
-    // (callers pass `size_of` of a non-ZST); failure handled below.
-    // Experiment (heap image): MIMALLOC_DETERMINISTIC_HINT=1 also places these arenas at a fixed bump address so no Bun memory is kernel-placed.
-    static DET_HINT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    // Where an image may be built or mapped, this reservation has to land at the same address in every process; the
+    // allocator decides that once and hands out the same kind of bump hint it uses for its own reservations.
+    static IMAGE_HINT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
     let mut hint: *mut libc::c_void = core::ptr::null_mut();
-    if std::env::var_os("MIMALLOC_DETERMINISTIC_HINT").is_some_and(|v| v == "1") {
-        let _ = DET_HINT.compare_exchange(
+    if mimalloc::mi_heap_image_hints_enabled() {
+        let _ = IMAGE_HINT.compare_exchange(
             0,
             0x1f0_0000_0000,
             core::sync::atomic::Ordering::AcqRel,
             core::sync::atomic::Ordering::Acquire,
         );
         let aligned = (len + 0x3f_ffff) & !0x3f_ffff;
-        hint =
-            DET_HINT.fetch_add(aligned, core::sync::atomic::Ordering::AcqRel) as *mut libc::c_void;
+        hint = IMAGE_HINT.fetch_add(aligned, core::sync::atomic::Ordering::AcqRel)
+            as *mut libc::c_void;
     }
+    // SAFETY: anonymous private mapping — fd/offset ignored, `len` is non-zero
+    // (callers pass `size_of` of a non-ZST); the hint is advisory; failure handled below.
     let p = unsafe {
         libc::mmap(
             hint,

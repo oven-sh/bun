@@ -29,6 +29,9 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Whether this process places its OS reservations deterministically (an executable that can carry a heap
+    /// image, or `MIMALLOC_DETERMINISTIC_HINT=1`); decided once. No preconditions.
+    pub safe fn mi_heap_image_hints_enabled() -> bool;
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_process_info(
         elapsed_msecs: *mut usize,

@@ -2,6 +2,10 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
+#include "HeapImage.h"
+// Images are built and mapped on macOS and (glibc/musl) Linux; elsewhere the entry points exist so the rest of the runtime
+// links, and report the feature as absent.
+#if BUN_HEAP_IMAGE_SUPPORTED
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
@@ -116,7 +120,6 @@ extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
-#include "HeapImage.h"
 namespace Bun::HeapImage {
 std::vector<std::pair<uintptr_t, uintptr_t>> frozenRanges; // sorted [start,end)
 std::vector<FrozenRun> imageRuns;
@@ -1902,3 +1905,29 @@ static void imageRestoreAndRun(const char* path)
     Bun__imageContinueEventLoop(); // never returns
 #endif
 }
+
+#else // !BUN_HEAP_IMAGE_SUPPORTED
+
+#include <stdio.h>
+#include <stdlib.h>
+namespace JSC {
+class VM;
+}
+extern "C" int bun_is_compiled_executable(void);
+extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
+extern "C" bool Bun__heapImageMode() { return false; }
+extern "C" bool Bun__heapImageActive() { return false; }
+extern "C" void Bun__imageMaybeRestore() {}
+extern "C" void Bun__heapImageInit() {}
+extern "C" void Bun__imageSetEnvGate(const uint8_t*, size_t) {}
+extern "C" void Bun__imageRecleanPages(JSC::VM*) {}
+extern "C" void Bun__VM__refreshStackBoundsAfterImageRestore(JSC::VM*) {}
+extern "C" void Bun__imageUnwindJS(JSC::VM*) {}
+extern "C" void Bun__imageClearTerminationRequest(JSC::VM*) {}
+extern "C" void Bun__imageDumpNow(JSC::VM*, const char*)
+{
+    fprintf(stderr, "error: heap images are not supported on this platform\n");
+    exit(1);
+}
+
+#endif // BUN_HEAP_IMAGE_SUPPORTED

@@ -315,7 +315,6 @@ impl Default for FilePoll {
     }
 }
 
-#[cfg(not(windows))]
 /// Outcome of `FilePoll::rearm_after_image_restore`.
 #[cfg(target_os = "macos")]
 enum ImageRearm {
@@ -324,6 +323,7 @@ enum ImageRearm {
     HungUp,
 }
 
+#[cfg(not(windows))]
 impl FilePoll {
     /// Heap-image restore (`Store::rearm_for_image`): re-add this poll to the new kqueue if its fd still means the same
     /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.

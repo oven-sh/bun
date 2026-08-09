@@ -2,18 +2,26 @@
 // Heap images: HeapImage.cpp builds and restores them; HeapImageTooling.cpp holds the attribution commands used while
 // putting an application on a diet (dirty-page maps, censuses, write traps), compiled only with -DBUN_HEAPIMAGE_TOOLING=1.
 #include "root.h"
-#include <sys/types.h>
-#include <utility>
-#include <vector>
 
 #ifndef BUN_HEAPIMAGE_TOOLING
 #define BUN_HEAPIMAGE_TOOLING 0
 #endif
 
-struct mi_heap_s;
+#if OS(DARWIN) || (OS(LINUX) && !defined(__ANDROID__))
+#define BUN_HEAP_IMAGE_SUPPORTED 1
+#else
+#define BUN_HEAP_IMAGE_SUPPORTED 0
+#endif
+
 namespace JSC {
 class VM;
 }
+
+#if BUN_HEAP_IMAGE_SUPPORTED
+#include <sys/types.h>
+#include <utility>
+#include <vector>
+struct mi_heap_s;
 
 namespace Bun::HeapImage {
 struct FrozenRun {
@@ -30,6 +38,7 @@ extern off_t imageBaseOff; // where the image starts inside imageFd (non-zero wh
 ssize_t ipread(int fd, void* buf, size_t n, off_t off);
 void recleanFrozenPages(JSC::VM&);
 }
+#endif
 
 #if BUN_HEAPIMAGE_TOOLING
 void heapImageToolingInstall();

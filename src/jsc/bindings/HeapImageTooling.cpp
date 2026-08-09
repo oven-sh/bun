@@ -2,6 +2,8 @@
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
 #include "root.h"
+#include "HeapImage.h"
+#if BUN_HEAPIMAGE_TOOLING && BUN_HEAP_IMAGE_SUPPORTED
 #include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
@@ -118,8 +120,6 @@ extern "C" void mi_arenas_freeze_pages() noexcept;
 extern "C" void mi_prof_visit_live(bool (*cb)(uintptr_t addr, size_t size, const uintptr_t* frames, uint8_t nframes, void* arg), void* arg) noexcept;
 #include <mimalloc.h>
 #include "ZigGlobalObject.h"
-#include "HeapImage.h"
-#if BUN_HEAPIMAGE_TOOLING
 using namespace Bun::HeapImage;
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 

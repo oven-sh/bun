@@ -2,13 +2,15 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_core::{MutableString, strings};
+use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
+
+use crate::webcore::s3::xml_response;
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
@@ -67,86 +69,60 @@ impl S3HttpDownloadStreamingTask {
 
     fn report_progress(&mut self, state: State) {
         let has_more = state.has_more();
-        let mut err: Option<S3Error> = None;
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
-        };
-
-        // reshaped for borrowck — `code`/`message` borrow from
-        // `self.reported_response_buffer`, so we compute the chunk after the
-        // borrow scope ends rather than inside the labeled block.
-        let chunk: MutableString = 'brk: {
-            if failed {
-                if !has_more {
-                    let mut _has_body_code = false;
-                    let mut _has_body_message = false;
-
-                    let mut code: &[u8] = b"UnknownError";
-                    let mut message: &[u8] = b"an unexpected error has occurred";
-                    if let Some(req_err) = self.request_error {
-                        code = req_err.name().as_bytes();
-                        _has_body_code = true;
-                    } else {
-                        let bytes = self.reported_response_buffer.list.as_slice();
-                        if !bytes.is_empty() {
-                            message = bytes;
-
-                            if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                                let value_start = start + b"<Code>".len();
-                                if let Some(end) =
-                                    strings::index_of(&bytes[value_start..], b"</Code>")
-                                {
-                                    code = &bytes[value_start..value_start + end];
-                                    _has_body_code = true;
-                                }
-                            }
-                            if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                                let value_start = start + b"<Message>".len();
-                                if let Some(end) =
-                                    strings::index_of(&bytes[value_start..], b"</Message>")
-                                {
-                                    message = &bytes[value_start..value_start + end];
-                                    _has_body_message = true;
-                                }
-                            }
-                        }
-                    }
-
-                    // `code`/`message` borrow `self.reported_response_buffer`;
-                    // the callback consumes them before any reset/deinit.
-                    err = Some(S3Error { code, message });
-                }
-                break 'brk MutableString::default();
-            } else {
-                // `core::mem::take` transfers ownership of the buffer, leaving an
-                // empty MutableString behind.
-                let buffer = core::mem::take(&mut self.reported_response_buffer);
-                break 'brk buffer;
-            }
         };
         bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
             failed,
             has_more,
-            chunk.len()
+            self.reported_response_buffer.list.len()
         );
+
         if failed {
-            if !has_more {
-                (self.callback)(&chunk, false, err, self.callback_context.as_ptr().cast());
+            if has_more {
+                return;
             }
-        } else {
-            // dont report empty chunks if we have more data to read
-            if !has_more || chunk.len() > 0 {
-                (self.callback)(
-                    &chunk,
-                    has_more,
-                    None,
-                    self.callback_context.as_ptr().cast(),
-                );
-                self.reported_response_buffer.reset();
+            let empty = MutableString::default();
+            let mut code: &[u8] = b"UnknownError";
+            let mut message: &[u8] = b"an unexpected error has occurred";
+            let parsed;
+            if let Some(req_err) = self.request_error {
+                code = req_err.name().as_bytes();
+            } else {
+                let bytes = self.reported_response_buffer.list.as_slice();
+                if !bytes.is_empty() {
+                    message = bytes;
+                }
+                parsed = xml_response::parse_error(bytes);
+                if let Some(error) = &parsed {
+                    code = error.code.as_deref().unwrap_or(code);
+                    message = error.message.as_deref().unwrap_or(message);
+                }
             }
+            (self.callback)(
+                &empty,
+                false,
+                Some(S3Error { code, message }),
+                self.callback_context.as_ptr().cast(),
+            );
+            return;
+        }
+
+        // dont report empty chunks if we have more data to read
+        if !has_more || self.reported_response_buffer.list.len() > 0 {
+            // `core::mem::take` transfers ownership of the buffer, leaving an
+            // empty MutableString behind.
+            let chunk = core::mem::take(&mut self.reported_response_buffer);
+            (self.callback)(
+                &chunk,
+                has_more,
+                None,
+                self.callback_context.as_ptr().cast(),
+            );
+            self.reported_response_buffer.reset();
         }
     }
 

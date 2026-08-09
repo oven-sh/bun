@@ -359,10 +359,11 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
 
     // ONE pass over the array: read each element exactly once, materialize each string
     // exactly once, and size the output as we go. `values` roots every chunk across the
-    // string materializations; `stringChunks` carries each string and its UTF-8 size so
-    // the write pass below never re-reads the array or re-encodes.
+    // string materializations; `measuredChunks` carries each chunk's measured byte size
+    // (plus the materialized string for string chunks) so the write pass below never
+    // re-reads the array or re-encodes.
     MarkedArgumentBuffer values;
-    WTF::Vector<std::pair<WTF::String, size_t>, 16> stringChunks;
+    WTF::Vector<std::pair<WTF::String, size_t>, 16> measuredChunks;
     bool anyString = false;
     WTF::CheckedSize total = 0;
     for (unsigned i = 0; i < length; i++) {
@@ -375,19 +376,21 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             RETURN_IF_EXCEPTION(scope, {});
             size_t byteLength = utf8ByteLengthWithReplacement(string);
             total += byteLength;
-            stringChunks.append({ WTF::move(string), byteLength });
+            measuredChunks.append({ WTF::move(string), byteLength });
             continue;
         }
-        stringChunks.append({ WTF::String(), 0 });
+        size_t byteLength = 0;
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
-            total += view->isDetached() ? 0 : view->byteLength();
+            byteLength = view->isDetached() ? 0 : view->byteLength();
         else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
             auto* impl = jsBuffer->impl();
-            total += (impl && !impl->isDetached()) ? impl->byteLength() : 0;
+            byteLength = (impl && !impl->isDetached()) ? impl->byteLength() : 0;
         } else {
             throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
             return {};
         }
+        total += byteLength;
+        measuredChunks.append({ WTF::String(), byteLength });
     }
     if (values.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -402,47 +405,62 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    WTF::Vector<uint8_t> bytes;
-    bytes.reserveInitialCapacity(total.value());
+    // Assemble directly into the result ArrayBuffer, like the all-binary arm above does.
+    // Staging through a WTF::Vector<uint8_t> would CRASH() past its INT32_MAX capacity
+    // cap, while a 64-bit ArrayBuffer legitimately holds up to MAX_ARRAY_BUFFER_SIZE
+    // bytes (and allocation failure here must throw, not abort).
+    RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreateUninitialized(total.value(), 1);
+    if (!resultBuffer) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    std::span<uint8_t> bytes { static_cast<uint8_t*>(resultBuffer->data()), total.value() };
+    size_t offset = 0;
     for (unsigned i = 0; i < length; i++) {
-        auto& [string, stringByteLength] = stringChunks[i];
+        auto& [string, measuredByteLength] = measuredChunks[i];
         if (!string.isNull()) {
-            if (stringByteLength) {
-                size_t oldSize = bytes.size();
-                bytes.grow(oldSize + stringByteLength);
-                size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
-                // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
-                ASSERT(written == stringByteLength);
-                if (written < stringByteLength) [[unlikely]]
-                    bytes.shrink(oldSize + written);
+            if (measuredByteLength) {
+                size_t written = writeUTF8(string, bytes.subspan(offset, measuredByteLength));
+                // The sizer and writer must agree; never expose unwritten (uninitialized) bytes.
+                ASSERT(written == measuredByteLength);
+                offset += written;
             }
             continue;
         }
         JSValue chunk = values.at(i);
+        std::span<const uint8_t> span;
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                span = view->span();
         } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
             if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                bytes.append(impl->span());
+                span = impl->span();
         }
+        // Clamp to the measured size so a chunk that grew since the sizing pass (a
+        // growable SharedArrayBuffer can grow from another thread) cannot overrun the
+        // space sized for the chunks after it.
+        size_t copyLength = std::min(span.size(), measuredByteLength);
+        if (copyLength)
+            memcpy(bytes.data() + offset, span.data(), copyLength);
+        offset += copyLength;
     }
-    if (asUint8Array) {
-        // Buffer-backed from birth: a later `.buffer` access never has to change modes.
-        RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreate(bytes.span());
-        if (!resultBuffer) [[unlikely]] {
+    if (offset < bytes.size()) [[unlikely]] {
+        // A chunk shrank or detached after it was measured; re-create at the actual size
+        // rather than exposing the never-written (uninitialized) tail.
+        RefPtr<JSC::ArrayBuffer> rightSized = JSC::ArrayBuffer::tryCreate(bytes.first(offset));
+        if (!rightSized) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
+        resultBuffer = WTF::move(rightSized);
+    }
+    size_t byteLength = resultBuffer->byteLength();
+    if (asUint8Array) {
+        // Buffer-backed from birth: a later `.buffer` access never has to change modes.
         auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
-        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, bytes.size()));
+        RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, byteLength));
     }
-    auto buffer = JSC::ArrayBuffer::tryCreate(bytes.span());
-    if (!buffer) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
+    return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(resultBuffer));
 }
 
 static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)

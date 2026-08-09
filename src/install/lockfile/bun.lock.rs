@@ -3159,15 +3159,15 @@ fn map_dep_to_pkg(
             // Only rewrite into the shape `Package::parse_dependency` would
             // produce (a member version the range satisfies); otherwise the
             // loaded root never matches a fresh parse and every install
-            // re-saves the unchanged lockfile.
-            if dep.version.tag == DependencyVersionTag::Npm {
+            // re-saves the unchanged lockfile. With linking disabled, always
+            // rewrite so a stale workspace resolution diffs and re-resolves.
+            if dep.version.tag == DependencyVersionTag::Npm && link_workspace_packages {
                 let npm = dep.version.npm();
-                let parse_would_rewrite = link_workspace_packages
-                    && workspace_versions
-                        .get(&StringBuilder::string_hash(npm.name.slice(string_buf)))
-                        .is_some_and(|version| {
-                            npm.version.satisfies(*version, string_buf, string_buf)
-                        });
+                let parse_would_rewrite = workspace_versions
+                    .get(&StringBuilder::string_hash(npm.name.slice(string_buf)))
+                    .is_some_and(|version| {
+                        npm.version.satisfies(*version, string_buf, string_buf)
+                    });
                 if !parse_would_rewrite {
                     return;
                 }

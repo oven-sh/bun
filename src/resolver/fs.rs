@@ -176,13 +176,6 @@ impl Entry {
     }
 
     #[inline(always)]
-    pub(crate) fn set_cache_kind(&self, kind: EntryKind) {
-        let mut c = self.cache.get();
-        c.kind = kind;
-        self.cache.set(c);
-    }
-
-    #[inline(always)]
     pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
@@ -495,22 +488,21 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
 
-                    let kind_changed = Some(existing.cache().kind) != found_kind;
-                    if kind_changed {
-                        // if found_kind is null, need_stat is published as true
-                        // below, so the arbitrary kind stored here only lasts
-                        // until the lazy stat fills in the real one
-                        existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
-                        existing.set_cache_symlink(Interned::EMPTY);
-                    }
+                    // No cache rewrite here, even when the kind changed: a
+                    // lock-free `kind()`/`symlink()` reader that already
+                    // observed `need_stat == false` reads `cache` without the
+                    // per-entry mutex, so overwriting it would race that read
+                    // (a torn 16-byte `Interned` faults in `as_bytes`).
+                    // Publishing `need_stat = true` instead routes every later
+                    // reader through the mutex, where the lazy stat writes the
+                    // fresh cache; a reader that raced the flag sees the old
+                    // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
-                    // mutex held above. The Release store runs after the cache
-                    // writes and pairs with the Acquire fast-path load in
-                    // `kind()`/`symlink()`.
+                    // mutex held above.
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || kind_changed,
+                            || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
                     break 'brk existing_ptr;

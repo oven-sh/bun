@@ -5395,10 +5395,8 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        // One `entries_mutex` critical section for the probe and the listing
-        // fd: a concurrent resolver at a newer generation rewrites the
-        // `DirEntry` in place under that lock. The entry pointer stays valid
-        // after unlock (EntryStore-owned). The fd gate matches
+        // Lookup + listing fd in one critical section (see `DirInfo::get_entry`
+        // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
             let realfs = &mut Fs::FileSystem::instance().fs;
@@ -5890,15 +5888,6 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        // ARENA-backed `DirEntry` (see `dir_entry` note above) — `BackRef` so each
-        // `entries!()` is a fresh safe shared borrow instead of an open-coded raw deref.
-        let entries = bun_ptr::BackRef::new(dir_entry.entries());
-        macro_rules! entries {
-            () => {
-                entries.get()
-            };
-        }
-
         let base = bun_paths::basename(path);
 
         // Try the plain path without any extensions
@@ -5909,8 +5898,13 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries!().get(base) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        // Each probe of the listing goes through `EntriesOption::lookup`, a
+        // single `entries_mutex` critical section (see its doc for the
+        // in-place rewrite this guards against).
+        let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
+        if let Some(query) = plain_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5935,7 +5929,7 @@ impl<'a> Resolver<'a> {
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
-                    dirname_fd: entries!().fd,
+                    dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
                 }));
             }
@@ -5952,7 +5946,7 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -5965,7 +5959,7 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -6008,8 +6002,10 @@ impl<'a> Resolver<'a> {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
-                    if let Some(query) = entries!().get(&buffer[..]) {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                    let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
+                    if let Some(query) = ts_query {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
@@ -6054,7 +6050,7 @@ impl<'a> Resolver<'a> {
                                     }
                                     query.entry().abs_path.as_bytes()
                                 },
-                                dirname_fd: entries!().fd,
+                                dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
                             }));
                         }
@@ -6080,7 +6076,9 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries!().dir, entries!().fd);
+                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
+                    watcher.watch(dir, fd);
+                }
             }
         }
         dec_ret!(None);
@@ -6091,17 +6089,12 @@ impl<'a> Resolver<'a> {
         base: &[u8],
         path: &[u8],
         ext: &[u8],
-        entries: &Fs::file_system::DirEntry,
+        dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
     ) -> Option<LoadResult> {
         // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // BACKREF — `entries` is a slot in the BSSMap-backed `DirEntry` arena
-        // (see `load_as_file`); detach the borrowck lifetime via `BackRef` so the
-        // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
-        // each read stays a safe `BackRef: Deref`.
-        let entries = bun_ptr::BackRef::new(entries);
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -6113,8 +6106,10 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries.get().get(file_name) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
+        if let Some(query) = ext_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -6143,7 +6138,7 @@ impl<'a> Resolver<'a> {
                         };
                         query.entry().abs_path.as_bytes()
                     },
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: query.entry().cache().fd,
                 });
             }

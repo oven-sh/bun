@@ -766,11 +766,9 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                // Refresh the listing at our generation (takes and releases
-                // `entries_mutex`), then copy the basenames out under the
-                // lock: `dot_env::Loader::load` probes the listing between
-                // file reads, and another resolver at a newer generation
-                // rewrites the `DirEntry` map in place under `entries_mutex`.
+                // Refresh the listing at our generation, then copy the
+                // basenames out under `entries_mutex`: concurrent resolvers
+                // rewrite the `DirEntry` map in place under that lock.
                 if dir_info.get_entries(self.resolver.generation).is_none() {
                     return Ok(());
                 }
@@ -819,9 +817,8 @@ impl<'a> Transpiler<'a> {
     }
 }
 
-/// Basenames copied out of a cached `DirEntry` under `entries_mutex` so
-/// `dot_env::Loader::load` can probe them without holding the lock across its
-/// file reads (see `run_env_loader`).
+/// Basenames copied out of a cached `DirEntry` under `entries_mutex` so the
+/// dotenv loader can probe them without the lock (see `run_env_loader`).
 struct DotEnvProbeKeys(Vec<Box<[u8]>>);
 
 impl dot_env::DirEntryProbe for DotEnvProbeKeys {

@@ -885,6 +885,41 @@ pub mod fs {
     impl EntriesOption {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
+
+        /// Probe the cached listing for `query` and return the lookup plus the
+        /// listing fd, in one `entries_mutex` critical section. A
+        /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
+        /// the old map's buckets) in place under that lock, so the map must
+        /// not be walked after unlock; the returned entry pointer is
+        /// EntryStore-owned and stays valid. The caller must NOT already hold
+        /// `entries_mutex` (it is non-recursive).
+        pub(crate) fn lookup(
+            &self,
+            query: &[u8],
+        ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => {
+                    // SAFETY: ARENA — the `DirEntry` is a process-lifetime
+                    // BSSMap slot (see the enum doc), so widening the local
+                    // reborrow to `'static` is sound.
+                    let entries: &'static DirEntry =
+                        unsafe { &*core::ptr::from_ref::<DirEntry>(&**entries) };
+                    (entries.get(query), entries.fd)
+                }
+                EntriesOption::Err(_) => (None, Fd::INVALID),
+            }
+        }
+
+        /// Listing dir + fd snapshot under `entries_mutex` (watch
+        /// registration); `None` when the slot holds a read error.
+        pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            match self {
+                EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
+                EntriesOption::Err(_) => None,
+            }
+        }
     }
 
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`

@@ -530,18 +530,26 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
-void consumeTermination(JSC::VM& vm)
+bool consumeTermination(JSC::VM& vm)
 {
     vm.clearHasTerminationRequest();
     // A parked thread services no traps, so stand down both traps this run's
     // interrupt machinery can leave pending: the SIGINT watcher's
     // NeedTermination, and NeedWatchdogCheck from a {timeout} watchdog that
-    // fired mid-park. A stale NeedWatchdogCheck otherwise reaches
-    // Watchdog::shouldTerminate after the time limit was already restored and
-    // trips the startTimer ASSERT(hasTimeLimit()); an outer timed run is
-    // unaffected because restoring its limit re-arms the timer.
+    // fired mid-park (left stale, it trips Watchdog::startTimer's
+    // ASSERT(hasTimeLimit()); an outer timed run re-arms via its restore).
     vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
     vm.traps().clearTrap(JSC::VMTraps::NeedWatchdogCheck);
+    // worker.terminate() may have landed after the caller's scriptAllowed
+    // check, and the clears above must not eat its trap: fireTrap and
+    // clearTrap serialize on the trap-signaling lock, so a stop whose trap we
+    // cleared is visible to this re-check. Re-deliver it.
+    if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) [[unlikely]] {
+        vm.setHasTerminationRequest();
+        vm.notifyNeedTermination();
+        return false;
+    }
+    return true;
 }
 
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)

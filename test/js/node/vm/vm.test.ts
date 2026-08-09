@@ -1630,6 +1630,38 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
     20_000,
   );
 
+  // A nested plain run must not consume (or crash on) an interrupt that
+  // belongs to the outer breakOnSigint frame, and the guest's own try/catch
+  // must not observe the uncatchable termination; the outer frame reports it.
+  test.concurrent(
+    "nested plain run inside a breakOnSigint run",
+    async () => {
+      const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      globalThis.ia = new Int32Array(sab);
+      globalThis.vm = vm;
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      try {
+        vm.runInThisContext(
+          "try { vm.runInThisContext('for(;;) Atomics.wait(ia, 0, 0);'); } catch (e) { console.log('guest caught', String(e)); } console.log('guest after');",
+          { breakOnSigint: true },
+        );
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
   // breakOnSigint composed with {timeout}: the watchdog's NeedWatchdogCheck
   // fires first and claims the thread-stop request, so the SIGINT's own trap
   // does not notify the parked waiter; the watcher's direct syncWaiter notify
@@ -1676,3 +1708,34 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
     );
   }
 });
+
+// A nested vm run with no options observes the shared VM's termination
+// request when the outer frame's {timeout} watchdog fires; its cleanup used
+// to hit RELEASE_ASSERT_NOT_REACHED ("terminated due neither to SIGINT nor
+// to timeout"), a crash in release builds too. The inner run must leave the
+// request for the outer frame, which reports the timeout as node does.
+test.concurrent("nested vm run propagates the outer frame's termination", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    globalThis.vm = vm;
+    try {
+      vm.runInThisContext("vm.runInThisContext('for(;;);');", { timeout: 100 });
+      console.log("returned");
+    } catch (e) {
+      console.log("caught", e.code);
+    }
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    console.log("alive", n === 100000);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 20_000);

@@ -315,25 +315,29 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // evaluate() caught like any other exception.
         if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
             return false;
+        // Not armed by this run and not flagged for it: the interrupt belongs
+        // to an outer vm frame (nested runs share the VM), whose own
+        // checkForTermination reports it. Leave the request pending.
+        if (!script->getSigintReceived() && !timeout && !breakOnSigint)
+            return false;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
         if (vm.hasPendingTerminationException())
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        consumeTermination(vm);
+        if (!consumeTermination(vm))
+            return false;
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else if (timeout) {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else if (breakOnSigint) {
-            // SIGINT raced the watcher registration or teardown: the watcher
-            // observed the global but not the script receiver, so the request
-            // was set without the paired sigintReceived flag.
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
+            // breakOnSigint was armed, but SIGINT raced the watcher
+            // registration or teardown, so the paired sigintReceived flag
+            // was not set. It is still an interrupt.
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         }
         return true;
     }

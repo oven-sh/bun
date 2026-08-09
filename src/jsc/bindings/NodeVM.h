@@ -33,7 +33,10 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // Clear a termination node:vm consumed (breakOnSigint/timeout). The request
 // flag alone is insufficient: a termination that interrupted Atomics.wait
 // never ran handleTraps, and the pending trap would re-terminate the VM.
-void consumeTermination(JSC::VM& vm);
+// Returns false when the VM began stopping (worker.terminate()) while we
+// consumed: the stop was re-delivered and the caller must propagate the
+// termination instead of reporting ERR_SCRIPT_EXECUTION_*.
+[[nodiscard]] bool consumeTermination(JSC::VM& vm);
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);

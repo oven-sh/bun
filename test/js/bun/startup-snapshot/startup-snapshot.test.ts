@@ -93,6 +93,12 @@ snapshotTest(
       expect(probeHex).toBeDefined();
       expect(BigInt("0x" + probeHex!)).toBeGreaterThanOrEqual(0x21000000000n);
       expect(stderr).toContain("[snapshot] restored");
+      // What gets copied back in (as opposed to mapped) is the executable's own data segment, a few MB; the compiled
+      // payload (this build ships bytecode, so tens of MB) must never be part of it — that showed up as every launch
+      // touching all of it.
+      const copied = Number(/([\d.]+)MB __DATA copied/.exec(stderr)?.[1]);
+      expect(copied).toBeGreaterThan(0);
+      expect(copied).toBeLessThan(8);
       expect(stdout).toContain("epoch 1");
       expect(stdout).toContain("fetch -> hello from restored server");
       expect(exitCode).toBe(0);
@@ -374,7 +380,7 @@ snapshotTest(
   60000,
 );
 
-darwinSnapshotTest(
+snapshotTest(
   "restore: 'restore' precedes any poll delivery; a stdio poll follows the re-seated fd; dns works again",
   async () => {
     using dir = tempDir("bun-snapshot-polls", {});

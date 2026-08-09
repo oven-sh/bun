@@ -1981,7 +1981,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
             .forget_entropy_cache_for_snapshot_restore()
     };
     crate::dns_jsc::internal::flush_dns_cache_for_snapshot_restore(); // answers in the snapshot came from the builder's network
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     {
         // SAFETY: main-thread VM adopted above; single-threaded at this point of restore.
         let vm = unsafe { &mut *vm_ptr };
@@ -2005,7 +2005,7 @@ pub extern "C" fn Bun__startupSnapshotContinueEventLoop() -> ! {
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     // SAFETY: `vm_ptr` is the snapshot's main-thread VM, now installed for this thread.
     let vm = unsafe { &mut *vm_ptr };
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
         let n = store.dispatch_snapshot_hangups();
         if n > 0 {

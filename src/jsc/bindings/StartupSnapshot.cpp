@@ -579,24 +579,40 @@ namespace Bun::StartupSnapshot {
 // Bun.startupSnapshot.reclean(): pages this process dirtied and then restored to their original bytes go back to the clean file mapping.
 void recleanFrozenPages(JSC::VM& vm)
 {
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(LINUX)
     JSC::JSLockHolder lock(vm);
     if (snapshotFd < 0)
         return;
     const size_t pg = getpagesize();
     std::vector<uint8_t> orig(pg);
+#if OS(DARWIN)
     std::vector<int> disp;
+#endif
     size_t dirty = 0, remapped = 0;
+#if OS(DARWIN)
     auto pageIsDirty = [&](size_t i) { return (disp[i] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED)) != 0; };
+#else
+    int pagemap = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+    if (pagemap < 0)
+        return;
+    std::vector<uint64_t> pm;
+    auto pageIsDirty = [&](size_t i) { return (pm[i] & (1ull << 63)) && !(pm[i] & (1ull << 61)); }; // present and no longer the file's page: a private copy
+#endif
     auto pageIsPristine = [&](const FrozenRun& run, size_t i) {
         return ipread(snapshotFd, orig.data(), pg, run.fileOff + i * pg) == (ssize_t)pg && !memcmp((const void*)(run.start + i * pg), orig.data(), pg);
     };
     for (auto& run : snapshotRuns) {
         const size_t n = run.len / pg;
+#if OS(DARWIN)
         disp.assign(n, 0);
         mach_vm_size_t cnt = n;
         if (mach_vm_page_range_query(mach_task_self(), run.start, run.len, (mach_vm_address_t)disp.data(), &cnt) != KERN_SUCCESS)
             continue;
+#else
+        pm.assign(n, 0);
+        if (ipread(pagemap, pm.data(), n * sizeof(uint64_t), (off_t)(run.start / pg) * sizeof(uint64_t)) != (ssize_t)(n * sizeof(uint64_t)))
+            continue;
+#endif
         for (size_t i = 0; i < n;) {
             if (!pageIsDirty(i)) {
                 i++;
@@ -617,6 +633,9 @@ void recleanFrozenPages(JSC::VM& vm)
             i = j;
         }
     }
+#if OS(LINUX)
+    close(pagemap);
+#endif
     if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE"))
         fprintf(stderr, "[snapshot] reclean: %zu dirty snapshot pages, %zu were pristine and are file-backed again\n", dirty, remapped);
 #else
@@ -814,14 +833,14 @@ static bool platformResidentPages(uint64_t addr, uint64_t size, std::vector<int>
         disp[i] = vec[i] & 1;
     return true;
 }
-extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr(); // the payload's vaddr; 0 outside a compiled executable
+extern "C" char _end[]; // linker-defined end of .bss: everything the injector appended to the segment (payload blocks, live or superseded) lies past it
 template<typename F> static void platformDataSegments(F&& f)
 {
-    // The writable PT_LOADs (.data/.bss/GOT: -z norelro), minus the payload the injector appended to the RW segment — that part is file-backed and identical in every launch.
+    // The writable PT_LOADs (.data/.bss/GOT: -z norelro), cut at _end: what the injector appended past it (payload blocks) is file-backed and identical in every launch.
     struct Ctx {
         F* f;
-        uint64_t payload;
-    } ctx { &f, *Bun__getStandaloneModuleGraphELFVaddr() };
+        uint64_t end;
+    } ctx { &f, (uint64_t)_end };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* arg) -> int {
         if (info->dlpi_name && *info->dlpi_name) return 0; // main executable only
         auto& ctx = *static_cast<Ctx*>(arg);
@@ -831,7 +850,7 @@ template<typename F> static void platformDataSegments(F&& f)
             if (ph.p_type != PT_LOAD || !(ph.p_flags & PF_W)) continue;
             uint64_t lo = (info->dlpi_addr + ph.p_vaddr) & ~(uint64_t)(pg - 1);
             uint64_t hi = (info->dlpi_addr + ph.p_vaddr + ph.p_memsz + pg - 1) & ~(uint64_t)(pg - 1);
-            if (ctx.payload > lo && ctx.payload < hi) hi = ctx.payload & ~(uint64_t)(pg - 1);
+            if (ctx.end > lo && ctx.end < hi) hi = (ctx.end + pg - 1) & ~(uint64_t)(pg - 1);
             if (hi > lo) (*ctx.f)(lo, hi - lo);
         }
         return 0;

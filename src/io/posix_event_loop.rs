@@ -316,7 +316,7 @@ impl Default for FilePoll {
 }
 
 /// Outcome of `FilePoll::rearm_after_snapshot_restore`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 enum StartupSnapshotRearm {
     Untouched,
     Rearmed,
@@ -327,7 +327,7 @@ enum StartupSnapshotRearm {
 impl FilePoll {
     /// snapshot restore (`Store::rearm_for_snapshot`): re-add this poll to the new kqueue if its fd still means the same
     /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> StartupSnapshotRearm {
         if self.fd == INVALID_FD
             || !self.flags.contains(Flags::WasEverRegistered)
@@ -1374,14 +1374,14 @@ pub struct Store {
     pending_free_tail: *mut FilePoll,
     /// Polls whose fd did not survive a snapshot restore; their hangups are delivered from the event loop once the
     /// process is fully adopted and the app has heard 'restore', not from inside the restore itself.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     snapshot_hangups: Vec<*mut FilePoll>,
 }
 
 #[cfg(not(windows))]
 impl Store {
     /// snapshot restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn rearm_for_snapshot(&mut self, loop_: &mut Loop) -> (usize, usize) {
         let (mut rearmed, mut hung_up) = (0usize, 0usize);
         let mut polls: Vec<*mut FilePoll> = Vec::new();
@@ -1405,7 +1405,7 @@ impl Store {
     }
 
     /// Deliver the hangups collected by `rearm_for_snapshot`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn dispatch_snapshot_hangups(&mut self) -> usize {
         let pending = core::mem::take(&mut self.snapshot_hangups);
         let mut delivered = 0usize;
@@ -1434,7 +1434,7 @@ impl Store {
             hive: FilePollHive::init(),
             pending_free_head: ptr::null_mut(),
             pending_free_tail: ptr::null_mut(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             snapshot_hangups: Vec::new(),
         }
     }

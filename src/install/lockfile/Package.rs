@@ -111,11 +111,9 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// A folder dependency and the workspace member sharing its name are the same
-/// package only when the dependency's path names the member's directory.
-/// `folder` is a folder path relative to the workspace root (either
-/// platform's separators); `workspace_path` is the member's registered
-/// posix-relative path.
+/// True when `folder`, a folder-dependency path relative to the workspace
+/// root (either platform's separators), names the directory of the member
+/// registered at `workspace_path` (posix).
 pub(crate) fn folder_path_is_workspace_path(folder: &[u8], workspace_path: &[u8]) -> bool {
     let mut buf = path::path_buffer_pool::get();
     let normalized = resolve_path::join_string_buf::<path::platform::Auto>(&mut buf[..], &[folder]);
@@ -1771,13 +1769,10 @@ impl Package<u64> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
 
-                // A folder dependency pointing anywhere but the same-named
-                // workspace member's directory can never resolve to that
-                // member. Keep the explicitly declared dependency and drop
-                // the member's workspace dependency, like the Npm arm below
-                // does on a version mismatch. Without this, both place into
-                // the root node_modules and bun.lock gets a duplicate
-                // package key its own parser rejects.
+                // A folder dependency that does not name the member's
+                // directory cannot resolve to it: the explicit dependency
+                // replaces the member's workspace dependency, like the Npm
+                // arm below on a version mismatch.
                 if let Some(workspace_path) = workspace_path {
                     if !folder_path_is_workspace_path(relative, workspace_path.slice(buf)) {
                         for dep in &mut package_dependencies[0..dependencies_count as usize] {

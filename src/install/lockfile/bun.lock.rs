@@ -2188,13 +2188,10 @@ pub(crate) fn parse_into_binary_lockfile(
                 // there should be no duplicates
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                // A root dependency that replaced this member's workspace
-                // dependency (`Package::parse_dependency`) owns the root
-                // `packages` key matching the member's name, and the member
-                // only appears nested under its dependents. Pre-claiming the
-                // name in `pkg_map` would falsely collide with that entry as
-                // a duplicate package path; the nested key still maps to this
-                // package through the resolution search further down.
+                // When a root dependency replaced this member's workspace
+                // dependency, its name keys another package and claiming it
+                // would report a false duplicate; the member's nested key
+                // still maps to it through the resolution search below.
                 if member_owns_packages_key(&pkgs_expr_for_claims, name, path) {
                     let entry = pkg_map.get_or_put(name)?;
                     if entry.found_existing {
@@ -3163,10 +3160,9 @@ fn map_dep_to_pkg(
     }
 }
 
-/// A workspace member normally owns the root `packages` key matching its
-/// name. When a root dependency replaced the member's workspace dependency
-/// (`Package::parse_dependency`), that key holds the other package and the
-/// member only appears nested, so its name must not pre-claim the key.
+/// Whether the root `packages` key matching a member's name is the member's
+/// own entry, rather than a package that replaced its workspace dependency
+/// (`Package::parse_dependency`).
 fn member_owns_packages_key(pkgs_expr: &Option<Expr>, name: &[u8], path: &[u8]) -> bool {
     let Some(pkgs) = pkgs_expr else {
         return true;
@@ -3399,11 +3395,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     .expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
-                // A root dependency on a folder other than this member's
-                // directory replaced the member's workspace dependency when
-                // package.json was parsed (`Package::parse_dependency`);
-                // mirror it so the loaded lockfile produces the same root
-                // dependency list.
+                // Mirror `Package::parse_dependency`: a root dependency on a
+                // folder other than this member's directory replaced the
+                // member's workspace dependency.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
                     lockfile.buffers.dependencies.as_slice()[off..]

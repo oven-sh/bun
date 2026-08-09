@@ -112,7 +112,6 @@ impl XML {
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
-        bun_core::analytics::Features::xml_parse_inc();
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
         unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {

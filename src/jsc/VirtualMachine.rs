@@ -6397,15 +6397,14 @@ impl VirtualMachine {
                         if global_ref.has_exception() {
                             global_ref.clear_exception();
                         }
-                    } else if global_ref.has_exception() {
-                        // Propagate instead of returning Ok with the exception
-                        // still pending: `?`-chaining callers (console.log,
-                        // the worker error render) treat Ok as "nothing
-                        // pending", and a leaked exception trips
-                        // assertNoExceptionExceptTermination on the next
-                        // ExceptionScope in debug builds.
-                        return Err(crate::CrateError::JSError);
-                    } else if formatter.failed {
+                    } else if global_ref.has_exception() || formatter.failed {
+                        // Ok with the exception left pending, deliberately:
+                        // Err here would be cleared by
+                        // `print_error_from_maybe_private_data`, and callers
+                        // depend on the exception surviving (Bun.inspect
+                        // re-throws the stack-overflow RangeError;
+                        // `Formatter::print_error` converts it to Err(Thrown)
+                        // at the formatter boundary).
                         return Ok(());
                     }
 

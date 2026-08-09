@@ -643,7 +643,8 @@ describe("workspace and npm dependency sharing a name", () => {
     // under its nested key, not fall back to the root version
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
-    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const reload = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(reload.err).not.toContain("Saved lockfile");
 
     expect(
       await file(join(packageDir, "packages", "no-deps", "node_modules", "a-dep", "package.json")).json(),
@@ -694,6 +695,10 @@ describe("workspace and npm dependency sharing a name", () => {
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
     // hoisted to the root: the member must not get its own nested copy
     expect(await exists(join(packageDir, "packages", "two-range-deps", "node_modules", "no-deps"))).toBe(false);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
 
     await runBunInstall(env, packageDir, { frozenLockfile: true });
   });
@@ -737,7 +742,8 @@ describe("workspace and npm dependency sharing a name", () => {
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "packages", "no-deps", "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "packages", "beta", "node_modules"), { recursive: true, force: true });
-    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const reload = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(reload.err).not.toContain("Saved lockfile");
 
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
     expect(
@@ -793,6 +799,33 @@ describe("workspace and npm dependency sharing a name", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Duplicate workspace name: 'member-a'");
     expect(exitCode).toBe(1);
+
+    // the same name at two different paths must also be rejected instead of
+    // silently keeping only the last path
+    await write(
+      join(packageDir, "bun.lock"),
+      `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": { "name": "sandbox", "dependencies": { "no-deps": "1.0.0" } },
+    "packages/nd": { "name": "member-a", "version": "1.0.0" },
+    "packages/nd2": { "name": "member-a", "version": "1.0.0" },
+  },
+  "packages": {
+    "member-a": ["member-a@workspace:packages/nd"],
+  }
+}`,
+    );
+    await using proc2 = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+    expect(stderr2).toContain("Duplicate workspace name: 'member-a'");
+    expect(exitCode2).toBe(1);
   });
 });
 

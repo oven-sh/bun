@@ -2022,6 +2022,20 @@ pub(crate) fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
+        // `insert` overwrites on the same name hash, which would silently
+        // drop one of the colliding members
+        if lockfile.workspace_paths.get(&name_hash).is_some() {
+            log.add_error_fmt(
+                source,
+                value_loc_of(source, name_expr.loc),
+                format_args!(
+                    "Duplicate workspace name: '{}'",
+                    bstr::BStr::new(name_expr.as_utf8_string_literal().unwrap_or_default()),
+                ),
+            );
+            return Err(ParseError::InvalidWorkspaceObject);
+        }
+
         lockfile
             .workspace_paths
             .insert(name_hash, sbuf!(lockfile).append(path)?);
@@ -2914,9 +2928,22 @@ pub(crate) fn parse_into_binary_lockfile(
                                     return Some(found);
                                 }
                             }
-                            match strings::last_index_of_char(prefix, b'/') {
-                                Some(i) => prefix = &prefix[..i as usize],
-                                None => return None,
+                            // strip one tree level; a scoped package name is
+                            // a single node, so never leave a bare "@scope"
+                            // segment as the tail
+                            let Some(i) = strings::last_index_of_char(prefix, b'/') else {
+                                return None;
+                            };
+                            let parent = &prefix[..i as usize];
+                            let tail_start = strings::last_index_of_char(parent, b'/')
+                                .map_or(0, |j| j as usize + 1);
+                            if parent.get(tail_start) == Some(&b'@') {
+                                if tail_start == 0 {
+                                    return None;
+                                }
+                                prefix = &parent[..tail_start - 1];
+                            } else {
+                                prefix = parent;
                             }
                         }
                     });

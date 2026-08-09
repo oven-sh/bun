@@ -928,3 +928,35 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("clears an exception thrown by a property get mid-walk", async () => {
+  // With the global Symbol clobbered, reifying Bun's lazy "$" property throws
+  // while the property walk is enumerating the Bun object. The exception must
+  // be cleared before the walk moves on to the next property; leaving it
+  // pending aborted debug builds when the next lazy property's host callback
+  // observed it.
+  const fixture = `
+    globalThis.Symbol = 123;
+    let thrown;
+    try {
+      Bun.$;
+    } catch (e) {
+      thrown = e;
+    }
+    if (!(thrown instanceof TypeError)) throw new Error("expected Bun.$ to throw, got: " + thrown);
+    const s = Bun.inspect(Bun);
+    if (!s.includes("Archive")) throw new Error("inspect(Bun) missing properties");
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});

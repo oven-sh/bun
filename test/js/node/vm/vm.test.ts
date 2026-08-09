@@ -1521,8 +1521,10 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
     return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   }
 
-  test.concurrent("script", async () => {
-    const fixture = `
+  test.concurrent(
+    "script",
+    async () => {
+      const fixture = `
       const vm = require("node:vm");
       const { Worker } = require("node:worker_threads");
       const sab = new SharedArrayBuffer(8);
@@ -1536,14 +1538,18 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
       }
       ${proveStillAlive}
     `;
-    const [stdout, stderr, exitCode] = await run(fixture);
-    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  }, 20_000);
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
 
-  test.concurrent("source text module", async () => {
-    const fixture = `
+  test.concurrent(
+    "source text module",
+    async () => {
+      const fixture = `
       const vm = require("node:vm");
       const { Worker } = require("node:worker_threads");
       const sab = new SharedArrayBuffer(8);
@@ -1559,9 +1565,11 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
       }
       ${proveStillAlive}
     `;
-    const [stdout, stderr, exitCode] = await run(fixture);
-    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  }, 20_000);
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
 });

@@ -922,24 +922,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // NAPI hands out must point at the storage that survives, or native writes
     // are silently dropped (see issue #37151).
     it("returns a data pointer whose writes are visible through small typed arrays", async () => {
-      for (const size of [16, 999, 2048]) {
-        const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
-        expect(output).toBe(`length=${size} first=42 last=42`);
-      }
+      await Promise.all(
+        [16, 999, 2048].map(async size => {
+          const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
+          expect(output).toBe(`length=${size} first=42 last=42`);
+        }),
+      );
     });
 
     it("returns a data pointer at the reported byte offset for small typed arrays", async () => {
-      for (const expr of ["new Uint8Array(0)", "new Uint8Array(64)", "new Int32Array(8)"]) {
-        const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
-        expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
-      }
+      await Promise.all(
+        ["new Uint8Array(0)", "new Uint8Array(64)", "new Int32Array(8)"].map(async expr => {
+          const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
+          expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
+        }),
+      );
     });
 
     it("napi_get_buffer_info pointer stays valid after the backing ArrayBuffer is materialized", async () => {
-      for (const expr of ["Buffer.alloc(32)", "new Uint8Array(32)"]) {
-        const output = await checkSameOutput("test_buffer_info_pointer_stability", `[${expr}]`);
-        expect(output).toBe("length=32 first=43 last=43");
-      }
+      await Promise.all(
+        ["Buffer.alloc(32)", "new Uint8Array(32)"].map(async expr => {
+          const output = await checkSameOutput("test_buffer_info_pointer_stability", `[${expr}]`);
+          expect(output).toBe("length=32 first=43 last=43");
+        }),
+      );
     });
 
     it("napi_create_buffer and napi_create_buffer_copy pointers stay valid after the backing ArrayBuffer is materialized", async () => {

@@ -94,7 +94,6 @@
 #define MAP_JIT 0
 #endif
 #include <JavaScriptCore/Completion.h>
-#include <zstd.h>
 #include <dlfcn.h>
 #include <hwy/targets.h>
 #include "wtf/SIMDUTF.h"
@@ -267,88 +266,46 @@ static void reexecWithoutASLRIfSlid()
 }
 
 // `<executable>.snapshot` next to the binary is used automatically (BUN_SNAPSHOT=0 opts out; BUN_SNAPSHOT_IN overrides).
-static bool snapshotInflateZstd(const char* zpath, const char* outPath);
 static uint64_t platformLibsBase();
 static uint64_t platformSystemLibsId();
 static uint64_t platformBuildId();
-static bool snapshotInflateZstdBuffer(const void* src, size_t srcLen, const char* outPath);
-static bool snapshotCacheDir(char* dir, size_t cap) // ~/.cache/bun/snapshots (or $XDG_CACHE_HOME/bun/snapshots), created on demand
+static bool snapshotOptedOut()
 {
-    const char* cacheHome = getenv("XDG_CACHE_HOME");
-    const char* home = getenv("HOME");
-    if (cacheHome && *cacheHome)
-        snprintf(dir, cap, "%s/bun/snapshots", cacheHome);
-    else if (home)
-        snprintf(dir, cap, "%s/.cache/bun/snapshots", home);
-    else
+    const char* off = getenv("BUN_SNAPSHOT");
+    return off && (!strcmp(off, "0") || !strcmp(off, "false"));
+}
+static bool ownExecutablePath(char* exe, size_t cap)
+{
+#if OS(DARWIN)
+    uint32_t len = (uint32_t)cap;
+    return _NSGetExecutablePath(exe, &len) == 0;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, cap - 1);
+    if (n <= 0)
         return false;
-    char partial[4200];
-    snprintf(partial, sizeof partial, "%s", dir);
-    for (char* q = partial + 1; *q; q++)
-        if (*q == '/') {
-            *q = 0;
-            mkdir(partial, 0755);
-            *q = '/';
-        }
-    mkdir(partial, 0755);
+    exe[n] = 0;
     return true;
+#endif
 }
 static bool findSiblingSnapshot(char* out, size_t cap)
 {
-    const char* off = getenv("BUN_SNAPSHOT");
-    if (off && (!strcmp(off, "0") || !strcmp(off, "false")))
-        return false;
     char exe[4096];
-#if OS(DARWIN)
-    uint32_t len = sizeof exe;
-    if (_NSGetExecutablePath(exe, &len) != 0) return false;
-#else
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n <= 0) return false;
-    exe[n] = 0;
-#endif
+    if (snapshotOptedOut() || !ownExecutablePath(exe, sizeof exe))
+        return false;
     snprintf(out, cap, "%s.snapshot", exe);
-    if (access(out, R_OK) == 0)
-        return true;
-    char zpath[4300];
-    snprintf(zpath, sizeof zpath, "%s.snapshot.zst", exe);
-    struct stat zst, est;
-    if (stat(zpath, &zst) || stat(exe, &est)) return false;
-    // Inflate once into the user cache, keyed by the executable + compressed snapshot identity.
-    char dir[4200];
-    if (!snapshotCacheDir(dir, sizeof dir)) return false;
-    uint64_t keyExtra = platformSystemLibsId() ^ platformBuildId(); // libraries may slide (extern-library fixups); their contents are part of the identity
-    snprintf(out, cap, "%s/%llx-%llx-%llx-%llx-%llx.snapshot", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)zst.st_size, (unsigned long long)zst.st_mtime, (unsigned long long)keyExtra);
-    if (access(out, R_OK) == 0)
-        return true;
-    if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] inflating %s -> %s\n", zpath, out);
-    return snapshotInflateZstd(zpath, out);
+    return access(out, R_OK) == 0;
 }
-
-static bool siblingSnapshotExists() // cheap pre-check (no inflate): is there an <exe>.snapshot or <exe>.snapshot.zst at all?
+static bool siblingSnapshotExists()
 {
-    const char* off = getenv("BUN_SNAPSHOT");
-    if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false;
-    char exe[4096], p[4300];
-#if OS(DARWIN)
-    uint32_t len = sizeof exe;
-    if (_NSGetExecutablePath(exe, &len) != 0) return false;
-#else
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n <= 0) return false;
-    exe[n] = 0;
-#endif
-    snprintf(p, sizeof p, "%s.snapshot", exe);
-    if (!access(p, R_OK)) return true;
-    snprintf(p, sizeof p, "%s.snapshot.zst", exe);
-    return !access(p, R_OK);
+    char path[4300];
+    return findSiblingSnapshot(path, sizeof path);
 }
 
 extern "C" bool Bun__standaloneEmbeddedSnapshot(const uint8_t** outPtr, size_t* outLen);
 static bool embeddedSnapshotExists()
 {
-    const char* off = getenv("BUN_SNAPSHOT");
-    if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false;
+    if (snapshotOptedOut())
+        return false;
     const uint8_t* p;
     size_t n;
     return Bun__standaloneEmbeddedSnapshot(&p, &n);
@@ -356,8 +313,8 @@ static bool embeddedSnapshotExists()
 // "<own executable>@<file offset>" for a snapshot embedded in the __BUN/.bun section (in-memory pointer -> segment -> file offset).
 static bool findEmbeddedSnapshot(char* out, size_t cap)
 {
-    const char* off = getenv("BUN_SNAPSHOT");
-    if (off && (!strcmp(off, "0") || !strcmp(off, "false"))) return false;
+    if (snapshotOptedOut())
+        return false;
     const uint8_t* p = nullptr;
     size_t n = 0;
     if (!Bun__standaloneEmbeddedSnapshot(&p, &n)) return false;
@@ -416,17 +373,6 @@ static bool findEmbeddedSnapshot(char* out, size_t cap)
 #else
     return false;
 #endif
-    if (n >= 4 && p[0] == 0x28 && p[1] == 0xB5 && p[2] == 0x2F && p[3] == 0xFD) { // zstd frame: what ships (a CC snapshot is ~33 MB compressed vs ~210 MB raw)
-        struct stat est;
-        if (stat(exe, &est)) return false;
-        char dir[4200];
-        if (!snapshotCacheDir(dir, sizeof dir)) return false;
-        uint64_t keyExtra = platformSystemLibsId() ^ platformBuildId();
-        snprintf(out, cap, "%s/%llx-%llx-%llx-%llx.snapshot", dir, (unsigned long long)est.st_size, (unsigned long long)est.st_mtime, (unsigned long long)n, (unsigned long long)keyExtra);
-        if (access(out, R_OK) == 0) return true;
-        if (getenv("BUN_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] inflating the embedded snapshot (%llu KB) -> %s\n", (unsigned long long)(n / 1024), out); // no %f before the restore: libc dtoa keeps malloc'd scratch that the overlay would invalidate
-        return snapshotInflateZstdBuffer(p, n, out);
-    }
     if (fileOff < 0 || (fileOff & (getpagesize() - 1))) {
         fprintf(stderr, "[snapshot] embedded snapshot is not page-aligned in the file (offset %lld); ignoring\n", (long long)fileOff);
         return false;
@@ -451,7 +397,7 @@ extern "C" void Bun__snapshotMaybeRestore()
         if (!findSiblingSnapshot(path, sizeof path)) {
             path[0] = 0;
             findEmbeddedSnapshot(path, sizeof path);
-        } // sibling .img[.zst] (debugging), else the snapshot embedded in this executable
+        } // a sibling .snapshot (debugging), else the one embedded in this executable
     }
     s_snapshotActive = path[0] || getenv("BUN_SNAPSHOT_OUT");
     if (path[0])
@@ -554,6 +500,8 @@ extern "C" void Bun__snapshotDumpNow(JSC::VM* vm, const char* path)
     snapshotDump(*vm, path);
 }
 extern "C" uint32_t Bun__standaloneSnapshotBuildFlags();
+extern "C" void Bun__startupSnapshotRunMain(JSC::JSGlobalObject*);
+extern "C" bool Bun__startupSnapshotHasMain();
 // `bun build --snapshot` marks the executable it is about to run (Flags::TAKE_SNAPSHOT and friends in its payload). Such a run
 // takes the snapshot to `<own path>.snapshot` instead of starting the app for real. The marking is translated here, before
 // anything else looks, into the variables the rest of the runtime (and its re-exec without ASLR) is driven by; the app's own
@@ -1086,74 +1034,6 @@ static struct sigaction s_prevBus, s_prevSegv;
 static struct termios s_snapshotTermios;
 static int s_snapshotTermiosFd = -1; // lives in __DATA, so it travels inside the snapshot
 static uint64_t s_snapshotOpenFds[16]; // fds 0..1023 open in the build process: the restored process parks /dev/null on them so stale closes are harmless and new fds never alias them
-// <img>.zst next to the snapshot: what ships. Restoring inflates it once into a per-user cache (see findSiblingSnapshot).
-static void snapshotWriteZstd(const char* path)
-{
-    int in = open(path, O_RDONLY);
-    if (in < 0) return;
-    struct stat st;
-    if (fstat(in, &st)) {
-        close(in);
-        return;
-    }
-    void* src = mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, in, 0);
-    close(in);
-    if (src == MAP_FAILED) return;
-    size_t cap = ZSTD_compressBound(st.st_size);
-    void* dst = mmap(nullptr, cap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    size_t n = ZSTD_compress(dst, cap, src, st.st_size, 3);
-    munmap(src, st.st_size);
-    if (!ZSTD_isError(n)) {
-        char zpath[1100];
-        snprintf(zpath, sizeof zpath, "%s.zst", path);
-        int out = open(zpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (out >= 0) {
-            if (write(out, dst, n) == (ssize_t)n) fprintf(stderr, "[snapshot] wrote %s (%.1fMB)\n", zpath, n / 1048576.0);
-            close(out);
-        }
-    }
-    munmap(dst, cap);
-}
-static bool snapshotInflateZstdBuffer(const void* src, size_t srcLen, const char* outPath) // atomically (tmp + rename) so concurrent launches never observe a partial snapshot
-{
-    unsigned long long full = ZSTD_getFrameContentSize(src, srcLen);
-    if (full == ZSTD_CONTENTSIZE_ERROR || full == ZSTD_CONTENTSIZE_UNKNOWN) return false;
-    char tmp[1100];
-    snprintf(tmp, sizeof tmp, "%s.tmp.%d", outPath, getpid());
-    int out = open(tmp, O_RDWR | O_CREAT | O_TRUNC, 0600);
-    if (out < 0) return false;
-    bool ok = false;
-    if (!ftruncate(out, full)) {
-        void* dst = mmap(nullptr, full, PROT_READ | PROT_WRITE, MAP_SHARED, out, 0);
-        if (dst != MAP_FAILED) {
-            size_t n = ZSTD_decompress(dst, full, src, srcLen);
-            ok = !ZSTD_isError(n) && n == full;
-            munmap(dst, full);
-        }
-    }
-    close(out);
-    if (ok)
-        ok = !rename(tmp, outPath);
-    else
-        unlink(tmp);
-    return ok;
-}
-static bool snapshotInflateZstd(const char* zpath, const char* outPath)
-{
-    int in = open(zpath, O_RDONLY);
-    if (in < 0) return false;
-    struct stat st;
-    if (fstat(in, &st)) {
-        close(in);
-        return false;
-    }
-    void* src = mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, in, 0);
-    close(in);
-    if (src == MAP_FAILED) return false;
-    bool ok = snapshotInflateZstdBuffer(src, st.st_size, outPath);
-    munmap(src, st.st_size);
-    return ok;
-}
 struct SnapshotFileFd {
     int fd;
     int flags;
@@ -1328,7 +1208,9 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     hdr.libsBase = platformLibsBase();
     hdr.spare[0] = platformBuildId();
     hdr.spare[2] = platformCpuFeatures();
-    hdr.spare[3] = snapshotArgvKey();
+    // A program registered with Bun.startupSnapshot.main() has not run yet when the snapshot is taken, so the snapshot is
+    // valid for any invocation (0 = no argv check); otherwise it holds the state of this particular invocation.
+    hdr.spare[3] = Bun__startupSnapshotHasMain() ? 0 : snapshotArgvKey();
     hdr.spare[4] = platformSystemLibsId();
     hdr.vm = (uint64_t)&vm;
     hdr.globalObject = (uint64_t)defaultGlobalObject();
@@ -1451,7 +1333,6 @@ static void snapshotDump(JSC::VM& vm, const char* path)
     pwrite(fd, &hdr, sizeof hdr, 0);
     pwrite(fd, out.data(), out.size() * sizeof(SnapshotRegion), tableOff);
     close(fd);
-    snapshotWriteZstd(path);
     fprintf(stderr, "[snapshot] wrote %s: %zu regions, %.1fMB (vm=%p global=%p thread=%p text=%p)\n", path, out.size(), total / 1048576.0, (void*)hdr.vm, (void*)hdr.globalObject, (void*)hdr.mainThread, (void*)hdr.textBase);
 #endif
 }
@@ -1941,6 +1822,7 @@ static void snapshotRestoreAndRun(const char* path)
         // chdir('.') refreshes libc's idea of the cwd for code that cached it. Once the app's own startup work has settled, one full
         // collection frees what that burst left behind and the reclean hands back the snapshot pages it only wrote transiently.
         JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.startupSnapshot.reclean(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        Bun__startupSnapshotRunMain(globalObject); // the program registered with Bun.startupSnapshot.main(), if any
         if (exception) fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
     Bun__snapshotContinueEventLoop(); // never returns

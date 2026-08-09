@@ -1,0 +1,153 @@
+---
+title: Startup Snapshots
+description: Embed a snapshot of your program's started-up state in a compiled executable, so every launch resumes instead of booting
+---
+
+A startup snapshot is a build-time optimization for [single-file executables](/bundler/executables). `bun build` runs your executable once, and when it has finished starting up, the runtime writes out the state of the whole process — every module loaded and evaluated, every object your startup code built, JIT-compiled code included — and embeds it in the executable. Every later launch maps that snapshot back into memory and continues from there. The work your program does while starting up happens once, on the build machine, instead of on every launch.
+
+```bash icon="terminal" terminal
+bun build --compile --snapshot ./app.ts --outfile myapp
+```
+
+This is experimental. It is available on macOS and Linux.
+
+## What it saves
+
+[Bytecode caching](/bundler/bytecode) removes parsing and compiling from startup; the modules still have to be evaluated on every launch, and everything they build — parsers, tables, plugin registries, the object graph a framework assembles before it does anything — is built again each time. A snapshot removes that too: a launch costs what it takes to map a file, and the snapshotted memory is shared between concurrent processes and stays untouched on disk until the program writes to it.
+
+Whether it is worth it depends on how much your program does before it becomes useful. A tool that imports a large dependency graph, or a long-running program that spends its first second building state, benefits. A small script does not.
+
+## Command-line tools
+
+For a program that starts, does one job and exits, the requirement is that the job runs *after* the snapshot is restored, not while the modules are being loaded. Import everything at the top level and put the program itself in `Bun.startupSnapshot.main()`:
+
+```ts cli.ts icon="/icons/typescript.svg"
+import { format } from "./formatter"; // the expensive part: this, and everything it imports, ends up in the snapshot
+
+Bun.startupSnapshot.main(async () => {
+  // Runs in every launch — after the snapshot has been restored, when there is one — with the
+  // launch's own argv, cwd, environment and stdio.
+  const [file] = process.argv.slice(2);
+  process.stdout.write(await format(file));
+});
+```
+
+`main()` calls the function immediately in a launch that has no snapshot, stores it in the launch that takes the snapshot, and calls it after the restore in every launch that resumes from one. Because nothing but imports runs before the snapshot is taken, there is nothing machine-specific in it, and the default build settings need no adjustment:
+
+```bash icon="terminal" terminal
+bun build --compile --bytecode --snapshot ./cli.ts --outfile fmt
+```
+
+## Long-running programs
+
+A server or an interactive program keeps running after it starts, so its snapshot is taken at the point where startup is over. By default (`--snapshot`, or `--snapshot=auto`) the runtime decides: it evaluates the entry point, lets whatever that started run to completion, and takes the snapshot once nothing is pending. Timers that are still armed at that point survive, with their remaining time preserved across the restore. Nothing in the program has to change.
+
+A program that wants to choose the moment itself — for example because it wants to release things right before, or because its startup involves timers — builds with `--snapshot=manual` and calls `take()` when it is ready:
+
+```ts app.ts icon="/icons/typescript.svg"
+import { boot } from "./app";
+
+const app = await boot();
+
+process.on("restore", () => {
+  // Runs first thing in every launch that resumes from the snapshot, before the first event-loop
+  // turn: re-read whatever depends on the machine, re-open what has to be open.
+  app.reload();
+});
+
+// Returns immediately in every process except the one the build runs to take the snapshot.
+Bun.startupSnapshot.take({
+  timers: "keep", // or "cancel"; by default a manual snapshot refuses while timers are armed
+  envGate: ["APP_MODE"], // launches whose values for these differ from the build's boot normally
+});
+```
+
+`process.on("restore")` is available in both modes. Its listeners run before anything else in a restored launch, so state that must be recomputed per machine can be recomputed there; `main()` functions run after them.
+
+## What a restored launch gets from its environment
+
+The runtime refreshes what it owns before your code runs again: `process.argv`, `process.env`, the working directory, `process.pid`, the clocks (`performance.now()`, `process.uptime()`), every source of randomness, timers, the DNS cache, its own threads, and standard input and output, which are the launcher's. Files and sockets that were open when the snapshot was taken are gone; the program receives hangups for them after `"restore"`.
+
+What it cannot refresh is anything your code derived from those before the snapshot was taken:
+
+- A value read from `process.env`, `os.homedir()`, `process.cwd()` and the like and kept in a variable is the build machine's value in every launch. Holding a reference to `process.env` itself is fine — it is updated in place — but a copy of it (`{ ...process.env }`, `dotenv`-style merging into another object) is not.
+- Random values and timestamps produced before the snapshot (an id generated at startup, `Date.now()` stored in a variable) are identical in every launch.
+- Anything computed from files or the network before the snapshot is whatever the build machine had.
+
+When the snapshot is written, the build prints which environment variables were read by name before it, and every place `process.env` was copied, with the code that did it. Each entry is either something to move into `main()` or a `"restore"` listener, or a variable that genuinely changes what the program is — those go in `envGate`, and a launch whose value differs boots normally.
+
+## What the build may do
+
+While the snapshot is being taken, operations whose result would be frozen into every launch are refused: `fetch()` and other network use, `node:fs`, subprocesses, DNS and sockets throw an error saying so. In auto mode, a program that fails this way (or never becomes quiet) leaves the build with an ordinary executable, and the build prints what happened.
+
+Programs that legitimately read their own files or run helpers while starting up can be allowed to:
+
+| Setting | Allowed while the snapshot is taken |
+| --- | --- |
+| `--snapshot-io=strict` (default) | Nothing that touches the machine. |
+| `--snapshot-io=local` | Files, subprocesses, local sockets, name resolution. |
+| `--snapshot-io=network` | The above, and the network. What it answered is in the snapshot. |
+
+With either of the last two, the build prints every operation it allowed, attributed to the code that performed it, so what went into the snapshot can be reviewed.
+
+## Building in CI
+
+The snapshot has to be taken on the platform the executable is for, because taking it means running the executable. The snapshot step therefore also works by itself, on an executable built earlier, and modifies it in place; running it again replaces the previous snapshot.
+
+```bash icon="terminal" terminal
+# On any machine: build for each target
+bun build --compile --target=bun-linux-x64 ./app.ts --outfile dist/app-linux-x64
+bun build --compile --target=bun-darwin-arm64 ./app.ts --outfile dist/app-darwin-arm64
+
+# On a Linux x64 machine, and on an Apple silicon machine respectively:
+bun build --snapshot --outfile dist/app-linux-x64
+bun build --snapshot=manual --snapshot-io=local --outfile dist/app-darwin-arm64
+```
+
+Take snapshots in an environment that holds nothing you would not ship: the snapshot is a copy of the process's memory, and whatever the build environment exposed to the program — variables, files, credentials — is in it.
+
+## `Bun.build()`
+
+The programmatic API takes the same thing as a top-level option. It requires `compile`, and the executable is built for the machine running the build.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: { outfile: "./myapp" },
+  snapshot: true, // or { mode: "auto" | "manual", io: "strict" | "local" | "network" }
+});
+```
+
+## When a launch does not use its snapshot
+
+A launch uses its snapshot only when it can do so exactly: the same executable, the same operating system build and system libraries, a CPU with the features the snapshot was taken on, and agreement on every `envGate` variable. Otherwise it boots normally — the program behaves the same either way, it just starts up the slow way. `Bun.startupSnapshot.epoch()` returns `0` in a launch that booted normally and a positive number in one that resumed.
+
+The snapshot is embedded in the executable as it is, and a launch maps the executable's own pages: nothing is unpacked, and nothing is written anywhere. It makes the executable larger by the size of the snapshotted state — typically tens of megabytes for a tool that loads a large dependency graph — and the build prints the size. For debugging, a launch prefers a `<name>.snapshot` file placed next to the executable over the embedded one, so an alternative snapshot can be tried without re-embedding it.
+
+## Limitations
+
+- A launch that resumes from a snapshot runs with address-space layout randomization disabled, because the snapshot has to be mapped at the addresses it was taken at.
+- Native addons and `bun:ffi` libraries that keep state of their own, and worker threads that are alive when the snapshot is taken, are not supported.
+- macOS and Linux only. On other platforms `--snapshot` reports that it is unavailable.
+- Programs that were not written with the snapshot in mind may hold state of the kinds described above; the reports the build prints are the way to find it.
+
+## Reference
+
+**`bun build`**
+
+| Flag | Meaning |
+| --- | --- |
+| `--snapshot`, `--snapshot=auto` | With `--compile`: run the executable once and embed its snapshot, taken when startup has drained. Without entrypoints: do this to the existing `--outfile`. |
+| `--snapshot=manual` | The same, but the program calls `Bun.startupSnapshot.take()` to say when. |
+| `--snapshot-io=strict\|local\|network` | What the program may do while the snapshot is taken (default `strict`). |
+
+**`Bun.startupSnapshot`**
+
+| | |
+| --- | --- |
+| `main(fn)` | The program. Called now in an ordinary launch, after the restore in a launch that resumes from a snapshot, and not at all in the run that takes the snapshot. |
+| `take(options?)` | Manual mode: take the snapshot now. `options.timers` is `"keep"` or `"cancel"`; `options.envGate` is a list of variable names. Returns immediately in every other process. |
+| `isBuildingSnapshot()` | `true` only in the run that takes the snapshot. |
+| `epoch()` | `0` in a launch that booted normally; otherwise the number of times this process has been resumed. |
+| `reclean()` | In a resumed launch, hand pages the program wrote and then restored to their original contents back to the shared snapshot. Optional; useful for programs that idle for a long time. |
+| `process.on("restore", fn)` | Runs first in every launch that resumes from a snapshot. |

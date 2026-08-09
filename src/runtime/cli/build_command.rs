@@ -1499,7 +1499,6 @@ pub(crate) fn collect_compile_assets(
 pub(crate) enum SnapshotStepOutcome {
     Embedded {
         snapshot_bytes: usize,
-        compressed: bool,
     },
     /// Auto mode only: the app never became quiet (it printed what kept it busy); the executable is left as built.
     KeptPlain,
@@ -1509,6 +1508,23 @@ pub(crate) enum SnapshotStepOutcome {
 /// just now (`--compile --snapshot`) or earlier (`--snapshot --outfile exe`, e.g. after cross-compiling elsewhere);
 /// re-running it replaces the previous snapshot. `exe` is resolved against `dir` when relative.
 pub(crate) fn run_snapshot_step(
+    dir: bun_sys::Fd,
+    exe: &[u8],
+    mode: CompileSnapshot,
+    io: CompileSnapshotIo,
+    env: &mut bun_dotenv::Loader,
+) -> Result<SnapshotStepOutcome, Vec<u8>> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (dir, exe, mode, io, env);
+        return Err(b"startup snapshots are available on macOS and Linux only".to_vec());
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    run_snapshot_step_impl(dir, exe, mode, io, env)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn run_snapshot_step_impl(
     dir: bun_sys::Fd,
     exe: &[u8],
     mode: CompileSnapshot,
@@ -1565,15 +1581,11 @@ pub(crate) fn run_snapshot_step(
     let mut snapshot_path = exe_abs.clone();
     snapshot_path.extend_from_slice(b".snapshot");
     let snapshot_z = bun_core::ZBox::from_vec_with_nul(snapshot_path.clone());
-    let mut zst = snapshot_path.clone();
-    zst.extend_from_slice(b".zst");
-    let zst_z = bun_core::ZBox::from_vec_with_nul(zst.clone());
     let written = bun_sys::stat(&snapshot_z).is_ok();
     if status.is_err() || !written {
         // Whatever happened, what is left on disk must be an ordinary executable again.
         let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         let _ = bun_sys::unlink(&snapshot_z);
-        let _ = bun_sys::unlink(&zst_z);
         return match (status, mode) {
             (Err(e), _) => Err(format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e).into_bytes()),
             (Ok(_), CompileSnapshot::Auto) => Ok(SnapshotStepOutcome::KeptPlain),
@@ -1584,16 +1596,11 @@ pub(crate) fn run_snapshot_step(
             .into_bytes()),
         };
     }
-    // What ships is the zstd frame the runtime also wrote (~6x smaller); the executable inflates it into the user's cache
-    // directory on first launch. BUN_SNAPSHOT_EMBED_RAW (development) embeds the raw form, which maps the executable itself.
-    let embed_raw = bun_core::env_var::BUN_SNAPSHOT_EMBED_RAW
-        .get()
-        .unwrap_or(false);
-    let payload_path: &[u8] = if embed_raw { &snapshot_path } else { &zst };
-    let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), payload_path, bun_sys::O::RDONLY, 0)
+    // The snapshot goes into the executable as it is: a launch maps the executable's own pages; nothing is unpacked anywhere.
+    let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), &snapshot_path, bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())
         .map_err(|e| {
-            format!("could not read {}: {}", bstr::BStr::new(payload_path), e).into_bytes()
+            format!("could not read {}: {}", bstr::BStr::new(&snapshot_path), e).into_bytes()
         });
     let embedded = snapshot
         .as_ref()
@@ -1604,7 +1611,6 @@ pub(crate) fn run_snapshot_step(
         .unwrap_or(false)
     {
         let _ = bun_sys::unlink(&snapshot_z);
-        let _ = bun_sys::unlink(&zst_z);
     }
     let snapshot = snapshot?;
     let embedded = embedded.expect("embed ran when the snapshot was read");
@@ -1614,19 +1620,14 @@ pub(crate) fn run_snapshot_step(
     }
     Ok(SnapshotStepOutcome::Embedded {
         snapshot_bytes: snapshot.len(),
-        compressed: !embed_raw,
     })
 }
 
 pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {
     match outcome {
-        SnapshotStepOutcome::Embedded {
-            snapshot_bytes,
-            compressed,
-        } => bun_core::prettyln!(
-            "<green>[snapshot]</r> embedded a {:.1} MB {}snapshot into the executable",
-            *snapshot_bytes as f64 / 1048576.0,
-            if *compressed { "compressed " } else { "" }
+        SnapshotStepOutcome::Embedded { snapshot_bytes } => bun_core::prettyln!(
+            "<green>[snapshot]</r> embedded a {:.1} MB snapshot into the executable",
+            *snapshot_bytes as f64 / 1048576.0
         ),
         SnapshotStepOutcome::KeptPlain => bun_core::prettyln!(
             "<yellow>[snapshot]</r> the app did not become quiet, so the executable was left without a snapshot (see above for what kept it busy; call Bun.startupSnapshot.take() yourself with --snapshot=manual to choose the moment)"

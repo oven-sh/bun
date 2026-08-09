@@ -59,25 +59,22 @@ test.skipIf(!hasSnapshots)(
     });
     const buildOut = build.stderr.toString() + build.stdout.toString();
     expect(buildOut).toContain("[snapshot] wrote");
-    expect(buildOut).toContain("compressed snapshot into the executable");
-    // Nothing beside the executable: the (compressed) snapshot lives in its __BUN/.bun section.
+    expect(buildOut).toContain("MB snapshot into the executable");
+    // Nothing beside the executable: the snapshot is in its __BUN/.bun section, and a launch maps the executable itself.
     expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]);
-    const rawSize = Number(/\[snapshot\] wrote .*?: \d+ regions, ([\d.]+)MB/.exec(buildOut)?.[1]);
-    expect(Bun.file(exe).size).toBeLessThan(Bun.file(bunExe()).size + rawSize * 1048576 * 0.5); // the payload is a fraction of the raw snapshot
-    const cache = join(String(dir), "cache");
+    const rawMB = Number(/\[snapshot\] wrote .*?: \d+ regions, ([\d.]+)MB/.exec(buildOut)?.[1]);
+    expect(rawMB).toBeGreaterThan(1);
+    expect(Bun.file(exe).size).toBeGreaterThan(Bun.file(bunExe()).size + rawMB * 1048576 * 0.9); // embedded as is
     for (const run of [1, 2]) {
       await using proc = Bun.spawn({
         cmd: [exe],
-        env: { HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: cache, BUN_SNAPSHOT_VERBOSE: "1" },
+        env: { HOME: String(dir), PATH: bunEnv.PATH!, BUN_SNAPSHOT_VERBOSE: "1" },
         stderr: "pipe",
         stdout: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (run === 1)
-        expect(stderr).toContain("inflating the embedded snapshot"); // first launch fills the cache ...
-      else expect(stderr).not.toContain("inflating"); // ... later launches map the cached file directly
-      // A compiled executable that is not building keeps its own early heap above snapshot space, so whatever the inflater
-      // (or libc) allocated before the restore is not overlaid by it.
+      // A compiled executable that is not taking a snapshot keeps its own early heap above snapshot space, so whatever libc
+      // allocated before the restore is not overlaid by it.
       const probeHex = /pre-restore heap probe=0x([0-9a-f]+)/.exec(stderr)?.[1];
       expect(probeHex).toBeDefined();
       expect(BigInt("0x" + probeHex!)).toBeGreaterThanOrEqual(0x21000000000n);
@@ -86,11 +83,7 @@ test.skipIf(!hasSnapshots)(
       expect(stdout).toContain("fetch -> hello from restored server");
       expect(exitCode).toBe(0);
     }
-    expect(
-      require("fs")
-        .readdirSync(join(cache, "bun", "snapshots"))
-        .filter((f: string) => f.endsWith(".snapshot")),
-    ).toHaveLength(1); // one inflated snapshot, no leftover .tmp
+    expect(require("fs").readdirSync(String(dir)).sort()).toEqual(["heavy"]); // launches wrote nothing anywhere (HOME is this dir)
     // Opt out boots normally.
     const plain = Bun.spawnSync({
       cmd: [exe],
@@ -442,11 +435,7 @@ test("envGate: the snapshot is only restored when the gated environment variable
   expect(other.stdout.toString()).toContain("[js] restored"); // ungated variables don't matter
 }, 60000);
 
-const runEnv = () => ({
-  HOME: bunEnv.HOME!,
-  PATH: bunEnv.PATH!,
-  XDG_CACHE_HOME: join(String(tempDir("bun-snapshot-cache", {})), "c"),
-});
+const runEnv = () => ({ HOME: bunEnv.HOME!, PATH: bunEnv.PATH! });
 function build(args: string[]) {
   const r = Bun.spawnSync({ cmd: [bunExe(), "build", ...args], env: bunEnv, stderr: "pipe", stdout: "pipe" });
   return { out: r.stderr.toString() + r.stdout.toString(), code: r.exitCode };
@@ -536,36 +525,38 @@ test("local I/O during the build is refused by default (auto mode keeps the plai
   expect(s.code).toBe(0); // the build still produced a working (plain) executable
   expect(runExe(strict).stdout).toBe(""); // boots plainly: the fixture only prints when restored
   const local = join(String(dir), "local");
-  const l = build([
-    "--compile",
-    "--snapshot",
-    "--snapshot-io=local",
-    join(import.meta.dir, "io-fixture.js"),
-    "--outfile",
-    local,
-  ]);
+  const l = build(["--compile", "--snapshot", "--snapshot-io=local", join(import.meta.dir, "io-fixture.js"), "--outfile", local]);
   expect(l.out).toContain("local I/O operations ran before the freeze");
   expect(l.out).toMatch(/node:fs x1 from:\n\s+at readFileSync/); // attributed to the call site
   expect(l.out).toContain("[snapshot] embedded");
   expect(l.code).toBe(0);
   expect(runExe(local).stdout).toMatch(/restored, exe bytes \d+/);
   // The io option is meaningless without the snapshot step, and manual mode explains itself when the app never snapshots.
-  expect(
-    build([
-      "--compile",
-      "--snapshot-io=local",
-      join(import.meta.dir, "auto-fixture.js"),
-      "--outfile",
-      join(String(dir), "x"),
-    ]).out,
-  ).toContain("only applies together with --snapshot");
-  const m = build([
-    "--compile",
-    "--snapshot=manual",
-    join(import.meta.dir, "auto-fixture.js"),
-    "--outfile",
-    join(String(dir), "manual"),
-  ]);
+  expect(build(["--compile", "--snapshot-io=local", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "x")]).out).toContain("only applies together with --snapshot");
+  const m = build(["--compile", "--snapshot=manual", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "manual")]);
   expect(m.out).toContain("In manual mode the app has to call Bun.startupSnapshot.take()");
   expect(m.code).toBe(1);
 });
+
+test("Bun.startupSnapshot.main(): the program runs after restore with each launch's own argv and cwd; a snapshot taken with it accepts any invocation", () => {
+  using dir = tempDir("bun-snapshot-main", { "a/.keep": "", "b/.keep": "" });
+  const exe = join(String(dir), "tool");
+  const b = build(["--compile", "--snapshot", join(import.meta.dir, "main-fixture.js"), "--outfile", exe]);
+  expect(b.out).toContain("[js] loading only; main deferred"); // the build run loaded the program without running it
+  expect(b.out).toContain("[snapshot] embedded");
+  expect(b.code).toBe(0);
+  for (const [args, cwd] of [
+    [["format", "x.ts"], "a"],
+    [[], "b"],
+    [["--version"], "a"],
+  ] as const) {
+    const r = Bun.spawnSync({ cmd: [exe, ...args], cwd: join(String(dir), cwd), env: { ...runEnv(), BUN_SNAPSHOT_VERBOSE: "1" }, stderr: "pipe", stdout: "pipe" });
+    expect(r.stderr.toString()).toContain("[snapshot] restored"); // any argv resumes from the snapshot
+    expect(r.stdout.toString()).toContain(`[js] main epoch=1 args=${JSON.stringify(args)} cwd=${cwd} table=5000 calls=1`);
+    expect(r.exitCode).toBe(0);
+  }
+  // Without a snapshot, main() simply runs.
+  const plain = Bun.spawnSync({ cmd: [bunExe(), join(import.meta.dir, "main-fixture.js"), "p", "q"], env: bunEnv, stderr: "pipe", stdout: "pipe" });
+  expect(plain.stdout.toString()).toContain('[js] main epoch=0 args=["p","q"]');
+});
+

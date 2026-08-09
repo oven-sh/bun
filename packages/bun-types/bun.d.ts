@@ -4959,6 +4959,15 @@ declare module "bun" {
    */
   namespace startupSnapshot {
     /**
+     * The program itself, for tools that start, do a job and exit. Called immediately in a launch
+     * that has no snapshot; stored — not called — in the run that takes the snapshot, so the snapshot
+     * holds the loaded program; called after `"restore"` in a launch that resumes from the snapshot,
+     * with that launch's argv, cwd, environment and stdio. A snapshot taken with a `main()` registered
+     * is used for every invocation, whatever the arguments.
+     */
+    function main(program: () => unknown): void;
+
+    /**
      * With `--snapshot=manual`, the point in startup at which the snapshot is taken. In the run
      * `bun build` makes for that purpose this never returns: the process exits once the snapshot is
      * written (or with a message naming what kept it busy). In every other process it returns at

@@ -1,12 +1,14 @@
 //! `Bun.startupSnapshot`: the app-facing side of `bun build --snapshot`. `take()` marks the point at which a manual-mode
 //! build takes the snapshot; the rest lets an app ask which kind of process it is in. `process.on('restore')` is the
 //! hook that runs in a resumed process.
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
         &[
+            ("main", __jsc_host_main, 1),
             ("take", __jsc_host_take, 1),
             ("isBuildingSnapshot", __jsc_host_is_building_snapshot, 0),
             ("epoch", __jsc_host_epoch, 0),
@@ -111,4 +113,49 @@ fn is_building_snapshot(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResul
 #[bun_jsc::host_fn]
 fn epoch(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::js_number(bun_core::snapshot::epoch() as f64))
+}
+
+/// `Bun.startupSnapshot.main(fn)`: the program itself. Called right away in an ordinary launch; kept aside in the run that
+/// takes the snapshot (so the snapshot holds the loaded program, not a program that has run); called after `'restore'` in
+/// a launch that resumes from the snapshot, with that launch's argv, cwd, environment and stdio.
+#[bun_jsc::host_fn]
+fn main(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [callback] = frame.arguments_as_array::<1>();
+    if !callback.is_callable() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.startupSnapshot.main() expects a function"
+        )));
+    }
+    if bun_core::snapshot::building() {
+        VirtualMachine::get()
+            .as_mut()
+            .rare_data()
+            .startup_snapshot_main
+            .set(global, callback);
+        return Ok(JSValue::UNDEFINED);
+    }
+    callback.call(global, JSValue::UNDEFINED, &[])
+}
+
+/// Called by the restore sequence after the `'restore'` listeners have run.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__startupSnapshotRunMain(global: &JSGlobalObject) {
+    let vm = VirtualMachine::get().as_mut();
+    let Some(callback) = vm.rare_data().startup_snapshot_main.get() else {
+        return;
+    };
+    if let Err(err) = callback.call(global, JSValue::UNDEFINED, &[]) {
+        let exception = global.take_exception(err);
+        vm.run_error_handler(exception, None);
+    }
+}
+
+/// Asked by the snapshot writer: a snapshot taken with a `main()` registered is valid for any invocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__startupSnapshotHasMain() -> bool {
+    VirtualMachine::get()
+        .as_mut()
+        .rare_data()
+        .startup_snapshot_main
+        .has()
 }

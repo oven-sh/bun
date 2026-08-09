@@ -251,7 +251,7 @@
           {
             "group": "Single File Executable",
             "icon": "binary",
-            "pages": ["/bundler/executables"]
+            "pages": ["/bundler/executables", "/bundler/startup-snapshots"]
           },
           {
             "group": "Extensions",

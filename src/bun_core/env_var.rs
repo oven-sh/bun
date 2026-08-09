@@ -93,7 +93,6 @@ new!(pub BUN_SNAPSHOT_VERBOSE: boolean, "BUN_SNAPSHOT_VERBOSE", {});
 new!(pub BUN_SNAPSHOT_OUT: string, "BUN_SNAPSHOT_OUT", {});
 new!(pub BUN_SNAPSHOT_IO: string, "BUN_SNAPSHOT_IO", {});
 new!(pub BUN_SNAPSHOT_AUTO: boolean, "BUN_SNAPSHOT_AUTO", {});
-new!(pub BUN_SNAPSHOT_EMBED_RAW: boolean, "BUN_SNAPSHOT_EMBED_RAW", {});
 new!(pub BUN_SNAPSHOT_KEEP_SIDECAR: boolean, "BUN_SNAPSHOT_KEEP_SIDECAR", {});
 new!(pub BUN_SNAPSHOT_QUIET_TIMEOUT: unsigned, "BUN_SNAPSHOT_QUIET_TIMEOUT", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior

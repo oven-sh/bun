@@ -1572,4 +1572,107 @@ describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
     },
     20_000,
   );
+
+  // The inverted topology the watcher's cross-thread machinery exists for:
+  // the guest runs inside a worker_threads Worker while the process-wide
+  // SIGINT arrives on the main thread. Also pins the listener semantics: a
+  // main-thread SIGINT listener must not fire while the watcher holds the
+  // signal, and must fire again once the breakOnSigint run is over.
+  test.concurrent(
+    "script hosted in a worker",
+    async () => {
+      const fixture = `
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      const ia = new Int32Array(sab);
+      let phase = "hold";
+      let holdCount = 0;
+      const { promise: post, resolve: postResolve } = Promise.withResolvers();
+      process.on("SIGINT", () => (phase === "hold" ? holdCount++ : postResolve()));
+      const w = new Worker(
+        \`const { parentPort, workerData } = require("node:worker_threads");
+         const vm = require("node:vm");
+         globalThis.ia = new Int32Array(workerData);
+         try {
+           vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true });
+           parentPort.postMessage("returned");
+         } catch (e) {
+           parentPort.postMessage("caught " + e.code);
+         }
+         parentPort.postMessage("alive");\`,
+        { eval: true, workerData: sab },
+      );
+      const { promise: alive, resolve: aliveResolve } = Promise.withResolvers();
+      const messages = [];
+      w.on("message", m => {
+        messages.push(m);
+        if (m === "alive") aliveResolve();
+      });
+      // Atomics.notify returning 1 proves the worker is parked inside the
+      // guest's Atomics.wait; then give it 100ms to re-enter the park.
+      while (Atomics.notify(ia, 0, 1) === 0) {}
+      Atomics.wait(ia, 1, 0, 100);
+      process.kill(process.pid, "SIGINT");
+      await alive;
+      phase = "post";
+      process.kill(process.pid, "SIGINT");
+      await post;
+      console.log(JSON.stringify({ messages, holdCount }));
+      process.exit(0);
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout.trim()).toBe(
+        JSON.stringify({ messages: ["caught ERR_SCRIPT_EXECUTION_INTERRUPTED", "alive"], holdCount: 0 }),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  // breakOnSigint composed with {timeout}: the watchdog's NeedWatchdogCheck
+  // fires first and claims the thread-stop request, so the SIGINT's own trap
+  // does not notify the parked waiter; the watcher's direct syncWaiter notify
+  // is what delivers the wake. Run under both trap configurations: polling
+  // traps has no signal-sender retry loop to paper over a missed notify
+  // (Windows always behaves like polling traps).
+  for (const usePollingTraps of [false, true]) {
+    test.concurrent(
+      `script with timeout armed${usePollingTraps ? " (polling traps)" : ""}`,
+      async () => {
+        const fixture = `
+        const vm = require("node:vm");
+        const { Worker } = require("node:worker_threads");
+        const sab = new SharedArrayBuffer(8);
+        globalThis.ia = new Int32Array(sab);
+        new Worker(
+          \`const { workerData } = require("node:worker_threads");
+           const ia = new Int32Array(workerData);
+           while (Atomics.notify(ia, 0, 1) === 0) {}
+           Atomics.wait(ia, 1, 0, 400);
+           process.kill(process.pid, "SIGINT");\`,
+          { eval: true, workerData: sab },
+        ).unref();
+        try {
+          vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true, timeout: 200 });
+          console.log("returned");
+        } catch (e) {
+          console.log("caught", e.code);
+        }
+        ${proveStillAlive}
+      `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: usePollingTraps ? { ...bunEnv, BUN_JSC_usePollingTraps: "1" } : bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+      20_000,
+    );
+  }
 });

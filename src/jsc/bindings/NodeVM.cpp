@@ -533,7 +533,15 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
 void consumeTermination(JSC::VM& vm)
 {
     vm.clearHasTerminationRequest();
+    // A parked thread services no traps, so stand down both traps this run's
+    // interrupt machinery can leave pending: the SIGINT watcher's
+    // NeedTermination, and NeedWatchdogCheck from a {timeout} watchdog that
+    // fired mid-park. A stale NeedWatchdogCheck otherwise reaches
+    // Watchdog::shouldTerminate after the time limit was already restored and
+    // trips the startTimer ASSERT(hasTimeLimit()); an outer timed run is
+    // unaffected because restoring its limit re-arms the timer.
     vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
+    vm.traps().clearTrap(JSC::VMTraps::NeedWatchdogCheck);
 }
 
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)

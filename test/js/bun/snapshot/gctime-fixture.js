@@ -7,4 +7,4 @@ process.on("restore", async () => {
   console.log("[js] restored: after alloc, full gc #2", fullGcMs(), "ms; #3", fullGcMs(), "ms; heap", (process.memoryUsage().heapUsed / 1048576) | 0, "MB");
   process.exit(0);
 });
-setTimeout(() => Bun.unsafe.snapshot({ timers: "cancel" }), 50);
+setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 50);

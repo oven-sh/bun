@@ -463,7 +463,7 @@ extern "C" void mi_os_hint_floor(void*) noexcept;
 extern "C" bool mi_prof_lock_is_free(void);
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 static void snapshotDump(JSC::VM& vm, const char* path);
-// envGate (Bun.unsafe.snapshot option): NUL-separated names, stored in the snapshot after the region data; hashed together with
+// envGate (Bun.startupSnapshot.take() option): NUL-separated names, stored in the snapshot after the region data; hashed together with
 // their values so a launch whose environment differs in any of them declines the snapshot before touching it.
 static std::string s_envGateNames;
 extern "C" void Bun__snapshotSetEnvGate(const uint8_t* names, size_t len) { s_envGateNames.assign((const char*)names, len); }
@@ -553,8 +553,43 @@ extern "C" void Bun__snapshotDumpNow(JSC::VM* vm, const char* path)
     }
     snapshotDump(*vm, path);
 }
+extern "C" uint32_t Bun__standaloneSnapshotBuildFlags();
+// `bun build --snapshot` marks the executable it is about to run (Flags::TAKE_SNAPSHOT and friends in its payload). Such a run
+// takes the snapshot to `<own path>.snapshot` instead of starting the app for real. The marking is translated here, before
+// anything else looks, into the variables the rest of the runtime (and its re-exec without ASLR) is driven by; the app's own
+// environment and arguments are never involved.
+static void applySnapshotBuildMarking()
+{
+    if (!bun_is_compiled_executable() || getenv("BUN_SNAPSHOT_OUT"))
+        return;
+    uint32_t bits = Bun__standaloneSnapshotBuildFlags();
+    if (!(bits & 1))
+        return;
+    char exe[4096];
+#if OS(DARWIN)
+    uint32_t len = sizeof exe;
+    if (_NSGetExecutablePath(exe, &len) != 0)
+        return;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0)
+        return;
+    exe[n] = 0;
+#endif
+    char out[4096 + 16];
+    snprintf(out, sizeof out, "%s.snapshot", exe);
+    setenv("BUN_SNAPSHOT_OUT", out, 1);
+    if (!(bits & 2))
+        setenv("BUN_SNAPSHOT_AUTO", "1", 1);
+    if (bits & 8)
+        setenv("BUN_SNAPSHOT_IO", "network", 1);
+    else if (bits & 4)
+        setenv("BUN_SNAPSHOT_IO", "local", 1);
+}
+
 extern "C" void Bun__snapshotInit()
 {
+    applySnapshotBuildMarking();
     if (getenv("BUN_SNAPSHOT_OUT"))
         Bun__snapshotSetBuilding(true); // building: network use is refused so the process can become quiet (see throw_disabled_in_snapshot_error_if_needed)
     snapshotToolingInstall();
@@ -562,7 +597,7 @@ extern "C" void Bun__snapshotInit()
 
 namespace Bun::Snapshot {
 // Snapshot pages this process wrote and then put back to their original bytes (refcounts, transient flags) are handed back to
-// the clean file mapping. Called by the application when it goes idle (Bun.unsafe.recleanSnapshotPages()).
+// the clean file mapping. Called by the application when it goes idle (Bun.startupSnapshot.reclean()).
 void recleanFrozenPages(JSC::VM& vm)
 {
 #if OS(DARWIN)
@@ -1905,7 +1940,7 @@ static void snapshotRestoreAndRun(const char* path)
         globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
         // chdir('.') refreshes libc's idea of the cwd for code that cached it. Once the app's own startup work has settled, one full
         // collection frees what that burst left behind and the reclean hands back the snapshot pages it only wrote transiently.
-        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.unsafe.recleanSnapshotPages(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.startupSnapshot.reclean(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
         if (exception) fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
     Bun__snapshotContinueEventLoop(); // never returns

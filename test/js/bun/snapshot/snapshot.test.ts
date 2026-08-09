@@ -6,7 +6,7 @@ import { join } from "path";
 const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
 const buildEnv = env;
 const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
-const hasSnapshots = typeof Bun.unsafe.snapshot === "function" && (isLinux || isMacOS);
+const hasSnapshots = typeof Bun.startupSnapshot?.take === "function" && (isLinux || isMacOS);
 
 for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   test.skipIf(!hasSnapshots)(`snapshot round-trip: ${fixture}`, async () => {
@@ -417,16 +417,14 @@ test("envGate: the snapshot is only restored when the gated environment variable
   {
     const b = Bun.spawnSync({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img },
+      env: { ...buildEnv, BUN_SNAPSHOT_OUT: img, UNGATED_VAR: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
     const err = b.stderr.toString();
     expect(err).toContain("[snapshot] wrote");
     // The report lists what was read by name before the freeze, minus the gated names.
-    expect(err).toMatch(
-      /values read from process.env before the freeze[^\n]*\n(?:[^\n]*\n)?  [^\n]*\bBUN_SNAPSHOT_OUT\b/,
-    );
+    expect(err).toMatch(/values read from process.env before the freeze[^\n]*\n(?:[^\n]*\n)?  [^\n]*\bUNGATED_VAR\b/);
     expect(err).not.toMatch(/\n  [^\n]*\bAPP_MODE\b/);
   }
   const run = (extra: Record<string, string>) =>
@@ -444,11 +442,7 @@ test("envGate: the snapshot is only restored when the gated environment variable
   expect(other.stdout.toString()).toContain("[js] restored"); // ungated variables don't matter
 }, 60000);
 
-const runEnv = () => ({
-  HOME: bunEnv.HOME!,
-  PATH: bunEnv.PATH!,
-  XDG_CACHE_HOME: join(String(tempDir("bun-snapshot-cache", {})), "c"),
-});
+const runEnv = () => ({ HOME: bunEnv.HOME!, PATH: bunEnv.PATH!, XDG_CACHE_HOME: join(String(tempDir("bun-snapshot-cache", {})), "c") });
 function build(args: string[]) {
   const r = Bun.spawnSync({ cmd: [bunExe(), "build", ...args], env: bunEnv, stderr: "pipe", stdout: "pipe" });
   return { out: r.stderr.toString() + r.stdout.toString(), code: r.exitCode };
@@ -490,7 +484,7 @@ test("the snapshot step runs on its own against an executable built earlier, in 
   expect(Math.abs(Bun.file(exe).size - sizeWithSnapshot)).toBeLessThan(sizeWithSnapshot - sizeBefore);
   // Misuse is explained.
   expect(build(["--snapshot", join(import.meta.dir, "auto-fixture.js")]).out).toContain("--snapshot needs --compile");
-  expect(build(["--snapshot", "--outfile", join(String(dir), "missing")]).out).toContain("could not run");
+  expect(build(["--snapshot", "--outfile", join(String(dir), "missing")]).out).toContain("could not read");
 });
 
 test("Bun.build({ snapshot }) is the flag's equivalent; it needs compile, and bad values are rejected up front", async () => {
@@ -538,36 +532,16 @@ test("local I/O during the build is refused by default (auto mode keeps the plai
   expect(s.code).toBe(0); // the build still produced a working (plain) executable
   expect(runExe(strict).stdout).toBe(""); // boots plainly: the fixture only prints when restored
   const local = join(String(dir), "local");
-  const l = build([
-    "--compile",
-    "--snapshot",
-    "--snapshot-io=local",
-    join(import.meta.dir, "io-fixture.js"),
-    "--outfile",
-    local,
-  ]);
+  const l = build(["--compile", "--snapshot", "--snapshot-io=local", join(import.meta.dir, "io-fixture.js"), "--outfile", local]);
   expect(l.out).toContain("local I/O operations ran before the freeze");
   expect(l.out).toMatch(/node:fs x1 from:\n\s+at readFileSync/); // attributed to the call site
   expect(l.out).toContain("[snapshot] embedded");
   expect(l.code).toBe(0);
   expect(runExe(local).stdout).toMatch(/restored, exe bytes \d+/);
   // The io option is meaningless without the snapshot step, and manual mode explains itself when the app never snapshots.
-  expect(
-    build([
-      "--compile",
-      "--snapshot-io=local",
-      join(import.meta.dir, "auto-fixture.js"),
-      "--outfile",
-      join(String(dir), "x"),
-    ]).out,
-  ).toContain("only applies together with --snapshot");
-  const m = build([
-    "--compile",
-    "--snapshot=manual",
-    join(import.meta.dir, "auto-fixture.js"),
-    "--outfile",
-    join(String(dir), "manual"),
-  ]);
-  expect(m.out).toContain("In manual mode the app has to call Bun.unsafe.snapshot()");
+  expect(build(["--compile", "--snapshot-io=local", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "x")]).out).toContain("only applies together with --snapshot");
+  const m = build(["--compile", "--snapshot=manual", join(import.meta.dir, "auto-fixture.js"), "--outfile", join(String(dir), "manual")]);
+  expect(m.out).toContain("In manual mode the app has to call Bun.startupSnapshot.take()");
   expect(m.code).toBe(1);
 });
+

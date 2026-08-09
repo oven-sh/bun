@@ -8,4 +8,4 @@ process.on("restore", async () => {
   console.log("[js] restored", JSON.stringify({ before, after: Bun.dns.getCacheStats(), status: r.status, body: await r.text() }));
   process.exit(0);
 });
-setTimeout(() => { server.stop(true); Bun.unsafe.snapshot({ timers: "cancel" }); }, 100);
+setTimeout(() => { server.stop(true); Bun.startupSnapshot.take({ timers: "cancel" }); }, 100);

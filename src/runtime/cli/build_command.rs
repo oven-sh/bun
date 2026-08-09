@@ -1515,6 +1515,9 @@ pub(crate) fn run_snapshot_step(
     io: CompileSnapshotIo,
     env: &mut bun_dotenv::Loader,
 ) -> Result<SnapshotStepOutcome, Vec<u8>> {
+    use bun_standalone_module_graph::StandaloneModuleGraph::{
+        CompileResult, Flags, embed_snapshot_into_executable, set_snapshot_build_flags,
+    };
     // `dir` is the executable's directory (as for `to_executable`); only the file name of `exe` matters here.
     let name = bun_paths::basename(exe);
     let exe_abs: Vec<u8> = {
@@ -1527,87 +1530,92 @@ pub(crate) fn run_snapshot_step(
         p.extend_from_slice(name);
         p
     };
-    let mut img = exe_abs.clone();
-    img.extend_from_slice(b".snapshot");
-    let img_z = bun_core::ZBox::from_vec_with_nul(img.clone());
+    let failed = |result: bun_standalone_module_graph::Result<CompileResult>,
+                  what: &str|
+     -> Option<Vec<u8>> {
+        match result {
+            Ok(CompileResult::Err(err)) => Some(err.slice().to_vec()),
+            Err(err) => Some(format!("{what}: {}", err.name()).into_bytes()),
+            Ok(_) => None,
+        }
+    };
+    // The executable itself is told to take its snapshot (and how) through a marking in its payload; nothing about the
+    // run is passed through the environment or arguments, which belong to the app.
+    let mut marking = Flags::TAKE_SNAPSHOT;
+    if mode == CompileSnapshot::Manual {
+        marking |= Flags::SNAPSHOT_MANUAL;
+    }
+    match io {
+        CompileSnapshotIo::Strict => {}
+        CompileSnapshotIo::Local => marking |= Flags::SNAPSHOT_IO_LOCAL,
+        CompileSnapshotIo::Network => marking |= Flags::SNAPSHOT_IO_NETWORK,
+    }
+    if let Some(message) = failed(
+        set_snapshot_build_flags(&exe_abs, marking, dir, name, env),
+        "could not prepare the executable",
+    ) {
+        return Err(message);
+    }
     bun_core::prettyln!(
         "<d>[snapshot]</r> running {} once to take its snapshot",
         bstr::BStr::new(&exe_abs)
     );
     Output::flush();
-    // SAFETY: single-threaded CLI; the strings are NUL-terminated and setenv copies them.
-    unsafe {
-        libc::setenv(c"BUN_SNAPSHOT_OUT".as_ptr(), img_z.as_ptr(), 1);
-        if mode == CompileSnapshot::Auto {
-            libc::setenv(c"BUN_SNAPSHOT_AUTO".as_ptr(), c"1".as_ptr(), 1);
-        } else {
-            libc::unsetenv(c"BUN_SNAPSHOT_AUTO".as_ptr());
-        }
-        match io {
-            CompileSnapshotIo::Local => {
-                libc::setenv(c"BUN_SNAPSHOT_IO".as_ptr(), c"local".as_ptr(), 1)
-            }
-            CompileSnapshotIo::Network => {
-                libc::setenv(c"BUN_SNAPSHOT_IO".as_ptr(), c"network".as_ptr(), 1)
-            }
-            CompileSnapshotIo::Strict => libc::unsetenv(c"BUN_SNAPSHOT_IO".as_ptr()),
-        };
-    }
     let status = bun_core::util::spawn_sync_inherit(&[exe_abs.as_slice()]);
-    // SAFETY: as above.
-    unsafe {
-        libc::unsetenv(c"BUN_SNAPSHOT_OUT".as_ptr());
-        libc::unsetenv(c"BUN_SNAPSHOT_AUTO".as_ptr());
-        libc::unsetenv(c"BUN_SNAPSHOT_IO".as_ptr());
-    }
-    if let Err(e) = status {
-        return Err(format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e).into_bytes());
-    }
-    if bun_sys::stat(&img_z).is_err() {
-        return match mode {
-            CompileSnapshot::Auto => Ok(SnapshotStepOutcome::KeptPlain),
-            _ => Err(format!(
-                "{} exited without writing a snapshot. In manual mode the app has to call Bun.unsafe.snapshot(); use --snapshot=auto to have the runtime take it once startup drains.",
+    let mut snapshot_path = exe_abs.clone();
+    snapshot_path.extend_from_slice(b".snapshot");
+    let snapshot_z = bun_core::ZBox::from_vec_with_nul(snapshot_path.clone());
+    let mut zst = snapshot_path.clone();
+    zst.extend_from_slice(b".zst");
+    let zst_z = bun_core::ZBox::from_vec_with_nul(zst.clone());
+    let written = bun_sys::stat(&snapshot_z).is_ok();
+    if status.is_err() || !written {
+        // Whatever happened, what is left on disk must be an ordinary executable again.
+        let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        let _ = bun_sys::unlink(&snapshot_z);
+        let _ = bun_sys::unlink(&zst_z);
+        return match (status, mode) {
+            (Err(e), _) => Err(format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e).into_bytes()),
+            (Ok(_), CompileSnapshot::Auto) => Ok(SnapshotStepOutcome::KeptPlain),
+            (Ok(_), _) => Err(format!(
+                "{} exited without taking a snapshot. In manual mode the app has to call Bun.startupSnapshot.take(); use --snapshot (auto) to have the runtime take it once startup drains.",
                 bstr::BStr::new(&exe_abs)
             )
             .into_bytes()),
         };
     }
-    // What ships is the zstd frame the snapshot also wrote (~6x smaller); the executable inflates it into the user's snapshot
-    // cache on first launch. BUN_SNAPSHOT_EMBED_RAW embeds the raw snapshot, which restores by mapping the executable itself.
+    // What ships is the zstd frame the runtime also wrote (~6x smaller); the executable inflates it into the user's cache
+    // directory on first launch. BUN_SNAPSHOT_EMBED_RAW (development) embeds the raw form, which maps the executable itself.
     let embed_raw = bun_core::env_var::BUN_SNAPSHOT_EMBED_RAW
         .get()
         .unwrap_or(false);
-    let mut zst = img.clone();
-    zst.extend_from_slice(b".zst");
-    let zst_z = bun_core::ZBox::from_vec_with_nul(zst.clone());
-    let payload_path: &[u8] = if embed_raw { &img } else { &zst };
+    let payload_path: &[u8] = if embed_raw { &snapshot_path } else { &zst };
     let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), payload_path, bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())
         .map_err(|e| {
             format!("could not read {}: {}", bstr::BStr::new(payload_path), e).into_bytes()
-        })?;
-    let embedded =
-        bun_standalone_module_graph::StandaloneModuleGraph::embed_snapshot_into_executable(
-            &exe_abs, &snapshot, dir, name, env,
-        );
+        });
+    let embedded = snapshot
+        .as_ref()
+        .ok()
+        .map(|snapshot| embed_snapshot_into_executable(&exe_abs, snapshot, dir, name, env));
     if !bun_core::env_var::BUN_SNAPSHOT_KEEP_SIDECAR
         .get()
         .unwrap_or(false)
     {
-        let _ = bun_sys::unlink(&img_z);
+        let _ = bun_sys::unlink(&snapshot_z);
         let _ = bun_sys::unlink(&zst_z);
     }
-    match embedded {
-        Ok(bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(err)) => {
-            Err(err.slice().to_vec())
-        }
-        Err(err) => Err(format!("failed to embed the snapshot: {}", err.name()).into_bytes()),
-        Ok(_) => Ok(SnapshotStepOutcome::Embedded {
-            snapshot_bytes: snapshot.len(),
-            compressed: !embed_raw,
-        }),
+    let snapshot = snapshot?;
+    let embedded = embedded.expect("embed ran when the snapshot was read");
+    if let Some(message) = failed(embedded, "failed to embed the snapshot") {
+        let _ = set_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        return Err(message);
     }
+    Ok(SnapshotStepOutcome::Embedded {
+        snapshot_bytes: snapshot.len(),
+        compressed: !embed_raw,
+    })
 }
 
 pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {
@@ -1621,7 +1629,7 @@ pub(crate) fn report_snapshot_step(outcome: &SnapshotStepOutcome) {
             if *compressed { "compressed " } else { "" }
         ),
         SnapshotStepOutcome::KeptPlain => bun_core::prettyln!(
-            "<yellow>[snapshot]</r> the app did not become quiet, so the executable was left without a snapshot (see above for what kept it busy; call Bun.unsafe.snapshot() yourself with --snapshot=manual to choose the moment)"
+            "<yellow>[snapshot]</r> the app did not become quiet, so the executable was left without a snapshot (see above for what kept it busy; call Bun.startupSnapshot.take() yourself with --snapshot=manual to choose the moment)"
         ),
     }
     Output::flush();

@@ -3226,7 +3226,7 @@ declare module "bun" {
      * Snapshots (experimental; requires `compile`): after producing the executable, run it once and
      * embed a snapshot of its started-up state, so later launches resume instead of booting. `true`
      * takes the snapshot once startup work drains (`bun build --snapshot`); use `mode: "manual"` when
-     * the app calls `Bun.unsafe.snapshot()` itself, and `io` to let the build touch this machine
+     * the app calls `Bun.startupSnapshot.take()` itself, and `io` to let the build touch this machine
      * (`"local"`: files, subprocesses, local sockets; `"network"`: the network too) — every use is
      * reported when the snapshot is written. Default `io` is `"strict"`.
      */
@@ -4950,20 +4950,26 @@ declare module "bun" {
      * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
+  }
 
+  /**
+   * Startup snapshots (experimental) — see `bun build --snapshot`. A snapshot of the started-up
+   * process is embedded in a compiled executable, and later launches resume from it instead of
+   * booting; `process.on("restore")` runs first thing in such a launch.
+   */
+  namespace startupSnapshot {
     /**
-     * Snapshots (experimental): the point in startup at which `bun build --compile --snapshot=manual`
-     * takes the snapshot of this process. In the process the build runs for that purpose it never
-     * returns — the process exits once the snapshot is written (or with a message naming what kept
-     * it busy). In every other process it returns immediately, so it can be called unconditionally.
-     * With `--snapshot` (auto) the runtime takes the snapshot itself once startup work has drained,
-     * and calling this only contributes the options.
+     * With `--snapshot=manual`, the point in startup at which the snapshot is taken. In the run
+     * `bun build` makes for that purpose this never returns: the process exits once the snapshot is
+     * written (or with a message naming what kept it busy). In every other process it returns at
+     * once, so it can be called unconditionally. With `--snapshot` (auto) the runtime picks the
+     * moment itself and a call only contributes the options.
      */
-    function snapshot(options?: {
+    function take(options?: {
       /**
        * Timers still armed when the process goes quiet: `"keep"` lets them survive with their
-       * remaining time preserved across the restore; `"cancel"` drops them. By default (manual mode)
-       * armed timers keep the snapshot from being taken; auto mode keeps them.
+       * remaining time preserved across the restore; `"cancel"` drops them. By default armed
+       * timers keep a manual snapshot from being taken; auto mode keeps them.
        */
       timers?: "keep" | "cancel";
       /**
@@ -4973,20 +4979,18 @@ declare module "bun" {
       envGate?: string[];
     }): void;
 
-    /**
-     * In a process resumed from a snapshot: hand back to the shared snapshot any
-     * page this process wrote and then restored to its original contents.
-     * Cheap; call it once startup work has settled. A no-op elsewhere.
-     */
-    function recleanSnapshotPages(): void;
+    /** True only in the run `bun build --snapshot` makes to take the snapshot. */
+    function isBuildingSnapshot(): boolean;
+
+    /** 0 in a process that booted normally; otherwise how many times this process has been resumed from a snapshot. */
+    function epoch(): number;
 
     /**
-     * Embed a snapshot file into an executable produced by `bun build --compile`,
-     * writing the result to `outPath` (default: in place). `bun build --snapshot --outfile <exe>`
-     * does this after running the executable once; this is the embedding half alone, for build
-     * pipelines that run the executable themselves.
+     * In a process resumed from a snapshot: hand back to the shared snapshot any page this process
+     * wrote and then restored to its original contents. Cheap; call it once startup work has
+     * settled. A no-op elsewhere.
      */
-    function embedSnapshot(exePath: string, snapshotPath: string, outPath?: string): void;
+    function reclean(): void;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

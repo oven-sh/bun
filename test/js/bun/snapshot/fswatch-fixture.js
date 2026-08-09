@@ -17,4 +17,4 @@ process.on("restore", () => {
     }
   }, 20);
 });
-setTimeout(() => Bun.unsafe.snapshot({ timers: "cancel" }), 100);
+setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 100);

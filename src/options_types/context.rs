@@ -190,7 +190,7 @@ pub enum CompileSnapshot {
     Off,
     /// The runtime snapshots the process itself once startup work has drained; the app needs no code for this.
     Auto,
-    /// The app decides when, by calling `Bun.unsafe.snapshot()`.
+    /// The app decides when, by calling `Bun.startupSnapshot.take()`.
     Manual,
 }
 

@@ -7,4 +7,4 @@ function ctx() {
 }
 console.log("[js] build " + JSON.stringify(ctx()));
 process.on("restore", () => { console.log("[js] restored " + JSON.stringify(ctx())); process.exit(0); });
-setTimeout(() => Bun.unsafe.snapshot({ timers: "cancel" }), 50);
+setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 50);

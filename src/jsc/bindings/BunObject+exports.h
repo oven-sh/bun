@@ -40,6 +40,7 @@
     macro(origin) \
     macro(s3) \
     macro(semver) \
+    macro(startupSnapshot) \
     macro(unsafe) \
     macro(valkey) \
 

@@ -377,7 +377,7 @@ process.on("restore", () => {
 });
 
 // Returns immediately in every process except the one the build runs to take the snapshot.
-Bun.unsafe.snapshot({
+Bun.startupSnapshot.take({
   timers: "keep", // timers armed now survive, with their remaining time preserved ("cancel" drops them; by default they block the snapshot)
   envGate: ["APP_MODE"], // launches where these variables differ from the build's boot normally
 });
@@ -393,7 +393,7 @@ What it cannot refresh is anything your code derived from those before the snaps
 - Random values and timestamps produced before the snapshot (a session id generated at startup, `Date.now()` stored in a variable) are the same in every launch. Generate them in `'restore'`.
 - Native addons and `bun:ffi` libraries that hold native state, and workers that are still alive when the snapshot is taken, are not supported.
 
-A launch that cannot use its snapshot (a different OS build, an `envGate` variable that differs, `BUN_SNAPSHOT=0` in the environment) boots normally and says nothing; `BUN_SNAPSHOT_VERBOSE=1` makes it explain.
+A launch that cannot use its snapshot (a different OS build, an `envGate` variable that differs) boots normally. `Bun.startupSnapshot.epoch()` tells the app which happened.
 
 <Warning>
   The snapshot is a copy of the process's memory, and it ships inside the executable: whatever the build process had

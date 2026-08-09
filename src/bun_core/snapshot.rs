@@ -152,7 +152,7 @@ pub fn snapshot_requested() -> bool {
     SNAPSHOT_REQUESTED.load(Ordering::Acquire) != 0
 }
 static SNAPSHOT_IN_PROGRESS: AtomicU32 = AtomicU32::new(0);
-/// Set once the runtime has started draining the process for the snapshot; a `Bun.unsafe.snapshot()` call from then on only
+/// Set once the runtime has started draining the process for the snapshot; a `Bun.startupSnapshot.take()` call from then on only
 /// contributes its options.
 pub fn set_snapshot_in_progress() {
     SNAPSHOT_IN_PROGRESS.store(1, Ordering::Release);
@@ -170,7 +170,7 @@ pub fn take_snapshot_request() -> Option<Vec<u8>> {
         .take()
 }
 
-/// What `Bun.unsafe.snapshot()` does about timers that are still armed when the process goes quiet.
+/// What `Bun.startupSnapshot.take()` does about timers that are still armed when the process goes quiet.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SnapshotTimers {

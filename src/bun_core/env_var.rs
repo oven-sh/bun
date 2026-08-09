@@ -89,7 +89,7 @@ new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 new!(pub BUN_SNAPSHOT_VERBOSE: boolean, "BUN_SNAPSHOT_VERBOSE", {});
 // Set for the process `bun build --snapshot` runs to take the snapshot: what it may touch on this machine ("strict" unless "local"),
-// and whether the runtime takes the snapshot itself once startup drains (auto) or waits for Bun.unsafe.snapshot() (manual).
+// and whether the runtime takes the snapshot itself once startup drains (auto) or waits for Bun.startupSnapshot.take() (manual).
 new!(pub BUN_SNAPSHOT_OUT: string, "BUN_SNAPSHOT_OUT", {});
 new!(pub BUN_SNAPSHOT_IO: string, "BUN_SNAPSHOT_IO", {});
 new!(pub BUN_SNAPSHOT_AUTO: boolean, "BUN_SNAPSHOT_AUTO", {});

@@ -13,4 +13,4 @@ const run = (tag) => {
 };
 if (!process.env.SKIP_BUILD_RUN) { try { run("build"); } catch (e) { console.log("[js] build run threw", String(e.message).slice(0, 50)); } }
 process.on("restore", () => { run("restored"); process.exit(0); });
-setTimeout(() => Bun.unsafe.snapshot({ timers: "keep" }), 50);
+setTimeout(() => Bun.startupSnapshot.take({ timers: "keep" }), 50);

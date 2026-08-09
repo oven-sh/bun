@@ -1541,7 +1541,7 @@ impl Run {
         }
 
         // `--snapshot` (auto): the entry point has been evaluated; take the snapshot as soon as whatever it started has
-        // drained. An app that wants to choose the moment calls Bun.unsafe.snapshot() itself (manual mode).
+        // drained. An app that wants to choose the moment calls Bun.startupSnapshot.take() itself (manual mode).
         if bun_core::snapshot::building()
             && bun_core::env_var::BUN_SNAPSHOT_AUTO.get().unwrap_or(false)
             && !bun_core::snapshot::snapshot_requested()
@@ -1828,7 +1828,7 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
     out
 }
 
-/// `Bun.unsafe.snapshot(path)` / cmd-file trigger: leave JS via an uncatchable termination and snapshot from the run loop.
+/// `Bun.startupSnapshot.take()` / cmd-file trigger: leave JS via an uncatchable termination and snapshot from the run loop.
 ///
 /// # Safety
 /// `path` must point to a NUL-terminated string that outlives the call.

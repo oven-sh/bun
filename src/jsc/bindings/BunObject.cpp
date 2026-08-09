@@ -1006,6 +1006,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
+    startupSnapshot                                BunObject_lazyPropCb_wrap_startupSnapshot                           ReadOnly|DontDelete|PropertyCallback
     sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
     postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
     SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback

@@ -616,14 +616,27 @@ pub(crate) struct Offsets {
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u32 {
         const DISABLE_DEFAULT_ENV_FILES     = 1 << 0;
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        // _padding: u28
+        /// `bun build --snapshot` stamps these into the executable it is about to run, so that run takes the snapshot (to
+        /// `<own path>.snapshot`) instead of starting the app for real; embedding the result clears them again.
+        const TAKE_SNAPSHOT                 = 1 << 4;
+        const SNAPSHOT_MANUAL               = 1 << 5;
+        const SNAPSHOT_IO_LOCAL             = 1 << 6;
+        const SNAPSHOT_IO_NETWORK           = 1 << 7;
+        // _padding: u24
     }
+}
+
+impl Flags {
+    pub const SNAPSHOT_BUILD_BITS: Flags = Flags::TAKE_SNAPSHOT
+        .union(Flags::SNAPSHOT_MANUAL)
+        .union(Flags::SNAPSHOT_IO_LOCAL)
+        .union(Flags::SNAPSHOT_IO_NETWORK);
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
@@ -800,6 +813,12 @@ pub unsafe extern "C" fn Bun__standaloneEmbeddedSnapshot(
         *out_len = len;
     }
     true
+}
+
+/// Bits: 1 = this run takes the snapshot, 2 = manual (the app calls take()), 4 = local I/O allowed, 8 = network allowed.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__standaloneSnapshotBuildFlags() -> u32 {
+    StandaloneModuleGraph::snapshot_build_flags_early().bits() >> 4
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -1900,6 +1919,7 @@ pub fn append_snapshot_to_serialized(
         Vec::with_capacity(body_len + pad + snapshot.len() + size_of::<Offsets>() + TRAILER.len());
     out.extend_from_slice(&bytes[..body_len]);
     out.resize(body_len + pad, 0);
+    offsets.flags.remove(Flags::SNAPSHOT_BUILD_BITS);
     offsets.snapshot = StringPointer {
         offset: (body_len + pad) as u32,
         length: snapshot.len() as u32,
@@ -1918,9 +1938,108 @@ pub fn append_snapshot_to_serialized(
     Some(out)
 }
 
-/// Embed a snapshot into an *existing* compiled executable (what `--snapshot` pass 2 does, for build pipelines that use the
-/// `Bun.build({compile})` API): recover the exact section payload from the file (`[body][Offsets][TRAILER]`), append the page-aligned
-/// snapshot, and re-emit through the normal inject/sign path with `exe_path` as the template.
+/// A compiled executable's payload as it sits in the file: `[body][pad][snapshot]?[Offsets][TRAILER]`.
+struct ExecutablePayload {
+    file: Vec<u8>,
+    payload_start: usize,
+    offsets_pos: usize,
+    offsets: Offsets,
+}
+
+fn read_executable_payload(exe_path: &[u8]) -> Result<ExecutablePayload, CompileResult> {
+    let file = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+        .map_err(|_| {
+            CompileResult::fail_fmt(format_args!("could not read {}", bstr::BStr::new(exe_path)))
+        })?;
+    // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
+    let tpos = bun_core::strings::last_index_of(&file, TRAILER).ok_or_else(|| {
+        CompileResult::fail_fmt(format_args!(
+            "{} is not a `bun build --compile` executable",
+            bstr::BStr::new(exe_path)
+        ))
+    })?;
+    if tpos < size_of::<Offsets>() {
+        return Err(CompileResult::fail_fmt(format_args!(
+            "corrupt trailer in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    let offsets_pos = tpos - size_of::<Offsets>();
+    // SAFETY: bounds checked; Offsets is repr(C) POD.
+    let offsets: Offsets =
+        unsafe { core::ptr::read_unaligned(file[offsets_pos..].as_ptr().cast::<Offsets>()) };
+    if offsets.byte_count > offsets_pos {
+        return Err(CompileResult::fail_fmt(format_args!(
+            "corrupt payload length in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    Ok(ExecutablePayload {
+        payload_start: offsets_pos - offsets.byte_count,
+        file,
+        offsets_pos,
+        offsets,
+    })
+}
+
+/// Re-emit `exe_path` (used as its own template) with `payload` in place of its current one, through the normal inject/sign path.
+fn rewrite_executable(
+    exe_path: &[u8],
+    payload: &[u8],
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    to_executable(
+        &CompileTarget::default(),
+        &[],
+        out_dir,
+        b"",
+        out_name,
+        env,
+        Format::Esm,
+        &WindowsOptions::default(),
+        b"",
+        Some(exe_path),
+        Flags::default(),
+        Some(payload),
+    )
+}
+
+/// `bun build --snapshot`: mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot; see
+/// `Flags::TAKE_SNAPSHOT`. Only the trailer word changes, so a snapshot already embedded stays where it is.
+pub fn set_snapshot_build_flags(
+    exe_path: &[u8],
+    flags: Flags,
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    let exe = match read_executable_payload(exe_path) {
+        Ok(exe) => exe,
+        Err(failure) => return Ok(failure),
+    };
+    let mut offsets = exe.offsets;
+    offsets.flags.remove(Flags::SNAPSHOT_BUILD_BITS);
+    offsets.flags.insert(flags & Flags::SNAPSHOT_BUILD_BITS);
+    if offsets.flags == exe.offsets.flags {
+        return Ok(CompileResult::Success);
+    }
+    let mut payload = exe.file
+        [exe.payload_start..exe.offsets_pos + size_of::<Offsets>() + TRAILER.len()]
+        .to_vec();
+    let rel = exe.offsets_pos - exe.payload_start;
+    // SAFETY: Offsets is repr(C) POD; `rel..rel+size` is where it was read from.
+    payload[rel..rel + size_of::<Offsets>()].copy_from_slice(unsafe {
+        core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
+    });
+    drop(exe);
+    rewrite_executable(exe_path, &payload, out_dir, out_name, env)
+}
+
+/// Embed a snapshot into an existing compiled executable, in place or to `out_name`; re-running it replaces the previous snapshot
+/// and clears the `TAKE_SNAPSHOT` marking.
 pub fn embed_snapshot_into_executable(
     exe_path: &[u8],
     snapshot: &[u8],
@@ -1928,47 +2047,18 @@ pub fn embed_snapshot_into_executable(
     out_name: &[u8],
     env: &mut bun_dotenv::Loader,
 ) -> crate::Result<CompileResult> {
-    let file = match bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
-        .and_then(|f| f.read_to_end())
-    {
-        Ok(f) => f,
-        Err(_) => {
-            return Ok(CompileResult::fail_fmt(format_args!(
-                "could not read {}",
-                bstr::BStr::new(exe_path)
-            )));
-        }
+    let exe = match read_executable_payload(exe_path) {
+        Ok(exe) => exe,
+        Err(failure) => return Ok(failure),
     };
-    // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
-    let Some(tpos) = bun_core::strings::last_index_of(&file, TRAILER) else {
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "{} is not a `bun build --compile` executable (no trailer)",
-            bstr::BStr::new(exe_path)
-        )));
-    };
-    if tpos < size_of::<Offsets>() {
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "corrupt trailer in {}",
-            bstr::BStr::new(exe_path)
-        )));
-    }
-    let opos = tpos - size_of::<Offsets>();
-    // SAFETY: bounds checked; Offsets is repr(C) POD.
-    let offsets: Offsets =
-        unsafe { core::ptr::read_unaligned(file[opos..].as_ptr().cast::<Offsets>()) };
-    if offsets.byte_count > opos {
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "corrupt payload length in {}",
-            bstr::BStr::new(exe_path)
-        )));
-    }
-    let payload = &file[opos - offsets.byte_count..tpos + TRAILER.len()];
+    let offsets = exe.offsets;
+    let full = &exe.file[exe.payload_start..exe.offsets_pos + size_of::<Offsets>() + TRAILER.len()];
     let previous_payload_len = if offsets.snapshot.length != 0 {
-        payload.len()
+        full.len()
     } else {
         0
     };
-    // Re-running the snapshot step replaces the snapshot: rebuild the snapshot-less form (body, then a cleared Offsets) and append to that.
+    // Rebuild the snapshot-less form (body, then a cleared Offsets) and append to that.
     let stripped: Vec<u8>;
     let payload: &[u8] = if offsets.snapshot.length != 0 {
         let body_end = offsets.snapshot.offset as usize;
@@ -1982,7 +2072,7 @@ pub fn embed_snapshot_into_executable(
         cleared.snapshot = StringPointer::default();
         cleared.byte_count = body_end;
         let mut out = Vec::with_capacity(body_end + size_of::<Offsets>() + TRAILER.len());
-        out.extend_from_slice(&payload[..body_end]);
+        out.extend_from_slice(&full[..body_end]);
         // SAFETY: Offsets is repr(C) POD.
         out.extend_from_slice(unsafe {
             core::slice::from_raw_parts((&raw const cleared).cast::<u8>(), size_of::<Offsets>())
@@ -1991,7 +2081,7 @@ pub fn embed_snapshot_into_executable(
         stripped = out;
         &stripped
     } else {
-        payload
+        full
     };
     let Some(new_payload) = append_snapshot_to_serialized(payload, snapshot, previous_payload_len)
     else {
@@ -1999,21 +2089,8 @@ pub fn embed_snapshot_into_executable(
             "could not append snapshot"
         )));
     };
-    drop(file);
-    to_executable(
-        &CompileTarget::default(),
-        &[],
-        out_dir,
-        b"",
-        out_name,
-        env,
-        Format::Esm,
-        &WindowsOptions::default(),
-        b"",
-        Some(exe_path),
-        Flags::default(),
-        Some(&new_payload),
-    )
+    drop(exe);
+    rewrite_executable(exe_path, &new_payload, out_dir, out_name, env)
 }
 
 pub fn to_executable(
@@ -2306,7 +2383,8 @@ impl StandaloneModuleGraph {
     /// sets it globally, and returns the pointer.
     /// snapshot restore runs long before the graph is constructed: locate the section, read the trailer `Offsets`, and report the
     /// embedded snapshot's in-memory location (the section is mapped as part of the executable). `None` if not compiled / no snapshot.
-    pub fn embedded_snapshot_early() -> Option<(*const u8, usize)> {
+    /// The trailer `Offsets` of this executable's own payload, readable before anything else is set up.
+    fn offsets_early() -> Option<(*const u8, usize, Offsets)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -2330,6 +2408,11 @@ impl StandaloneModuleGraph {
                     .cast::<Offsets>(),
             )
         };
+        Some((base.cast_const(), len, offsets))
+    }
+
+    pub fn embedded_snapshot_early() -> Option<(*const u8, usize)> {
+        let (base, len, offsets) = Self::offsets_early()?;
         let (off, ilen) = (
             offsets.snapshot.offset as usize,
             offsets.snapshot.length as usize,
@@ -2338,7 +2421,14 @@ impl StandaloneModuleGraph {
             return None;
         }
         // SAFETY: subrange of the mapped section.
-        Some((unsafe { base.add(off) }.cast_const(), ilen))
+        Some((unsafe { base.add(off) }, ilen))
+    }
+
+    /// The `TAKE_SNAPSHOT` family of flags stamped by `bun build --snapshot`, or empty.
+    pub fn snapshot_build_flags_early() -> Flags {
+        Self::offsets_early().map_or(Flags::empty(), |(_, _, offsets)| {
+            offsets.flags & Flags::SNAPSHOT_BUILD_BITS
+        })
     }
 
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {

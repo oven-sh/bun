@@ -319,9 +319,7 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-    // No load-failure reporting here: this runs inside a lazy property lookup,
-    // and reportUncaughtExceptionAtEventLoop runs JS, which is not safe
-    // mid-getPropertySlot. Propagating the exception is enough.
+    // Don't report the failure here: that runs JS inside a lazy property lookup.
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }

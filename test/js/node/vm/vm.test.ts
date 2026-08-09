@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1483,4 +1483,85 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
+});
+
+// breakOnSigint must interrupt a guest parked in Atomics.wait. The SIGINT
+// watcher thread fires the NeedTermination trap, which wakes the VM's sync
+// waiter, but JSC's park loop re-parks unless vm.hasTerminationRequest() is
+// set, and no safepoint inside the futex wait ever sets it. The watcher now
+// sets the request itself, and the vm entry points clear the unserviced trap
+// afterward so the surviving thread is not re-terminated at its next trap
+// check.
+describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
+  // Atomics.notify returning 1 proves the main thread is parked; the short
+  // wait lets it re-enter the park before SIGINT is sent.
+  const workerSource = `
+    const { workerData } = require("node:worker_threads");
+    const ia = new Int32Array(workerData);
+    while (Atomics.notify(ia, 0, 1) === 0) {}
+    Atomics.wait(ia, 1, 0, 100);
+    process.kill(process.pid, "SIGINT");
+  `;
+
+  // The loop and call after catching are trap checks: they would rethrow the
+  // termination if the NeedTermination trap were left pending.
+  const proveStillAlive = `
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    (function alive() { console.log("alive", n === 100000); })();
+  `;
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  test.concurrent("script", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      globalThis.ia = new Int32Array(sab);
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      try {
+        vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true });
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+    const [stdout, stderr, exitCode] = await run(fixture);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  test.concurrent("source text module", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      const context = vm.createContext({ ia: new Int32Array(sab) });
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      const mod = new vm.SourceTextModule("for(;;) Atomics.wait(ia, 0, 0);", { context });
+      await mod.link(() => { throw new Error("unexpected import"); });
+      try {
+        await mod.evaluate({ breakOnSigint: true });
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+    const [stdout, stderr, exitCode] = await run(fixture);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 20_000);
 });

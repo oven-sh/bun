@@ -110,6 +110,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
+                // A termination that interrupted Atomics.wait bypassed
+                // handleTraps, leaving the NeedTermination trap pending;
+                // clear it so it can't re-terminate the surviving VM.
+                vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
                 if (getSigintReceived()) {
                     setSigintReceived(false);
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
@@ -256,6 +260,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
+        // A termination that interrupted Atomics.wait bypassed handleTraps,
+        // leaving the NeedTermination trap pending; clear it so it can't
+        // re-terminate the surviving VM.
+        vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);

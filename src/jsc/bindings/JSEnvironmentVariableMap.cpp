@@ -5,6 +5,7 @@
 
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -787,12 +788,35 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
+// The innermost few JS frames, formatted like an error stack (source maps applied), as the key a copy of process.env is reported under.
+static String callSiteForEnvReport(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = JSC::getVM(globalObject);
+    WTF::Vector<JSC::StackFrame> frames;
+    vm.interpreter.getStackTrace(globalObject, frames, 0, 4);
+    OrdinalNumber line = OrdinalNumber::beforeFirst();
+    OrdinalNumber column = OrdinalNumber::beforeFirst();
+    String sourceURL;
+    String formatted = Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, "Error"_s, String(), line, column, sourceURL, frames, nullptr);
+    StringBuilder site;
+    bool first = true;
+    for (auto frameLine : StringView(formatted).split('\n')) {
+        if (first) { // the "Error" header line
+            first = false;
+            continue;
+        }
+        site.append(site.isEmpty() ? ""_s : "\n"_s, "      "_s, frameLine.trim(isASCIIWhitespace<char16_t>));
+    }
+    return site.toString();
+}
+
 void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = JSC::getVM(globalObject);
     if (auto* store = sharedEnvStoreFor(object)) {
         if (store->isRecordingReads()) [[unlikely]]
-            store->noteEnumeration();
+            store->noteEnumeration(callSiteForEnvReport(globalObject));
         for (const auto& key : store->keys())
             propertyNames.add(JSC::Identifier::fromString(vm, key));
     }
@@ -1011,8 +1035,14 @@ void printEnvReadsBeforeSnapshot(Zig::GlobalObject* globalObject, const Vector<S
         return;
     StringBuilder out;
     out.append("snapshot: values read from process.env before the freeze are baked into the image; read them in a 'restore' listener or list them in envGate:"_s);
-    if (enumerations)
+    if (enumerations) {
         out.append("\n  process.env was enumerated or copied "_s, enumerations, enumerations == 1 ? " time"_s : " times"_s, " (every variable)"_s);
+        auto sites = store->enumerationSites();
+        std::sort(sites.begin(), sites.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        for (auto& [site, count] : sites) {
+            out.append("\n    "_s, count, count == 1 ? " copy from:\n"_s : " copies from:\n"_s, site);
+        }
+    }
     // A copy reads every variable on the way through; listing them individually would say nothing more.
     if (!names.isEmpty() && (!enumerations || names.size() < store->keys().size())) {
         out.append("\n  "_s);

@@ -4,7 +4,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
-#include <atomic>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/StringHash.h>
@@ -84,13 +83,31 @@ public:
         Locker locker { m_lock };
         m_readKeys.add(key.isolatedCopy());
     }
-    void noteEnumeration() { m_enumerations++; }
+    void noteEnumeration(const String& site)
+    {
+        Locker locker { m_lock };
+        m_enumerations++;
+        m_enumerationSites.add(site.isolatedCopy(), 0).iterator->value++;
+    }
     Vector<String> readKeys()
     {
         Locker locker { m_lock };
         return copyToVector(m_readKeys);
     }
-    unsigned enumerations() const { return m_enumerations; }
+    unsigned enumerations()
+    {
+        Locker locker { m_lock };
+        return m_enumerations;
+    }
+    Vector<std::pair<String, unsigned>> enumerationSites()
+    {
+        Locker locker { m_lock };
+        Vector<std::pair<String, unsigned>> out;
+        out.reserveInitialCapacity(m_enumerationSites.size());
+        for (auto& entry : m_enumerationSites)
+            out.append({ entry.key.isolatedCopy(), entry.value });
+        return out;
+    }
 
     // Windows env keys are case-insensitive. This follows bun's own Windows env
     // object, not node: node only folds case for a main-rooted tree (RealEnvStore),
@@ -121,8 +138,9 @@ private:
     Lock m_lock;
     HashMap<String, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
     bool m_recordReads { false };
-    std::atomic<unsigned> m_enumerations { 0 };
+    unsigned m_enumerations WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     HashSet<String> m_readKeys WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<String, unsigned> m_enumerationSites WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace Bun

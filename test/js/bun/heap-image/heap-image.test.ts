@@ -154,7 +154,8 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
     // The build names what was read from process.env before the freeze (and that it was copied wholesale once).
     expect(err).toContain("values read from process.env before the freeze are baked into the image");
     expect(err).toContain("process.env was enumerated or copied 1 time");
-    expect(err).toMatch(/copied 1 time \(every variable\)\n(?!  )/); // a copy covers every name: no per-name list after it
+    expect(err).toMatch(/1 copy from:\n\s+at .*launchctx-fixture\.js/); // attributed to the fixture's spread
+    expect(err).not.toMatch(/\n  (?!process\.env was )\S/); // a copy covers every name: no per-name list
     expect(code).toBe(0);
   }
   await using p = Bun.spawn({

@@ -1445,12 +1445,10 @@ extern "C" fn napi_get_typedarray_info(
     }
     let _keep = jsc::EnsureStillAlive(typedarray);
 
-    // Node guarantees the data pointer stays valid for the view's lifetime.
-    // A fast-mode view's storage is abandoned when its buffer is materialized
-    // (which the arraybuffer out-param below would do anyway), so materialize
-    // it before capturing the pointer.
-    if !maybe_data.is_null() {
-        typedarray.materialize_array_buffer_view_buffer();
+    // Keep the pointer valid for the view's lifetime, as in Node: the
+    // arraybuffer out-param below would otherwise invalidate it.
+    if !maybe_data.is_null() && !typedarray.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
     }
 
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
@@ -2042,47 +2040,13 @@ unsafe extern "C" {
         finalize_hint: *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn napi_create_buffer_copy(
-    env_: napi_env,
-    length: usize,
-    data: *const u8,
-    result_data: *mut *mut c_void,
-    result_: *mut napi_value,
-) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
-    let env = preamble!(env_);
-    let result = get_out!(env, result_);
-    let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
-        Ok(b) => b,
-        Err(_) => return env.generic_failure(),
-    };
-    // Node guarantees `result_data` stays valid for the buffer's lifetime;
-    // a fast-mode view's storage is abandoned when its buffer is materialized.
-    if !result_data.is_null() {
-        buffer.materialize_array_buffer_view_buffer();
-    }
-    if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
-        if length > 0 {
-            // SAFETY: caller guarantees `data` points to at least `length` bytes.
-            let src = unsafe { bun_core::ffi::slice(data, length) };
-            array_buf.slice_mut()[..length].copy_from_slice(src);
-        }
-        write_out(
-            result_data,
-            if length > 0 {
-                array_buf.ptr.cast::<c_void>()
-            } else {
-                ptr::null_mut()
-            },
-        );
-    }
-
-    result.set(env, buffer);
-
-    env.ok()
+    pub(super) fn napi_create_buffer_copy(
+        env: napi_env,
+        length: usize,
+        data: *const c_void,
+        result_data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 unsafe extern "C" {
@@ -2099,10 +2063,9 @@ extern "C" fn napi_get_buffer_info(
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     let env = get_env!(env_);
     let value = value_.get();
-    // Node guarantees the data pointer stays valid for the buffer's lifetime;
-    // a fast-mode view's storage is abandoned when its buffer is materialized.
-    if !data.is_null() {
-        value.materialize_array_buffer_view_buffer();
+    // Keep the pointer valid for the buffer's lifetime, as in Node.
+    if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
     }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);

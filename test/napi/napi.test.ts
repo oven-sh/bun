@@ -1017,30 +1017,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("test_napi_remove_wrap", []);
     });
 
-    // 7 sequential node+bun pairs; a debug+ASAN bun takes ~2s each, so the
-    // 5s default times out on slow machines.
     it("has the right lifetime", async () => {
-      await checkSameOutput("test_wrap_lifetime_without_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
-      // check that napi finalizers also run at VM exit, even if they didn't get run by GC
-      await checkSameOutput("test_ref_deleted_in_cleanup", []);
-      // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
-      await checkSameOutput("test_ref_deleted_in_async_finalize", []);
-    }, 30_000);
+      await Promise.all([
+        checkSameOutput("test_wrap_lifetime_without_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_strong_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []),
+        // napi finalizers also run at VM exit, even if they didn't get run by GC
+        checkSameOutput("test_ref_deleted_in_cleanup", []),
+        // calling napi_delete_ref in the ref's finalizer is not use-after-free
+        checkSameOutput("test_ref_deleted_in_async_finalize", []),
+      ]);
+    });
   });
 
   describe("napi_define_class", () => {
-    // Spawns 4 sequential node+bun pairs; a debug+ASAN bun takes ~2s each,
-    // so the 5s default times out on slow machines.
     it("handles edge cases in the constructor", async () => {
-      await checkSameOutput("test_napi_class", []);
-      await checkSameOutput("test_subclass_napi_class", []);
-      await checkSameOutput("test_napi_class_non_constructor_call", []);
-      await checkSameOutput("test_reflect_construct_napi_class", []);
-    }, 30_000);
+      await Promise.all([
+        checkSameOutput("test_napi_class", []),
+        checkSameOutput("test_subclass_napi_class", []),
+        checkSameOutput("test_napi_class_non_constructor_call", []),
+        checkSameOutput("test_reflect_construct_napi_class", []),
+      ]);
+    });
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);

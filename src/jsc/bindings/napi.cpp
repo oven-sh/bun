@@ -2274,19 +2274,62 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     Zig::GlobalObject* globalObject = toJS(env);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
+    // Create the backing ArrayBuffer up front and move it into the view, so the
+    // view is never in fast mode and the data pointer stays valid for the
+    // buffer's lifetime, as in Node.
     // In Node.js, napi_create_buffer is uninitialized memory.
-    auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, length);
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
+    if (!arrayBuffer) {
+        // Node leaves a pending exception for a failed allocation.
+        auto scope = DECLARE_THROW_SCOPE(env->vm());
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+
+    auto* uint8Array = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
     if (data != nullptr) {
-        // Node guarantees the pointer stays valid for the buffer's lifetime.
-        // Small views start in fast mode, whose storage is abandoned when the
-        // backing ArrayBuffer is materialized, so materialize it first.
-        uint8Array->possiblySharedBuffer();
         // Node.js' code looks like this:
         //    *data = node::Buffer::Data(buffer);
         // That means they unconditionally update the data pointer.
         *data = length > 0 ? uint8Array->typedVector() : nullptr;
+    }
+
+    *result = toNapi(uint8Array, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
+    const void* data,
+    void** result_data,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    // As above: one allocation, never fast mode, stable data pointer.
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
+    if (!arrayBuffer) {
+        // Node leaves a pending exception for a failed allocation.
+        auto scope = DECLARE_THROW_SCOPE(env->vm());
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+    if (length > 0) {
+        memcpy(arrayBuffer->data(), data, length);
+    }
+
+    auto* uint8Array = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+
+    if (result_data != nullptr) {
+        *result_data = length > 0 ? uint8Array->typedVector() : nullptr;
     }
 
     *result = toNapi(uint8Array, globalObject);

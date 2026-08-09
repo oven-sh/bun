@@ -2599,12 +2599,10 @@ impl JSValue {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
     }
 
-    /// Force a typed array out of JSC's "fast" mode, where small views'
-    /// contents live in GC-heap storage that is abandoned (copied into a
-    /// fresh `ArrayBuffer`) the first time the backing buffer is
-    /// materialized. After this call the view's data pointer is stable for
-    /// the view's lifetime. Returns `false` if `self` is not a view or the
-    /// buffer could not be allocated.
+    /// Force a typed array out of JSC's "fast" mode so its data pointer stays
+    /// stable for the view's lifetime (fast-mode storage is abandoned when the
+    /// backing buffer is materialized). Returns `false` only when `self` is a
+    /// view whose backing buffer could not be allocated; non-views are a no-op.
     pub fn materialize_array_buffer_view_buffer(self) -> bool {
         Bun__JSValue__materializeArrayBufferViewBuffer(self)
     }

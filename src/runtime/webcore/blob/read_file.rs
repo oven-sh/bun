@@ -78,10 +78,9 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     }
 }
 
-/// Completion callback for a file read. Monomorphized per
-/// call-site type so the erased shim calls `C::run` directly and
-/// `on_complete_ctx` carries the **raw** `*mut C` — no heap wrapper, so any
-/// code introspecting `on_complete_ctx` sees the original context pointer.
+/// A typed receiver for a file read's bytes. [`ReadFileCompletionFns::of`] erases it to the
+/// `(ctx, run, cancel)` a `ReadFile` job carries as its JS side (or a `ReadFileUV` as a field): the
+/// shims call `C::run` / `C::cancel` directly and `ctx` is the raw `*mut C`, no extra heap wrapper.
 pub trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to

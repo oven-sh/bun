@@ -449,10 +449,7 @@ describe("workspace and file: dependency sharing a name", () => {
           dependencies: { alpha: "file:./vendor/alpha" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "1.0.0" })),
       write(
         join(packageDir, "packages", "beta", "package.json"),
         JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { alpha: "workspace:*" } }),
@@ -465,7 +462,10 @@ describe("workspace and file: dependency sharing a name", () => {
     // corrupt the lockfile with a folder path too long to normalize
     const lockPath = join(packageDir, "bun.lock");
     const huge = `file:./${Buffer.alloc(70000, "a").toString()}`;
-    await write(lockPath, (await file(lockPath).text()).replace('"alpha": "file:./vendor/alpha"', `"alpha": "${huge}"`));
+    await write(
+      lockPath,
+      (await file(lockPath).text()).replace('"alpha": "file:./vendor/alpha"', `"alpha": "${huge}"`),
+    );
 
     const second = await runBunInstall(env, packageDir, { allowErrors: true, allowWarnings: true });
     expect(second.err).toContain("Ignoring lockfile");

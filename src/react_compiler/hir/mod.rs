@@ -68,10 +68,8 @@ pub use reactive::*;
 /// buffer's `deallocate` is a no-op. Nonetheless, HIR types must NOT own
 /// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
 /// frees on reset without walking elements, so any nested global allocation
-/// leaks per parse. Use [`StoreStr`] / [`HirBox`] / [`HirVec`] instead.
+/// leaks per parse. Use [`StoreStr`] / [`HirVec`] instead.
 pub type HirVec<T> = bun_alloc::AstVec<T>;
-/// Arena-backed `Box<T>`. See [`HirVec`] for the leak rationale.
-pub type HirBox<T> = bun_alloc::AstBox<T>;
 pub use bun_alloc::AstAlloc;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
 pub use bun_ast::StoreStr;
@@ -1478,7 +1476,7 @@ impl NonLocalBinding {
 // =============================================================================
 
 /// The recursive `Box<Type>` fields here intentionally use the global
-/// allocator, NOT [`HirBox`]: `Type` values are constructed and held by the
+/// allocator, NOT the AST arena: `Type` values are constructed and held by the
 /// process-lifetime [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry),
 /// which outlives the per-file AST arena, so an arena-backed box would dangle
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not

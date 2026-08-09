@@ -109,9 +109,6 @@ pub trait Host {
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 
-// Back-compat alias for the parser hook written against the previous API.
-pub use Host as SymbolHost;
-
 // -----------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------

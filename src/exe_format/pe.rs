@@ -36,8 +36,6 @@ pub enum Error {
     SecurityDirInsideImage,
     #[error("UnexpectedOverlayPresent")]
     UnexpectedOverlayPresent,
-    #[error("InsufficientSpace")]
-    InsufficientSpace,
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables

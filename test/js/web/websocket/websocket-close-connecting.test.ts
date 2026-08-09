@@ -6,7 +6,8 @@
 // — never GC'd, close event never fired, process never exited.
 
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createServer, type AddressInfo } from "net";
 
 describe.each(["close", "terminate"] as const)("%s() during CONNECTING", method => {
@@ -87,4 +88,62 @@ describe.each(["close", "terminate"] as const)("%s() during CONNECTING", method 
       server.close();
     }
   });
+});
+
+// Connect bursts racing server.stop(): every candidate socket of the
+// happy-eyeballs connect ("localhost" resolves to ::1 and 127.0.0.1 on
+// Windows) fails and is closed from inside the poll callback, while awaits
+// between events pump the event loop re-entrantly. On Windows this pattern
+// double-freed the uv_poll of a candidate whose close finished inside a
+// nested loop tick (see packages/bun-usockets/src/eventing/libuv.c and
+// patches/libuv/win-poll-no-endgame-requeue-after-close.patch); the fallout
+// ranged from segfaults at shutdown to a spinning event loop. Run it in a
+// child so a crash fails the test instead of the suite.
+test("connect bursts racing server.stop() do not corrupt the event loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      for (let round = 0; round < 4; round++) {
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("ok");
+          },
+          websocket: { message() {} },
+        });
+        const settled = [];
+        for (let i = 0; i < 8; i++) {
+          const { promise, resolve } = Promise.withResolvers();
+          const ws = new WebSocket("ws://localhost:" + server.port + "/");
+          ws.onopen = resolve;
+          ws.onerror = resolve;
+          ws.onclose = resolve;
+          settled.push(promise);
+        }
+        await Promise.all(settled);
+        server.stop(true);
+        const late = [];
+        for (let i = 0; i < 8; i++) {
+          const { promise, resolve } = Promise.withResolvers();
+          const ws = new WebSocket("ws://localhost:" + server.port + "/");
+          ws.onerror = resolve;
+          ws.onclose = resolve;
+          late.push(promise);
+        }
+        await Promise.all(late);
+        Bun.gc(true);
+      }
+      console.log("OK");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
 });

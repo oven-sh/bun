@@ -190,6 +190,15 @@ static void close_cb_free_poll(uv_handle_t *h) {
   if (h->data) {
     us_free(h->data);
     us_free(h);
+  } else {
+    /* us_poll_free has not run yet: its free was deferred past this close
+     * (loop_post skips us_internal_free_closed_sockets in nested ticks, and a
+     * nested tick can finish this close before the outermost tick frees the
+     * socket). Mark close-completion with a self-pointer so us_poll_free can
+     * tell "closed, callback spent" from "closing, callback pending" —
+     * uv_is_closing() returns true for both, and handing off to a close
+     * callback that already ran would leak both blocks. */
+    h->data = h;
   }
 }
 
@@ -223,7 +232,14 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
    * HOWEVER, if we then call us_poll_free while still closing the uv-poll, we
    * simply change back the data to point to our structure so that we actually
    * do free it like we should. */
-  if (uv_is_closing((uv_handle_t *)p->uv_p)) {
+  if (p->uv_p->data == p->uv_p) {
+    /* close_cb_free_poll already ran with data == 0 and left its marker: the
+     * handle is fully closed and no further callback will fire, so the frees
+     * are ours to do. (uv_is_closing() is also true for closed handles, so
+     * the branch below would park the frees on a callback that never comes.) */
+    us_free(p->uv_p);
+    us_free(p);
+  } else if (uv_is_closing((uv_handle_t *)p->uv_p)) {
     p->uv_p->data = p;
   } else {
     us_free(p->uv_p);
@@ -333,10 +349,19 @@ void us_loop_pump(struct us_loop_t *loop) {
    * for unref'd handles (subprocess exit packets, socket events) and due
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
-   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0.
+   *
+   * tick_depth mirrors epoll_kqueue.c's us_loop_run/us_loop_run_bun_tick: a
+   * JS callback dispatched from this iteration may pump the loop again
+   * (wait_for_promise), and that nested iteration's loop_post must defer
+   * us_internal_free_closed_sockets — this iteration's dispatch still holds
+   * pointers into the closed lists (the DNS drain chain, the poll dispatch's
+   * socket). Without the depth the nested tick freed them mid-use. */
+  loop->data.tick_depth++;
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
+  loop->data.tick_depth--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -414,7 +439,10 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
+  /* See us_loop_pump for why tick_depth brackets the iteration. */
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

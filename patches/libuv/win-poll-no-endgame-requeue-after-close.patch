@@ -1,0 +1,30 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -242,8 +242,16 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
++    /* The CLOSED guard: Bun re-enters uv_run from inside poll callbacks
++     * (wait_for_promise / bun:test pump the loop re-entrantly). A nested
++     * iteration can uv_close this handle, process its cancelled reqs, and
++     * run its endgame while our poll_cb frame is suspended. When that frame
++     * unwinds to here, CLOSING && submitted == 0 holds again; re-queueing
++     * would run uv__poll_endgame on an already-CLOSED handle - a second
++     * close_cb and a double free of the embedding poll allocation. */
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+   }
+ }
+@@ -443,8 +451,10 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__slow_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
++    /* Same CLOSED guard as the fast path above. */
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+   }
+ }

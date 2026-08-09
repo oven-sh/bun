@@ -3576,9 +3576,12 @@ mod posix_impl {
     /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
     /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
     /// returned ENOSYS/EPERM/EACCES.
-    /// OHOS: memfd_create verified available on 2026-06-07 (falls under this
-    /// same target_os = "linux" arm; no separate guard needed there).
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    /// OHOS: excluded even though memfd_create itself works (verified
+    /// 2026-06-07) — child processes abort on the stdio memfd fast-path
+    /// (memfd writes not visible to the parent's fstat after exit), so
+    /// callers must fall back to socketpair/pipe. Matches the stdio.rs
+    /// can_use_memfd() guard.
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
     #[inline]
     pub fn can_use_memfd() -> bool {
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_MEMFD
@@ -3589,7 +3592,7 @@ mod posix_impl {
         }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))))]
     #[inline]
     pub fn can_use_memfd() -> bool {
         false

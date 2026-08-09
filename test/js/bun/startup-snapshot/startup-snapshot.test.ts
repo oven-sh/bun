@@ -564,7 +564,7 @@ snapshotTest(
     expect(again.code).toBe(0);
     expect(runExe(exe).stdout).toContain("[js] restored epoch 1");
     // Replaced, not stacked: the second snapshot takes the place of the first (allow a page of alignment slack either way).
-    expect(Bun.file(exe).size - sizeWithSnapshot).toBeLessThan(sizeWithSnapshot - sizeBefore); // in place, or at most one more block (ELF, when the new one is bigger); never a copy per rewrite
+    expect(Bun.file(exe).size - sizeWithSnapshot).toBeLessThan((sizeWithSnapshot - sizeBefore) / 2); // rewritten in place (or the block replaced): the file never accumulates superseded blocks
     // Misuse is explained.
     expect(build(["--snapshot", join(import.meta.dir, "auto-fixture.js")]).out).toContain("--snapshot needs --compile");
     expect(build(["--snapshot", "--outfile", join(String(dir), "missing")]).out).toContain("could not read");

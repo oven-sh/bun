@@ -282,7 +282,13 @@ impl ElfFile {
         // `new_file_offset` follows the segment's existing (vaddr - offset)
         // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
         // covers our new payload continuously once we grow p_filesz.
-        let new_vaddr = align_up(max_vaddr_end, page_size);
+        // A superseded block of ours is the last thing in the segment: the new one takes its place instead of
+        // accumulating behind it, so a file rewritten any number of times carries exactly one block.
+        let new_vaddr = if previous_block.is_some() {
+            bun_section.vaddr
+        } else {
+            align_up(max_vaddr_end, page_size)
+        };
         let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
         let new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
@@ -290,7 +296,7 @@ impl ElfFile {
         // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
         // past it by construction. This guard catches pathological inputs
         // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
-        if new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
+        if previous_block.is_none() && new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
 
@@ -350,9 +356,11 @@ impl ElfFile {
         // Zero the bytes between the old RW file-content end and the payload
         // start. This entire range is now inside the extended PT_LOAD's
         // file-backed region; keeping it zero preserves BSS semantics.
-        self.data[usize::try_from(move_src_start).expect("int cast")
-            ..usize::try_from(new_file_offset).expect("int cast")]
-            .fill(0);
+        if new_file_offset > move_src_start {
+            self.data[usize::try_from(move_src_start).expect("int cast")
+                ..usize::try_from(new_file_offset).expect("int cast")]
+                .fill(0);
+        }
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
         write_u64_le(

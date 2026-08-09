@@ -394,6 +394,7 @@ pub enum Tag {
     Promise,
 
     JSON,
+    Temporal,
     NativeCode,
     ArrayBuffer,
 
@@ -523,6 +524,8 @@ impl Tag {
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
+            // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
+            JSType::Object if value.temporal_type() != bun_jsc::TemporalType::None => Tag::Temporal,
             JSType::Object
             | JSType::FinalObject
             | JSType::ModuleNamespaceObject
@@ -1038,6 +1041,30 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    /// `Temporal.PlainDate 2020-01-02`, the token console.log prints. Kept
+    /// `#[inline(never)]` so its locals stay out of recursive `print_as` frames.
+    #[inline(never)]
+    fn print_temporal<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer_: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let mut writer = WrappedWriter::new(writer_);
+        let (label, str) = value.temporal_display_string(self.global_this)?;
+        self.add_for_new_line(label.length() + 1 + str.length());
+        writer.print(format_args!(
+            "{} {}{}{}",
+            label,
+            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><magenta>"),
+            str,
+            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+        ));
+        if writer.failed {
+            self.failed = true;
+        }
+        Ok(())
+    }
+
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -1851,6 +1878,9 @@ impl<'a> Formatter<'a> {
 
                     writer.print(format_args!("{}", str));
                 }
+                Tag::Temporal => {
+                    self.print_temporal::<W, ENABLE_ANSI_COLORS>(writer.ctx, value)?;
+                }
                 Tag::Event => {
                     let event_type_value: JSValue = 'brk: {
                         let value_: JSValue = match value.get(self.global_this, "type")? {
@@ -2577,6 +2607,8 @@ impl<'a> Formatter<'a> {
             Tag::JSON => {
                 self.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
+            Tag::Temporal => self
+                .print_as::<W, { Tag::Temporal }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::NativeCode => self
                 .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::JSX => {
@@ -2653,6 +2685,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
             Ft::Private => Tag::Private,
             Ft::Promise => Tag::Promise,
             Ft::JSON => Tag::JSON,
+            Ft::Temporal => Tag::Temporal,
             Ft::NativeCode => Tag::NativeCode,
             Ft::JSX => Tag::JSX,
             Ft::Event => Tag::Event,

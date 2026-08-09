@@ -182,6 +182,10 @@ const {
   isTypedArray,
 } = require("node:util/types");
 
+// "Temporal.PlainDate" / undefined, and the slot-derived default toString() text.
+const getTemporalLabel = $newCppFunction("Temporal.cpp", "jsFunctionTemporalLabel", 1);
+const getTemporalDisplayString = $newCppFunction("Temporal.cpp", "jsFunctionTemporalToDisplayString", 1);
+
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
   constructor(message, isForced = false) {
@@ -1478,6 +1482,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   let braces;
   let extraKeys;
   let noIterator = true;
+  let temporalLabel;
   let i = 0;
   const filter = ctx.showHidden ? ALL_PROPERTIES : ONLY_ENUMERABLE;
 
@@ -1621,6 +1626,16 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) {
         return base;
+      }
+    } else if ((temporalLabel = getTemporalLabel(value)) !== undefined) {
+      // JSC names the constructors `PlainDate` where V8 uses `Temporal.PlainDate`;
+      // map direct instances onto the label so the prefix matches Node's output.
+      const effectiveConstructor =
+        constructor !== null && `Temporal.${constructor}` === temporalLabel ? temporalLabel : constructor;
+      const prefix = getPrefix(effectiveConstructor, tag, temporalLabel);
+      base = `${prefix}${getTemporalDisplayString(value)}`;
+      if (keys.length === 0 && protoProps === undefined) {
+        return ctx.stylize(base, "date");
       }
     } else {
       if (keys.length === 0 && protoProps === undefined) {

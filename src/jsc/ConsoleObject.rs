@@ -1925,6 +1925,7 @@ pub mod formatter {
 
         JSON,
         ToJSON,
+        Temporal,
         NativeCode,
 
         JSX,
@@ -1996,6 +1997,7 @@ pub mod formatter {
         Promise,
         JSON,
         ToJSON,
+        Temporal,
         NativeCode,
         JSX,
         Event,
@@ -2042,6 +2044,7 @@ pub mod formatter {
                 TagPayload::Promise => Tag::Promise,
                 TagPayload::JSON => Tag::JSON,
                 TagPayload::ToJSON => Tag::ToJSON,
+                TagPayload::Temporal => Tag::Temporal,
                 TagPayload::NativeCode => Tag::NativeCode,
                 TagPayload::JSX => Tag::JSX,
                 TagPayload::Event => Tag::Event,
@@ -2087,6 +2090,7 @@ pub mod formatter {
                 Tag::Promise => TagPayload::Promise,
                 Tag::JSON => TagPayload::JSON,
                 Tag::ToJSON => TagPayload::ToJSON,
+                Tag::Temporal => TagPayload::Temporal,
                 Tag::NativeCode => TagPayload::NativeCode,
                 Tag::JSX => TagPayload::JSX,
                 Tag::Event => TagPayload::Event,
@@ -2304,6 +2308,11 @@ pub mod formatter {
                 T::WeakSet | T::Set => TagPayload::Set,
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
+
+                // Temporal cells are plain `ObjectType`; only ClassInfo tells them apart.
+                T::Object if value.temporal_type() != crate::TemporalType::None => {
+                    TagPayload::Temporal
+                }
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
@@ -3415,6 +3424,7 @@ pub mod formatter {
                 Tag::Set => self.print_set::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::ToJSON => self.print_to_json::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::JSON => self.print_json::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::Temporal => self.print_temporal::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Event => self.print_event::<ENABLE_ANSI_COLORS>(
                     writer_,
                     value,
@@ -4301,6 +4311,34 @@ pub mod formatter {
             }
 
             writer.print(format_args!("{str}"));
+            if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// `Temporal.PlainDate 2020-01-02` — label uncolored, `toString()` text
+        /// in Date's magenta; own properties and subclasses ignored like `Date`.
+        #[inline(never)]
+        fn print_temporal<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let (label, str) = value.temporal_display_string(self.global_this)?;
+            writer.add_for_new_line(label.length() + 1 + str.length());
+            writer.print(format_args!(
+                "{} {}{}{}",
+                label,
+                pfmt!("<r><magenta>", C),
+                str,
+                pfmt!("<r>", C)
+            ));
             if writer.failed {
                 self.failed = true;
             }

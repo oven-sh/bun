@@ -1587,6 +1587,29 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
+
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalType(self)
+    }
+
+    /// Requires `self.temporal_type() != TemporalType::None`; e.g. `("Temporal.PlainDate", "2020-01-02")`.
+    pub fn temporal_display_string(
+        self,
+        global: &JSGlobalObject,
+    ) -> JsResult<(bun_core::String, bun_core::OwnedString)> {
+        let mut label = bun_core::String::empty();
+        let mut text = bun_core::OwnedString::new(bun_core::String::empty());
+        // SAFETY: both out-pointers are live `BunString`s the callee writes at most once.
+        unsafe {
+            crate::cpp::Bun__Temporal__toDisplayString(
+                global,
+                self,
+                &raw mut label,
+                &raw mut *text,
+            )?
+        };
+        Ok((label, text))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2137,6 +2160,21 @@ unsafe extern "C" {
 pub enum ProxyField {
     Target = 0,
     Handler = 1,
+}
+
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
 }
 
 /// `JSValue.SerializedFlags`.

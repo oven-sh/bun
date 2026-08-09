@@ -145,3 +145,31 @@ describe("util.isDeepStrictEqual on Temporal values", () => {
     expect(isDeepStrictEqual(Temporal.Duration.from("PT1H"), Temporal.Duration.from("PT60M"))).toBe(false);
   });
 });
+
+describe("toEqual failure messages on Temporal values", () => {
+  // The matcher message is colored in CI; strip ANSI so the label and value
+  // read as one contiguous string.
+  it("shows the values instead of two empty objects", () => {
+    let message = "";
+    try {
+      expect(Temporal.PlainDate.from("2020-01-02")).toEqual(Temporal.PlainDate.from("1999-12-31"));
+    } catch (e) {
+      message = Bun.stripANSI((e as Error).message);
+    }
+    expect(message).toContain("Expected: Temporal.PlainDate 1999-12-31");
+    expect(message).toContain("Received: Temporal.PlainDate 2020-01-02");
+  });
+
+  it("shows the values when nested in objects", () => {
+    let message = "";
+    try {
+      expect({ at: Temporal.Instant.from("1970-01-01T00:00:00Z") }).toEqual({
+        at: Temporal.Instant.from("1999-12-31T00:00:00Z"),
+      });
+    } catch (e) {
+      message = Bun.stripANSI((e as Error).message);
+    }
+    expect(message).toContain("Temporal.Instant 1970-01-01T00:00:00Z");
+    expect(message).toContain("Temporal.Instant 1999-12-31T00:00:00Z");
+  });
+});

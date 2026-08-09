@@ -62,3 +62,16 @@ describe("toMatchSnapshot errors", () => {
     }).toThrow();
   });
 });
+
+test("Temporal values serialize as their default toString in snapshots", () => {
+  expect(Temporal.PlainDate.from("2020-01-02")).toMatchSnapshot();
+  expect({
+    instant: Temporal.Instant.from("1973-07-22T23:57:25.566778899Z"),
+    zoned: Temporal.ZonedDateTime.from("2020-01-01T00:00:00-10:00[Pacific/Honolulu]"),
+    duration: Temporal.Duration.from({ hours: 1, minutes: 30 }),
+    time: Temporal.PlainTime.from("10:20:23"),
+    dateTime: Temporal.PlainDateTime.from("1901-02-03T04:05:06.007008009"),
+    yearMonth: Temporal.PlainYearMonth.from("2020-01"),
+    monthDay: Temporal.PlainMonthDay.from("01-15"),
+  }).toMatchSnapshot();
+});

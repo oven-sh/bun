@@ -2084,14 +2084,16 @@ test.concurrent("override still applies to a workspace: dependency with no match
     }),
   );
 
-  const { exited } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await exited).toBe(0);
+  const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderrText).not.toContain("error:");
+  expect(exitCode).toBe(0);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "2.0.0",
@@ -2118,20 +2120,58 @@ test.concurrent("override still applies when the range does not link the member"
     write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
   ]);
 
-  const { exited } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await exited).toBe(0);
+  const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderrText).not.toContain("error:");
+  expect(exitCode).toBe(0);
   // ^3.0.0 does not link the member, so the name resolves from the registry and
   // the override picks the version
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "2.0.0",
   });
+});
+
+// A ranged `workspace:` dependency a present member cannot satisfy is rejected while
+// parsing package.json, before overrides are consulted, with or without this fix. The
+// override neither rescues it nor turns it into a resolution conflict.
+test.concurrent("override does not rescue a workspace: range the member does not satisfy", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "workspace:^3.0.0",
+        },
+        overrides: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+
+  const proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [stderrText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderrText).toContain('No matching version for workspace dependency "no-deps"');
+  expect(stderrText).not.toContain("dependency loop");
+  expect(exitCode).toBe(1);
 });
 
 describe("LinkWorkspacePackages", () => {

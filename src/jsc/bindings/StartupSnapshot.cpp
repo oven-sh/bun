@@ -1823,15 +1823,6 @@ static void snapshotRestoreAndRun(const char* path)
     setvbuf(stderr, nullptr, _IONBF, 0);
     setvbuf(stdout, nullptr, _IOLBF, 0); // stdio buffering mode was decided in the builder (whose fds may have been files)
     { // Snapshot payload pages are immortal: never free into them (that would dirty a clean file-backed page for allocator metadata); allocate from fresh pages.
-        frozenRanges.clear();
-        snapshotRuns.clear();
-        for (auto& r : regions)
-            if ((r.kind & 0xff) == 0) {
-                frozenRanges.push_back({ r.addr, r.addr + r.len });
-                snapshotRuns.push_back({ (uintptr_t)r.addr, (size_t)r.len, (size_t)r.fileOff });
-            }
-        std::sort(frozenRanges.begin(), frozenRanges.end());
-        std::sort(snapshotRuns.begin(), snapshotRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
         snapshotFd = fd; // stays open: reclean remaps pristine pages from it (and the tooling diffs against it)
         { // Watchpoint.cpp asks whether an object is snapshotted; the snapshotted allocator arenas are one contiguous span
             uintptr_t lo = UINTPTR_MAX, hi = 0;
@@ -1874,6 +1865,16 @@ static void snapshotRestoreAndRun(const char* path)
             fresh = mi_heap_new();
         freshHeap = fresh;
         mi_theap_set_default(mi_heap_theap(fresh));
+        // Only now may anything allocate: these live in the fresh heap, not in the (frozen) snapshot pages they describe.
+        frozenRanges.clear();
+        snapshotRuns.clear();
+        for (auto& r : regions)
+            if ((r.kind & 0xff) == 0) {
+                frozenRanges.push_back({ r.addr, r.addr + r.len });
+                snapshotRuns.push_back({ (uintptr_t)r.addr, (size_t)r.len, (size_t)r.fileOff });
+            }
+        std::sort(frozenRanges.begin(), frozenRanges.end());
+        std::sort(snapshotRuns.begin(), snapshotRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
         {
             void* probe = mi_malloc(64);
             if (verbose) fprintf(stderr, "[snapshot] fresh heap: own arena=%d probe=%p\n", (int)(fresh != nullptr), probe);

@@ -1958,7 +1958,9 @@ fn links_workspace_member(
             this.lockfile
                 .workspace_versions
                 .get(&name_hash)
-                .is_some_and(|workspace_version| npm.version.satisfies(*workspace_version, buf, buf))
+                .is_some_and(|workspace_version| {
+                    npm.version.satisfies(*workspace_version, buf, buf)
+                })
         }
         _ => false,
     }

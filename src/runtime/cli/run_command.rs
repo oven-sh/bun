@@ -1494,6 +1494,10 @@ impl Run {
             }
         }
 
+        if bun_core::image::building() {
+            // SAFETY: the VM and its global object are live on this thread; nothing of the app has run yet.
+            unsafe { Bun__Process__useSharedEnvForImageBuild(vm.global) };
+        }
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
@@ -1812,6 +1816,7 @@ pub extern "C" fn Bun__imageSetBuilding(on: bool) {
 }
 
 unsafe extern "C" {
+    fn Bun__Process__useSharedEnvForImageBuild(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__Process__reloadEnvAfterImageRestore(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__VM__refreshStackBoundsAfterImageRestore(vm: *mut bun_jsc::VM);
 }

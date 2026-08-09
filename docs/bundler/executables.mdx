@@ -369,9 +369,22 @@ if (process.env.BUN_IMAGE_OUT) {
 }
 ```
 
-What the runtime refreshes on its own in a restored process: `process.argv`, `process.env`, the working directory, `process.pid`, clocks (`performance.now()`, `process.uptime()`), every source of randomness, timers, the DNS cache, and its own threads. What it cannot know about is yours: files and sockets the build process had open are gone (the app gets hangups for them after `'restore'`), and anything you computed from the build machine's environment must be recomputed in the `'restore'` listener.
+What the runtime refreshes on its own in a restored process: `process.argv`, `process.env`, the working directory, `process.pid`, clocks (`performance.now()`, `process.uptime()`), every source of randomness, timers, the DNS cache, and its own threads. Files and sockets the build process had open are gone; the app gets hangups for them after `'restore'`.
 
-While the image is being built, the runtime refuses to talk to the network, so nothing fetched during the build can end up frozen into the executable; set `BUN_IMAGE_ALLOW_LOCAL_IO=1` for the build run if startup legitimately reads files, runs helpers or binds local sockets. An image is only used when the executable is launched with the same arguments as the build run, on the same OS build (system libraries may move between reboots; that is handled), and when the `envGate` variables match; in every other case, and with `BUN_IMAGE=0`, the executable boots normally. The first launch inflates the image into `$XDG_CACHE_HOME/bun/images` (or `~/.cache/bun/images`).
+What it cannot refresh is anything your code derived from those before the image was taken:
+
+- A value read from `process.env`, `os.homedir()`, `process.cwd()` and the like and kept in a variable is the build machine's value in every launch. Holding on to `process.env` itself is fine — the object is updated in place — but a copy of it (`{ ...process.env }`, `dotenv`-style merging) is not. When the image is written, the build prints which variables were read before the freeze and whether `process.env` was copied; move those reads into the `'restore'` listener, or list variables that legitimately change what the app is in `envGate`.
+- Random values and timestamps produced before the freeze (a session id generated at startup, `Date.now()` stored in a variable) are the same in every launch. Generate them in `'restore'`.
+- Native addons and `bun:ffi` libraries that hold native state, and workers that are still alive at the freeze, are not supported.
+
+While the image is being built, `fetch()` and other network use are refused, and the snapshot waits for in-flight work to finish; timers still armed at that point block it unless you pass `timers`.
+
+<Warning>
+  The image is a copy of the process's memory at the freeze, and it ships inside the executable: whatever the build
+  process had read — environment variables, files, credentials — is in it. Build images in an environment that holds
+  nothing secret. A process started from an image also runs with address-space randomization disabled, because the
+  image has to map at fixed addresses.
+</Warning>
 
 <Note>
   The saving is startup work: an app that builds a lot of state at startup starts in the time it takes to map a file,

@@ -149,8 +149,12 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(out).toContain('"marker":"builder"');
+    // The build names what was read from process.env before the freeze (and that it was copied wholesale once).
+    expect(err).toContain("values read from process.env before the freeze are baked into the image");
+    expect(err).toContain("process.env was enumerated or copied 1 time");
+    expect(err).toMatch(/copied 1 time \(every variable\)\n(?!  )/); // a copy covers every name: no per-name list after it
     expect(code).toBe(0);
   }
   await using p = Bun.spawn({
@@ -167,6 +171,8 @@ test("launch context (argv, env, cwd, HOME) comes from the restoring process, no
   expect(got.argv).toEqual(["restored-arg", "--flag"]);
   expect(got.bunArgv).toEqual(["restored-arg", "--flag"]);
   expect(got.marker).toBe("restorer");
+  expect(got.viaCapturedRef).toBe("restorer");
+  expect(got.viaCopy).toBe("builder");
   expect(got.home).toBe(join(String(dir), "homeB"));
   expect(got.cwd.endsWith("/b")).toBe(true);
   expect(code).toBe(0);
@@ -414,7 +420,11 @@ test("envGate: the image is only restored when the gated environment variables a
       stderr: "pipe",
       stdout: "pipe",
     });
-    expect(b.stderr.toString()).toContain("[image] wrote");
+    const err = b.stderr.toString();
+    expect(err).toContain("[image] wrote");
+    // The report lists what was read by name before the freeze, minus the gated names.
+    expect(err).toMatch(/values read from process.env before the freeze[^\n]*\n(?:[^\n]*\n)?  [^\n]*\bBUN_IMAGE_OUT\b/);
+    expect(err).not.toMatch(/\n  [^\n]*\bAPP_MODE\b/);
   }
   const run = (extra: Record<string, string>) =>
     Bun.spawnSync({

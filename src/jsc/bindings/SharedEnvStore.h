@@ -2,6 +2,9 @@
 
 #include "root.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/Vector.h>
+#include <atomic>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/StringHash.h>
@@ -62,6 +65,33 @@ public:
         return out;
     }
 
+    // Heap image restore: the environment is the launching process's now; every view of this store sees it at once.
+    void replaceAll(Vector<std::pair<String, String>>&& entries)
+    {
+        {
+            Locker locker { m_lock };
+            m_map.clear();
+        }
+        for (auto& [key, value] : entries)
+            set(key, value);
+    }
+
+    // While an image is being built, remember what the app read: values read before the freeze are baked into the image.
+    void startRecordingReads() { m_recordReads = true; }
+    bool isRecordingReads() const { return m_recordReads; }
+    void noteRead(const String& key)
+    {
+        Locker locker { m_lock };
+        m_readKeys.add(key.isolatedCopy());
+    }
+    void noteEnumeration() { m_enumerations++; }
+    Vector<String> readKeys()
+    {
+        Locker locker { m_lock };
+        return copyToVector(m_readKeys);
+    }
+    unsigned enumerations() const { return m_enumerations; }
+
     // Windows env keys are case-insensitive. This follows bun's own Windows env
     // object, not node: node only folds case for a main-rooted tree (RealEnvStore),
     // and is case-sensitive for one rooted at a snapshot worker (MapKVStore).
@@ -90,6 +120,9 @@ private:
 
     Lock m_lock;
     HashMap<String, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
+    bool m_recordReads { false };
+    std::atomic<unsigned> m_enumerations { 0 };
+    HashSet<String> m_readKeys WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace Bun

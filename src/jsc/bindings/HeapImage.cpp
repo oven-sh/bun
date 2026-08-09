@@ -3,6 +3,7 @@
 #endif
 #include "root.h"
 #include "HeapImage.h"
+#include "JSEnvironmentVariableMap.h"
 // Images are built and mapped on macOS and (glibc/musl) Linux; elsewhere the entry points exist so the rest of the runtime
 // links, and report the feature as absent.
 #if BUN_HEAP_IMAGE_SUPPORTED
@@ -1123,6 +1124,17 @@ static void imageDump(JSC::VM& vm, const char* path)
 {
 #if OS(DARWIN) || OS(LINUX)
     JSC::JSLockHolder lock(vm);
+    {
+        Vector<String> gated;
+        for (size_t start = 0; start < s_envGateNames.size();) {
+            size_t end = s_envGateNames.find('\0', start);
+            if (end == std::string::npos)
+                end = s_envGateNames.size();
+            gated.append(String::fromUTF8(std::span { s_envGateNames.data() + start, end - start }));
+            start = end + 1;
+        }
+        Bun::printEnvReadsBeforeSnapshot(defaultGlobalObject(), gated);
+    }
     s_imageTermiosFd = -1;
     for (int fd = 0; fd < 3; fd++)
         if (isatty(fd) && !tcgetattr(fd, &s_imageTermios)) {
@@ -1198,7 +1210,7 @@ static void imageDump(JSC::VM& vm, const char* path)
     std::vector<std::pair<uintptr_t, uintptr_t>> freeRanges; // arena slices in no page: free memory, whatever the kernel says about residency
     mi_arenas_visit_free_ranges(mi_heap_main(), [](void* start, size_t size, void* arg) { static_cast<std::vector<std::pair<uintptr_t, uintptr_t>>*>(arg)->push_back({ (uintptr_t)start, (uintptr_t)start + size }); }, &freeRanges);
     std::sort(freeRanges.begin(), freeRanges.end());
-    {
+    if (getenv("BUN_IMAGE_VERBOSE")) {
         size_t fb = 0;
         for (auto& r : freeRanges)
             fb += r.second - r.first;

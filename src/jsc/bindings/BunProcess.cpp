@@ -3197,8 +3197,7 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
     return JSC::jsString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
-// Heap-image restore: `process.env` was materialized from the builder's environment. Rebuild it from the (reloaded) loader map and
-// re-install it on `process` so `process.env.X` reads see this process's environment. (Code that captured the old object keeps that copy.)
+// Heap-image restore: process.env holds the builder's environment; rebuild it from the reloaded loader map.
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject*);
 extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* lexicalGlobalObject)
 {
@@ -3211,9 +3210,13 @@ extern "C" void Bun__Process__reloadEnvAfterImageRestore(JSC::JSGlobalObject* le
         (void)scope.tryClearException();
         return;
     }
-    globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
+    // Images built by `bun` make process.env a store-backed view first, so the contents can change under every reference
+    // the app holds; only an image built some other way needs the object itself replaced.
     JSObject* process = globalObject->processObject();
-    process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
+    if (!Bun::refillSharedEnvAfterImageRestore(globalObject, fresh.getObject())) {
+        globalObject->m_processEnvObject.set(vm, globalObject, fresh.getObject());
+        process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), fresh, 0);
+    }
     uncheckedDowncast<Bun::Process>(process)->invalidateLaunchContext();
     // Bun-object lazy properties derived from the launch context were reified into own properties on first access;
     // deleting them sends the next access back through their PropertyCallback (which reads the current process).

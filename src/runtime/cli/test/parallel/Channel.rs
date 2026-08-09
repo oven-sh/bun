@@ -409,20 +409,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
     }
 
-    /// True while the underlying socket/pipe is still open. When `done` is set
-    /// with the transport still attached, it was a protocol error (corrupt
-    /// frame), not a clean close.
-    pub(crate) fn is_attached(&self) -> bool {
-        #[cfg(windows)]
-        {
-            return !self.backend.pipe.get().is_null();
-        }
-        #[cfg(not(windows))]
-        {
-            !self.backend.socket.get().is_detached()
-        }
-    }
-
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
         if !self.out.get().is_empty() {

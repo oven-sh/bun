@@ -375,11 +375,19 @@ impl ChannelOwner for Worker {
     }
 
     fn on_channel_done(&mut self) {
-        if self.ipc.is_attached() {
-            // Corrupt frame path — kill the worker so onWorkerExit accounts for
-            // the in-flight file and the slot can respawn.
-            if let Some(p) = self.process {
-                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+        // The channel is the worker's only command/result path, so a worker
+        // that outlives it can neither receive a file nor report one. That
+        // happens on a corrupt frame (transport still attached) and on EOF
+        // while the worker is still running — e.g. a test closed fd 3, which
+        // also leaves the worker unable to notice its channel died (the fd
+        // vanished from its poll set), so without this kill both sides wait
+        // forever. After a normal worker exit the EOF often arrives before
+        // the exit notification; the process is an unreaped zombie then and
+        // kill(9) is a no-op.
+        if let Some(p) = self.process {
+            // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+            if unsafe { !(*p).has_exited() } {
+                // SAFETY: as above.
                 let _ = unsafe { (*p).kill(9) };
             }
         }

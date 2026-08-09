@@ -669,10 +669,7 @@ describe("workspace and npm dependency sharing a name", () => {
           dependencies: { "no-deps": "1.0.0" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "nd", "package.json"),
-        JSON.stringify({ name: "member-a", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "packages", "nd", "package.json"), JSON.stringify({ name: "member-a", version: "1.0.0" })),
       // duplicate workspace path keys with an npm package owning the first
       // member name's root packages key; the duplicate must be rejected by
       // the parser, not trip an out-of-bounds workspace package range

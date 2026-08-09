@@ -3454,8 +3454,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
                     !member_owns_packages_key(pkgs_expr, name, path) || {
-                        let member_version =
-                            lockfile.workspace_versions.get(&name_hash).copied();
+                        let member_version = lockfile.workspace_versions.get(&name_hash).copied();
                         lockfile.buffers.dependencies.as_slice()[off..]
                             .iter()
                             .any(|dep| {
@@ -3463,8 +3462,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                                     return false;
                                 }
                                 let npm = dep.version.npm();
-                                if StringBuilder::string_hash(npm.name.slice(bytes)) != name_hash
-                                {
+                                if StringBuilder::string_hash(npm.name.slice(bytes)) != name_hash {
                                     return false;
                                 }
                                 let satisfies = match member_version {

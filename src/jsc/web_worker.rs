@@ -1050,6 +1050,10 @@ impl WebWorker {
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
         drop(arena.take());
+        // Everything this thread allocated is now free; hand it back to the OS before the parent
+        // learns the worker exited, rather than leaving it to a delayed purge that only runs when
+        // some later allocation elsewhere happens to trigger one.
+        bun_alloc::mimalloc::mi_collect(true);
         log!(
             "[{}] shutdown: thread state freed",
             self.execution_context_id

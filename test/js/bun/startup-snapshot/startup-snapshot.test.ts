@@ -96,6 +96,22 @@ overlapTest(
   },
 );
 
+snapshotTest("a stale sidecar cannot stand in for a snapshot the app failed to take", async () => {
+  using dir = tempDir("bun-snapshot-stale-sidecar", { "app.js": `process.exit(3);` });
+  const exe = join(String(dir), "app");
+  await Bun.write(exe + ".snapshot", "left over from an earlier build");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "--snapshot", "app.js", "--outfile", exe],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(build.stderr.toString()).toContain("exited with status 3");
+  expect(build.exitCode).not.toBe(0);
+  expect(require("fs").existsSync(exe + ".snapshot")).toBe(false);
+});
+
 snapshotTest(
   "bun build --compile --snapshot embeds the snapshot; the single file restores from itself with no env",
   async () => {

@@ -27,8 +27,9 @@ export const mimalloc: Dependency = {
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.
-    //   macOS:   OFF — overriding via zone/interpose breaks NAPI addons and
-    //            system frameworks (SecureTransport etc.).
+    //   macOS:   OFF by default — overriding via zone/interpose breaks NAPI addons
+    //            and system frameworks (SecureTransport etc.); BUN_MIMALLOC_OVERRIDE_DARWIN=1
+    //            opts in (what startup snapshots need there).
     //   Linux:   ON — the main win. All malloc/free routes through mimalloc,
     //            including WebKit's bmalloc when it falls back to system malloc.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;

@@ -1914,10 +1914,12 @@ pub fn append_startup_snapshot_to_serialized(
     out.extend_from_slice(&bytes[..body_len]);
     out.resize(body_len + pad, 0);
     offsets.flags.remove(Flags::STARTUP_SNAPSHOT_BUILD_BITS);
-    offsets.snapshot = StringPointer {
-        offset: (body_len + pad) as u32,
-        length: snapshot.len() as u32,
+    // The trailer addresses the payload with 32-bit fields; anything larger would be recorded truncated and mapped wrong.
+    let (Ok(offset), Ok(length)) = (u32::try_from(body_len + pad), u32::try_from(snapshot.len()))
+    else {
+        return None;
     };
+    offsets.snapshot = StringPointer { offset, length };
     out.extend_from_slice(snapshot);
     let tail = size_of::<Offsets>() + TRAILER.len();
     if out.len() + tail < min_len {
@@ -2093,7 +2095,7 @@ pub fn embed_startup_snapshot_into_executable(
         append_startup_snapshot_to_serialized(payload, snapshot, previous_payload_len)
     else {
         return Ok(CompileResult::fail_fmt(format_args!(
-            "could not append snapshot"
+            "could not append the snapshot (payload trailer not recognized, or the snapshot or payload exceeds 4 GiB)"
         )));
     };
     drop(exe);

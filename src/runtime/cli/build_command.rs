@@ -1552,12 +1552,14 @@ pub(crate) fn run_startup_snapshot_step(
         bstr::BStr::new(&exe_abs)
     );
     Output::flush();
-    let status = bun_core::util::spawn_sync_inherit(&[exe_abs.as_slice()]);
     let mut snapshot_path = exe_abs.clone();
     snapshot_path.extend_from_slice(b".snapshot");
     let snapshot_z = bun_core::ZBox::from_vec_with_nul(snapshot_path.clone());
+    let _ = bun_sys::unlink(&snapshot_z); // a sidecar left by an earlier run must not pass for this run's
+    let status = bun_core::util::spawn_sync_inherit(&[exe_abs.as_slice()]);
     let written = bun_sys::stat(&snapshot_z).is_ok();
-    if status.is_err() || !written {
+    let ran_ok = matches!(&status, Ok(st) if st.is_ok());
+    if !ran_ok || !written {
         // Whatever happened, what is left on disk must be an ordinary executable again.
         let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
         let _ = bun_sys::unlink(&snapshot_z);
@@ -1597,7 +1599,13 @@ pub(crate) fn run_startup_snapshot_step(
     {
         let _ = bun_sys::unlink(&snapshot_z);
     }
-    let snapshot = snapshot?;
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env); // never leave it in take-a-snapshot mode
+            return Err(message);
+        }
+    };
     let embedded = embedded.expect("embed ran when the snapshot was read");
     if let Some(message) = failed(embedded, "failed to embed the snapshot") {
         let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);

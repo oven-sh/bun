@@ -298,10 +298,7 @@ describe("workspace and file: dependency sharing a name", () => {
         }),
       ),
       write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha" })),
-      write(
-        join(packageDir, "vendor", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "2.0.0" }),
-      ),
+      write(join(packageDir, "vendor", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "2.0.0" })),
     ]);
 
     await runBunInstall(env, packageDir);
@@ -335,18 +332,12 @@ describe("workspace and file: dependency sharing a name", () => {
           dependencies: { alpha: "file:./vendor/alpha" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "1.0.0" })),
       write(
         join(packageDir, "packages", "beta", "package.json"),
         JSON.stringify({ name: "beta", version: "1.0.0", dependencies: { alpha: "workspace:*" } }),
       ),
-      write(
-        join(packageDir, "vendor", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "2.0.0" }),
-      ),
+      write(join(packageDir, "vendor", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "2.0.0" })),
     ]);
 
     await runBunInstall(env, packageDir);
@@ -388,10 +379,7 @@ describe("workspace and file: dependency sharing a name", () => {
           dependencies: { alpha: "file:./vendor/alpha" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "1.0.0" })),
       write(
         join(packageDir, "vendor", "alpha", "package.json"),
         JSON.stringify({ name: "alpha", version: "2.0.0", dependencies: { alpha: "workspace:*" } }),
@@ -426,10 +414,7 @@ describe("workspace and file: dependency sharing a name", () => {
           dependencies: { alpha: "file:./packages/alpha" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "packages", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "1.0.0" })),
     ]);
 
     await runBunInstall(env, packageDir);
@@ -457,14 +442,8 @@ describe("workspace and file: dependency sharing a name", () => {
           dependencies: { beta: "file:./vendor/alpha" },
         }),
       ),
-      write(
-        join(packageDir, "packages", "beta", "package.json"),
-        JSON.stringify({ name: "beta", version: "1.0.0" }),
-      ),
-      write(
-        join(packageDir, "vendor", "alpha", "package.json"),
-        JSON.stringify({ name: "alpha", version: "2.0.0" }),
-      ),
+      write(join(packageDir, "packages", "beta", "package.json"), JSON.stringify({ name: "beta", version: "1.0.0" })),
+      write(join(packageDir, "vendor", "alpha", "package.json"), JSON.stringify({ name: "alpha", version: "2.0.0" })),
     ]);
 
     await runBunInstall(env, packageDir);

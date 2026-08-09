@@ -3406,11 +3406,16 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 // dependency list.
                 let overridden = {
                     let bytes = lockfile.buffers.string_bytes.as_slice();
-                    lockfile.buffers.dependencies.as_slice()[off..].iter().any(|dep| {
-                        dep.name_hash == name_hash
-                            && dep.version.tag == DependencyVersionTag::Folder
-                            && !folder_path_is_workspace_path(dep.version.folder().slice(bytes), path)
-                    })
+                    lockfile.buffers.dependencies.as_slice()[off..]
+                        .iter()
+                        .any(|dep| {
+                            dep.name_hash == name_hash
+                                && dep.version.tag == DependencyVersionTag::Folder
+                                && !folder_path_is_workspace_path(
+                                    dep.version.folder().slice(bytes),
+                                    path,
+                                )
+                        })
                 };
                 if overridden {
                     continue 'workspaces;

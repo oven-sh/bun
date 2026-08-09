@@ -1334,6 +1334,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // Diagnostics: if the child left heap snapshots behind (it only does so
       // when GC #1 failed to finalize), upload them as build artifacts.
       const diagDir = join(__dirname, "napi-app");
+      const pregc = join(diagDir, "napi-diag-pregc.txt");
+      if (existsSync(pregc)) {
+        console.error("napi diagnostics (pre-GC scan, V1 run 0):\n" + readFileSync(pregc, "utf8"));
+        rmSync(pregc, { force: true });
+      }
       const snapshots = readdirSync(diagDir).filter(f => f.startsWith("napi-diag-") && f.endsWith(".heapsnapshot"));
       if (snapshots.length) {
         console.error(

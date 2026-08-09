@@ -80,6 +80,13 @@ for (const v of variants) {
     const r = spawnSync(process.argv[0], ['--expose-gc', '-e', v.script], { env: v.env, encoding: 'utf8', timeout: 60_000 });
     try { fs.rmSync(DIAG_REQUEST, { force: true }); } catch {}
     if (wantDump) {
+      // Always surface the child's [napi-diag] lines for V1 run 0, pass or fail:
+      // the outer test prints this file unconditionally.
+      try {
+        fs.writeFileSync(path.join(__dirname, 'napi-diag-pregc.txt'),
+          `V1 run 0 (pid ${r.pid}, status=${r.status}, signal=${r.signal}):\n` +
+          (r.stderr || '').split('\n').filter(l => l.includes('[napi-diag]')).join('\n') + '\n');
+      } catch {}
       const dump = `/tmp/bun-napi-diag-${r.pid}.json`;
       if (fs.existsSync(dump)) {
         const dest = path.join(__dirname, `napi-diag-${r.pid}.heapsnapshot`);

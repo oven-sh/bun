@@ -2638,28 +2638,6 @@ pub mod package_index {
             Entry::Id(0)
         }
     }
-
-    /// Does a package with this name exist with a workspace resolution? Used
-    /// by the bun.lock loader, where the loaded lockfile is the member set
-    /// being reproduced; the fresh resolver keys the same exemption on the
-    /// current install's members (`Lockfile::is_workspace_member_name`).
-    pub(crate) fn contains_workspace_package(
-        map: &Map,
-        pkg_resolutions: &[Resolution],
-        name_hash: PackageNameHash,
-    ) -> bool {
-        let Some(entry) = map.get(&name_hash) else {
-            return false;
-        };
-        let ids: &[PackageID] = match entry {
-            Entry::Id(id) => core::slice::from_ref(id),
-            Entry::Ids(ids) => ids.as_slice(),
-        };
-        ids.iter().any(|&id| {
-            (id as usize) < pkg_resolutions.len()
-                && pkg_resolutions[id as usize].tag == ResolutionTag::Workspace
-        })
-    }
 }
 
 pub use package_index::Entry as PackageIndexEntry;

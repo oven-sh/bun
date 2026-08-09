@@ -3080,16 +3080,12 @@ fn resolve_peer_dep_version_based(
     // here would pick a version the override replaced. The printed tree
     // already reflects the overridden resolution, so overridden edges keep
     // the path walk. The exemptions mirror
-    // `enqueue_dependency_with_main_and_success_fn`: `npm:` aliases,
-    // workspace-only edges, and edges linking a present workspace member
-    // are never overridden.
+    // `enqueue_dependency_with_main_and_success_fn`: `npm:` aliases and
+    // workspace-only edges are never overridden. The fresh resolver's
+    // member-link exemption needs no clause here: a workspace-tagged edge
+    // falls through to `None` either way (`satisfies_dependency_version`
+    // and the kind fallback below never match the Workspace tag).
     let overridable = !dep.behavior.is_workspace()
-        && !(dep.version.tag == DependencyVersionTag::Workspace
-            && super::package_index::contains_workspace_package(
-                package_index,
-                pkg_resolutions,
-                name_hash,
-            ))
         && (dep.version.tag != DependencyVersionTag::Npm || !dep.version.npm().is_alias);
     if overridable && overrides.get(name_hash).is_some() {
         return None;

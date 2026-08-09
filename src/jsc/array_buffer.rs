@@ -881,7 +881,11 @@ impl MarkedArrayBuffer {
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
-            owns_buffer: true,
+            // An empty `Box<[u8]>` has no backing allocation (its pointer is
+            // dangling), so there is nothing to own: `destroy()` must not
+            // `free` it. Mirrors the `len == 0` arms in
+            // `JSValue::create_buffer*` and `MarkedArrayBuffer::to_js`.
+            owns_buffer: !bytes.is_empty(),
             pinned: false,
         }
     }

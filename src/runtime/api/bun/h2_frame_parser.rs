@@ -3467,7 +3467,6 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-
     /// A frame callback's JS value that could not be built (allocation
     /// failure, a terminating VM): the frame is dropped and the engine stops
     /// dispatching this batch; the exception stays pending for `read()` /
@@ -3583,7 +3582,6 @@ impl H2FrameParser {
         }
         Some(stream)
     }
-
 
     fn to_writer(&self) -> DirectWriterStruct {
         DirectWriterStruct {

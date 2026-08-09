@@ -212,37 +212,29 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    /// Called when the process has exited with pipes possibly still open. A
-    /// background child the script left behind can hold the write ends
-    /// forever, so EOF must not be waited for: read what is already buffered
-    /// (the exit notification can beat the last readable data), then
-    /// force-end any pipe still open. On Windows there is no synchronous
-    /// drain; data libuv has not delivered yet is dropped, as it was before
-    /// the EOF gate existed.
+    /// On process exit, read what the pipes already hold, then force-end any
+    /// pipe a leftover child still keeps open: its EOF may never come and
+    /// must not stall the finish. Windows has no synchronous drain, so only
+    /// the force-end applies there.
     ///
     /// # Safety
-    /// `this` is the live handle. Raw (not `&mut self`): the reader callbacks
-    /// re-enter `State::maybe_finish` with their own exclusive reborrow of
-    /// the handle, which must not run under a live receiver borrow.
+    /// `this` is the live handle; the reader callbacks re-enter
+    /// `State::maybe_finish` with their own exclusive reborrow of it, so no
+    /// receiver borrow may be live across these calls.
     unsafe fn drain_and_close_pipes(this: *mut Self) {
-        // SAFETY: caller contract; each raw-ptr reborrow ends before the
-        // dispatches inside `read`/`deinit` run.
+        // SAFETY: caller contract; raw-ptr reborrows end before each dispatch.
         unsafe {
             for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
-                // `is_done()` distinguishes a reader whose EOF was already
-                // counted out of `remaining_fds` from one still open (the
-                // shared-parent done callback cannot tell which pipe it was).
+                // `is_done()` = EOF already counted out of `remaining_fds`.
                 #[cfg(unix)]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
-                    // Streams readable data through `on_read_chunk`; reaching
-                    // EOF dispatches `on_reader_done` (decrements the count).
                     BufferedReader::read(reader);
                 }
                 if !(*reader).is_done() {
-                    // Fires no callback; the counter is zeroed below.
                     (*reader).deinit();
                 }
             }
+            // `deinit` fires no callback; all pipes are over, record it here.
             (*this).remaining_fds = 0;
         }
     }
@@ -278,13 +270,11 @@ impl<'a> ProcessHandle<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
-        // The process itself is leaked: the whole program exits once every
-        // script is done.
+        // The Process is never freed; the program exits when all scripts finish.
         on_process_exit(_process, status, _rusage) => {
             (*this).process.as_mut().unwrap().status = status;
             (*this).end_time = Some(Instant::now());
-            // Aborted runs keep the old rule (exit alone finishes); pending
-            // output of a killed script is dropped, not drained.
+            // Aborted runs finish on exit alone; their pending output is dropped.
             if !(*(*this).state.as_ptr()).aborted {
                 ProcessHandle::drain_and_close_pipes(this);
             }
@@ -400,11 +390,9 @@ impl<'a> State<'a> {
     }
 
     /// A script is finished once its process has exited *and* both pipes have
-    /// ended: the exit notification can arrive before the last output has
-    /// been read, and finishing then would drop that output (or, for the last
-    /// script, exit before printing it). A pipe a background child still
-    /// holds open cannot stall this: the exit path drains and force-ends both
-    /// pipes (`drain_and_close_pipes`), and on abort exit alone suffices.
+    /// ended; finishing on exit alone can drop output the exit notification
+    /// beat. The exit path force-ends pipes a leftover child holds open
+    /// (`drain_and_close_pipes`); on abort, exit alone suffices.
     fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         if handle.finished || !exited || (handle.remaining_fds != 0 && !self.aborted) {

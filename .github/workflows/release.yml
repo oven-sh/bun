@@ -43,15 +43,8 @@ on:
         description: Should binaries be uploaded to S3?
         type: boolean
         default: false
-      use-types:
-        description: Should types be released to npm?
-        type: boolean
-        default: false
-      use-definitelytyped:
-        description: "Should types be PR'd to DefinitelyTyped?"
-        type: boolean
-        default: false
 
+# bun-types and the DefinitelyTyped bump are published by release-types.yml.
 jobs:
   sign:
     name: Sign Release
@@ -112,110 +105,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-  npm-types:
-    name: Release types to NPM
-    runs-on: ubuntu-latest
-    needs: sign
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: packages/bun-types
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: latest
-      - name: Setup Bun
-        if: ${{ env.BUN_VERSION != 'canary' }}
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: "1.3.14"
-      - name: Setup Bun
-        if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: "canary" # Must be 'canary' so tag is correct
-      - name: Install Dependencies
-        run: bun install
-      - name: Setup Tag
-        if: ${{ env.BUN_VERSION == 'canary' }}
-        run: |
-          VERSION=$(bun --version)
-          TAG="${VERSION}-canary.$(date +'%Y%m%dT%H%M%S')"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - name: Build
-        run: bun run build
-        env:
-          BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
-      - name: Release
-        if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
-          NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
-        run: |
-          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
-          VERSION=$(node -p 'require("./package.json").version')
-          if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
-            echo "bun-types@$VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish --access public --tag "$NPM_TAG"
-  definitelytyped:
-    name: Make pr to DefinitelyTyped to update `bun-types` version
-    runs-on: ubuntu-latest
-    needs: npm-types
-    if: ${{ github.event_name == 'release' || github.event.inputs.use-definitelytyped == 'true' }}
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout (DefinitelyTyped)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          repository: DefinitelyTyped/DefinitelyTyped
-      - name: Checkout (bun)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          path: bun
-      - name: Setup Bun
-        uses: ./bun/.github/actions/setup-bun
-        with:
-          bun-version: "1.3.14"
-      - id: bun-version
-        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
-      - name: Update bun-types version in package.json
-        run: |
-          bun -e '
-          const file = Bun.file("./types/bun/package.json");
-          const json = await file.json();
-          const version = process.env.BUN_VERSION.replace(/^bun-v/, "");
-          json.dependencies["bun-types"] = version;
-          json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
-          await file.write(JSON.stringify(json, null, 4) + "\n");
-          '
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
-        with:
-          token: ${{ secrets.ROBOBUN_TOKEN }}
-          add-paths: ./types/bun/package.json
-          title: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
-          commit-message: "[bun] update to ${{ steps.bun-version.outputs.BUN_VERSION }}"
-          body: |
-            Update `bun-types` version to ${{ steps.bun-version.outputs.BUN_VERSION }}
-
-            https://bun.com/blog/${{ env.BUN_VERSION }}
-          push-to-fork: oven-sh/DefinitelyTyped
-          branch: ${{env.BUN_VERSION}}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -361,4 +250,3 @@ jobs:
           ignore_empty: true
           version: ${{ env.BUN_VERSION }}
           environment: production
-

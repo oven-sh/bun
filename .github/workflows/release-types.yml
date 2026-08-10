@@ -1,0 +1,145 @@
+# Publishes packages/bun-types to npm and keeps @types/bun on DefinitelyTyped
+# pointing at the latest release.
+#
+#   release published   bun-types@<version> (dist-tag "latest"), then a PR to
+#                       DefinitelyTyped bumping @types/bun to it
+#   schedule            bun-types@<package.json version>-canary.<timestamp>
+#                       (dist-tag "canary") from main
+#   workflow_dispatch   either of the above for the given tag. Re-running is
+#                       safe: versions already on npm and PRs already open are
+#                       skipped.
+#
+# Credentials:
+#   npm: the publish job has id-token: write and runs in the "release"
+#        environment, so registering this workflow file (and optionally that
+#        environment) as the trusted publisher of bun-types on npmjs.com is all
+#        it needs. NPM_TOKEN is only used when that is not set up (and it expires).
+#   DefinitelyTyped: ROBOBUN_TOKEN must be a classic PAT with the "repo" and
+#        "workflow" scopes. The branch is pushed to the oven-sh/DefinitelyTyped
+#        fork, which also pushes every upstream commit the fork is missing. Some
+#        of those edit DefinitelyTyped's own workflow files, and GitHub rejects
+#        that from a token without the "workflow" scope.
+
+name: release-types
+concurrency: release-types
+
+permissions:
+  contents: read
+
+on:
+  release:
+    types:
+      - published
+  schedule:
+    - cron: "17 14 * * *" # daily; off the hour, where GitHub delays or drops scheduled runs
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        description: Release tag to publish types for (e.g. "bun-v1.3.15"), or "canary"
+        required: true
+        default: canary
+
+env:
+  BUN_TAG: ${{ github.event.release.tag_name || inputs.tag || 'canary' }}
+
+jobs:
+  publish:
+    name: Publish bun-types to npm
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      npm_tag: ${{ steps.version.outputs.npm_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Canaries come from the branch the run was triggered on (main for the schedule).
+          ref: ${{ env.BUN_TAG != 'canary' && env.BUN_TAG || '' }}
+      - name: Pick version
+        id: version
+        run: |
+          if [ "$BUN_TAG" = canary ]; then
+            echo "version=$(jq -r .version package.json)-canary.$(date -u +%Y%m%dT%H%M%S)" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=canary" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${BUN_TAG#bun-v}" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.3.14"
+      - name: Build
+        working-directory: packages/bun-types
+        env:
+          BUN_VERSION: ${{ steps.version.outputs.version }}
+        run: bun run build
+      - name: Publish
+        working-directory: packages/bun-types
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NPM_TAG: ${{ steps.version.outputs.npm_tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "$(npm view "bun-types@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "bun-types@$VERSION is already published"
+            exit 0
+          fi
+          npm publish --access public --tag "$NPM_TAG" --provenance
+
+  definitelytyped:
+    name: Update @types/bun on DefinitelyTyped
+    runs-on: ubuntu-latest
+    needs: publish
+    if: ${{ needs.publish.outputs.npm_tag == 'latest' }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - name: Checkout DefinitelyTyped
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DefinitelyTyped/DefinitelyTyped
+          persist-credentials: false
+      - name: Update types/bun/package.json
+        run: |
+          jq --indent 4 --arg version "$VERSION" --arg types_version "${VERSION%.*}.9999" \
+            '.version = $types_version | .dependencies["bun-types"] = $version' \
+            types/bun/package.json > package.json.tmp
+          mv package.json.tmp types/bun/package.json
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ secrets.ROBOBUN_TOKEN }}
+        run: |
+          if git diff --quiet; then
+            echo "DefinitelyTyped already depends on bun-types@$VERSION"
+            exit 0
+          fi
+          branch="bun-v$VERSION"
+          title="[bun] update to $VERSION"
+          git -c user.name=robobun -c user.email=robobun@oven.sh commit --all --message "$title"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/oven-sh/DefinitelyTyped" "HEAD:refs/heads/$branch"
+          existing=$(gh api "repos/DefinitelyTyped/DefinitelyTyped/pulls?state=open&head=oven-sh:$branch" --jq '.[].html_url')
+          if [ -n "$existing" ]; then
+            echo "Updated $existing"
+            exit 0
+          fi
+          # Not `gh pr create`: its --head does not accept an organization-owned fork (cli/cli#10093).
+          gh api --method POST repos/DefinitelyTyped/DefinitelyTyped/pulls --jq .html_url \
+            --raw-field base=master \
+            --raw-field head="oven-sh:$branch" \
+            --raw-field title="$title" \
+            --raw-field body="$(printf '%s\n\n%s' "Update \`bun-types\` to $VERSION." "https://bun.com/blog/bun-v$VERSION")"

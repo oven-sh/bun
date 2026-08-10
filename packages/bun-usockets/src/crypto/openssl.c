@@ -906,10 +906,10 @@ end:
  * the still-empty SSL_CTX_new() store are first replaced by a private full
  * default-root copy, and the context is marked so the per-socket attach keeps
  * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
-int us_ssl_ctx_ca_mode(SSL_CTX *ctx) {
+int us_ssl_ctx_use_system_ca(SSL_CTX *ctx) {
   us_ex_idx_ensure();
   intptr_t stored = (intptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_use_system_ca_ex_idx);
-  return stored ? (int)(stored - 1) : us_default_ca_mode();
+  return stored ? (int)(stored - 1) : us_default_use_system_ca();
 }
 
 static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
@@ -926,7 +926,7 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
    * no `ca` configured at all may be seeded with the default roots here. */
   int user_ca = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
   if (store == NULL || store_is_shared || (store_is_empty && !user_ca)) {
-    X509_STORE *own = us_get_default_ca_store(us_ssl_ctx_ca_mode(ctx));
+    X509_STORE *own = us_get_default_ca_store(us_ssl_ctx_use_system_ca(ctx));
     if (own == NULL) {
       return NULL;
     }
@@ -1111,9 +1111,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
-  const int ca_mode = us_resolve_ca_mode(options.use_system_ca);
+  const int use_system_ca = us_resolve_use_system_ca(options.use_system_ca);
   us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ssl_context, us_ctx_use_system_ca_ex_idx, (void *)(intptr_t)(ca_mode + 1));
+  SSL_CTX_set_ex_data(ssl_context, us_ctx_use_system_ca_ex_idx, (void *)(intptr_t)(use_system_ca + 1));
 
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1241,7 +1241,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
      * (for requestCert) client verification both read it. The getter up-refs,
      * so set_cert_store owns exactly one reference per context. */
-    SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store(ca_mode));
+    SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store(use_system_ca));
     if (options.request_cert) {
       SSL_CTX_set_verify(ssl_context,
           options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
@@ -1582,7 +1582,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
          * A context whose store holds user-provided CAs (ca/caFile options or
          * addCACert) keeps using its own store - overriding it here would
          * hide those CAs from chain verification. */
-        X509_STORE *roots = us_get_shared_default_ca_store(us_ssl_ctx_ca_mode(ctx));
+        X509_STORE *roots = us_get_shared_default_ca_store(us_ssl_ctx_use_system_ca(ctx));
         if (roots) SSL_set0_verify_cert_store(ssl, roots);
       }
     }

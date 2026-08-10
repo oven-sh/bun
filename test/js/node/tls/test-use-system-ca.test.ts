@@ -137,11 +137,12 @@ describe("--use-system-ca", () => {
     },
   );
 
-  // OpenSSL's default lookups (SSL_CERT_FILE here) stay in the default store unless system CAs are
-  // explicitly disabled — flagless users depend on them for issuer lookups (#23735, restored by
-  // #24350) — while --no-use-system-ca drops them along with the OS store.
+  // node's NewRootCertStore: the default store is the bundled roots (plus the system store when asked);
+  // OpenSSL's default lookups (SSL_CERT_FILE here) are never part of it on their own, and
+  // --use-openssl-ca selects them *instead* of the bundled roots. --use-system-ca reaches them too,
+  // as node's Linux system loader honours SSL_CERT_FILE / SSL_CERT_DIR.
   test.each([
-    [[], "trusted"],
+    [[], "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
     [["--no-use-system-ca"], "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
     [["--use-openssl-ca"], "trusted"],
     [["--use-system-ca"], "trusted"],

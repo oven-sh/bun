@@ -2002,8 +2002,6 @@ pub type RuntimeState = *mut c_void;
 
 unsafe extern "C" {
     safe fn us_default_use_system_ca() -> i32;
-    safe fn us_default_ca_mode() -> i32;
-    safe fn us_resolve_ca_mode(requested: i32) -> i32;
 }
 
 impl VirtualMachine {
@@ -2024,11 +2022,11 @@ impl VirtualMachine {
         }
     }
 
-    /// This thread's decision resolves to a different store than the process default, so anything
-    /// keyed on "the default TLS context" (fetch's shared client context) must use a variant of its own.
+    /// This thread's decision differs from the process default, so anything keyed on "the default
+    /// TLS context" (fetch's shared client context) must use a variant of its own.
     pub fn tls_use_system_ca_differs_from_process(&self) -> bool {
-        self.use_system_ca.is_some()
-            && us_resolve_ca_mode(self.tls_use_system_ca_option()) != us_default_ca_mode()
+        self.use_system_ca
+            .is_some_and(|v| v != (us_default_use_system_ca() != 0))
     }
 }
 

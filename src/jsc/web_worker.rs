@@ -709,15 +709,13 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // node resolves a thread's CA option from its execArgv, else from that thread's own env — the
-        // source `tls.getCACertificates("default")` reports from too. Only NODE_USE_SYSTEM_CA=1 is a
-        // decision; otherwise the thread stays on the process default (`None`), which keeps OpenSSL's
-        // default lookups (#23735) and lets the reporting side fall back to the env the same way.
+        // node resolves a thread's CA option from its execArgv (inherited from the parent when it has
+        // none of its own), else from that thread's own env — the same source
+        // `tls.getCACertificates("default")` reports from, so both halves agree.
         let env_use_system_ca = match self.env_use_system_ca {
             -1 => map.get(b"NODE_USE_SYSTEM_CA") == Some(b"1".as_slice()),
             v => v == 1,
-        }
-        .then_some(true);
+        };
 
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
@@ -743,12 +741,14 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
-                use_system_ca: if own_exec_argv.is_some() {
-                    exec_argv.use_system_ca
-                } else {
-                    parent.use_system_ca
-                }
-                .or(env_use_system_ca),
+                use_system_ca: Some(
+                    if own_exec_argv.is_some() {
+                        exec_argv.use_system_ca
+                    } else {
+                        parent.use_system_ca
+                    }
+                    .unwrap_or(env_use_system_ca),
+                ),
                 ..Default::default()
             },
         )?;

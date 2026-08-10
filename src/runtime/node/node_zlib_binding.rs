@@ -467,9 +467,7 @@ fn parse_write_args<S: CompressionContext>(
         return Err(global_this
             .err(
                 ErrorCode::INVALID_ARG_VALUE,
-                format_args!(
-                    "The \"out\" argument must not be backed by a resizable ArrayBuffer"
-                ),
+                format_args!("The \"out\" argument must not be backed by a resizable ArrayBuffer"),
             )
             .throw());
     }

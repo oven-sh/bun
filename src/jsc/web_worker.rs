@@ -1218,9 +1218,8 @@ fn on_unhandled_rejection(
     if let Err(err) = format_result {
         error_instance = global_object.take_exception(err);
     }
-    // Formatting ran script; if this worker was stopped meanwhile (the gate closed, or what came back
-    // is its termination) there is no error to dispatch.
-    if error_instance.is_termination_exception() || !global_object.script_allowed() {
+    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    if error_instance.is_termination_exception() {
         return;
     }
     jsc::mark_binding();

@@ -3,7 +3,7 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, Stopped,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
@@ -30,7 +30,7 @@ pub trait AsyncFormDataExt {
         global: &JSGlobalObject,
         data: &[u8],
         promise: AnyPromise,
-    ) -> Result<(), Stopped>;
+    ) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
@@ -41,7 +41,7 @@ impl AsyncFormDataExt for AsyncFormData {
         global: &JSGlobalObject,
         data: &[u8],
         promise: AnyPromise,
-    ) -> Result<(), Stopped> {
+    ) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(

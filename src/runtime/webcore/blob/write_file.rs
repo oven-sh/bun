@@ -9,7 +9,7 @@ use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, Stopped, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -32,7 +32,7 @@ pub enum WriteFileResultType {
 }
 
 pub type WriteFileOnWriteFileCallback =
-    fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), Stopped>;
+    fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
 
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
@@ -56,7 +56,7 @@ impl bun_jsc::JobContext for WriteFile {
         None
     }
     fn then(this: Self, _: (), cx: &bun_jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(WriteFile::then(this, cx.global())?)
+        WriteFile::then(this, cx.global())
     }
 }
 
@@ -390,7 +390,7 @@ impl WriteFile {
         true
     }
 
-    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), Stopped> {
+    pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
@@ -657,14 +657,23 @@ mod windows_impl {
     pub enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
         WriteFileWindowsDeinitialized,
-        #[error("Stopped")]
-        Stopped,
+        /// Delivering the result entered JS (settled the promise) and an exception is pending.
+        #[error("JSError")]
+        Js(jsc::JsError),
     }
 
-    impl From<Stopped> for WriteFileWindowsError {
-        fn from(_: Stopped) -> Self {
-            WriteFileWindowsError::Stopped
+    impl From<jsc::JsError> for WriteFileWindowsError {
+        fn from(err: jsc::JsError) -> Self {
+            WriteFileWindowsError::Js(err)
         }
+    }
+
+    /// A libuv completion callback returns void: an exception left pending by delivering the write's
+    /// result is reported as uncaught here (a termination just stands the loop down).
+    #[cold]
+    fn report(err: jsc::JsError) {
+        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+        let _ = bun_jsc::task::report_error_or_terminate(global, err);
     }
 
     impl PartialEq<crate::Error> for WriteFileWindowsError {
@@ -941,7 +950,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
                 return;
             }
@@ -954,7 +963,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
             }
         }
@@ -1003,7 +1012,7 @@ mod windows_impl {
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
                 return;
             }
@@ -1012,14 +1021,14 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
             }
         }
 
         /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
-        /// a `Stopped` from the inner body means the loop is standing down and needs no delivery).
+        /// `*mut Self` and returns the event-loop `jsc::JsResult<()>` (always `Ok`: the inner body
+        /// reports a delivery exception itself).
         fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
             // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
@@ -1078,7 +1087,7 @@ mod windows_impl {
                     )
                 } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
                 return;
             }
@@ -1089,7 +1098,7 @@ mod windows_impl {
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                    WriteFileWindowsError::Stopped => {} // the loop is standing down; nothing to deliver
+                    WriteFileWindowsError::Js(err) => report(err),
                 }
             }
         }
@@ -1303,7 +1312,7 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> Result<(), Stopped> {
+    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in
         // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
@@ -1366,7 +1375,7 @@ impl WriteFileWaitFromLockedValueTask {
     pub(crate) fn then(
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
-    ) -> Result<(), Stopped> {
+    ) -> jsc::JsResult<()> {
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();

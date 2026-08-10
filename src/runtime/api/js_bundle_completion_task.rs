@@ -235,7 +235,7 @@ impl JSBundleCompletionTask {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::Stopped> {
+    ) -> jsc::JsResult<()> {
         let throw_on_error = self.config.throw_on_error;
 
         let build_result = JSValue::create_empty_object(global_this, 3);

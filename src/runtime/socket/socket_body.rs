@@ -1176,7 +1176,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
                 let err_value = err.to_error_instance_with_async_stack(&global, js_promise);
                 if let Err(e) = js_promise.reject(&global, Ok(err_value)) {
-                    global.report_active_exception_as_unhandled(e.into());
+                    global.report_active_exception_as_unhandled(e);
                 }
             }
 
@@ -1218,7 +1218,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .take()
                 .to_error_instance_with_async_stack(&global, promise);
             if let Err(e) = promise.reject_as_handled(&global, err_) {
-                global.report_active_exception_as_unhandled(e.into());
+                global.report_active_exception_as_unhandled(e);
             }
         }
 

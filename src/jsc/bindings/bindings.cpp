@@ -5165,13 +5165,26 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-// The VM's TerminationException value (allocating it if it was never needed yet). Nothing is thrown or
-// set pending: for a boundary that unwound because script is no longer allowed and wants the value a
-// termination would have carried.
-[[ZIG_EXPORT(nothrow)]]
-JSC::EncodedJSValue JSC__VM__ensureTerminationException(JSC::VM* vm)
+// The one crossing from the loop-level stop into the exception currency: loop code that learned of a
+// stop from the gate (a wait, a completion) and must hand a JsError to a caller inside a JS operation
+// throws the VM's TerminationException for real, as VMTraps does on trap. Always leaves it pending.
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(vm->ensureTerminationException());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.hasPendingTerminationException())
+        return;
+    if (!vm.hasTerminationRequest())
+        vm.setHasTerminationRequest();
+    scope.release();
+    vm.throwTerminationException();
+}
+
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).hasPendingTerminationException();
 }
 
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)

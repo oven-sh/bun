@@ -664,7 +664,7 @@ impl PromiseResult {
         self,
         global: &JSGlobalObject,
         promise: &mut JSPromise,
-    ) -> Result<(), bun_jsc::Stopped> {
+    ) -> JsResult<()> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
@@ -702,10 +702,10 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return Ok(promise.reject(global, Err(e))?);
+                return promise.reject(global, Err(e));
             }
         };
-        Ok(result.fulfill(global, promise)?)
+        result.fulfill(global, promise)
     }
 }
 

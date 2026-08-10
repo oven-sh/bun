@@ -134,7 +134,7 @@ pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
 // ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
 
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
-/// (`.zero` when an exception is pending, or the VM has stopped allowing script).
+/// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
     if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
         let value = match result {
@@ -173,15 +173,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    // An empty return means "unwind": an exception is pending, or script is no longer allowed here.
-    assert!(
-        if value.is_empty() {
-            global_this.has_exception() || !global_this.script_allowed()
-        } else {
-            !global_this.has_exception()
-        },
-        "host fn return/exception state mismatch"
-    );
+    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
 pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -237,8 +229,8 @@ impl IntoHostSetterReturn for JsResult<()> {
 // `false` is the signal for "exception already thrown". The Rust thunk wraps in an
 // `ExceptionValidationScope` and re-derives the ABI bool from `JsResult`, so
 // `false` must round-trip to `Err(Thrown)` here — discarding it (as `Ok(())`)
-// makes `host_setter_result` return `true` and trips the boundary's unwind assertion
-// (`assert_unwind_reason_matches`) while an exception is pending.
+// makes `host_setter_result` return `true` and trips
+// `assert_exception_presence_matches(false)` while an exception is pending.
 impl IntoHostSetterReturn for bool {
     #[inline]
     fn into_host_setter_return(self) -> JsResult<()> {
@@ -627,7 +619,7 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     let mut scope_storage = core::mem::MaybeUninit::uninit();
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let r = to_js_host_setter_value(global, f().into_host_setter_return());
-    scope.assert_unwind_reason_matches(global, !r);
+    scope.assert_exception_presence_matches(!r);
     r
 }
 
@@ -648,7 +640,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
         }
         Err(_) => core::ptr::null_mut(),
     };
-    scope.assert_unwind_reason_matches(global, ptr.is_null());
+    scope.assert_exception_presence_matches(ptr.is_null());
     ptr
 }
 
@@ -672,7 +664,7 @@ pub fn to_js_host_call(
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
     };
-    scope.assert_unwind_reason_matches(global_this, normal.is_empty());
+    scope.assert_exception_presence_matches(normal.is_empty());
     normal
 }
 

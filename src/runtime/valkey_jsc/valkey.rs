@@ -1556,7 +1556,7 @@ impl ValkeyClient {
         self.parent().on_valkey_reconnect();
     }
 
-    pub(crate) fn on_valkey_close(&mut self) -> Result<(), bun_jsc::Stopped> {
+    pub(crate) fn on_valkey_close(&mut self) -> JsResult<()> {
         self.parent().on_valkey_close()
     }
 }

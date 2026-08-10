@@ -686,11 +686,11 @@ impl jsc::JobContext for TransformTask {
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
-        Ok(TransformTask::then(
+        TransformTask::then(
             &mut this,
             js.promise.swap(),
             cx.global(),
-        )?)
+        )
     }
 }
 
@@ -871,7 +871,7 @@ impl TransformTask {
         &mut self,
         promise: &mut JSPromise,
         global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::Stopped> {
+    ) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
@@ -905,7 +905,7 @@ impl TransformTask {
         &mut self,
         promise: &mut JSPromise,
         global: &JSGlobalObject,
-    ) -> Result<(), bun_jsc::Stopped> {
+    ) -> JsResult<()> {
         promise.settle(global, self.output_code.transfer_to_js(global))
     }
 }

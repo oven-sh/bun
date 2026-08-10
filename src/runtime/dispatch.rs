@@ -40,6 +40,7 @@ use bun_event_loop::EventLoopTimer::{
 
 use bun_jsc::JSGlobalObject;
 use bun_jsc::event_loop::{EventLoop, Stopped};
+use bun_jsc::JsResultExt as _;
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -249,7 +250,7 @@ pub(crate) fn run_task(
                     crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
                 ))
             };
-            holder.run()?;
+            holder.run().report_error_or_terminate(global)?;
         }
         task_tag::FileResponseStreamEof => {
             let stream = cast_ptr!(crate::server::FileResponseStream);
@@ -302,13 +303,13 @@ pub(crate) fn run_task(
         }
         task_tag::AsyncCpTask => {
             // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread()? };
+            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread() }
+                .report_error_or_terminate(global)?;
         }
         task_tag::ShellAsyncCpTask => {
             // SAFETY: as above.
-            unsafe {
-                (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()?
-            };
+            unsafe { (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread() }
+                .report_error_or_terminate(global)?;
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
@@ -349,7 +350,7 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => {
-            cast!(FetchTasklet).on_progress_update()?;
+            cast!(FetchTasklet).on_progress_update().report_error_or_terminate(global)?;
         }
         task_tag::FetchTaskletDeinit => {
             // SAFETY: posted by `deref_from_thread` with the last ref.
@@ -362,7 +363,8 @@ pub(crate) fn run_task(
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
-            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
+            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))
+                .report_error_or_terminate(global)?;
         }
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
@@ -429,7 +431,7 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread().report_error_or_terminate(global)?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
@@ -475,7 +477,8 @@ pub(crate) fn run_task(
         task_tag::ServerAllConnectionsClosedTask => {
             ServerAllConnectionsClosedTask::run_from_js_thread(cast_ptr!(
                 ServerAllConnectionsClosedTask
-            ))?;
+            ))
+            .report_error_or_terminate(global)?;
         }
         task_tag::BundleV2DeferredBatchTask => {
             // `bun_bundler` is JSC-free so the exception-scope check is hoisted

@@ -302,7 +302,7 @@ impl S3Ext for S3 {
             fn resolve(
                 result: S3DeleteResult<'_>,
                 opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::Stopped> {
+            ) -> JsResult<()> {
                 // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
@@ -388,7 +388,7 @@ impl S3Ext for S3 {
             fn resolve(
                 result: S3ListObjectsResult<'_>,
                 opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::Stopped> {
+            ) -> JsResult<()> {
                 // SAFETY: opaque_self was created via heap::alloc below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.

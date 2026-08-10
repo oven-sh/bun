@@ -240,7 +240,7 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::Stopped> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) -> jsc::JsResult<()> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -754,7 +754,7 @@ impl ByteStream {
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return Ok(blob.to_promise(global_this, action)?);
+            return blob.to_promise(global_this, action);
         }
 
         self.buffer_action

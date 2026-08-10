@@ -175,13 +175,26 @@ impl JSGlobalObject {
 }
 
 /// This VM no longer runs script (a worker being terminated, or teardown has begun): what loop-level
-/// code -- ticks, task completions, waits -- returns to say "stand down". It is not an exception and
-/// says nothing about `vm.exception()`; a boundary that entered JS produces it from
-/// `is_termination_exception() || !script_allowed()` (WebCore: `isTerminationException(returned)
-/// || isTerminatingExecution()`), and inside a `JsResult` function it unwinds as `JsError::Thrown`.
+/// code -- ticks, task completions, waits, "should I enter JS?" -- returns to say "stand down". Only
+/// loop-level code reads the gate (`script_allowed`) and speaks `Stopped`; code inside a JS operation
+/// (`JsResult`) only ever sees exceptions. A boundary that entered JS produces `Stopped` when the
+/// exception it takes is the termination (WebCore: `isTerminationException(returned)`); the opposite
+/// crossing -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 #[error("Stopped")]
 pub struct Stopped;
+
+impl Stopped {
+    /// Cross into a `JsResult` function: throw the VM's TerminationException for real (what `VMTraps`
+    /// does on trap), so `Err(Thrown)` keeps meaning "an exception is pending" for every caller above.
+    #[cold]
+    pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
+        match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
+            Err(err) => err,
+            Ok(()) => unreachable!("throwTerminationException returned without an exception pending"),
+        }
+    }
+}
 
 impl From<Stopped> for crate::CrateError {
     fn from(_: Stopped) -> Self {
@@ -1107,7 +1120,8 @@ impl EventLoop {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
-        self.drain_microtasks_with_global(global_object, jsc_vm)?;
+        self.drain_microtasks_with_global(global_object, jsc_vm)
+            .map_err(|stopped| stopped.throw(global_object))?;
         Ok(result)
     }
 

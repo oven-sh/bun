@@ -548,7 +548,11 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
+                            global_this
+                .bun_vm()
+                .as_mut()
+                .wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {

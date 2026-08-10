@@ -88,7 +88,7 @@ impl jsc::JobContext for CopyFile {
         mut promise: jsc::JSPromiseStrong,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        Ok(CopyFile::then(&mut this, promise.swap(), cx.global())?)
+        CopyFile::then(&mut this, promise.swap(), cx.global())
     }
 }
 
@@ -132,7 +132,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::Stopped> {
+    ) -> jsc::JsResult<()> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -159,7 +159,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::Stopped> {
+    ) -> jsc::JsResult<()> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
@@ -1932,7 +1932,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
+    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> jsc::JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we

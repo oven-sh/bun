@@ -985,11 +985,11 @@ impl JSGlobalObject {
         JSGlobalObject__hasException(self)
     }
 
-    /// Whether this VM still runs script (its stop gate is open) -- WebCore's `!isTerminatingExecution()`.
-    /// For the folds at native/JS boundaries; see `VirtualMachine::script_allowed` for when else to read it.
+    /// The pending exception is the VM's TerminationException: for host code that handles ordinary errors
+    /// itself but must let a termination keep unwinding without taking it.
     #[inline]
-    pub fn script_allowed(&self) -> bool {
-        self.bun_vm().script_allowed()
+    pub fn has_pending_termination_exception(&self) -> bool {
+        crate::cpp::JSC__JSGlobalObject__hasPendingTerminationException(self)
     }
 
     pub fn clear_exception(&self) {
@@ -1009,9 +1009,7 @@ impl JSGlobalObject {
     }
 
     /// Clears the current exception and returns that value. Requires compile-time
-    /// proof of an unwind via `JsError`. When the unwind was the VM's gate closing rather than a throw
-    /// (nothing pending, script no longer allowed), the value is the VM's TerminationException — what
-    /// a boundary asks `is_termination_exception()` about before it stands the loop down.
+    /// proof of an exception via `JsError`.
     pub fn take_exception(&self, proof: JsError) -> JSValue {
         match proof {
             JsError::Thrown => {}
@@ -1021,11 +1019,7 @@ impl JSGlobalObject {
         }
 
         self.try_take_exception().unwrap_or_else(|| {
-            assert!(
-                !self.script_allowed(),
-                "A JavaScript exception was thrown, but it was cleared before it could be read."
-            );
-            self.vm().ensure_termination_exception()
+            panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }
 
@@ -1057,7 +1051,7 @@ impl JSGlobalObject {
     ///
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
-        if !exception.is_termination_exception() && self.script_allowed() {
+        if !exception.is_termination_exception() {
             let _ = self
                 .bun_vm()
                 .as_mut()
@@ -1378,8 +1372,8 @@ impl JSGlobalObject {
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
         crate::mark_binding();
         let taken = self.take_exception(proof);
-        // A terminated worker's pending exception (or its closed gate) is not an error to report.
-        if taken.is_termination_exception() || !self.script_allowed() {
+        // A terminated worker's pending exception is not an error to report.
+        if taken.is_termination_exception() {
             return;
         }
         let exc = taken

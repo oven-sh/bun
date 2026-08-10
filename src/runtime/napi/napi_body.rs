@@ -2703,7 +2703,7 @@ impl ThreadSafeFunction {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::Stopped> {
+    fn call(&mut self, task: *mut c_void, is_first: bool) -> JsResult<()> {
         let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
             // env torn down; nothing to call into.
             return Ok(());
@@ -2712,7 +2712,9 @@ impl ThreadSafeFunction {
             let Some(loop_) = self.loop_mut() else {
                 return Ok(());
             };
-            loop_.drain_microtasks()?;
+            // SAFETY: `env` is the live napi env this function was created against (checked above).
+            let global_object = unsafe { &*env }.to_js();
+            loop_.drain_microtasks().map_err(|stopped| stopped.throw(global_object))?;
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();

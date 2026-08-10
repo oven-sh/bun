@@ -1304,7 +1304,7 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
+        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }?;
         Ok(promise)
     }
 
@@ -1473,7 +1473,7 @@ impl jsc::JobContext for PipelineTask {
         Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(PipelineTask::then(this, js, cx)?)
+        PipelineTask::then(this, js, cx)
     }
 }
 
@@ -1775,7 +1775,7 @@ impl PipelineTask {
         mut self,
         mut js: PipelineJs,
         cx: &jsc::JsThread<'_>,
-    ) -> Result<(), jsc::Stopped> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);

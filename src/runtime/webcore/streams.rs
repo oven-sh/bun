@@ -715,6 +715,14 @@ impl StreamResult {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
+        // A completion for a VM that no longer runs script settles nothing: `release()` frees
+        // `.owned`/`.owned_and_done` and unprotects `.err` instead of leaking them.
+        if !vm.script_allowed() {
+            result.release();
+            *result = StreamResult::Temporary(RawSlice::EMPTY);
+            return;
+        }
+
         vm.event_loop_ref().enter();
         // cannot capture &mut event_loop in scopeguard while also using
         // `promise` (borrowck); call exit() explicitly on each path instead.
@@ -760,16 +768,6 @@ impl StreamResult {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if !global_this.script_allowed() {
-            // `release()` frees `.owned`/`.owned_and_done` ByteLists and
-            // unprotects `.err.JSValue` instead of leaking on the shutdown path.
-            self.release();
-            // No value is produced for a VM that no longer runs script: unwind; the boundary that
-            // settles the pull promise finds the gate closed and stands down. (A self-exiting VM still
-            // running its exit handlers has the gate open and gets its value as usual.)
-            return Err(jsc::JsError::Thrown);
-        }
-
         match self {
             StreamResult::Owned(list) => {
                 // The buffer is handed to JSC; the later
@@ -2061,7 +2059,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     /// Only VM termination
     /// escapes; promise resolution cannot raise an ordinary JS exception here.
-    pub(crate) fn flush_promise(&mut self) -> core::result::Result<(), jsc::Stopped> {
+    pub(crate) fn flush_promise(&mut self) -> JsResult<()> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
@@ -2273,7 +2271,7 @@ impl NetworkSink {
         task: &bun_s3::MultiPartUpload,
         this: *mut NetworkSink,
         flushed: u64,
-    ) -> core::result::Result<(), jsc::Stopped> {
+    ) -> JsResult<()> {
         bun_core::scoped_log!(
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
@@ -2638,7 +2636,7 @@ impl BufferAction {
         &mut self,
         global: &JSGlobalObject,
         blob: &mut AnyBlob,
-    ) -> core::result::Result<(), jsc::Stopped> {
+    ) -> JsResult<()> {
         blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
     }
 
@@ -2646,7 +2644,7 @@ impl BufferAction {
         &mut self,
         global: &JSGlobalObject,
         err: &StreamError,
-    ) -> core::result::Result<(), jsc::Stopped> {
+    ) -> JsResult<()> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }

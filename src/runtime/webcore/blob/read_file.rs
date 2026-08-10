@@ -85,7 +85,7 @@ pub trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
     /// this call (it is reclaimed via `bun_core::heap::take`).
-    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> Result<(), jsc::Stopped>;
+    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> JsResult<()>;
     /// The read will never complete (its VM stopped before it did): release `ctx`.
     ///
     /// # Safety
@@ -97,7 +97,7 @@ pub trait ReadFileCompletion {
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    unsafe fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> Result<(), jsc::Stopped> {
+    unsafe fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> JsResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // `Strong::swap()` ties the returned `&mut JSPromise` to
@@ -234,7 +234,7 @@ impl bun_jsc::JobContext for ReadFile {
         completion: ReadFileCompletionFns,
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        Ok(ReadFile::then(this, completion, cx.global())?)
+        ReadFile::then(this, completion, cx.global())
     }
 }
 
@@ -623,7 +623,7 @@ impl ReadFile {
         this: Self,
         completion: ReadFileCompletionFns,
         _: &JSGlobalObject,
-    ) -> Result<(), jsc::Stopped> {
+    ) -> JsResult<()> {
         let mut this = this;
 
         if this.store.is_none() && this.system_error.is_some() {

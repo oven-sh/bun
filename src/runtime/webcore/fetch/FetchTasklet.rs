@@ -19,7 +19,7 @@ use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Stopped, StringJsc, StrongOptional,
+    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;
@@ -734,7 +734,7 @@ impl FetchTasklet {
         self.write_end_request(None);
     }
 
-    fn on_body_received(&mut self) -> Result<(), Stopped> {
+    fn on_body_received(&mut self) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -796,10 +796,7 @@ impl FetchTasklet {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // Erroring the body settles its promise and can throw: report a throw, stand down on a stop.
-                if let Err(e) = body.to_error_instance(err, &global_this) {
-                    bun_jsc::task::report_error_or_terminate(&global_this, e)?;
-                }
+                body.to_error_instance(err, &global_this)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the
@@ -903,18 +900,14 @@ impl FetchTasklet {
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
                     let body = unsafe { &mut *body };
-                    // Resolving the body settles its promise and can throw: report a throw, stand down
-                    // on a stop.
-                    if let Err(e) = BodyValue::resolve(&mut old, body, &self.global_this, headers) {
-                        bun_jsc::task::report_error_or_terminate(&self.global_this, e)?;
-                    }
+                    BodyValue::resolve(&mut old, body, &self.global_this, headers)?;
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn on_progress_update(&mut self) -> Result<(), Stopped> {
+    pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
@@ -2742,7 +2735,7 @@ pub(crate) struct FetchTaskletPromiseSettle {
 
 impl FetchTaskletPromiseSettle {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(mut self: Box<Self>) -> Result<(), jsc::Stopped> {
+    pub(crate) fn run(mut self: Box<Self>) -> JsResult<()> {
         let prom = self.promise.value_or_empty().as_any_promise().unwrap();
         let res = self.held.swap();
         res.ensure_still_alive();

@@ -26,9 +26,9 @@ use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
-/// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql), a
-/// loop-level `Result<(), Stopped>`, or a `JsResult<()>` (it settled promises / converted values and
-/// something threw: valkey). All three become the `JsResult<()>` the dispatcher folds at the entry.
+/// A driver's inherent `on_*` returns `()` (it handled everything itself: postgres, mysql) or a
+/// `JsResult<()>` (it settled promises / converted values and something threw: valkey). Both become the
+/// `JsResult<()>` the dispatcher folds at the entry.
 trait IntoJsResult {
     fn into_js_result(self) -> bun_jsc::JsResult<()>;
 }
@@ -42,12 +42,6 @@ impl IntoJsResult for bun_jsc::JsResult<()> {
     #[inline]
     fn into_js_result(self) -> bun_jsc::JsResult<()> {
         self
-    }
-}
-impl IntoJsResult for Result<(), bun_jsc::Stopped> {
-    #[inline]
-    fn into_js_result(self) -> bun_jsc::JsResult<()> {
-        self.map_err(Into::into)
     }
 }
 

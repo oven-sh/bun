@@ -697,7 +697,7 @@ impl ErrorDeferred {
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
-        Ok(self.promise.reject(global_this, Ok(instance))?)
+        self.promise.reject(global_this, Ok(instance))
     }
 
     pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {

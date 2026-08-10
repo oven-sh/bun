@@ -837,10 +837,10 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
-                // The VM stopped before the macro's promise settled: unwind (the entry finds the gate closed).
+                // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.as_mut()
                     .wait_for_promise(promise)
-                    .map_err(|e| MacroError::Js(e.into()))?;
+                    .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
 
                 let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;

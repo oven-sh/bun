@@ -1806,7 +1806,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1947,7 +1947,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_array_buffer(
@@ -2003,7 +2003,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             blob.to_array_buffer(g, Lifetime::Transfer)
         });
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_bytes(
@@ -2054,7 +2054,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             blob.to_uint8_array(g, Lifetime::Transfer)
         });
         blob.detach();
-        Ok(result?)
+        result
     }
 
     fn get_form_data(

@@ -37,12 +37,11 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
 /// The fold at a loop entry that ran a task's JS: report the uncaught exception, or -- if what came
-/// back is the VM's termination (pending, or the gate already closed) -- stand the tick loop down.
-/// WebCore: `if (isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
+/// back is the VM's termination -- stand the tick loop down (WebCore: `isTerminationException(returned)`).
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
-    if ex.is_termination_exception() || !global.script_allowed() {
+    if ex.is_termination_exception() {
         return Err(Stopped);
     }
     let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();

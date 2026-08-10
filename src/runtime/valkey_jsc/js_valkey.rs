@@ -10,7 +10,7 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
-    JsRef, JsResult, Stopped,
+    JsRef, JsResult,
 };
 use bun_ptr::{AsCtxPtr, BackRef, ScopedRef};
 use bun_uws as uws;
@@ -1237,11 +1237,9 @@ impl JSValkeyClient {
                 // unwinds; the socket entry stands down). Reject the connection promise with the
                 // error, then fail and close the connection as a failed handshake does, so the
                 // client's state matches the rejected promise.
+                Err(err) if global_object.has_pending_termination_exception() => return Err(err),
                 Err(err) => {
                     let error = global_object.take_exception(err);
-                    if error.is_termination_exception() || !global_object.script_allowed() {
-                        return Err(err);
-                    }
                     if let Some(promise) = Js::connection_promise_get_cached(this_value) {
                         Js::connection_promise_set_cached(
                             this_value,
@@ -1374,7 +1372,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client closes
-    pub(crate) fn on_valkey_close(&self) -> Result<(), Stopped> {
+    pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
 
         // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
@@ -1868,7 +1866,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(jsc::JsError::Thrown) if !this.global_object.script_allowed() => {
+                Err(jsc::JsError::Thrown) if this.global_object.has_pending_termination_exception() => {
                     return Err(jsc::JsError::Thrown);
                 }
                 Err(jsc::JsError::Thrown) => {

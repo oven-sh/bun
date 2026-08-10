@@ -557,11 +557,12 @@ Warning: options change between releases of Bun and WebKit without notice. This 
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`).
 ///
-/// There is deliberately no "terminated" variant. A worker being terminated reaches native code the way
-/// it reaches JSC's own host functions: as a pending TerminationException, i.e. `Thrown`; only the
-/// boundary that entered JS asks whether the exception it takes is the termination one (or whether the
-/// VM's gate has closed) and stands the loop down with [`Stopped`]. That is WebCore's shape too:
-/// `if (vm.isTerminationException(returned) || isTerminatingExecution()) forbidExecution();`.
+/// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
+/// pending on the VM. There is deliberately no "terminated" variant: a worker being terminated reaches
+/// native code the way it reaches JSC's own host functions -- as a pending TerminationException, i.e.
+/// `Thrown` -- and only the boundary that entered JS asks whether the exception it takes is the
+/// termination one and stands the loop down with [`Stopped`]. Loop-level code that learns of a stop
+/// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
     /// Unwind to the native/JS boundary: a JavaScript exception is pending in the VM's exception scope
@@ -592,15 +593,6 @@ impl From<bun_core::JsError> for JsError {
     }
 }
 
-/// A loop-level stop observed inside a `JsResult` function unwinds to the boundary like an exception
-/// does; the boundary finds the gate closed (or the termination pending) and stands down.
-impl From<Stopped> for bun_core::JsError {
-    #[inline]
-    fn from(_: Stopped) -> Self {
-        bun_core::JsError::Thrown
-    }
-}
-
 impl From<JsError> for bun_core::JsError {
     #[inline]
     fn from(e: JsError) -> Self {
@@ -625,13 +617,6 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     }
 }
 
-/// See the `bun_core::JsError` impl: a loop-level stop unwinds to the boundary as `Thrown`.
-impl From<Stopped> for JsError {
-    fn from(_: Stopped) -> Self {
-        JsError::Thrown
-    }
-}
-
 /// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
 /// so the `unused_must_use` lint can be satisfied without `let _ =` at call
 /// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
@@ -644,6 +629,9 @@ pub trait JsResultExt {
     /// Use this when an error has nowhere left to bubble — never to paper over
     /// a missing `?`.
     fn report_unhandled(self, global: &JSGlobalObject);
+    /// The fold for loop-level code that entered JS (settled a promise, ran a callback): report the
+    /// pending exception as uncaught, or -- if it is the VM's termination -- stand down with `Stopped`.
+    fn report_error_or_terminate(self, global: &JSGlobalObject) -> Result<(), Stopped>;
 }
 
 impl<T> JsResultExt for JsResult<T> {
@@ -651,6 +639,12 @@ impl<T> JsResultExt for JsResult<T> {
     fn report_unhandled(self, global: &JSGlobalObject) {
         if let Err(e) = self {
             global.report_uncaught_exception_from_error(e);
+        }
+    }
+    fn report_error_or_terminate(self, global: &JSGlobalObject) -> Result<(), Stopped> {
+        match self {
+            Ok(_) => Ok(()),
+            Err(e) => task::report_error_or_terminate(global, e),
         }
     }
 }

@@ -7,7 +7,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, Stopped, StringJsc};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -61,11 +61,11 @@ bun_core::declare_scope!(S3UploadStream, visible);
 pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3StatResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -84,11 +84,11 @@ pub(crate) fn stat(
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -109,11 +109,11 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -151,11 +151,11 @@ pub(crate) fn download_slice(
 pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -178,10 +178,10 @@ pub(crate) fn list_objects(
     // search-params string — borrow so the caller (Store::S3::
     // list_objects) can retain ownership in its async Wrapper for `Drop`.
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -389,9 +389,9 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> Result<(), Stopped>,
+    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-) -> Result<(), Stopped> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -429,7 +429,7 @@ pub(crate) fn writable_stream(
     request_payer: bool,
 ) -> JsResult<JSValue> {
     // Local callback wrapper
-    fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> Result<(), Stopped> {
+    fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
         let global = sink
@@ -472,7 +472,7 @@ pub(crate) fn writable_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> Result<(), Stopped> {
+    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
@@ -663,7 +663,7 @@ impl S3UploadStreamWrapper {
         });
     }
 
-    fn resolve(result: S3UploadResult, self_: &mut Self) -> Result<(), Stopped> {
+    fn resolve(result: S3UploadResult, self_: &mut Self) -> JsResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
@@ -914,7 +914,7 @@ pub(crate) fn upload_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> Result<(), Stopped> {
+    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
         S3UploadStreamWrapper::resolve(result, unsafe {
             bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx)
@@ -1341,7 +1341,7 @@ impl S3DownloadStreamWrapper {
         has_more: bool,
         request_err: Option<Error::S3Error>,
         self_: &mut Self,
-    ) -> Result<(), Stopped> {
+    ) -> JsResult<()> {
         // scope-exit cleanup via guard (keeps borrowck happy)
         let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
             if !has_more {

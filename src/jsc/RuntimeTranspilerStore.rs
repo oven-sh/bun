@@ -972,16 +972,9 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_module_info_for_esm` to avoid forming
-        // `&VirtualMachine`.
-        let test_isolation_enabled = unsafe { (*vm).test_isolation_enabled };
+        // SAFETY: leaf scalar field read; see `vm` note above.
         let use_module_info_for_esm =
-            !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
-                .unwrap_or(false)
-                || (test_isolation_enabled
-                    && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
-                        .unwrap_or(false));
+            VirtualMachine::use_module_info_for_esm_with(unsafe { (*vm).test_isolation_enabled });
 
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a

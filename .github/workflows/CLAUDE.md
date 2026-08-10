@@ -55,8 +55,9 @@ The workflow runs all three formatters simultaneously:
 
 1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
 2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
-3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `clippy.yml`, `miri.yml`, and `lolhtml.yml` to the same value.
+3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `clippy.yml`, `miri.yml`, `lolhtml.yml`, and `hawk.yml` to the same value.
 4. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
+5. `hawk.yml` builds `cargo-hawk` against the new nightly (it links rustc internals). Run `bun run rust:hawk install` locally on the new toolchain; if the build breaks, fix it on the `bun` branch of oven-sh/hawk and bump `HAWK_REV` in `scripts/rust-hawk.ts`.
 
 #### To update clang-format version:
 

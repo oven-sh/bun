@@ -4,7 +4,7 @@
       "owner": "rust",
       "pattern": [
         {
-          "regexp": "^(error|warning)(\\[E\\d+\\])?: (.+)$",
+          "regexp": "^(error|warning)(\\[[^\\]]+\\])?: (.+)$",
           "severity": 1,
           "message": 3
         },

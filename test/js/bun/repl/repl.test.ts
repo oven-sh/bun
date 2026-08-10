@@ -764,6 +764,26 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("regex after a conditional's closing paren", async () => {
+      const { stdout, exitCode } = await runRepl(['if (true) x = /"/;', "x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain('/"/');
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex as the right operand of a division", async () => {
+      const { stdout, exitCode } = await runRepl(['10 / /[(]/.test("(")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("10");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a property named like a keyword does not start a regex", async () => {
+      // `x.in / {` must open a continuation, not be read as `x.in` followed
+      // by a regex starting at `/ {`.
+      const { stdout, exitCode } = await runRepl(["x = { in: 84 }; x.in / {", "valueOf: () => 2 }", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
     test("unbalanced bracket in a line comment is ignored", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1 // unbalanced (", ".exit"]);
       expect(stripAnsi(stdout)).toContain("2");

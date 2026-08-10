@@ -2527,6 +2527,12 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     let mut prev: u8 = 0;
     let mut word_start = 0usize;
     let mut word_end = 0usize;
+    // `obj.in` is a property access, not the `in` keyword.
+    let mut word_after_dot = false;
+    // Whether each open paren is an `if`/`for`/`while`/`with` head, so that a
+    // `/` right after its `)` reads as a regex, not division.
+    let mut paren_stack: Vec<bool> = Vec::new();
+    let mut last_paren_conditional = false;
 
     let mut i = 0usize;
     while i < code.len() {
@@ -2578,10 +2584,12 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             }
             // A `/` starts a regex literal when the previous significant token
             // cannot end an expression; otherwise it's division.
-            let after_keyword =
-                is_word_char(prev) && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
+            let after_keyword = is_word_char(prev)
+                && !word_after_dot
+                && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
             let starts_regex = prev == 0
                 || after_keyword
+                || (prev == b')' && last_paren_conditional)
                 || matches!(
                     prev,
                     b'(' | b'['
@@ -2598,6 +2606,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                         | b'+'
                         | b'-'
                         | b'*'
+                        | b'/'
                         | b'%'
                         | b'<'
                         | b'>'
@@ -2620,7 +2629,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     }
                     i += 1;
                 }
-                prev = b'/';
+                // A regex literal ends an expression, so a following `/` is
+                // division; `)` (non-conditional) encodes that.
+                prev = b')';
+                last_paren_conditional = false;
                 i += 1;
                 continue;
             }
@@ -2629,10 +2641,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
         if is_word_char(ch) {
             if word_end != i {
                 word_start = i;
+                word_after_dot = prev == b'.';
             }
             word_end = i + 1;
         }
-        prev = ch;
 
         match ch {
             b'"' | b'\'' => in_string = ch,
@@ -2641,10 +2653,20 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             b'}' => brace_count -= 1,
             b'[' => bracket_count += 1,
             b']' => bracket_count -= 1,
-            b'(' => paren_count += 1,
-            b')' => paren_count -= 1,
+            b'(' => {
+                paren_count += 1;
+                paren_stack.push(
+                    is_word_char(prev)
+                        && matches!(&code[word_start..word_end], b"if" | b"for" | b"while" | b"with"),
+                );
+            }
+            b')' => {
+                paren_count -= 1;
+                last_paren_conditional = paren_stack.pop().unwrap_or(false);
+            }
             _ => {}
         }
+        prev = ch;
         i += 1;
     }
 

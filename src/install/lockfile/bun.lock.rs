@@ -1509,20 +1509,16 @@ impl<T> PkgMap<T> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
     }
 
-    /// Like `find_resolution`, but stops the upward walk at the bundle hoist
-    /// root: once a directory on the walk is a bundled package, only one more
-    /// level (the tree node containing the bundled package) is searched. This
-    /// mirrors `Tree::hoist_dependency`, which never walks past a bundled
-    /// dependency's hoist root when it re-derives optional peer edges.
+    /// Like `find_resolution`, but stops the upward walk one level above a
+    /// bundled package, mirroring `Tree::hoist_dependency`, which never
+    /// searches past a bundled dependency's hoist root when it re-derives
+    /// optional peer edges (#37346).
     ///
-    /// Only directly bundled packages (entries with `"bundled": true`) bound
-    /// the walk. A transitive dependency of a bundled package inherits the
-    /// bundle's hoist root in `Tree.rs` too, but it serializes at a path like
-    /// `a/c` with no bundled marker, byte-identical to a package nested at
-    /// `a/c` by an ordinary version conflict whose hoist root is the lockfile
-    /// root. The path alone cannot distinguish the two; bounding there would
-    /// need per-entry hoist roots reconstructed from the edge that placed
-    /// each package.
+    /// Only `"bundled": true` entries bound the walk: a transitive dependency
+    /// of a bundled package also inherits the bundle's hoist root in
+    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
+    /// indistinguishable from an ordinary conflict-nested package whose hoist
+    /// root is the lockfile root.
     fn find_resolution_bounded_at_bundle(
         &self,
         pkg_path: &[u8],
@@ -2998,13 +2994,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 let res_id = match peer_res_id {
                     Some(id) => id,
                     None => {
-                        // Optional peer edges are re-derived by the hoister
-                        // (`Package::clone` resets them), which never searches
-                        // past a bundle hoist root. Bound the path walk the
-                        // same way so a loaded lockfile resolves them exactly
-                        // like a fresh install does; otherwise the frozen
-                        // lockfile `eql` check sees a tree the fresh resolve
-                        // would never produce (#37346).
+                        // Bounded so the loaded lockfile binds optional peers
+                        // exactly like the hoister that re-derives them after
+                        // `Package::clone` resets them (#37346).
                         let found = if dep.behavior.is_optional_peer() {
                             pkg_map.find_resolution_bounded_at_bundle(
                                 pkg_path,

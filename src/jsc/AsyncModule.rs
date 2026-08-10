@@ -72,6 +72,15 @@ pub struct Queue {
     pub(crate) scheduled: u32,
 }
 
+/// What the resolver's `WakeHandler` carries as its opaque context: the
+/// module queue (for the JS-thread dependency-error callback) and the VM's
+/// handle (for wake-ups from install / HTTP threads). Allocated once per VM at
+/// registration and kept for the VM's lifetime.
+pub struct WakeContext {
+    pub queue: *mut Queue,
+    pub loop_handle: crate::LoopHandle,
+}
+
 impl Queue {
     /// Recover the owning VM.
     ///
@@ -99,10 +108,23 @@ impl Queue {
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+    /// A "poll your pending modules" ping from an install thread: `this` is
+    /// the VM's own queue; nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl bun_event_loop::Taskable for AsyncModule {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
+    /// A module whose dependencies finished installing but whose fulfilment
+    /// will not run: undo `done()`'s bookkeeping and drop it (its promise
+    /// handle, arena and parse result go with the box).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `done()` queued.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let vm = VirtualMachine::get().as_mut();
+        this.poll_ref.unref(bun_io::js_vm_ctx());
+        vm.modules.scheduled -= 1;
+    }
 }
 
 impl AsyncModule {
@@ -352,20 +374,28 @@ impl Queue {
         });
     }
 
+    /// `WakeHandler::handler` — runs on install / HTTP-callback threads
+    /// (`PackageManager::wake_raw`). `ctx` is the [`WakeContext`] registered in
+    /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
-        let queue = ctx.cast::<Queue>();
-        let task = ConcurrentTaskItem::create_from(queue);
-        // SAFETY: runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
-        // where the per-thread `VirtualMachine::get()` singleton is NOT
-        // installed — using it here would panic. `ctx` was registered as
-        // `addr_of_mut!((*vm).modules)` from a raw `*mut VirtualMachine`
-        // (runtime/jsc_hooks.rs), so its provenance covers the whole VM and
-        // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
-        // widening from a `&mut self`-derived pointer, but `ctx` is a raw
-        // `*mut` carried from the original allocation.
-        let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
-        vm.enqueue_task_concurrent(task);
+        // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
+        let ctx = unsafe { &*ctx.cast::<WakeContext>() };
+        let task = ConcurrentTaskItem::create_from(ctx.queue);
+        if let crate::vm_handle::Posted::Refused(task) = ctx.loop_handle.post_task(task) {
+            // VM torn down: nobody is waiting on these modules any more.
+            // SAFETY: refused ⇒ we own the task box.
+            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+        }
+    }
+
+    /// `WakeHandler::on_dependency_error` context accessor — JS thread.
+    ///
+    /// # Safety
+    /// `ctx` is the leaked `WakeContext` registered in `runtime/jsc_hooks.rs`.
+    pub unsafe fn queue_from_wake_context(ctx: *mut c_void) -> *mut Queue {
+        // SAFETY: fn contract.
+        unsafe { (*ctx.cast::<WakeContext>()).queue }
     }
 
     pub fn on_poll(&mut self) {

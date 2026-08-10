@@ -192,7 +192,8 @@ impl State {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
                 unsafe {
-                    (*c).cancelled = true;
+                    (*c).cancelled
+                        .store(true, core::sync::atomic::Ordering::Release);
                     RefCount::<JSBundleCompletionTask>::deref(c);
                 }
             }
@@ -498,8 +499,7 @@ impl Route {
         }
         config.source_map = bundler_options::SourceMapOption::Linked;
 
-        let completion_task =
-            create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;
+        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
         unsafe {
             (*completion_task).started_at_ns =

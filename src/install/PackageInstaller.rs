@@ -2197,10 +2197,13 @@ impl<'a> PackageInstaller<'a> {
                                 ),
                             ),
                         );
+                        // Opt-in: symbolizing the debug binary costs seconds per failed package.
                         #[cfg(bun_debug)]
-                        {
-                            let t = cause.debug_trace;
-                            bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
+                        if PackageInstaller.is_visible() {
+                            bun_crash_handler::dump_stack_trace(
+                                &cause.debug_trace.trace(),
+                                Default::default(),
+                            );
                         }
                         self.summary.fail += 1;
                     }

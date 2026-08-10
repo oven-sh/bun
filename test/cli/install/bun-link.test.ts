@@ -458,7 +458,12 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err4 = await new Response(stderr4).text();
-  expect(err4).toContain(`FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`);
+  // Debug builds used to follow this line with a stack trace (stdout on Linux,
+  // stderr elsewhere); neither stream may carry it unless opted into.
+  expect(err4.split(/\r?\n/)).toEqual([
+    `FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`,
+    "",
+  ]);
   const out4 = await new Response(stdout4).text();
   expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),

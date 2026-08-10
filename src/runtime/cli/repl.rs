@@ -2652,7 +2652,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 paren_count += 1;
                 paren_stack.push(
                     is_word_char(prev)
-                        && matches!(&code[word_start..word_end], b"if" | b"for" | b"while" | b"with"),
+                        && matches!(
+                            &code[word_start..word_end],
+                            b"if" | b"for" | b"while" | b"with"
+                        ),
                 );
             }
             b')' => {

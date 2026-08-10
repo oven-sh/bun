@@ -1259,6 +1259,27 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
     expect(pkcs8[1]).toBe(0x81); // outer SEQUENCE length is long-form
     expect(await signsAndVerifies(pkcs8)).toBe(true);
   });
+
+  // Strict DER, like Deno and bun's own node:crypto (and unlike Node's
+  // BER-tolerant OpenSSL): non-minimal lengths and nonzero padding bits
+  // reject, while the publicKey [1] contents stay uninterpreted.
+  it("rejects a non-minimal outer SEQUENCE length", async () => {
+    await expectRejected(fromHex("30812e" + version1 + edAlgorithm + wrapSeed(edSeed)));
+  });
+
+  it("rejects a non-minimal privateKey OCTET STRING length", async () => {
+    await expectRejected(fromHex("302f" + version1 + edAlgorithm + "0481220420" + edSeed));
+  });
+
+  it("rejects a publicKey [1] with nonzero padding bits", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "81020101"));
+  });
+
+  it("accepts a publicKey [1] whose contents are not a 32-byte key", async () => {
+    // the field is stored, not interpreted, matching Node and Deno
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), "810b00" + Buffer.alloc(10).toString("hex"));
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
+  });
 });
 
 // importKey's empty-usages guard got Node's message; the same predicate in

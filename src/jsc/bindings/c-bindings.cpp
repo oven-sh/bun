@@ -1144,7 +1144,6 @@ static constexpr size_t kOffsetsSnapshotLengthOffset = 36;
 static constexpr uint32_t kTakeStartupSnapshotFlag = 1u << 4;
 static constexpr char kPayloadTrailer[16] = { '\n', '-', '-', '-', '-', ' ', 'B', 'u', 'n', '!', ' ', '-', '-', '-', '-', '\n' };
 
-
 // Asked by the pinned mimalloc during its own initialization (MI_STARTUP_SNAPSHOT_HOST_FN): deterministic placement is only
 // wanted by an executable that is marked to take a snapshot or carries one, so an ordinary compiled executable pays nothing.
 extern "C" __attribute__((visibility("default"), used)) int bun_startup_snapshot_placement_wanted(void)

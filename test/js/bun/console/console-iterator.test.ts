@@ -131,14 +131,14 @@ console.write(JSON.stringify(lines));`,
 for (const [operation, cleanup] of [
   [
     "return()",
-    `const result = await console[Symbol.asyncIterator]().return();
+    `const result = await iterator.return();
 if (!result.done) throw new Error("Expected return() to close the iterator");`,
   ],
   [
     "throw()",
     `const reason = undefined;
 try {
-  await console[Symbol.asyncIterator]().throw(reason);
+  await iterator.throw(reason);
   throw new Error("Expected throw() to reject");
 } catch (error) {
   if (error !== reason) throw error;
@@ -148,9 +148,10 @@ try {
   it.concurrent(`releases the console iterator after ${operation} before next()`, async () => {
     expect(
       await runConsoleIterator(
-        `${cleanup}
-const iterator = console[Symbol.asyncIterator]();
-const first = await iterator.next();
+        `const iterator = console[Symbol.asyncIterator]();
+${cleanup}
+const nextIterator = console[Symbol.asyncIterator]();
+const first = await nextIterator.next();
 const lines = [first.value];
 for await (const line of console) lines.push(line);
 console.write(JSON.stringify(lines));`,
@@ -158,6 +159,27 @@ console.write(JSON.stringify(lines));`,
       ),
     ).toEqual({
       stdout: '["first","second"]',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it.concurrent(`releases the console iterator after ${operation} following next()`, async () => {
+    expect(
+      await runConsoleIterator(
+        `const iterator = console[Symbol.asyncIterator]();
+const first = await iterator.next();
+if (first.done || first.value !== "first") throw new Error("Expected the first line");
+${cleanup}
+const nextIterator = console[Symbol.asyncIterator]();
+const lines = [];
+for await (const line of nextIterator) lines.push(line);
+console.write(JSON.stringify(lines));`,
+        "first\nsecond\n",
+      ),
+    ).toEqual({
+      stdout: '["second"]',
       stderr: "",
       exitCode: 0,
       signalCode: null,

@@ -179,6 +179,10 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
+    // On a pending exception (worker termination) hand back the still-pending
+    // promise: JSModuleLoader::makeModule downcasts our return value before its
+    // caller consults the throw scope, so it must never be a null cell.
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
@@ -186,7 +190,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 #if BUN_DEBUG
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #else
-    promise->resolve(globalObject, vm, moduleRecord);
+    promise->fulfill(vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 #endif
 }
@@ -203,12 +207,16 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
         vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
         StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
-    if (error.isValid())
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
+    if (error.isValid()) {
+        auto* errorObject = error.toErrorObject(globalObject, sourceCode);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(errorObject)));
+    }
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+    // See Bun__analyzeTranspiledModule: never return a null cell to makeModule.
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
@@ -233,7 +241,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     }
 
     scope.release();
-    promise->resolve(globalObject, vm, resultValue == nullptr ? moduleRecord : resultValue);
+    promise->fulfill(vm, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 

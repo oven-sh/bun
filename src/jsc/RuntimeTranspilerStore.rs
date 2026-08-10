@@ -249,11 +249,23 @@ impl RuntimeTranspilerStore {
             }
             // SAFETY: a live job popped from the intrusive queue; this thread
             // owns it now (its worker-thread part finished before `close()`).
-            unsafe {
-                (*job).promise.deinit();
-                (*job).reset_for_pool();
-                self.store.put(job);
-            }
+            unsafe { self.release_job(job) };
+        }
+    }
+
+    /// Release a popped job without running its completion: drops the
+    /// transpiled source (with its ModuleInfo), log and module promise, and
+    /// recycles the slot.
+    ///
+    /// # Safety
+    /// `job` was popped from `self.queue` on the JS thread and nothing else
+    /// references it.
+    unsafe fn release_job(&mut self, job: *mut TranspilerJob) {
+        // SAFETY: per fn contract.
+        unsafe {
+            (*job).promise.deinit();
+            (*job).reset_for_pool();
+            self.store.put(job);
         }
     }
 
@@ -276,6 +288,7 @@ impl RuntimeTranspilerStore {
         if let Err(err) = unsafe { (*first).run_from_js_thread() } {
             global.report_uncaught_exception_from_error(err);
         }
+        let mut terminated = false;
         loop {
             let job = iter.next();
             if job.is_null() {
@@ -283,10 +296,18 @@ impl RuntimeTranspilerStore {
             }
             // if there are more, we need to drain the microtasks from the previous run
             // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
+            if !terminated
+                && unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
+                    .is_err()
             {
-                return;
+                terminated = true;
+            }
+            if terminated {
+                // The rest of the batch is already off the queue, so teardown's
+                // `release_queued_jobs_for_teardown` would never see it.
+                // SAFETY: `job` is a live job popped from the intrusive queue.
+                unsafe { self.release_job(job) };
+                continue;
             }
             // SAFETY: `job` is a live job popped from the intrusive queue.
             if let Err(err) = unsafe { (*job).run_from_js_thread() } {
@@ -484,8 +505,8 @@ fn tls_get_or_leak<T>(
 
 impl TranspilerJob {
     /// Kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
-    /// `run_from_js_thread`.
+    /// slot is recycled into the HiveArray via `store.put(this)`. Callers are
+    /// `run_from_js_thread` and `RuntimeTranspilerStore::release_job`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
     /// hive_array.rs note), so the Drop-carrying fields — `OwnedString` ×2,

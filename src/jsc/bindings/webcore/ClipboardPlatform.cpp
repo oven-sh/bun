@@ -73,8 +73,8 @@ bool clipboardWritesSingleRepresentation()
 
 } // namespace WebCore
 
-// Settles one scheduled operation on the JS thread. Adopts the reference the
-// backend was handed, so completing a request is also what releases it.
+// JS thread: settles one scheduled operation. Adopts the job's JS-side
+// reference, so completing a request is also what releases that side.
 extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObject, WebCore::ClipboardRequest* request, const WebCore::ClipboardRepresentation* representations, size_t count, const uint8_t* failureMessage, size_t failureLength)
 {
     Ref<WebCore::ClipboardRequest> adopted = adoptRef(*request);
@@ -84,15 +84,29 @@ extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObjec
     adopted->complete(*globalObject, { representations, count }, message);
 }
 
-// Balances the leaked reference when the backend drops a job without completing
-// it (the VM is shutting down). The completion is never run; the captured
-// DeferredPromise is on a dying global and would ignore the call anyway.
+// JS thread, VM tearing down before the op came back: the completion is never
+// run, and its captures are released here while their heap is alive. The
+// off-thread side may still hold the (now inert) request.
 extern "C" void Bun__Clipboard__requestAbandon(WebCore::ClipboardRequest* request)
 {
-    adoptRef(*request);
+    Ref<WebCore::ClipboardRequest> adopted = adoptRef(*request);
+    adopted->releaseCompletion();
 }
 
-// Read from the clipboard thread (atomic); the job's leaked reference keeps `request` alive.
+// The job's off-thread reference: taken on the JS thread at schedule, dropped
+// wherever the job ends (ThreadSafeRefCounted, and by then the completion has
+// already been run or released on the JS thread).
+extern "C" void Bun__Clipboard__requestRef(WebCore::ClipboardRequest* request)
+{
+    request->ref();
+}
+
+extern "C" void Bun__Clipboard__requestDeref(WebCore::ClipboardRequest* request)
+{
+    request->deref();
+}
+
+// Read on the clipboard thread (atomic); the off-thread reference keeps `request` alive.
 extern "C" bool Bun__Clipboard__requestIsCancelled(WebCore::ClipboardRequest* request)
 {
     return request->isCancelled();

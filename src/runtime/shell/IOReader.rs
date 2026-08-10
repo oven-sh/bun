@@ -74,22 +74,6 @@ unsafe impl Send for IOReader {}
 unsafe impl Sync for IOReader {}
 
 impl IOReader {
-    /// Drops the last strong ref so the underlying `BufferedReader`
-    /// closes on the JS thread.
-    ///
-    /// # Safety
-    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOReader>` whose
-    /// strong count was held by the async-deinit task.
-    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn deinit_on_main_thread(this: *mut IOReader) {
-        // SAFETY: precondition above.
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
-    }
-}
-
-impl IOReader {
     #[inline]
     #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn state(&self) -> &mut State {
@@ -135,7 +119,7 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
-            reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+            reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),

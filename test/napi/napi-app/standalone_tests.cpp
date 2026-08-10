@@ -3214,6 +3214,109 @@ test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Writes through the data pointer that napi_get_typedarray_info returns (with
+// every out-param requested, like napi-rs does) and reads the bytes back
+// through the JS view. Small typed arrays use JSC's "fast" GC-heap storage,
+// which is abandoned when the backing ArrayBuffer is materialized; the pointer
+// must reflect the storage that survives.
+static napi_value
+test_typedarray_info_write_visibility(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value typedarray = info[1];
+
+  napi_typedarray_type type;
+  size_t length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env,
+                napi_get_typedarray_info(env, typedarray, &type, &length, &data,
+                                         &arraybuffer, &byte_offset));
+  if (length > 0) {
+    memset(data, 0x2a, length);
+  }
+
+  uint32_t first = 0, last = 0;
+  napi_value element;
+  if (length > 0) {
+    NODE_API_CALL(env, napi_get_element(env, typedarray, 0, &element));
+    NODE_API_CALL(env, napi_get_value_uint32(env, element, &first));
+    NODE_API_CALL(env,
+                  napi_get_element(env, typedarray,
+                                   static_cast<uint32_t>(length) - 1, &element));
+    NODE_API_CALL(env, napi_get_value_uint32(env, element, &last));
+  }
+  printf("length=%zu first=%u last=%u\n", length, first, last);
+  return ok(env);
+}
+
+// The pointer from napi_get_buffer_info must stay valid after the view's
+// backing ArrayBuffer is materialized (here via the arraybuffer out-param of
+// napi_get_typedarray_info; JS touching .buffer does the same).
+static napi_value
+test_buffer_info_pointer_stability(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value buffer = info[1];
+
+  void *data = nullptr;
+  size_t length = 0;
+  NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+
+  napi_value arraybuffer = nullptr;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, buffer, nullptr, nullptr,
+                                              nullptr, &arraybuffer, nullptr));
+
+  uint32_t first = 0, last = 0;
+  napi_value element;
+  if (length > 0) {
+    memset(data, 0x2b, length);
+    NODE_API_CALL(env, napi_get_element(env, buffer, 0, &element));
+    NODE_API_CALL(env, napi_get_value_uint32(env, element, &first));
+    NODE_API_CALL(env,
+                  napi_get_element(env, buffer,
+                                   static_cast<uint32_t>(length) - 1, &element));
+    NODE_API_CALL(env, napi_get_value_uint32(env, element, &last));
+  }
+  printf("length=%zu first=%u last=%u\n", length, first, last);
+  return ok(env);
+}
+
+// Pointers returned by napi_create_buffer and napi_create_buffer_copy must
+// also stay valid after the backing ArrayBuffer is materialized.
+static napi_value
+test_create_buffer_pointer_stability(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value element;
+
+  void *data = nullptr;
+  napi_value buffer = nullptr;
+  NODE_API_CALL(env, napi_create_buffer(env, 64, &data, &buffer));
+  napi_value arraybuffer = nullptr;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, buffer, nullptr, nullptr,
+                                              nullptr, &arraybuffer, nullptr));
+  memset(data, 0x2c, 64);
+  uint32_t last = 0;
+  NODE_API_CALL(env, napi_get_element(env, buffer, 63, &element));
+  NODE_API_CALL(env, napi_get_value_uint32(env, element, &last));
+  printf("create_buffer last=%u\n", last);
+
+  const uint8_t src[16] = {0};
+  void *copy_data = nullptr;
+  napi_value copy = nullptr;
+  NODE_API_CALL(
+      env, napi_create_buffer_copy(env, sizeof src, src, &copy_data, &copy));
+  napi_value copy_arraybuffer = nullptr;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, copy, nullptr, nullptr,
+                                              nullptr, &copy_arraybuffer,
+                                              nullptr));
+  memset(copy_data, 0x2d, sizeof src);
+  uint32_t copy_last = 0;
+  NODE_API_CALL(env, napi_get_element(env, copy, 15, &element));
+  NODE_API_CALL(env, napi_get_value_uint32(env, element, &copy_last));
+  printf("create_buffer_copy last=%u\n", copy_last);
+  return ok(env);
+}
+
 static napi_value test_napi_float16_array(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // napi_float16_array == 11; cast so older headers without the member compile.
@@ -4024,6 +4127,9 @@ test_reference_ref_after_collect(const Napi::CallbackInfo &info) {
 
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_typedarray_info_write_visibility);
+  REGISTER_FUNCTION(env, exports, test_buffer_info_pointer_stability);
+  REGISTER_FUNCTION(env, exports, test_create_buffer_pointer_stability);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_napi_float16_array);
   REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);

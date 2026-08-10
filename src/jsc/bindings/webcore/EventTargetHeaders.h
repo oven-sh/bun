@@ -42,6 +42,6 @@
 #include "Worker.h"
 #include "JSWorker.h"
 
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 
 #endif // EventTargetHeaders_h

@@ -70,8 +70,9 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     EventTargetInterface eventTargetInterface() const final { return ClipboardEventTargetInterfaceType; }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
     explicit Clipboard(ScriptExecutionContext*);

@@ -652,6 +652,13 @@ impl WindowsNamedPipe {
                 self.discard_unadopted_pipe();
                 return Err(e);
             }
+            // Until the writer adopts it (start_with_pipe), a thread teardown closes
+            // this pipe through us; afterwards the writer re-records itself as owner.
+            uv::open_handles::set_owner(
+                pipe.cast(),
+                self.root_ptr().cast(),
+                Some(Self::stop_for_vm_teardown),
+            );
 
             // SAFETY: as above.
             if let Err(e) = server
@@ -699,6 +706,13 @@ impl WindowsNamedPipe {
             self.discard_unadopted_pipe();
             return Err(e);
         }
+        // Until the writer adopts it (start_with_pipe), a thread teardown closes
+        // this pipe through us; afterwards the writer re-records itself as owner.
+        uv::open_handles::set_owner(
+            pipe.cast(),
+            self.root_ptr().cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
 
         // SAFETY: as above.
         if let Err(e) = unsafe { (*pipe).open(fd.uv()) }.to_result(bun_sys::Tag::open) {
@@ -737,6 +751,13 @@ impl WindowsNamedPipe {
             self.discard_unadopted_pipe();
             return Err(e);
         }
+        // Until the writer adopts it (start_with_pipe), a thread teardown closes
+        // this pipe through us; afterwards the writer re-records itself as owner.
+        uv::open_handles::set_owner(
+            pipe.cast(),
+            self.root_ptr().cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
 
         let ctx: *mut Self = self.root_ptr();
         let req: *mut uv::uv_connect_t = self.connect_req.as_ptr();
@@ -895,6 +916,19 @@ impl WindowsNamedPipe {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    /// `uv::open_handles` closes a not-yet-adopted pipe through here at teardown.
+    #[cfg(windows)]
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
+        // SAFETY: recorded right after `pipe.init` by this live object; replaced by
+        // the writer at adoption or dropped with the pipe (discard_unadopted_pipe).
+        let this = unsafe { &*this.cast::<Self>() };
+        if this.flags.get().contains(Flags::PIPE_ADOPTED) {
+            this.close();
+        } else {
+            this.discard_unadopted_pipe();
+        }
+    }
+
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&self) {
         let _ = self.with_wrapper(|w| {
@@ -1039,13 +1073,7 @@ impl WindowsNamedPipe {
                 // always succeeds and is a no-op if not reading.
                 unsafe { (*stream).read_stop() };
             }
-            if self.writer.get().get_fd() != Fd::INVALID {
-                self.writer.with_mut(|w| {
-                    debug_assert!(!w.closed_without_reporting);
-                    w.closed_without_reporting = true;
-                    w.close();
-                });
-            }
+            self.writer.with_mut(|w| w.close_without_reporting());
             self.writer.with_mut(|w| w.outgoing = Default::default());
         }
         if !self.flags.get().contains(Flags::WRAPPER_BUSY) {

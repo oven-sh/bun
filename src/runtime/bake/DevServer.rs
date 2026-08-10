@@ -304,6 +304,8 @@ pub struct DevServer {
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    /// How the file-watcher thread submits hot-reload events to the VM.
+    pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -515,6 +517,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, bun_ptr::BackRef::new(options.vm));
+        w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -1020,6 +1023,7 @@ impl Drop for DevServer {
                 inspector_server_id: _,
                 configuration_hash_key: _,
                 vm: _,
+                vm_handle: _,
                 server: _,
                 router: _,
                 route_bundles: _,

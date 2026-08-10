@@ -68,6 +68,12 @@ pub struct File {
 
     /// When true, file will close itself when the current operation completes.
     pub(crate) close_after_operation: bool,
+
+    /// A read still in flight when its reader let go of this file (`iov`
+    /// points into it): the reader's buffer, kept alive here until the
+    /// detached completion frees the Box, so the pending ReadFile never lands
+    /// in freed memory.
+    pub(crate) orphaned_read_buf: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -94,6 +100,7 @@ impl Default for File {
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
+            orphaned_read_buf: Vec::new(),
         }
     }
 }
@@ -288,6 +295,44 @@ impl Source {
             Source::Pipe(pipe) => pipe.data = data,
             Source::Tty(tty) => Self::tty_mut(tty).data = data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data = data,
+        }
+    }
+
+    /// `owner` (a reader or writer) now drives this source: point the uv
+    /// handle's `data` at it and record it as the one a thread teardown closes
+    /// the source through (`uv::open_handles`). A file is listed only by a
+    /// reader (`WindowsBufferedReader::set_source`); for anything else the
+    /// file arm just sets `data`.
+    pub fn set_owner(
+        &mut self,
+        owner: *mut c_void,
+        close_via_owner: uv::open_handles::CloseViaOwner,
+    ) {
+        self.set_data(owner);
+        match self {
+            Source::Pipe(pipe) => uv::open_handles::set_owner(
+                core::ptr::from_mut::<Pipe>(pipe).cast(),
+                owner,
+                Some(close_via_owner),
+            ),
+            Source::Tty(tty) => {
+                uv::open_handles::set_owner(tty.as_ptr().cast(), owner, Some(close_via_owner))
+            }
+            Source::SyncFile(file) | Source::File(file) => uv::open_handles::set_file_owner(
+                core::ptr::from_mut::<File>(file).cast(),
+                owner,
+                close_via_owner,
+            ),
+        }
+    }
+
+    /// The boxed `File`'s address — the key a reader lists it under.
+    pub fn file_key(&mut self) -> Option<*mut c_void> {
+        match self {
+            Source::SyncFile(file) | Source::File(file) => {
+                Some(core::ptr::from_mut::<File>(file).cast())
+            }
+            _ => None,
         }
     }
 

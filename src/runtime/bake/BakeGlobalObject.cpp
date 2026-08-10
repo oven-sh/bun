@@ -248,7 +248,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM);
+    WebCore::JSVMClientData::create(&vm, bunVM, /* isWorkerVM */ false);
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(

@@ -8,7 +8,7 @@
 #include <atomic>
 #include <span>
 #include <wtf/Function.h>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -23,14 +23,17 @@ struct ClipboardRepresentation {
     size_t length;
 };
 
-// One outstanding platform clipboard operation. Refcounted so the work-pool job
-// can hold it across the thread hop; the backend treats it as an opaque handle
-// and hands it back on the JS thread exactly once.
-class ClipboardRequest : public RefCounted<ClipboardRequest> {
+// One outstanding platform clipboard operation. The backend's job holds two
+// references: its JS side owns the completion (run or released on the JS
+// thread only), and its off-thread side keeps the cancel flag readable on the
+// clipboard thread for as long as the op can still run. Whichever side drops
+// last may be off the JS thread, hence ThreadSafeRefCounted; by then the
+// completion has already been run or released on the JS thread.
+class ClipboardRequest : public ThreadSafeRefCounted<ClipboardRequest> {
 public:
     // Runs on the JS thread when done. Empty `representations` is not an error; `failureMessage`
     // is null on success. `Function` (not `CompletionHandler`): a VM that shuts down while the
-    // job is on the work pool drops the request without a live global to call it with.
+    // job is out drops the request without a live global to call it with.
     using Completion = Function<void(JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage)>;
 
     static Ref<ClipboardRequest> create(Completion&& completion)
@@ -45,6 +48,10 @@ public:
         if (auto completion = std::exchange(m_completion, {}))
             completion(globalObject, representations, failureMessage);
     }
+
+    // JS thread, VM going away: release the promise and clipboard the
+    // completion captured while their heap is alive.
+    void releaseCompletion() { m_completion = {}; }
 
     // A superseded writer's AbortError must not be a lie: the clipboard-thread
     // job checks this before the platform transaction, so a cancelled write
@@ -62,8 +69,8 @@ private:
     std::atomic<bool> m_cancelled { false };
 };
 
-// Schedule a platform operation. Each consumes a reference, which the backend
-// releases when it completes the request.
+// Schedule a platform operation. Each consumes a reference, which becomes the
+// backend job's JS side; the backend takes its own off-thread reference.
 void scheduleClipboardReadText(JSC::JSGlobalObject&, Ref<ClipboardRequest>&&);
 void scheduleClipboardRead(JSC::JSGlobalObject&, Ref<ClipboardRequest>&&);
 void scheduleClipboardWriteText(JSC::JSGlobalObject&, Ref<ClipboardRequest>&&, const String& text);

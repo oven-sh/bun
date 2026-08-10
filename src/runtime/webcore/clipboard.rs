@@ -6,25 +6,21 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
+use bun_jsc::job::JsAffine;
+use bun_jsc::vm_handle::Borrow;
+use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsThread};
 use bun_threading::WorkPoolTask;
 
-/// Opaque `WebCore::ClipboardRequest*` (a leaked +1), handed back exactly
-/// once: `complete`/`fail` on the JS thread, or `Drop` (abandon) on VM
-/// shutdown. The sole owner of the request FFI, so everything above it is
-/// safe code.
+/// The job's JS side: the `WebCore::ClipboardRequest` reference that owns the
+/// completion. Consumed exactly once on the JS thread by `complete`/`fail`,
+/// or released there by `Drop` when the VM tears down first.
 struct RequestHandle(*mut c_void);
 
-// SAFETY: off the JS thread the pointer is only read through the atomic
-// `is_cancelled`; completion happens back on the JS thread.
-unsafe impl Send for RequestHandle {}
+// SAFETY: used and dropped only on the JS thread, which is what the job
+// carrier guarantees for its `Js` side.
+unsafe impl JsAffine for RequestHandle {}
 
 impl RequestHandle {
-    fn is_cancelled(&self) -> bool {
-        // SAFETY: the leaked ref keeps the request alive; the flag is atomic.
-        unsafe { Bun__Clipboard__requestIsCancelled(self.0) }
-    }
-
     /// Settles with `items` on the JS thread.
     fn complete(self, global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) {
         let views: Vec<Representation> = items
@@ -75,10 +71,40 @@ impl RequestHandle {
 
 impl Drop for RequestHandle {
     fn drop(&mut self) {
-        // Dropped without settling (VM shutdown): balance the leaked ref.
-        // SAFETY: still the live leaked reference; `complete`/`fail` bypass
-        // Drop via `take`.
+        // VM teardown released this side before the op came back.
+        // SAFETY: JS thread; still the live reference (`complete`/`fail`
+        // bypass Drop via `take`).
         unsafe { Bun__Clipboard__requestAbandon(self.0) };
+    }
+}
+
+/// The job's off-thread reference to the same request: keeps the cancel flag
+/// readable on the clipboard thread however long the op waits, independent of
+/// the JS side, which teardown may release first.
+struct CancelProbe(*mut c_void);
+
+// SAFETY: the request is ThreadSafeRefCounted and the flag is atomic; the
+// JS-affine completion is only ever touched through `RequestHandle`.
+unsafe impl Send for CancelProbe {}
+
+impl CancelProbe {
+    /// JS thread, at schedule, while the JS side's reference is held.
+    fn new(request: *mut c_void) -> CancelProbe {
+        // SAFETY: `request` is the live reference the JS side holds.
+        unsafe { Bun__Clipboard__requestRef(request) };
+        CancelProbe(request)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        // SAFETY: our own reference keeps the request alive; atomic read.
+        unsafe { Bun__Clipboard__requestIsCancelled(self.0) }
+    }
+}
+
+impl Drop for CancelProbe {
+    fn drop(&mut self) {
+        // SAFETY: releases the reference `new` took; thread-safe by type.
+        unsafe { Bun__Clipboard__requestDeref(self.0) };
     }
 }
 
@@ -102,22 +128,26 @@ unsafe extern "C" {
         failure_message: *const u8,
         failure_length: usize,
     );
-    /// Releases a request the job never got to complete (VM shutting down).
+    /// JS thread: releases the completion of a request the VM tore down under.
     fn Bun__Clipboard__requestAbandon(request: *mut c_void);
+    /// The off-thread reference (ThreadSafeRefCounted).
+    fn Bun__Clipboard__requestRef(request: *mut c_void);
+    fn Bun__Clipboard__requestDeref(request: *mut c_void);
     /// Whether the JS thread cancelled this request (atomic; safe off-thread).
     fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
 }
 
-/// An `AnyTaskJob`'s intrusive task crossing to the clipboard thread.
+/// A `Job`'s intrusive task crossing to the clipboard thread.
 #[derive(Clone, Copy)]
 struct QueuedTask(*mut WorkPoolTask);
 // SAFETY: same hand-off `WorkPool::schedule` performs; the callback is the
 // only consumer.
 unsafe impl Send for QueuedTask {}
 
-/// One FIFO thread runs every platform job, so ops commit in schedule order
-/// and a blocking backend never occupies the shared work pool. `None` while
-/// the thread cannot be spawned (retried on the next call).
+/// One FIFO thread runs every job (`Job::schedule_with`), so ops commit in
+/// schedule order, which the multi-worker pool would not guarantee, and a
+/// blocking backend never occupies it. `None` while the thread cannot be
+/// spawned (retried on the next call).
 fn serial_queue() -> Option<&'static bun_threading::Channel<QueuedTask>> {
     use core::sync::atomic::{AtomicBool, Ordering};
     static QUEUE: std::sync::OnceLock<bun_threading::Channel<QueuedTask>> =
@@ -191,16 +221,22 @@ enum Outcome {
     Failed(Unavailable),
 }
 
-pub(crate) struct ClipboardCtx {
+/// The job's off-thread side: owned bytes plus the cancel probe.
+struct ClipboardOp {
     op: Op,
     outcome: Option<Outcome>,
-    /// `then()` takes it; a job dropped earlier abandons via `RequestHandle::drop`.
-    request: Option<RequestHandle>,
+    probe: CancelProbe,
 }
 
-impl AnyTaskJobCtx for ClipboardCtx {
-    fn run(&mut self, _global: *mut JSGlobalObject) {
-        self.outcome = Some(match &self.op {
+struct ClipboardJob;
+
+impl JobContext for ClipboardJob {
+    type OffThread = ClipboardOp;
+    type Js = RequestHandle;
+
+    /// Clipboard thread (see `serial_queue`).
+    fn run(this: &mut ClipboardOp, _vm: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+        this.outcome = Some(match &this.op {
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
                 Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
                 Ok(None) => Outcome::Representations(Vec::new()),
@@ -214,11 +250,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 // A superseded write is cancelled on the JS thread; honoring it
                 // here keeps its AbortError honest (the write never reaches
                 // the OS). `then()` still runs; the settled promise ignores it.
-                if self
-                    .request
-                    .as_ref()
-                    .is_some_and(RequestHandle::is_cancelled)
-                {
+                if this.probe.is_cancelled() {
                     Outcome::Representations(Vec::new())
                 } else {
                     let borrowed: Vec<(Mime, &[u8])> =
@@ -230,11 +262,12 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 }
             }
         });
+        Some(done)
     }
 
-    fn then(&mut self, global: &JSGlobalObject) -> bun_jsc::JsResult<()> {
-        let request = self.request.take().expect("then() runs once");
-        match self.outcome.take().expect("run() filled the outcome") {
+    fn then(this: ClipboardOp, request: RequestHandle, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
+        let global = cx.global();
+        match this.outcome.expect("run() filled the outcome") {
             Outcome::Representations(items) => request.complete(global, &items),
             Outcome::Failed(unavailable) => request.fail(global, unavailable),
         }
@@ -242,21 +275,18 @@ impl AnyTaskJobCtx for ClipboardCtx {
     }
 }
 
-/// `create` consumes `ctx` on every path, so a failure has already balanced
-/// the request via `RequestHandle`'s Drop.
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
-    // No clipboard thread: reject rather than abort, or run unserialized on
-    // the shared pool.
+    // No clipboard thread: reject rather than run unserialized on the pool.
     let Some(queue) = serial_queue() else {
         request.fail(global, Unavailable::Platform);
         return;
     };
-    let ctx = ClipboardCtx {
+    let off = ClipboardOp {
         op,
         outcome: None,
-        request: Some(request),
+        probe: CancelProbe::new(request.0),
     };
-    let _ = AnyTaskJob::create_and_schedule_with(global, ctx, |task| {
+    Job::<ClipboardJob>::schedule_with(&global.js_thread(), off, request, |task| {
         // Fails only on OOM; the queue is never closed.
         bun_core::handle_oom(queue.write_item(QueuedTask(task)));
     });

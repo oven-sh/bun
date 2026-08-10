@@ -785,6 +785,52 @@ describe("readText / writeText", () => {
     });
   });
 
+  // A VM torn down while its op is still on the clipboard thread: teardown
+  // releases the job's JS side first, the op's completion is then refused, and
+  // the off-thread side is dropped on the clipboard thread. The helper shim
+  // sleeps so the worker's write is reliably in flight at terminate(), and the
+  // main thread's own write, queued behind it on the FIFO thread, resolves
+  // only after the orphaned op has been fully released; a fault anywhere on
+  // that path aborts the child (ASAN / debug assert) instead of exiting 0.
+  test.skipIf(!isLinux)("terminating a worker with a write in flight releases the job cleanly", async () => {
+    using dir = tempDir("clipboard-worker-teardown", {
+      "xclip": `#!/bin/sh\nsleep 0.2\ncat > "$CLIP_STATE_FILE"\n`,
+      "xsel": `#!/bin/sh\nexit 7\n`,
+      "wl-paste": `#!/bin/sh\nexit 7\n`,
+      "wl-copy": `#!/bin/sh\nexit 7\n`,
+      "worker.js": `
+        navigator.clipboard.writeText("from the worker").catch(() => {});
+        postMessage("started");
+      `,
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+        await worker.terminate();
+        await navigator.clipboard.writeText("after");
+        console.log("released");
+      `,
+    });
+    for (const helper of ["xclip", "xsel", "wl-paste", "wl-copy"]) chmodSync(join(String(dir), helper), 0o755);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        PATH: `${dir}:${bunEnv.PATH ?? process.env.PATH}`,
+        DISPLAY: ":0",
+        WAYLAND_DISPLAY: undefined,
+        CLIP_STATE_FILE: join(String(dir), "clipboard-state.txt"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "released",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   test("round-trips text, or rejects with NotAllowedError where there is no system clipboard", async () => {
     if (savedClipboard === null) {
       // No reachable clipboard here (e.g. headless Linux with no display):

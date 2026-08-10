@@ -758,13 +758,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // while libuv still has the handle queued (UAF) and the later
                 // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
-                    (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stdout.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stdout.start_with_current_pipe()?;
                 }
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
-                    (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stderr.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stderr.start_with_current_pipe()?;

@@ -581,7 +581,7 @@ it("process.versions", () => {
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
-    ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
+    ares: "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
     lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
@@ -2337,4 +2337,50 @@ describe("NODE_NO_WARNINGS", () => {
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
+});
+
+it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {
+  // Node runs 'exit' handlers and nothing queued before them; the exit-time
+  // teardown must discard, not drain, the pre-exit microtask/nextTick queues.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.nextTick(() => console.log("TICK_FIRED"));
+       queueMicrotask(() => console.log("MICROTASK_FIRED"));
+       Promise.resolve().then(() => console.log("THEN_FIRED"));
+       process.on("exit", () => console.log("exit handler"));
+       process.exit(0);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit handler\n");
+  expect(exitCode).toBe(0);
+});
+
+// Node runs its environment cleanup with JS execution disallowed: closing the
+// process's sockets/servers at exit dispatches no 'close'/'error' handlers, so
+// nothing of the user's runs after the 'exit' event.
+it("no socket close handler runs after the 'exit' event", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() { console.log("server socket closed after exit"); } } });
+       Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+         data() {},
+         close() { console.log("client socket closed after exit"); },
+         open() { process.on("exit", () => console.log("exit")); process.exit(0); },
+       } });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit\n");
+  expect(exitCode).toBe(0);
 });

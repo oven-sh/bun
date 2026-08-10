@@ -2613,7 +2613,8 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 let mut in_class = false;
                 while i < code.len() && code[i] != b'\n' {
                     match code[i] {
-                        b'\\' => i += 1,
+                        // A trailing escape must not consume the line break.
+                        b'\\' if code.get(i + 1).is_some_and(|&next| next != b'\n') => i += 1,
                         b'[' => in_class = true,
                         b']' => in_class = false,
                         b'/' if !in_class => break,

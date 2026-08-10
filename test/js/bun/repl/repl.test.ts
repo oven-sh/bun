@@ -723,6 +723,27 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("escaped slash inside a regex does not end the regex", async () => {
+      const { stdout, exitCode } = await runRepl(['/a\\/b/.test("a/b")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("true");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unbalanced brace and paren inside a regex evaluate on one line", async () => {
+      const { stdout, exitCode } = await runRepl(["x = /a{b\\(/;", "x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("/a{b\\(/");
+      expect(exitCode).toBe(0);
+    });
+
+    test("backslash before a newline does not continue a regex onto the next line", async () => {
+      // `/a\` at end of line is an unterminated regex; the `2]` on the next
+      // line must still balance the `[`, not be swallowed as regex body.
+      const { stdout, stderr, exitCode } = await runRepl(["x = [1, /a\\", "2]", "40 + 2", ".exit"]);
+      expect(stripAnsi(stdout + stderr)).toContain("SyntaxError");
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
     test("invalid regex reports a syntax error instead of waiting for more input", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["x = /hello (world/;", "1 + 1", ".exit"]);
       expect(stripAnsi(stdout + stderr)).toContain("SyntaxError");

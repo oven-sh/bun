@@ -957,6 +957,17 @@ describe("a nested value throws while formatting with { sorted: true }", () => {
     expect(visited).toEqual(["c", "a"]);
   });
 
+  it("also stops the walks of the enclosing objects", () => {
+    const visited = [];
+    const obj = {
+      x: { a: throwing(visited, "a"), b: formattable(visited, "b") },
+      y: formattable(visited, "y"),
+    };
+
+    expect(() => Bun.inspect(obj, { sorted: true })).toThrow("boom");
+    expect(visited).toEqual(["a"]);
+  });
+
   it("Bun.inspect.table", () => {
     const visited = [];
     const rows = [{ cell: { a: throwing(visited, "a"), b: formattable(visited, "b") } }];

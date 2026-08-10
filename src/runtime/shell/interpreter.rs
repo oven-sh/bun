@@ -500,7 +500,18 @@ impl Interpreter {
         let mut pathbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
+            // The process cwd may have been deleted out from under us. An
+            // absolute `.cwd()` override replaces the initial cwd below
+            // anyway, so start there directly (matching `Bun.spawn`'s
+            // handling of `cwd`). A relative override has nothing to resolve
+            // against, so that still errors.
+            Err(e) => match cwd_ {
+                Some(c) if bun_paths::is_absolute(c) && c.len() < pathbuf.len() => {
+                    pathbuf[..c.len()].copy_from_slice(c);
+                    c.len()
+                }
+                _ => return Err(ShellErr::new_sys(&e)),
+            },
         };
         // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
         pathbuf[cwd_len] = 0;

@@ -1115,6 +1115,31 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    // Windows refuses to delete a process's cwd, so this scenario is POSIX-only.
+    test.skipIf(isWindows)(".cwd() works when the process cwd has been deleted", async () => {
+      using dir = tempDir("shell-deleted-cwd", {
+        "repro.js": `
+          import { rmdirSync } from "fs";
+          const target = process.argv[2];
+          rmdirSync(process.cwd());
+          const { stdout, exitCode } = await Bun.$\`pwd\`.cwd(target).quiet();
+          console.log(JSON.stringify({ pwd: stdout.toString().trim(), exitCode }));
+        `,
+      });
+      mkdirSync(join(String(dir), "gone"));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "repro.js"), String(dir)],
+        env: bunEnv,
+        cwd: join(String(dir), "gone"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(JSON.stringify({ pwd: String(dir), exitCode: 0 }));
+      expect(exitCode).toBe(0);
+    });
+
     test(".cwd() rejects path longer than buffer with ENAMETOOLONG", async () => {
       const script = `
         import { $ } from "bun";

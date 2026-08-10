@@ -131,7 +131,7 @@ without *requiring* a postinstall script.
     cpu,
     keywords: ["bun", "bun.js", "node", "node.js", "runtime", "bundler", "transpiler", "typescript"],
     homepage: "https://bun.com",
-    bugs: "https://github.com/oven-sh/issues",
+    bugs: "https://github.com/oven-sh/bun/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
   });
@@ -161,7 +161,7 @@ async function buildModule(
     version: version,
     description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
     homepage: "https://bun.com",
-    bugs: "https://github.com/oven-sh/issues",
+    bugs: "https://github.com/oven-sh/bun/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
     preferUnplugged: true,

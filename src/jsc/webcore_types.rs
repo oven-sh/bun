@@ -433,15 +433,15 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// Reading or writing this blob during a strict snapshot build would freeze file contents into the image. Stdio-backed
-    /// blobs are exempt: those descriptors belong to each launch and are set up again at restore.
-    pub fn is_snapshot_gated_file(&self) -> bool {
+    /// The I/O class reading or writing this blob counts as while a snapshot is being built (`None` = not gated: memory, or stdio, which is each launch's own).
+    pub fn snapshot_io_kind(&self) -> Option<&'static str> {
         match self.store.get().as_deref().map(|s| &s.data) {
             Some(store::Data::File(file)) => match &file.pathlike {
-                PathOrFileDescriptor::Path(_) => true,
-                PathOrFileDescriptor::Fd(fd) => !fd.is_stdio(),
+                PathOrFileDescriptor::Path(_) => Some("Bun.file"),
+                PathOrFileDescriptor::Fd(fd) => (!fd.is_stdio()).then_some("Bun.file"),
             },
-            _ => false,
+            Some(store::Data::S3(_)) => Some("Bun.s3"), // network-class: refused under strict and local alike
+            _ => None,
         }
     }
 

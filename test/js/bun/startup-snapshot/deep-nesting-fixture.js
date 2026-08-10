@@ -3,7 +3,7 @@
 function probe() {
   const depth = 200_000;
   try {
-    new Bun.Transpiler().transformSync("[".repeat(depth) + "]".repeat(depth));
+    new Bun.Transpiler().transformSync(Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString());
     return "transformed";
   } catch (e) {
     return "error: " + String(e.message ?? e).split("\n")[0].slice(0, 60);

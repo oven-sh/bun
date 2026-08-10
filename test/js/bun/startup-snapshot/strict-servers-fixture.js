@@ -5,7 +5,9 @@ async function attempt(name, make) {
     if (s && typeof s.then === "function") s = await s; // the Bun.file/Bun.write forms reject rather than throw
     s?.stop?.(true); s?.close?.();
     console.log(`[js] ${name} created`);
-  } catch (e) { console.log(`[js] ${name} refused`); }
+  } catch (e) {
+    console.log(String(e?.message ?? e).includes("while building a snapshot") ? `[js] ${name} refused` : `[js] ${name} failed otherwise: ${String(e?.message ?? e).slice(0, 40)}`);
+  }
 }
 const attempts = [];
 const queue = (name, make) => attempts.push([name, make]);
@@ -22,6 +24,7 @@ queue("cp-async", () => new Promise((res, rej) => fs.cp(process.execPath, proces
 queue("bun-write", () => Bun.write(process.env.CP_TARGET, "x"));
 queue("bun-file-text", () => Bun.file(process.execPath).text());
 queue("bun-file-exists", () => Bun.file(process.execPath).exists());
+queue("s3-blob-text", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }).text()); // an S3-backed blob is network I/O
 // ...but stdio is each launch's own and must stay usable while building (process.stdin is built on the same machinery).
 queue("stdout-write", () => Bun.write(Bun.stdout, ""));
 queue("stdin-access", () => { if (!process.stdin) throw new Error("no stdin"); });

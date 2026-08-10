@@ -1208,6 +1208,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     globalObject->armStdioBlobs(); // whether or not Bun itself was reified: the slots behind Bun.stdin/stdout/stderr hold the builder's blobs
     if (!globalObject->m_bunObject.isInitialized())
         return; // never touched during the build: nothing was reified, and making it now would only dirty pages
@@ -1231,6 +1232,14 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
         JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);
         if (bunObject->getDirectOffset(vm, id) == invalidOffset)
             continue; // never accessed: the static-table callback will run on first access
-        bunObject->putDirect(vm, id, p.make(vm, bunObject), 0);
+        JSValue fresh = p.make(vm, bunObject);
+        if (scope.exception() || !fresh) { // e.g. this launch's REDIS_URL is malformed: say so and leave nothing of the builder's behind; 'restore' must still fire
+            auto* exception = scope.exception();
+            WTF::String why = exception ? exception->value().toWTFStringForConsole(globalObject) : "no value"_s;
+            (void)scope.tryClearException();
+            fprintf(stderr, "[snapshot] Bun.%s could not be remade for this launch: %s\n", p.name.characters(), why.utf8().data());
+            fresh = JSC::jsUndefined();
+        }
+        bunObject->putDirect(vm, id, fresh, 0);
     }
 }

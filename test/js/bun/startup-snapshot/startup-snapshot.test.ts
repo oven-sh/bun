@@ -402,6 +402,26 @@ snapshotTest(
     expect(out).toContain("s3key=LAUNCHKEY sameS3=false"); // used to sign with BUILDKEY: the reified client was the builder's
     expect(out).toContain("sameStdout=false sameRedis=false"); // both remade for the launch
     expect(code).toBe(0);
+    {
+      // A launch whose REDIS_URL cannot even be parsed: the property is reported and left undefined, and 'restore' still fires.
+      await using bad = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: {
+          ...restoreEnv,
+          ...aws,
+          MARKER: "launch",
+          AWS_ACCESS_KEY_ID: "LAUNCHKEY",
+          REDIS_URL: "::not a url::",
+          BUN_STARTUP_SNAPSHOT_IN: img,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [badOut, badErr, badCode] = await Promise.all([bad.stdout.text(), bad.stderr.text(), bad.exited]);
+      expect(badErr).toContain("[snapshot] Bun.redis could not be remade for this launch");
+      expect(badOut).toContain("s3key=LAUNCHKEY"); // the restore listener ran; before, the pending exception kept it from firing
+      expect(badCode).toBe(0);
+    }
   },
 );
 
@@ -620,6 +640,7 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
     "bun-write",
     "bun-file-text",
     "bun-file-exists",
+    "s3-blob-text",
   ])
     expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
   for (const op of ["stdout-write", "stdin-access"]) expect(out).toContain(`[js] ${op} created`); // stdio is exempt from the gate

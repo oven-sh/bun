@@ -690,7 +690,7 @@ pub fn did_connect() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// AsyncTaskTracker — stable surface (used by WorkTask / event_loop).
+// AsyncTaskTracker — stable surface (used by pool jobs / event_loop).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Copy, Clone)]

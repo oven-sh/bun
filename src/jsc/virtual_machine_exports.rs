@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
@@ -58,26 +57,6 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
         / 1_000_000.0
 }
 
-// HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)
-pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
-    use crate::virtual_machine::IPCInstanceUnion;
-    match &global.bun_vm().as_mut().ipc {
-        Some(IPCInstanceUnion::Initialized(inst)) => {
-            // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
-            // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
-            unsafe { (**inst).data.is_connected() }
-        }
-        Some(IPCInstanceUnion::Waiting { .. }) => true,
-        None => false,
-    }
-}
-
-// HOST_EXPORT(Bun__GlobalObject__hasIPC, c)
-pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    global.bun_vm().as_mut().ipc.is_some()
-}
-
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
 pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
@@ -90,27 +69,6 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
     // JSGlobalObject::bun_vm contract.
     str.eql_utf8(global.bun_vm().as_mut().main())
-}
-
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
-    // it will do nothing if IPC is not enabled.
-    let _ = global.bun_vm().as_mut().get_ipc_instance();
-}
-
-/// This function is called on the main thread
-/// The bunVM() call will assert this
-// HOST_EXPORT(Bun__queueTask, c)
-pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
-    crate::mark_binding!();
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .enqueue_task(Task::init(task));
 }
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
@@ -126,19 +84,34 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     JSValue::UNDEFINED
 }
 
-/// This function is called on another thread
-/// The main difference: we need to allocate the task & wakeup the thread
-/// We can avoid that if we run it from the main thread.
-// HOST_EXPORT(Bun__queueTaskConcurrently, c)
-pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+/// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
+/// directly because it outlives the `Zig::GlobalObject` it was created with.
+// HOST_EXPORT(Bun__VM__queueTask, c)
+pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
-    // returns null for a Bun-owned global. Called off-thread but the loop
-    // wakeup is thread-safe.
-    unsafe {
-        (*(*global.bun_vm_concurrently()).event_loop())
-            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
-    }
+    this.event_loop_mut().enqueue_task(Task::init(task));
+}
+
+/// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
+/// first (a drain re-posting its own continuation).
+// HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
+pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    this.event_loop_mut()
+        .enqueue_task_after_yield(Task::init(task));
+}
+
+/// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
+// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
+pub fn vm_handle_queue_task_concurrently(
+    r: *const crate::vm_handle::Shared,
+    task: *mut crate::cpp_task::CppTask,
+) {
+    crate::mark_binding!();
+    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
+    // hands over a live heap EventLoopTask.
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
@@ -267,18 +240,20 @@ pub unsafe fn is_no_proxy(
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;
-    VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
-        1 => HTTPVerboseLevel::Headers as u8,
-        2 => HTTPVerboseLevel::Curl as u8,
-        _ => HTTPVerboseLevel::None as u8,
-    });
+    VirtualMachine::get()
+        .default_verbose_fetch
+        .set(Some(match value {
+            1 => HTTPVerboseLevel::Headers as u8,
+            2 => HTTPVerboseLevel::Curl as u8,
+            _ => HTTPVerboseLevel::None as u8,
+        }));
 }
 
 // HOST_EXPORT(Bun__getVerboseFetchValue, c)
 pub fn get_verbose_fetch_value() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
-    match VirtualMachine::get().as_mut().get_verbose_fetch() {
+    match VirtualMachine::get().get_verbose_fetch() {
         HTTPVerboseLevel::None => 0,
         HTTPVerboseLevel::Headers => 1,
         HTTPVerboseLevel::Curl => 2,

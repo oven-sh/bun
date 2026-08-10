@@ -297,7 +297,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader>>,
+    pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
@@ -1736,11 +1736,20 @@ pub fn init(
     };
 
     env.load_process()?;
-    // Reborrow the BSSMap-owned `*DirEntry` for the
-    // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
+    // Copy the listing's basenames out under `entries_mutex`; `.data` must
+    // only be probed while the lock is held.
+    let env_probe_keys = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        dot_env::DirEntryKeys(
+            entries_option
+                .data
+                .iter()
+                .map(|(k, _)| Box::from(&**k))
+                .collect(),
+        )
+    };
     env.load(
-        // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
-        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
+        &env_probe_keys,
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -2454,7 +2463,12 @@ fn init_with_runtime_once(
     // `root_dir` was moved into `*manager` above (the field is
     // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
     // original binding is dead). Read it back through `manager.root_dir`.
-    if manager.root_dir.has_comptime_query(b"bun.lockb") {
+    // `.data` probes must hold `entries_mutex`.
+    let has_lockb = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        manager.root_dir.has_comptime_query(b"bun.lockb")
+    };
+    if has_lockb {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}

@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
@@ -23,7 +21,7 @@ pub struct Graph<'a> {
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool>,
+    pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
     pub(crate) heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -57,6 +55,15 @@ pub struct Graph<'a> {
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
+
+    /// onResolve / onLoad requests a plugin currently holds (dispatched to its
+    /// VM, not yet answered). Bundle thread only. Failed wholesale when that
+    /// VM shuts down mid-build (`BundleV2::is_done`).
+    pub(crate) outstanding_resolves: OutstandingList<crate::bundle_v2::api::JSBundler::Resolve>,
+    pub(crate) outstanding_loads: OutstandingList<crate::bundle_v2::api::JSBundler::Load>,
+    /// The owning VM cancelled this pass; plugin requests were failed and no
+    /// deferred batch will run.
+    pub(crate) cancelled: bool,
 
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
@@ -154,7 +161,7 @@ impl<'a> Graph<'a> {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
+            pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
@@ -162,6 +169,9 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
+            outstanding_resolves: OutstandingList::default(),
+            outstanding_loads: OutstandingList::default(),
+            cancelled: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
@@ -223,6 +233,15 @@ impl<'a> Graph<'a> {
         if self.deferred_pending > 0 {
             self.pending_items += self.deferred_pending;
             self.deferred_pending = 0;
+            // Their units are back in `pending_items`.
+            let mut load = self.outstanding_loads.head;
+            while !load.is_null() {
+                // SAFETY: linked ⇒ arena-live; bundle thread.
+                unsafe {
+                    (*load).deferred = false;
+                    load = (*load).outstanding.next;
+                }
+            }
 
             transpiler.drain_defer_task.init();
             transpiler.drain_defer_task.schedule();
@@ -239,3 +258,82 @@ impl<'a> Graph<'a> {
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
 use bun_ast::SideEffects;
+
+/// Intrusive doubly-linked membership in an [`OutstandingList`].
+pub struct OutstandingLink<T> {
+    prev: *mut T,
+    pub(crate) next: *mut T,
+    linked: bool,
+}
+impl<T> Default for OutstandingLink<T> {
+    fn default() -> Self {
+        Self {
+            prev: core::ptr::null_mut(),
+            next: core::ptr::null_mut(),
+            linked: false,
+        }
+    }
+}
+pub trait OutstandingNode: Sized {
+    fn link(&mut self) -> &mut OutstandingLink<Self>;
+}
+/// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
+pub struct OutstandingList<T: OutstandingNode> {
+    head: *mut T,
+}
+impl<T: OutstandingNode> Default for OutstandingList<T> {
+    fn default() -> Self {
+        Self {
+            head: core::ptr::null_mut(),
+        }
+    }
+}
+impl<T: OutstandingNode> OutstandingList<T> {
+    pub(crate) fn push(&mut self, node: *mut T) {
+        // SAFETY: `node` is arena-live and unlinked; bundle thread.
+        unsafe {
+            let l = (*node).link();
+            debug_assert!(!l.linked);
+            l.linked = true;
+            l.prev = core::ptr::null_mut();
+            l.next = self.head;
+            if !self.head.is_null() {
+                (*self.head).link().prev = node;
+            }
+        }
+        self.head = node;
+    }
+    /// No-op if `node` is not linked (already answered / never dispatched).
+    pub(crate) fn unlink(&mut self, node: &mut T) {
+        let node_ptr: *mut T = node;
+        let l = node.link();
+        if !l.linked {
+            return;
+        }
+        l.linked = false;
+        let (prev, next) = (l.prev, l.next);
+        l.prev = core::ptr::null_mut();
+        l.next = core::ptr::null_mut();
+        // SAFETY: neighbours are linked ⇒ arena-live; bundle thread.
+        unsafe {
+            if prev.is_null() {
+                debug_assert!(core::ptr::eq(self.head, node_ptr));
+                self.head = next;
+            } else {
+                (*prev).link().next = next;
+            }
+            if !next.is_null() {
+                (*next).link().prev = prev;
+            }
+        }
+    }
+    pub(crate) fn pop(&mut self) -> Option<*mut T> {
+        let head = self.head;
+        if head.is_null() {
+            return None;
+        }
+        // SAFETY: linked ⇒ arena-live.
+        self.unlink(unsafe { &mut *head });
+        Some(head)
+    }
+}

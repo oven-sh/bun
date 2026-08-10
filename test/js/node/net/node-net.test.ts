@@ -878,6 +878,67 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.cause?.name).toBe("TimeoutError");
 });
 
+// Regression test for #30697: net.connect({ localPort, lookup }) on the
+// happy-eyeballs path must not throw a ReferenceError before the socket
+// is opened.
+describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
+  describe.each([
+    {
+      label: "IPv4 first",
+      addresses: [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ],
+    },
+    {
+      label: "IPv6 first",
+      addresses: [
+        { address: "::1", family: 6 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+    },
+  ])("$label", ({ addresses }) => {
+    it("does not throw ReferenceError", async () => {
+      const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
+      const server = createServer();
+      server.once("error", onListenError);
+      // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
+      // happy-eyeballs falls through to the IPv4 address.
+      server.listen(0, "127.0.0.1", () => onListen(server));
+      await using _server = await listening;
+      const { port } = server.address() as { port: number };
+
+      // Non-zero localPort is required to enter the branch that used to
+      // crash, and the local bind is actually applied during connect, so it
+      // must be a free unprivileged port: grab an ephemeral one and release it.
+      const { promise: probing, resolve: onProbe, reject: onProbeError } = Promise.withResolvers<number>();
+      const probe = createServer();
+      probe.once("error", onProbeError);
+      probe.listen(0, "127.0.0.1", () => onProbe((probe.address() as { port: number }).port));
+      const localPort = await probing;
+      await new Promise(resolve => probe.close(resolve));
+
+      const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
+      const client = new Socket();
+      client.on("error", onError);
+      client.on("connect", () => onConnect());
+
+      client.connect({
+        port,
+        host: "localhost",
+        localPort,
+        lookup: (_hostname, _opts, cb) => cb(null, addresses),
+      } as any);
+
+      try {
+        await connected;
+      } finally {
+        client.destroy();
+      }
+    });
+  });
+});
+
 it.if(isWindows)(
   "should work with named pipes",
   async () => {
@@ -1905,4 +1966,85 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,
+// WSAEADDRINUSE) from getsockopt(SO_ERROR) and the pre-connect bind(); these
+// must be mapped before the errno whitelist, or every failure degrades to
+// ECONNREFUSED. POSIX already reports these correctly.
+describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
+  it("localPort in use reports EADDRINUSE", async () => {
+    const server1 = createServer(() => {});
+    const server2 = createServer(() => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server1.on("error", reject);
+        server1.listen(0, "127.0.0.1", resolve);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server2.on("error", reject);
+        server2.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server1.address() as import("node:net").AddressInfo).port;
+      const localPort = (server2.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect({ host: "127.0.0.1", port, localAddress: "127.0.0.1", localPort });
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+      expect(err.code).toBe("EADDRINUSE");
+    } finally {
+      server1.close();
+      server2.close();
+    }
+  });
+
+  it("server resetAndDestroy() surfaces ECONNRESET on the client", async () => {
+    const server = createServer(c => {
+      c.resetAndDestroy();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect(port, "127.0.0.1");
+        c.on("error", resolve);
+        c.on("close", hadError => {
+          if (!hadError) resolve(Object.assign(new Error("clean close"), { code: "NOERR" }));
+        });
+      });
+      expect(err.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
+    const dir = tmpdirSync();
+    const regular = join(dir, "not-a-socket.txt");
+    fs.writeFileSync(regular, "");
+    const missing = join(dir, "does-not-exist");
+
+    const errFor = (path: string) =>
+      new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = createConnection(path);
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+
+    const regularErr = await errFor(regular);
+    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code);
+
+    const missingErr = await errFor(missing);
+    expect(missingErr.code).toBe("ENOENT");
+  });
 });

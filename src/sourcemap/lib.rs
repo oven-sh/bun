@@ -855,7 +855,8 @@ pub(crate) fn parse_url(
                 match source[DATA_PREFIX.len()] {
                     b';' => {
                         let after = &source[DATA_PREFIX.len() + 1..];
-                        let Some(comma) = after.iter().position(|&b| b == b',') else {
+                        let Some(comma) = bun_core::strings::index_of_char_usize(after, b',')
+                        else {
                             break 'try_data_url;
                         };
                         if &after[..comma] != b"base64" {
@@ -1142,11 +1143,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Sli
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
-    let end = source[start..]
-        .iter()
-        .position(|&b| b == b'\n')
-        .map(|p| start + p)
-        .unwrap_or(source.len());
+    let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
     Some(bun_core::zig_string::Slice::from_utf8_never_free(url))
 }
@@ -1155,9 +1152,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
-    let end = source[start..]
-        .iter()
-        .position(|&c| c == b'\n' as u16)
+    let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)
         .unwrap_or(source.len());
     let mut url = &source[start..end];

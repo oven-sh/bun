@@ -13,7 +13,6 @@ use bun_uws as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-use crate::ipc::IPC; // scoped logger static for `bun_core::scoped_log!(IPC, ...)`
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
@@ -59,11 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
-/// `api::JsException` lives in
-/// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
-/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
-/// this crate — see the `schema_api` module doc in lib.rs.
-pub type ExceptionList = Vec<crate::schema_api::JsException>;
+pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
@@ -73,6 +68,10 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
+    /// True when the entry module evaluated as CommonJS: Node reports a CJS
+    /// entry's top-level throw with origin `uncaughtException` but an ESM
+    /// entry rejection with `unhandledRejection`; the run command consults this.
+    pub evaluated_as_cjs: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -184,6 +183,17 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
+    /// LAYERING: the real type is `bun_runtime`'s
+    /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
+    ///
+    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
+    /// is currently on this VM's native stack, if any. Content handlers reach
+    /// their sink through it (to record a thrown exception, and to park the JS
+    /// wrapper + pending promise when an async handler suspends the rewrite).
+    /// Saved and restored LIFO around every lol-html call, so a handler body
+    /// that synchronously starts a nested `transform()` nests correctly.
+    /// All-zero bytes decode as `None` (null niche).
+    pub html_rewriter_active_sink: Option<core::ptr::NonNull<c_void>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -220,7 +230,7 @@ pub struct VirtualMachine {
     pub(crate) default_tls_reject_unauthorized: Option<bool>,
     // LAYERING: real type is `Option<http::HTTPVerboseLevel>` (forward dep);
     // stored as the enum's `u8` repr.
-    pub(crate) default_verbose_fetch: Option<u8>,
+    pub(crate) default_verbose_fetch: core::cell::Cell<Option<u8>>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
     /// that we don't accidentally make a stack copy of it; only use it through
@@ -232,6 +242,15 @@ pub struct VirtualMachine {
     // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
+    /// The current entry load reached module evaluation: the root's graph is
+    /// linked and executing (set from the moduleLoaderEvaluate hook once the
+    /// root record — `Bun__VM__entryRootKey` — is Evaluating; a module some
+    /// other root evaluates meanwhile, e.g. a preload's un-awaited import(),
+    /// does not count). What is still pending on the entry promise after that
+    /// is a top-level await.
+    pub entry_evaluation_started: bool,
+    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
+    pub(crate) jobs: core::cell::UnsafeCell<crate::job::JobList>,
 
     pub(crate) had_errors: bool,
 
@@ -308,9 +327,17 @@ pub struct VirtualMachine {
     pub module_loader: ModuleLoader::ModuleLoader,
 
     pub(crate) gc_controller: crate::GarbageCollectionController,
-    // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
+    /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
+    /// The thread holds a ref on it for its whole life.
     pub worker: Option<*const c_void>,
-    pub ipc: Option<IPCInstanceUnion>,
+    /// Workers created on this thread and not yet released by it. Parent-thread
+    /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
+    /// `join_child_workers` drains at exit.
+    pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
+    /// The one object other threads hold to reach this VM (post completions,
+    /// wake, keep-alive, borrow VM-owned memory); closed by `teardown`.
+    handle: core::mem::ManuallyDrop<crate::VmHandle>,
+    pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -369,12 +396,17 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
-    safe fn Bun__closeAllSQLiteDatabasesForTermination();
+    safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
+    safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
-    safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
+    safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
+
+bun_core::define_scoped_log!(teardown_log, Worker, hidden);
 
 pub const HOT_RELOAD_HOT: u8 = 1;
 pub const HOT_RELOAD_WATCH: u8 = 2;
@@ -467,6 +499,34 @@ impl VMHolder {
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
     }
+
+    /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
+    /// flushes the CPU and heap profiles before sending the (likely fatal)
+    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
+        let Some(vm_ptr) = VM.get() else { return };
+        // SAFETY: called on the JS thread that owns this VM (process._kill).
+        let vm = unsafe { &mut *vm_ptr };
+        if let Some(config) = vm.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = vm.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+        // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
+        // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
+        // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
+        crate::node_compile_cache::persist_now();
+    }
 }
 
 #[thread_local]
@@ -493,6 +553,33 @@ impl ExitHandler {
     }
 
     #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
+        vm.entry_evaluation_started = true;
+    }
+
+    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+    /// any other VM answers `true` so the hook's registry probe never runs there.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
+        vm.entry_evaluation_started || vm.worker.is_none()
+    }
+
+    /// The module-registry key of the current entry load's root: the
+    /// `bun:main` wrapper when the entry is transpiled through it, else the
+    /// entry path itself (see `reload_entry_point`). Borrowed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryRootKey(
+        vm: &VirtualMachine,
+        out: &mut bun_core::String,
+    ) {
+        *out = if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+            bun_core::String::static_(MAIN_FILE_NAME)
+        } else {
+            bun_core::String::borrow_utf8(vm.main())
+        };
+    }
+
+    #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: u8) {
         vm.exit_handler.exit_code = code;
     }
@@ -504,10 +591,11 @@ impl ExitHandler {
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
-        Process__dispatchOnExit(vm.global(), exit_code);
+        // `process.on('exit')` handlers are user script (see `on_exit`).
+        if vm.script_allowed() {
+            Process__dispatchOnExit(vm.global(), exit_code);
+        }
         if vm.worker.is_none() {
-            Bun__closeAllSQLiteDatabasesForTermination();
-            Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
             Bun__WebView__closeAllForTermination();
         }
     }
@@ -515,6 +603,9 @@ impl ExitHandler {
     /// See [`dispatch_on_exit`] for the `&mut self → &VirtualMachine`
     /// signature change.
     pub(crate) fn dispatch_on_before_exit(vm: &VirtualMachine) {
+        if !vm.script_allowed() {
+            return;
+        }
         let exit_code = vm.exit_handler.exit_code;
         let global = vm.global();
         let _ = jsc::from_js_host_call_generic(global, || {
@@ -752,6 +843,61 @@ impl VirtualMachine {
         unsafe { &*self.event_loop }
     }
 
+    /// A clone of this VM's [`crate::VmHandle`] — what off-thread work captures
+    /// instead of a pointer to the VM or its event loop.
+    #[inline]
+    pub fn handle(&self) -> crate::VmHandle {
+        (*self.handle).clone()
+    }
+
+    /// May native code enter user JavaScript right now? `true` in normal
+    /// operation and while the exit handlers run; `false` once teardown has
+    /// forbidden execution — the start of [`teardown`](Self::teardown), or
+    /// already in `on_exit` for a worker its parent terminated. Node's
+    /// `can_call_into_js()`. JS thread.
+    ///
+    /// This is **not** something callers of `JSValue::call` consult: once
+    /// script is forbidden, the native→JS boundary itself
+    /// (`Bun__JSValue__call`, WebCore's `JSEventListener`) turns a call into a
+    /// silent no-op and JSC discards microtasks — the same model as Node's
+    /// `InternalMakeCallback` and WebCore's `isJSExecutionForbidden`. Read it
+    /// only for a *resource* decision that differs during teardown (e.g.
+    /// "release this parked request instead of waiting for a JS consumer"),
+    /// never as a guard in front of a call.
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        self.handle.script_allowed()
+    }
+
+    /// From here no script runs on this VM: JS entry is refused at the
+    /// native→JS boundary (`Bun__JSValue__call`, `EventLoop::run_callback*`,
+    /// WebCore's `JSEventListener`) and JSC discards microtasks. Both the
+    /// ordinary teardown (after the stop phase) and a parent-terminated
+    /// worker's exit (before it) go through here.
+    pub fn forbid_script(&self) {
+        Zig__GlobalObject__forbidExecution(self.global());
+        self.handle.stop();
+    }
+
+    /// Which embedded loop is current (`event_loop` points at the regular loop
+    /// except while a macro runs). Off-thread completions carry this so they
+    /// land on the loop that was current when their work started.
+    #[inline]
+    pub fn current_loop_kind(&self) -> crate::LoopKind {
+        if core::ptr::eq(
+            self.event_loop.cast_const(),
+            &raw const self.regular_event_loop,
+        ) {
+            crate::LoopKind::Regular
+        } else {
+            debug_assert!(core::ptr::eq(
+                self.event_loop.cast_const(),
+                &raw const self.macro_event_loop
+            ));
+            crate::LoopKind::Macro
+        }
+    }
+
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
     /// `runtime-hostfn-safe` branch; both names funnel into the single audited
     /// `unsafe` deref above.
@@ -985,17 +1131,11 @@ impl VirtualMachine {
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down {
-            return crate::ScriptExecutionStatus::Stopped;
+        if self.is_shutting_down || !self.script_allowed() {
+            crate::ScriptExecutionStatus::Stopped
+        } else {
+            crate::ScriptExecutionStatus::Running
         }
-
-        if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
-                return crate::ScriptExecutionStatus::Stopped;
-            }
-        }
-
-        crate::ScriptExecutionStatus::Running
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
@@ -1038,6 +1178,8 @@ impl VirtualMachine {
             && ((active as usize)
                 + self.active_tasks
                 + el.tasks.readable_length()
+                + el.yield_tasks.len()
+                + (!el.concurrent_tasks.is_empty() as usize)
                 + (el.has_pending_refs() as usize)
                 > 0)
     }
@@ -1458,6 +1600,27 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&mut self) {
+        // Decide once whether the exit sequence may run script. It can be
+        // entered with an exception pending: `process.exit()` from inside a
+        // throwing/catching callback (an ordinary exception — cleared here, as
+        // Node's EmitProcessExit does under a TryCatch), or after
+        // `worker.terminate()` / a termination request (script must not run at
+        // all: no 'exit' handlers or close events for a forcefully terminated
+        // worker, matching Node and WebCore's terminate()).
+        {
+            unsafe extern "C" {
+                safe fn Bun__GlobalObject__clearExceptionsForExit(global: &JSGlobalObject);
+            }
+            Bun__GlobalObject__clearExceptionsForExit(self.global());
+            // A worker stopped by its parent (worker.terminate()) runs no exit
+            // handlers. A worker exiting on its own — process.exit(), or an
+            // uncaught exception — does, even though Bun stops its script with
+            // the same trap.
+            if self.worker_ref().is_some_and(|w| w.stopped_by_parent()) {
+                self.forbid_script();
+            }
+        }
+
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
@@ -1508,6 +1671,12 @@ impl VirtualMachine {
         }
         // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
         self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
     }
 
     pub fn global_exit(&mut self) -> ! {
@@ -1517,108 +1686,282 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
-            #[cfg(windows)]
-            if let Some(t) = self.event_loop_mut().forever_timer.take() {
-                // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::tick_possibly_forever`; `close::<true>()`
-                // (fallthrough) frees it without re-entering the loop.
-                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
-            }
-            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
-            // while `runtime_state`, the event loop, and the JSC heap are all
-            // still alive: drops their JS pins and in-heap `+1` refs so the GC
-            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
-            // them instead of leaking. Must precede `close_all_socket_groups`
-            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
-            // observed during the walk.
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: `self` is the live per-thread VM on the JS thread;
-                // `runtime_state` is still installed (it's torn down in
-                // `destroy()`, well after `global_exit`).
-                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
-            }
-            // Same reason: the GC timers are heap nodes too.
-            self.gc_controller.deinit();
-            // Detached worker threads may still be in startVM()/spin() using
-            // the process-global resolver BSSMap singletons. transpiler.deinit()
-            // below frees those singletons, so request termination of every
-            // live worker and wait for each to reach shutdown() first.
-            if let Some(hooks) = runtime_hooks() {
-                // Main-thread only; futex-waits on every registered worker
-                // until each unparks at shutdown().
-                (hooks.terminate_all_workers_and_wait)(10_000);
-            }
-
-            // Mirror web_worker.rs::shutdown(): fence DeferredWorkTimer
-            // producers before the drain so a cross-thread scheduleWorkSoon
-            // that raced the shutdown either enqueued (and is caught by the
-            // drain below) or observes the flag under m_lock and drops.
-            // destructOnExit sets it again (idempotently).
-            Bun__JSCTaskScheduler__markShuttingDown(self.global());
-
-            // Every worker has now posted its close task to our concurrent
-            // queue (OUTSTANDING is decremented after dispatchExit). Drop
-            // those queued lambdas — without running them — so the captured
-            // `Ref<Worker>` releases and the final GC sweep below brings the
-            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
-            // precede `destructOnExit`: deleting after JSC VM teardown would
-            // run `~JSEventListener` against freed Weak handle storage.
-            self.event_loop_mut().drop_concurrent_cpp_tasks();
-
-            // Embedded per-VM socket groups must drain while JSC is still
-            // alive (closeAll() fires on_close → JS). After JSC teardown,
-            // RareData's Drop only deinit()s the groups (asserts empty).
-            if self.rare_data.is_some() {
-                // Note: reshaped for borrowck — `close_all_socket_groups`
-                // walks the loop's group list via `vm.uws_loop()` and never
-                // touches `vm.rare_data`, so the disjoint reborrow is sound.
-                // SAFETY: `self` is the live per-thread VM; the shared borrow
-                // only reads `event_loop_handle` (no overlap with `rare_data`).
-                let vm_ref = unsafe { &*core::ptr::from_ref(self) };
-                self.rare_data
-                    .as_deref_mut()
-                    .unwrap()
-                    .close_all_socket_groups(vm_ref);
-            }
-            // Destroy the per-VM c-ares channel while JSC / `RareData.file_polls`
-            // / `runtime_state` are all still live — `ares_destroy()` re-enters
-            // them from its EDESTRUCTION and socket-state callbacks. Mirrors
-            // `WebWorker::shutdown`.
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.close_dns_for_terminate)();
-            }
-
-            // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
-            // in-flight request; with the JS thread exiting those never reach
-            // a terminal state. Ask it to reclaim them now (waits up to 1s).
-            bun_http::shutdown_for_exit();
-
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live heap.
-            self.event_loop_mut().release_queued_tasks_for_shutdown();
-
-            if let Some(rare) = self.rare_data.as_deref_mut() {
-                rare.release_js_handles();
-            }
-
-            Zig__GlobalObject__destructOnExit(self.global());
-
-            // lastChanceToFinalize() above runs Listener/Server finalize →
-            // their own embedded group.closeAll() → sockets land in
-            // loop.closed_head. Drain again now or LSAN reports every accepted
-            // socket that was still open at process.exit().
-            // SAFETY: `uws::Loop::get()` returns the process-global usockets
-            // loop, which is live for the process lifetime.
-            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
-
-            self.destroy();
+            // SAFETY: main-thread VM on the main thread; exit handlers have run.
+            unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
+        } else {
+            self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// Checkpoint + close the sqlite connections *this* VM opened, while it is
+    /// alive and no user script will touch them again. Never another VM's: a
+    /// worker still running when the main thread exits without joining it owns
+    /// live objects on another thread; its WAL is recovered on next open, as
+    /// after any abrupt exit (and as in Node).
+    fn close_sqlite_databases_for_exit(&self) {
+        Bun__closeAllSQLiteDatabasesForTermination(self.global());
+        Bun__closeAllNodeSqliteDatabasesForTermination(self.global());
+    }
+
+    /// Tear down this thread's VM: the one sequence both a finished worker
+    /// thread and the exiting main thread (under `BUN_DESTRUCT_VM_ON_EXIT`) run.
+    /// The exit handlers ran before this (`on_exit`); nothing below enters script.
+    ///
+    ///  A. stop — script forbidden (microtasks/modules cleared, termination
+    ///     requested), WebCore stop phase (child workers asked to terminate;
+    ///     ports/channels/WebSockets closed without events; listeners stripped),
+    ///     everything registered as stoppable closed natively (servers,
+    ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
+    ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
+    ///     channel closed.
+    ///  B. release — cron, user timers and GC-controller timers cancelled; child
+    ///     workers joined; this VM's sqlite connections closed; the JS side of
+    ///     boxed pool jobs released; counted off-thread work waited for; main:
+    ///     HTTP thread parked; the VM handle closed; (Windows worker) in-flight
+    ///     uv requests completed; queued tasks and RareData's JS handles
+    ///     released without running.
+    ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
+    ///     timers ride the timer heap until ~VM returns); sockets they closed
+    ///     drained; then the timer heap's loop handles closed.
+    ///  D. worker: keep-alive delta folded, uSockets loop freed and (Windows)
+    ///     the uv loop closed — every handle unlinks while its owner is still
+    ///     allocated. Main proceeds to process exit instead.
+    ///  E. `destroy()`: RareData, runtime state, event loop.
+    ///
+    /// # Safety
+    /// `this` is this thread's VM and no other thread can reach it any more
+    /// (worker: unpublished under `vm_lock`); `is_shutting_down` is set and
+    /// the exit handlers have run.
+    pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
+        // SAFETY: per fn contract — sole owner on the owning thread. Shared
+        // here; the few `&mut` steps below are statement-scoped, because the
+        // hooks re-derive their own access from `this`.
+        let vm = unsafe { &*this };
+        let hooks = runtime_hooks();
+
+        // ---- A. no more script; stop phase ------------------------------------
+        // The user's last word was the exit handlers (`on_exit`, before this).
+        // Everything below closes natively and dispatches nothing into JS —
+        // Node runs its environment cleanup under a DisallowJavascriptExecution
+        // scope, WebCore's ActiveDOMObject::stop() runs no script — so no
+        // 'close'/'error' handler runs after 'exit', and nothing can reopen what
+        // a sweep just closed.
+        vm.forbid_script();
+        Zig__GlobalObject__prepareForDestruction(vm.global());
+        // SAFETY: fn contract.
+        let sweep = || unsafe {
+            let _ = Self::stop_phase_sweep(this, kind);
+            let second = Self::stop_phase_sweep(this, kind);
+            debug_assert!(
+                second == SweepResult::Idle,
+                "a native close path registered a stoppable resource during teardown"
+            );
+        };
+        sweep();
+        // A worker closes its uv loop below (D), so requests still in flight
+        // complete here, against this live VM: their handles were just closed,
+        // so what remains finishes on its own (threadpool work), and a
+        // completion may start more — open a handle, schedule pool work (still
+        // accepted, and awaited in B) — hence sweep again after each drain.
+        // The exiting main thread neither closes its loop nor may nest uv_run
+        // here: process.exit() can be running inside a libuv completion callback.
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            while bun_sys::windows::libuv::Loop::drain_requests() {
+                sweep();
+            }
+        }
+        teardown_log!("teardown: stopped");
+
+        // ---- B. release ------------------------------------------------------
+        #[cfg(windows)]
+        if let Some(t) = vm.event_loop_mut().forever_timer.take() {
+            // SAFETY: live usockets timer from `hold_forever_poll`; closed like
+            // any us_timer (freed by its close callback when the loop turns).
+            unsafe { uws::Timer::close::<true>(t.as_ptr()) };
+        }
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            (hooks.stop_cron_for_vm_teardown)(unsafe { &mut *this });
+            // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
+            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
+            // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
+            // this heap and keep being scheduled until ~VM returns.
+            // SAFETY: fn contract.
+            unsafe { (hooks.cancel_all_timers)(this) };
+            // And unlink every other kind of EventLoopTimer (socket timeouts,
+            // reconnect/lifetime timers, schedulers): their owners stay valid
+            // and find them CANCELLED, but nothing fires again even where the
+            // loop still turns (JSC's timers).
+            // SAFETY: fn contract.
+            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
+        }
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).gc_controller.deinit();
+            crate::web_worker::join_child_workers(&mut *this);
+        }
+        // Children have closed their own; now this VM's sqlite connections
+        // checkpoint and close, before finalizers could.
+        vm.close_sqlite_databases_for_exit();
+        // Work still out on other threads (pool jobs, fetches): its JS side
+        // — promises, callbacks, pins, protected buffers, keep-alives — is
+        // released here, on this thread with the heap alive. After `close()`
+        // below the other thread cannot hand it back; it frees only its own part.
+        vm.jobs().release_all_js(&vm.global().js_thread());
+        // Pool work stored inside JS-owned objects (transpile slots, zlib
+        // streams) must be back before the handle closes: it completes into the
+        // still-open queue and is released below, on this thread.
+        teardown_log!(
+            "teardown: waiting for {} unit(s) of off-thread work",
+            vm.handle.embedded_work_outstanding()
+        );
+        vm.handle.wait_for_embedded_work();
+        // The exiting main thread now parks the process-wide HTTP thread —
+        // after the children it also served are joined and this VM's own
+        // requests are back — so it cannot touch what process exit frees. If
+        // it does not acknowledge (≤1 s), leave the rest to process exit.
+        if matches!(kind, Teardown::MainThreadExit) && !bun_http::shutdown_for_exit() {
+            teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
+            return;
+        }
+        // From here no other thread reaches this VM: posts are refused (the
+        // poster releases its task itself), wake/keep-alive are no-ops, and any
+        // job still using VM-owned memory has finished (close waits for it).
+        vm.handle.close();
+        // Tasks posted by other threads (HTTP, children before they were
+        // joined) or by the request completions in A: release, do not run —
+        // their JSC handles must drop against a live heap.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).release_queued_work();
+            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
+        }
+        teardown_log!("teardown: script forbidden, resources cancelled, children joined");
+
+        // ---- C. JSC VM -------------------------------------------------------
+        match kind {
+            Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
+            Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
+        }
+        // Finalizers just closed the sockets only they owned; `us_socket_close`
+        // queues onto `loop->data.closed_head`, normally freed on the next tick.
+        vm.uws_loop_mut().drain_closed_sockets();
+        // Nothing schedules a WTFTimer any more: the timer heap's loop handles
+        // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract; runtime state still installed.
+            unsafe { (hooks.close_timer_loop_handles_after_vm_destroyed)(this) };
+        }
+        teardown_log!("teardown: JSC VM destroyed");
+
+        // ---- D. loops (worker; main exits the process instead) ----------------
+        if matches!(kind, Teardown::Worker) {
+            // Whatever B/C unref'd through the concurrent counter, folded now:
+            // on Windows it shares `active_handles` with libuv and a residue
+            // would keep the loop close below spinning.
+            vm.event_loop_mut().apply_concurrent_ref_delta();
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
+                rare.detach_socket_groups_from_loop();
+            }
+            // SAFETY: this thread's loop; nothing ticks it any more.
+            unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+            bun_uws::free_thread_loop();
+            teardown_log!("teardown: uSockets loop freed");
+            #[cfg(windows)]
+            bun_sys::windows::libuv::Loop::close_thread_loop();
+            teardown_log!("teardown: loops closed");
+        }
+
+        // ---- E. free owners --------------------------------------------------
+        // SAFETY: fn contract; last use of `this`.
+        unsafe { (*this).destroy() };
+    }
+}
+
+impl VirtualMachine {
+    /// One stop-phase sweep: registered handles (servers, listeners, watchers,
+    /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
+    /// handles, every socket group, the VM-global dns channel. Reports whether
+    /// it found anything.
+    ///
+    /// # Safety
+    /// As [`teardown`](Self::teardown): sole owner on the owning thread, heap alive.
+    unsafe fn stop_phase_sweep(this: *mut Self, kind: Teardown) -> SweepResult {
+        let hooks = runtime_hooks();
+        let mut result = SweepResult::Idle;
+        if let Some(hooks) = hooks {
+            // SAFETY: fn contract.
+            result = result.and(unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) });
+        }
+        // A worker's uv loop is closed in D, so every pipe / tty / child-process
+        // handle open on it closes now — through whoever drives it (reader,
+        // writer, IPC channel, named pipe, Process), or directly if nothing
+        // adopted it — so pending writes complete (ECANCELED) against a live VM
+        // and no request on them can hold up the loop drain in B. The exiting
+        // main thread keeps its loop (the OS reclaims the handles); sweeping
+        // them there only re-enters stream owners under still-running script.
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
+        }
+        let _ = kind;
+        // `close_all_socket_groups` walks the loop's group list through the VM
+        // and never touches `rare_data`, so the two accesses are disjoint.
+        // SAFETY: fn contract.
+        if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
+            // SAFETY: as above.
+            result = result.and(rare.close_all_socket_groups(unsafe { &*this }));
+        }
+        if let Some(hooks) = hooks {
+            result = result.and((hooks.stop_dns_for_vm_teardown)());
+        }
+        result
+    }
+
+    /// Release — never run — everything queued on both event loops (tasks,
+    /// concurrent tasks, pending immediates) while the JSC heap and this
+    /// thread's loop are alive: their JS handles and keep-alives drop now. The
+    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
+    /// it is still there. Teardown phase B; also the one thing an owner that
+    /// calls `destroy()` without a teardown (bake's build VM) must do first.
+    pub fn release_queued_work(&mut self) {
+        self.regular_event_loop.release_queued_tasks();
+        self.macro_event_loop.release_queued_tasks();
+        self.transpiler_store.release_queued_jobs_for_teardown();
+    }
+}
+
+/// Which exit funnel is running [`VirtualMachine::teardown`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Teardown {
+    Worker,
+    MainThreadExit,
+}
+
+/// What one stop-phase sweep found (see `VirtualMachine::stop_phase_sweep`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum SweepResult {
+    /// Nothing was registered / open / pending; the sweep did no work.
+    Idle,
+    /// The sweep stopped or closed at least one thing (whose close handlers may
+    /// have opened something else).
+    Stopped,
+}
+
+impl SweepResult {
+    pub fn and(self, other: SweepResult) -> SweepResult {
+        if self == SweepResult::Stopped || other == SweepResult::Stopped {
+            SweepResult::Stopped
+        } else {
+            SweepResult::Idle
+        }
     }
 }
 
@@ -1733,10 +2076,6 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
-    /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
-    pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
-    /// `node_cluster_binding.child_singleton.deinit()`.
-    pub ipc_child_singleton_deinit: fn(),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
@@ -1778,17 +2117,9 @@ pub struct RuntimeHooks {
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
-    pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
-    /// `WebWorker.terminateAllAndWait(timeout_ms)`.
-    /// `WebWorker` lives in this crate but the
-    /// `web_worker` module is above `virtual_machine` in the dep graph
-    /// (forward use) AND the body re-enters `bun_runtime` for the worker
-    /// thread's `event_loop().auto_tick()`, so [`global_exit`] reaches it
-    /// through this slot. Prevents detached worker threads from racing the
-    /// freed resolver BSSMap singletons during `transpiler.deinit()`.
-    pub terminate_all_workers_and_wait: fn(timeout_ms: u64),
+    pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// Same impl as `cron_clear_all_teardown` but
+    /// Same impl as `stop_cron_for_vm_teardown` but
     /// the `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &mut VirtualMachine),
@@ -1830,7 +2161,23 @@ pub struct RuntimeHooks {
     /// runs those callbacks against freed state. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
-    pub close_dns_for_terminate: fn(),
+    pub stop_dns_for_vm_teardown: fn() -> SweepResult,
+    /// Stop every registered native handle behind a JS object (servers,
+    /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
+    /// with the VM alive right after the WebCore stop phase.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
+    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
+    /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
+    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
+    /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
+    /// so the loop close unlinks them before the runtime state is freed.
+    ///
+    /// # Safety
+    /// JS thread; `runtime_state` installed.
+    pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -1863,12 +2210,6 @@ bun_io::link_impl_EventLoopCtx! {
                 .pending_unref_counter
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         },
-        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
-        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
-        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
-        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
-        ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
-        unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
         after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             let vm = vm_from_owner(this.cast());
@@ -2099,13 +2440,16 @@ impl VirtualMachine {
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
-            addr_of_mut!((*vm).ipc).write(None);
+            addr_of_mut!((*vm).pending_ipc).write(None);
             // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
             // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
             // `URL` is a struct of `&[u8]` references — all-zero bytes violate
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).child_workers).write(Vec::new());
+            addr_of_mut!((*vm).handle)
+                .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -2249,9 +2593,8 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
-        // accessed here (no overlapping `&mut EventLoop`).
-        self.event_loop_mut().wait_for_promise(promise);
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
+        self.event_loop_mut().wait_for_promise(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -2384,6 +2727,9 @@ impl VirtualMachine {
                 }
             }
 
+            // Preloads (evaluated above, synchronously) are not the entry: only
+            // module evaluations from here on mark the entry graph as executing.
+            self.entry_evaluation_started = false;
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
@@ -2408,6 +2754,7 @@ impl VirtualMachine {
             JSValue::from_cell(promise).ensure_still_alive();
             Ok(promise)
         } else {
+            self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =
@@ -2456,7 +2803,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
@@ -2792,122 +3139,12 @@ pub struct Options {
     pub is_main_thread: bool,
 }
 
-/// State of the child-side IPC channel: enabled-but-waiting for a JS listener, or fully initialized.
-pub enum IPCInstanceUnion {
-    /// IPC is put in this "enabled but not started" state when IPC is
-    /// detected but the client JavaScript has not yet done `.on("message")`.
-    Waiting {
-        fd: bun_sys::Fd,
-        mode: crate::ipc::Mode,
-    },
-    Initialized(*mut IPCInstance),
-}
-
-/// Child-side IPC channel: the send queue plus the global object it dispatches incoming messages into.
-pub struct IPCInstance {
-    pub global_this: *mut JSGlobalObject,
-    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
-    /// borrowed handle so the isolation swap can skip it.
-    #[cfg(unix)]
-    pub(crate) group: *mut uws::SocketGroup,
-    pub data: crate::ipc::SendQueue,
-}
-
-impl IPCInstance {
-    pub fn new(v: IPCInstance) -> *mut IPCInstance {
-        bun_core::heap::into_raw(Box::new(v))
-    }
-    /// Only reached from the `get_ipc_instance` error path.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
-    /// not yet freed or aliased.
-    pub(crate) unsafe fn deinit(this: *mut IPCInstance) {
-        // SAFETY: caller contract — `this` is a live heap::alloc'd box.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub fn handle_ipc_message(&mut self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        crate::mark_binding!();
-        let global_this = self.global_this;
-        // SAFETY: VM singleton + its event loop are process-lifetime.
-        let event_loop = VirtualMachine::get().event_loop_mut();
-
-        match *message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            crate::ipc::DecodedIPCMessage::Version(v) => {
-                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
-            }
-            crate::ipc::DecodedIPCMessage::Data(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
-                // `global_this` is the live VM global; `JSGlobalObject` is an
-                // opaque ZST handle so `opaque_ref` is the centralised
-                // zero-byte deref proof (panics on null).
-                Process__emitMessageEvent(JSGlobalObject::opaque_ref(global_this), data, handle);
-                event_loop.exit();
-            }
-            crate::ipc::DecodedIPCMessage::Internal(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                event_loop.enter();
-                if let Some(hooks) = runtime_hooks() {
-                    // SAFETY: hook fn is supplied by `bun_runtime` at startup;
-                    // `global_this` is the live VM global.
-                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
-                }
-                event_loop.exit();
-            }
-        }
-    }
-
-    /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close(&mut self) {
-        bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        // SAFETY: VM singleton is process-lifetime.
-        let vm = VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop_mut();
-        if let Some(hooks) = runtime_hooks() {
-            (hooks.ipc_child_singleton_deinit)();
-        }
-        event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
-        event_loop.exit();
-        // Group is embedded in RareData and shared with subprocess IPC; nothing
-        // to free here.
-        vm.channel_ref.disable();
-    }
-}
-
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
-// mutating VM/process state through it is interior mutation invisible to Rust.
-unsafe extern "C" {
-    safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
-    safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
-}
-
-/// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
-/// the `Subprocess` impl in `bun_runtime`; lives here because `IPCInstance`
-/// itself is defined in this crate.
-impl crate::ipc::SendQueueOwner for IPCInstance {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this
-    }
-    fn handle_ipc_close(&mut self) {
-        IPCInstance::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        IPCInstance::handle_ipc_message(self, &msg, handle)
-    }
-    /// VM-side owner has no JS-visible `this`.
-    fn this_jsvalue(&self) -> JSValue {
-        JSValue::ZERO
-    }
-    fn kind(&self) -> crate::ipc::SendQueueOwnerKind {
-        crate::ipc::SendQueueOwnerKind::VirtualMachine
-    }
+/// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
+/// `ipc_host::get_ipc_instance` when JS first attaches a listener.
+#[derive(Clone, Copy)]
+pub struct PendingIpc {
+    pub fd: bun_sys::Fd,
+    pub advanced: bool,
 }
 
 /// Caller intent for runtime module resolution.
@@ -2977,6 +3214,11 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
+    // In a `data:` URL everything after the comma is the payload; a `?` is
+    // part of the data, not a query string.
+    if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
+        return specifier_;
+    }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
@@ -3207,9 +3449,9 @@ impl VirtualMachine {
     }
 
     /// Verbose fetch logging level, from the cached override or `BUN_CONFIG_VERBOSE_FETCH`.
-    pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
+    pub fn get_verbose_fetch(&self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
-        if let Some(v) = self.default_verbose_fetch {
+        if let Some(v) = self.default_verbose_fetch.get() {
             // Note: field is `Option<u8>` until the b2-cycle widens it;
             // map ordinals back.
             return match v {
@@ -3221,14 +3463,14 @@ impl VirtualMachine {
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
         if let Some(verbose_fetch) = self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
             if verbose_fetch == b"true" || verbose_fetch == b"1" {
-                self.default_verbose_fetch = Some(1);
+                self.default_verbose_fetch.set(Some(1));
                 return L::Headers;
             } else if verbose_fetch == b"curl" {
-                self.default_verbose_fetch = Some(2);
+                self.default_verbose_fetch.set(Some(2));
                 return L::Curl;
             }
         }
-        self.default_verbose_fetch = Some(0);
+        self.default_verbose_fetch.set(Some(0));
         L::None
     }
 
@@ -3263,25 +3505,34 @@ impl VirtualMachine {
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;
-            let mode = map
+            let advanced = map
                 .map
                 .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
                 .map(|i| map.map.swap_remove_at(i).1)
-                .and_then(|v| crate::ipc::Mode::from_string(&v.value))
-                .unwrap_or(crate::ipc::Mode::Json);
+                .is_some_and(|v| &v.value[..] == b"advanced");
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
             // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
-                .ok()
-                .filter(|&n| n >= 0)
-            {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
-                None => bun_core::warn!(
-                    "Failed to parse IPC channel number '{}'",
-                    bstr::BStr::new(&fd_s[..])
-                ),
+            // The channel belongs to the process (its main thread). A worker
+            // sees the same inherited variables but must not open a second
+            // endpoint over the same fd (Node: no process.send() in workers).
+            if self.is_main_thread() {
+                match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
+                    .ok()
+                    .filter(|&n| n >= 0)
+                {
+                    Some(fd) => {
+                        self.pending_ipc = Some(PendingIpc {
+                            fd: bun_sys::Fd::from_uv(fd),
+                            advanced,
+                        })
+                    }
+                    None => bun_core::warn!(
+                        "Failed to parse IPC channel number '{}'",
+                        bstr::BStr::new(&fd_s[..])
+                    ),
+                }
             }
         }
 
@@ -3529,6 +3780,22 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if self.hot_reload == HOT_RELOAD_WATCH {
+            // Watch reload replaces the process: never defer on a pending
+            // entry promise (node restarts regardless of child state), and
+            // emit the --watch-kill-signal JS handlers first, like node.
+            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+            let should_clear_terminal =
+                !self.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            // execve will not reach on_exit; flush the compile cache here like
+            // node's child does via AtExit(FlushCompileCache) on every restart.
+            crate::node_compile_cache::persist_now();
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
+
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -3551,11 +3818,6 @@ impl VirtualMachine {
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if self.hot_reload == HOT_RELOAD_WATCH {
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
-        }
-
         if should_clear_terminal {
             bun_core::Output::flush();
             bun_core::Output::disable_buffering();
@@ -3622,15 +3884,6 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_immediate_task(task);
     }
 
-    /// Enqueues a task from another thread onto this VM's event loop.
-    #[inline]
-    pub fn enqueue_task_concurrent(
-        &mut self,
-        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
-    ) {
-        self.event_loop_mut().enqueue_task_concurrent(task);
-    }
-
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
@@ -3688,11 +3941,9 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
-            // The global is created
-            // with `worker.cpp_worker`, `worker.execution_context_id`,
-            // and `worker.mini` so the C++ ZigGlobalObject is born with its
-            // WorkerGlobalScope + debugger context id wired.
-            worker_ptr: worker.cpp_worker(),
+            // The global is created with the worker's messaging proxy, context id
+            // and `mini` so the C++ ZigGlobalObject is born with its options wired.
+            worker_ptr: worker.messaging_proxy(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
             ..Default::default()
@@ -3704,6 +3955,12 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_REFUSAL_GATE::get()
+            .unwrap_or(false)
+        {
+            vm_ref.handle.park_posts_until_closed();
+        }
         // `parent_vm()` is a `BackRef`; the parent outlives this worker while
         // `parent_poll_ref` is held (see web_worker.rs file header).
         let parent = worker.parent_vm();
@@ -4243,7 +4500,12 @@ impl VirtualMachine {
         mode: ResolveMode,
     ) -> JsResult<()> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
+        // `data:` URLs carry the module source inline and never touch the
+        // filesystem, so the path-length cap does not apply to them.
+        if IS_A_FILE_PATH
+            && specifier.length() > MAX_LEN
+            && !specifier.has_prefix_comptime(b"data:")
+        {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = mode.import_kind();
@@ -4428,6 +4690,10 @@ impl VirtualMachine {
     pub fn destroy(&mut self) {
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
+        // The VM's own clone of its handle; the shared inner is freed when the
+        // last outside holder (C++ client data, a late poster) lets go.
+        // SAFETY: `destroy` runs once; the field is not used afterwards.
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.handle) };
 
         // `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
@@ -4445,7 +4711,7 @@ impl VirtualMachine {
         // `debug_assert!(cron_jobs.is_empty())` fires.
         if self.rare_data.is_some() {
             if let Some(hooks) = runtime_hooks() {
-                (hooks.cron_clear_all_teardown)(self);
+                (hooks.stop_cron_for_vm_teardown)(self);
             }
         }
         if let Some(rare) = self.rare_data.take() {
@@ -4577,7 +4843,10 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// Loads the worker entry point and waits for it, honoring termination requests.
+    /// Load a worker's entry: fetch and link its module graph and begin
+    /// evaluating it. Returns once evaluation has begun (or the load failed) —
+    /// the promise may still be pending on a top-level await, which then
+    /// continues in the worker's normal event loop, as in Node.
     pub(crate) fn load_entry_point_for_web_worker(
         &mut self,
         entry_path: &[u8],
@@ -4585,13 +4854,13 @@ impl VirtualMachine {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
         self.event_loop_mut()
-            .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
+            .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);
             }
         }
-        Ok(self.pending_internal_promise.unwrap())
+        Ok(promise)
     }
 
     /// Loads a test-file entry point and waits for the load promise to settle.
@@ -4627,7 +4896,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
@@ -4696,13 +4965,18 @@ impl VirtualMachine {
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
-    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
+    /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
     /// Strongs, which otherwise pin the outgoing global) before the blind
     /// socket-group close below. That helper lives in the higher-tier crate
     /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+
+        // The finished file's workers, ports, channels and sockets are stopped
+        // first (no events dispatched), before its socket groups and timers are
+        // swept and before the new global exists.
+        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -4726,17 +5000,6 @@ impl VirtualMachine {
                 ),
                 None => (core::ptr::null_mut(), core::ptr::null_mut()),
             };
-            #[cfg(unix)]
-            let skip_process_ipc: *mut uws::SocketGroup = match &self.ipc {
-                Some(IPCInstanceUnion::Initialized(inst)) => {
-                    // SAFETY: `inst` was produced by `IPCInstance::new` and is
-                    // live for as long as `self.ipc` holds it.
-                    unsafe { (**inst).group }
-                }
-                _ => core::ptr::null_mut(),
-            };
-            #[cfg(not(unix))]
-            let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
             // SAFETY: process-global usockets loop is live.
             let loop_ = unsafe { &mut *uws::Loop::get() };
             let mut maybe_group = loop_.internal_loop_data.head;
@@ -4744,7 +5007,7 @@ impl VirtualMachine {
                 // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
                 let next = unsafe { (*group.as_ptr()).next };
                 let g = group.as_ptr();
-                if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
+                if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
                     // SAFETY: see above.
                     unsafe { (*g).close_all() };
                 }
@@ -4782,7 +5045,7 @@ impl VirtualMachine {
         //
         // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
         // it drains the (already-closed — the caller ran
-        // `close_isolation_handles` before this swap) watcher queue and retires
+        // `stop_active_handles_for_test_isolation` before this swap) watcher queue and retires
         // the per-VM scheduler singleton, which the next file's first
         // `fs.watchFile` lazily recreates. That per-file reset is intentional
         // — the scheduler's queue and in-flight work-pool task belong to the
@@ -4797,6 +5060,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
+        self.entry_point_result.evaluated_as_cjs = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();
@@ -4822,12 +5086,6 @@ impl VirtualMachine {
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
-        if let Some(IPCInstanceUnion::Initialized(inst)) = self.ipc {
-            // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
-            // until `IPCInstance::deinit`; repoint at the new global so
-            // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
-            unsafe { (*inst).global_this = new_global };
-        }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
                 if hook.global_this == old_global {
@@ -4847,7 +5105,7 @@ impl VirtualMachine {
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
-        self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
 
@@ -4959,9 +5217,8 @@ impl VirtualMachine {
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
-                    let top_level_dir = self.top_level_dir();
-                    let _ =
-                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                    let origin = self.is_from_devserver.then_some(&self.origin);
+                    zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
                 }
                 holder.deinit(self);
             }
@@ -5264,13 +5521,8 @@ impl VirtualMachine {
                     let _ = (self.enable_source_code_preview, self.source_code_slice);
                 }
                 if let Some(list) = self.exception_list.take() {
-                    let top_level_dir = this.top_level_dir();
-                    // OOM-only.
-                    bun_core::handle_oom(exception.add_to_error_list(
-                        list,
-                        top_level_dir,
-                        Some(&this.origin),
-                    ));
+                    let origin = this.is_from_devserver.then_some(&this.origin);
+                    exception.add_to_error_list(list, this.top_level_dir(), origin);
                 }
             }
         }
@@ -5705,7 +5957,7 @@ impl VirtualMachine {
             }
         }
         let _restore_had_errors = RestoreHadErrors {
-            vm: bun_ptr::BackRef::new_mut(self),
+            vm: bun_ptr::BackRef::new(&*self),
             prev: prev_had_errors,
         };
 
@@ -5735,7 +5987,7 @@ impl VirtualMachine {
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: bun_ptr::BackRef::new_mut(exception),
+            exception: bun_ptr::BackRef::new(&*exception),
         };
 
         // `pretty_fmt!` takes a `const` color parameter, so route the runtime
@@ -5787,15 +6039,7 @@ impl VirtualMachine {
             last_pad = pad;
             splat_space(writer, pad)?;
 
-            let text = source.text.slice();
-            let _trimmed = text
-                .trim_ascii_start()
-                .strip_prefix(b"\n")
-                .unwrap_or(text)
-                .trim_ascii_end();
-            // Trim newlines on both sides, then trailing tab/space.
-            let trimmed = bun_core::trim(text, b"\n");
-            let trimmed = bun_core::trim_right(trimmed, b"\t ");
+            let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
 
             let hl = bun_core::fmt::fmt_javascript(
@@ -5899,9 +6143,7 @@ impl VirtualMachine {
                     }
                 }
 
-                let text = source.text.slice();
-                let trimmed = bun_core::trim(text, b"\n");
-                let trimmed = bun_core::trim_right(trimmed, b"\t ");
+                let trimmed = source.trimmed_text();
 
                 if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
                     did_print_name = true;
@@ -6472,130 +6714,6 @@ impl VirtualMachine {
             source_map: Some(map),
             prefetched_source_code: None,
         })
-    }
-
-    /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub(crate) fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
-        bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
-        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
-    }
-
-    /// Returns the initialized IPC instance, lazily creating it from the waiting fd/mode.
-    pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        let (fd, mode) = match self.ipc.as_ref()? {
-            IPCInstanceUnion::Initialized(inst) => return Some(*inst),
-            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
-        };
-
-        bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
-
-        self.event_loop_mut().ensure_waker();
-
-        #[cfg(not(windows))]
-        let instance: *mut IPCInstance = {
-            let loop_ = self.uws_loop();
-            let group: *mut uws::SocketGroup = self.rare_data().spawn_ipc_group(loop_);
-
-            // Box the instance first so `data.owner` can name its final
-            // address.
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                group,
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
-            });
-            // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
-            // ext slot for the socket's lifetime, so that pointer must derive
-            // from the root raw `instance` (SharedReadWrite tag, never popped),
-            // NOT from a `&mut IPCInstance` reborrow whose Unique tag would be
-            // invalidated by later writes through `instance`. Per-use raw deref
-            // also avoids holding a live `&mut` across `deinit` on the failure
-            // branch.
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
-            // is the freshly-initialized SendQueue stored inline in `*instance`.
-            let socket = unsafe {
-                crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
-                    &mut *group,
-                    uws::SocketKind::SpawnIpc,
-                    fd,
-                    core::ptr::addr_of_mut!((*instance).data),
-                    true,
-                )
-            };
-            let Some(socket) = socket else {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::warn!("Unable to start IPC socket");
-                return None;
-            };
-            socket.set_timeout(0);
-
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
-
-            instance
-        };
-
-        #[cfg(windows)]
-        let instance: *mut IPCInstance = {
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
-            });
-            // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
-            // would remain live across `deinit(instance)` on the failure
-            // branch (live `&mut T` to freed memory violates the validity
-            // invariant even if never dereferenced).
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // PROVENANCE: `windows_configure_client` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
-            // must derive from the root raw `instance` (SharedReadWrite tag,
-            // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
-            // tag would be invalidated by `(*instance).data.write_version_packet`
-            // below — every later libuv read callback would then deref a popped
-            // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
-            // `addr_of_mut!` treatment.
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
-            // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
-            // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
-            {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-                return None;
-            }
-
-            instance
-        };
-
-        // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
-
-        Some(instance)
     }
 
     /// To satisfy the interface from NewHotReloader().

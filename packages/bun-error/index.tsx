@@ -1,27 +1,17 @@
 import type { JSX } from "preact";
 import { createContext, render } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
-import type {
-  FallbackMessageContainer,
-  JSException,
-  JSException as JSExceptionType,
-  Location,
-  Message,
-  SourceLine,
-  StackFrame,
-  WebsocketMessageBuildFailure,
-} from "../../src/api/schema";
-import { messagesToMarkdown, problemsToMarkdown, withBunInfo } from "./markdown";
+import { problemsToMarkdown, withBunInfo } from "./markdown";
+import {
+  StackFrameScope,
+  type FallbackMessageContainer,
+  type JSException as JSExceptionType,
+  type Location,
+  type Message,
+  type SourceLine,
+  type StackFrame,
+} from "./schema";
 import { fetchAllMappings, remapPosition, sourceMappings } from "./sourcemap";
-
-export enum StackFrameScope {
-  Eval = 1,
-  Module = 2,
-  Function = 3,
-  Global = 4,
-  Wasm = 5,
-  Constructor = 6,
-}
 
 export enum JSErrorCode {
   Error = 0,
@@ -225,7 +215,7 @@ const srcFileURL = (filename: string, line?: number, column?: number): string =>
 };
 
 class FancyTypeError {
-  constructor(exception: JSException) {
+  constructor(exception: JSExceptionType) {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
     this.message = exception.message || "";
@@ -239,7 +229,7 @@ class FancyTypeError {
   runtimeTypeName: string;
   message: string;
 
-  normalize(exception: JSException) {
+  normalize(exception: JSExceptionType) {
     if (!exception.message) return;
     const i = exception.message.lastIndexOf(" is ");
     if (i === -1) return;
@@ -317,7 +307,7 @@ const AsyncSourceLines = ({
 }: {
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd: number;
+  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
   sourceLines: SourceLine[];
@@ -432,7 +422,7 @@ const SourceLines = ({
   sourceLines: SourceLine[];
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd: number;
+  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
 }) => {
@@ -922,11 +912,7 @@ const ResolveError = ({ message }: { message: Message }) => {
     </div>
   );
 };
-const OverlayMessageContainer = ({
-  problems,
-  reason,
-  isClient = false,
-}: FallbackMessageContainer & { isClient: boolean }) => {
+const OverlayMessageContainer = ({ problems, isClient = false }: FallbackMessageContainer & { isClient: boolean }) => {
   const errorCount = problems ? problems.exceptions.length + problems.build.errors : 0;
   return (
     <div id="BunErrorOverlay-container">
@@ -982,29 +968,6 @@ const Footer = ({ toMarkdown, data }) => (
   </div>
 );
 
-const BuildFailureMessageContainer = ({ messages }: { messages: Message[] }) => {
-  return (
-    <div id="BunErrorOverlay-container">
-      <div className="BunError-content">
-        <div className="BunError-header">
-          <Summary onClose={dismissError} errorCount={messages.length} />
-        </div>
-        <div className={`BunError-list`}>
-          {messages.map((buildMessage, index) => {
-            if (buildMessage.on.build) {
-              return <BuildError key={index} message={buildMessage} />;
-            } else if (buildMessage.on.resolve) {
-              return <ResolveError key={index} message={buildMessage} />;
-            } else {
-              throw new Error("Unknown build message type");
-            }
-          })}
-        </div>
-        <Footer toMarkdown={messagesToMarkdown} data={messages} />
-      </div>
-    </div>
-  );
-};
 export var thisCwd = "";
 const ErrorGroupContext = createContext<{ cwd?: string }>({ cwd: undefined });
 var reactRoot;
@@ -1034,12 +997,6 @@ function renderWithFunc(func) {
       fallbackStyleSheet.remove();
       shadowRoot.appendChild(fallbackStyleSheet);
       reactRoot.classList.add("BunErrorRoot--FullPage");
-
-      const page = document.querySelector("style[data-bun-error-page-style]");
-      if (page) {
-        page.remove();
-        shadowRoot.appendChild(page);
-      }
     }
 
     shadowRoot.appendChild(reactRoot);
@@ -1055,9 +1012,6 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
   if (fallback && fallback.cwd) {
     thisCwd = fallback.cwd;
   }
-  // Not an error
-  if (fallback?.problems?.name === "JSDisabled") return;
-
   return renderWithFunc(() => (
     <ErrorGroupContext.Provider value={fallback}>
       <OverlayMessageContainer isClient {...fallback} />
@@ -1152,8 +1106,6 @@ export function renderRuntimeError(error: Error) {
         errors: 0,
         msgs: [],
       },
-      code: 0,
-      name: error.name,
       exceptions: [exception],
     },
   };
@@ -1254,15 +1206,3 @@ export function dismissError() {
     while (pending.length > 0) pending.shift().stopped = true;
   }
 }
-
-export const renderBuildFailure = (failure: WebsocketMessageBuildFailure, cwd: string) => {
-  thisCwd = cwd;
-  renderWithFunc(() => (
-    <ErrorGroupContext.Provider value={{ cwd }}>
-      <BuildFailureMessageContainer messages={failure.log.msgs} />
-    </ErrorGroupContext.Provider>
-  ));
-};
-
-export const clearBuildFailure = dismissError;
-globalThis.__BunClearBuildFailure = dismissError;

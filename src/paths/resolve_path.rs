@@ -765,8 +765,6 @@ fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
         && !Platform::Windows.is_separator_t::<T>(path[2])
         && path[2] != T::from_u8(b'.')
     {
-        // PERF: the single generic helper checks elementwise (no T==u8 SIMD
-        // branch) — profile if hot.
         if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
@@ -1903,6 +1901,10 @@ fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
 }
 
 fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+    if core::mem::size_of::<T>() == 1 {
+        return strings::last_index_of_any(bun_core::cast_slice::<T, u8>(slice), b"/\\");
+    }
+    // No two-needle reverse kernel for u16.
     slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
@@ -1911,7 +1913,7 @@ fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
 }
 
 fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
-    slice.iter().rposition(|&c| c == T::from_u8(SEP_POSIX))
+    strings::last_index_of_char_t::<T>(slice, T::from_u8(SEP_POSIX))
 }
 
 fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
@@ -2071,7 +2073,7 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     }
     #[cfg(windows)]
     {
-        path.iter().rposition(|&c| is_sep_any_t::<T>(c))
+        last_index_of_separator_windows_t::<T>(path)
     }
 }
 
@@ -2389,10 +2391,8 @@ pub fn dangerously_convert_path_to_windows_in_place<T: PathChar>(path: &mut [T])
 
 pub fn path_to_posix_buf<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a mut [T] {
     let mut idx: usize = 0;
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP_WINDOWS))
-        .map(|p| p + idx)
+    while let Some(index) =
+        strings::index_of_scalar(&path[idx..], T::from_u8(SEP_WINDOWS)).map(|p| p + idx)
     {
         buf[idx..index].copy_from_slice(&path[idx..index]);
         buf[index] = T::from_u8(SEP_POSIX);
@@ -2407,10 +2407,7 @@ pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -
         return path;
     }
     let mut idx: usize = 0;
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP))
-        .map(|p| p + idx)
+    while let Some(index) = strings::index_of_scalar(&path[idx..], T::from_u8(SEP)).map(|p| p + idx)
     {
         buf[idx..index].copy_from_slice(&path[idx..index]);
         buf[index] = T::from_u8(b'/');

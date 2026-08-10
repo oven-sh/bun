@@ -655,7 +655,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let version: dependency::Version = 'version: {
-        if dependency.version.tag == dependency::version::Tag::Npm {
+        // An `npm:` alias names its registry target explicitly, so only plain
+        // dependencies may be redirected to a same-named alias elsewhere in the tree.
+        if dependency.version.tag == dependency::version::Tag::Npm
+            && !dependency.version.npm().is_alias
+        {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -1680,11 +1684,7 @@ fn enqueue_git_clone(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1864,11 +1864,7 @@ fn enqueue_local_tarball(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {

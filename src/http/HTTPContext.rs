@@ -18,7 +18,7 @@ use bun_uws as uws;
 bun_core::declare_scope!(HTTPContext, hidden);
 
 const POOL_SIZE: usize = 64;
-const MAX_KEEPALIVE_HOSTNAME: usize = 128;
+pub(crate) const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
@@ -55,6 +55,8 @@ pub struct HTTPContext<const SSL: bool> {
     // into the box interior; unboxing would dangle it on `Vec` realloc.
     #[expect(clippy::vec_box)]
     pub(crate) pending_h2_connects: Vec<Box<h2::PendingConnect>>,
+    /// Client-side TLS session cache; populated only when `SSL`.
+    pub(crate) session_cache: crate::session_cache::SessionCache,
 }
 
 // Intrusive refcount:
@@ -669,8 +671,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // without a second decrement. Route through the centralised
             // `raw_as_mut` accessor — `raw` is a live intrusive-refcounted
             // ProxyTunnel; we hold the strong ref `detach_and_deref` releases.
-            let t = crate::proxy_tunnel::raw_as_mut(t.leak());
-            t.shutdown();
+            let t_ptr = t.leak();
+            crate::proxy_tunnel::ProxyTunnel::shutdown(
+                core::ptr::NonNull::new(t_ptr).expect("leaked strong ref is non-null"),
+            );
+            let t = crate::proxy_tunnel::raw_as_mut(t_ptr);
             t.detach_and_deref();
         }
         if let Some(s) = h2_session {
@@ -1177,6 +1182,12 @@ impl<const SSL: bool> Handler<SSL> {
                         // `client` again.
                         return;
                     }
+                    // Peer chain + hostname verified: let the session sink
+                    // flush its pending TLS 1.2 ticket (parked before this
+                    // dispatch) and cache later TLS 1.3 tickets directly.
+                    // SAFETY: `ssl` is the live handle for this socket on the
+                    // HTTP thread.
+                    unsafe { crate::session_cache::arm(ssl) };
                 }
 
                 return client.first_call::<SSL>(socket);

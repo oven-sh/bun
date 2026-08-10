@@ -35,7 +35,7 @@ export interface Flag {
   when?: (cfg: Config) => boolean;
   /** Restrict to one language. Omitted = both C and C++. */
   lang?: "c" | "cxx";
-  /** What this flag does. Used by `--explain-flags`. */
+  /** What this flag does. */
   desc: string;
 }
 
@@ -699,15 +699,12 @@ export const defines: Flag[] = [
       "_HAS_EXCEPTIONS=0",
       "LIBUS_USE_OPENSSL=1",
       "LIBUS_USE_BORINGSSL=1",
-      "WITH_BORINGSSL=1",
       "STATICALLY_LINKED_WITH_JavaScriptCore=1",
-      "STATICALLY_LINKED_WITH_BMALLOC=1",
       "BUILDING_WITH_CMAKE=1",
       "JSC_OBJC_API_ENABLED=0",
-      "BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1",
       "NAPI_EXPERIMENTAL=ON",
+      "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
       "NOMINMAX",
-      "IS_BUILD",
       "BUILDING_JSCONLY__",
     ],
     desc: "Core bun defines (always on)",
@@ -1585,6 +1582,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_xml.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
+  },
+  {
     file: "src/jsc/bindings/highway_json.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -1709,41 +1712,4 @@ export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
     return resolveFlagValue(o.extraFlags, cfg);
   }
   return [];
-}
-
-/**
- * Produce a human-readable explanation of all active flags for `--explain-flags`.
- * Grouped by flag type, shows each flag alongside its description.
- */
-export function explainFlags(cfg: Config): string {
-  const lines: string[] = [];
-
-  const explainTable = (title: string, flags: Flag[]) => {
-    const active = flags.filter(f => !f.when || f.when(cfg));
-    if (active.length === 0) return;
-    lines.push(`\n─── ${title} ───`);
-    for (const f of active) {
-      const vals = resolveFlagValue(f.flag, cfg);
-      const langSuffix = f.lang ? ` [${f.lang}]` : "";
-      lines.push(`  ${vals.join(" ")}${langSuffix}`);
-      lines.push(`    ${f.desc}`);
-    }
-  };
-
-  explainTable("Global compiler flags (bun + deps)", globalFlags);
-  explainTable("Bun-only compiler flags", bunOnlyFlags);
-  explainTable("Defines", defines);
-  explainTable("Linker flags", linkerFlags);
-  explainTable("Strip flags", stripFlags);
-
-  const overrides = fileOverrides.filter(o => !o.when || o.when(cfg));
-  if (overrides.length > 0) {
-    lines.push("\n─── Per-file overrides ───");
-    for (const o of overrides) {
-      lines.push(`  ${o.file}: ${resolveFlagValue(o.extraFlags, cfg).join(" ")}`);
-      lines.push(`    ${o.desc}`);
-    }
-  }
-
-  return lines.join("\n");
 }

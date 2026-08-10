@@ -45,6 +45,7 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
+  "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
   "Listener.rs": "runtime/socket/Listener.rs",
@@ -65,7 +66,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
-  "ipc.rs": "jsc/ipc.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
@@ -88,6 +88,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
@@ -188,10 +189,6 @@ function normalizeSymbolPathPrefix(input: string) {
   }
 
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
-}
-
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
 }
 
 export function getJS2NativeCPP() {

@@ -490,7 +490,7 @@ impl Expect {
                     promise.set_handled(vm);
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -893,8 +893,9 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            vm.wait_for_promise(promise);
+            let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
+            waited?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1022,7 +1023,7 @@ impl Expect {
                 dst_idx += line_newline;
             }
         }
-        let Some(c) = str_in.iter().rposition(|&b| b == b'\n') else { return give_up_2!(); }; // there has to have been at least a single newline to get here
+        let Some(c) = strings::last_index_of_char(str_in, b'\n') else { return give_up_2!(); }; // there has to have been at least a single newline to get here
         let end_indent = c + 1;
         for &c in &str_in[end_indent..] {
             if c != b' ' && c != b'\t' { return give_up_2!(); } // we already checked, but the last line is not all whitespace again
@@ -1488,7 +1489,7 @@ impl Expect {
             promise.set_handled(vm);
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this.bun_vm().as_mut().wait_for_promise(promise);
+            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
 
             result = promise.result(vm);
             result.ensure_still_alive();
@@ -1822,12 +1823,11 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
             let source_slice = source_str.to_utf8();
 
             let source: &[u8] = source_slice.slice();
-            if let Some(lparen) = source.iter().position(|&b| b == b'(') {
-                if let Some(rparen_rel) = source[lparen..].iter().position(|&b| b == b')') {
-                    let rparen = lparen + rparen_rel;
+            if let Some(lparen) = strings::index_of_char_usize(source, b'(') {
+                if let Some(rparen) = strings::index_of_char_pos(source, b')', lparen) {
                     let params_str = &source[lparen + 1..rparen];
                     let mut param_index: usize = 0;
-                    for param_name in params_str.split(|&b| b == b',') {
+                    for param_name in strings::split(params_str, b",") {
                         if param_index > 0 {
                             // skip the first param from the matcher_fn, which is the received value
                             if param_index > 1 {
@@ -3069,10 +3069,14 @@ pub mod mock {
     }
 
     pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
-        if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
-            if type_string.is_string() {
-                if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
-                    return Ok(val);
+        // `mock.results` is a user-mutable JSArray, so `value` can be anything
+        // (`fn.mock.results.push(undefined)`); `fast_get` requires an object.
+        if value.is_object() {
+            if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
+                if type_string.is_string() {
+                    if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
+                        return Ok(val);
+                    }
                 }
             }
         }
@@ -3277,8 +3281,8 @@ mod tests {
 
     fn sanity_check(input: &[u8], res: &TrimResult<'_>) {
         // sanity check: output has same number of lines & all input lines endWith output lines
-        let mut input_iter = input.split(|&b| b == b'\n');
-        let mut output_iter = res.trimmed.split(|&b| b == b'\n');
+        let mut input_iter = strings::split(input, b"\n");
+        let mut output_iter = strings::split(res.trimmed, b"\n");
         loop {
             let next_input = input_iter.next();
             let next_output = output_iter.next();

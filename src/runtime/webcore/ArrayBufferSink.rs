@@ -1,5 +1,6 @@
 use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::{ByteVecExt, VecExt};
+use bun_jsc::HostReturn as _;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
@@ -52,16 +53,14 @@ impl ArrayBufferSink {
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.streaming {
-            // TODO: properly propagate exception upwards.
-            let value: JSValue = if self.as_uint8array {
+            let value = if self.as_uint8array {
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())
-                    .unwrap_or(JSValue::ZERO)
             } else {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())
-                    .unwrap_or(JSValue::ZERO)
             };
             self.bytes.clear();
-            return Ok(value);
+            // Host return: empty ⇒ the exception `create` left pending.
+            return Ok(value.or_pending_exception());
         }
 
         Ok(JSValue::js_number(0.0))

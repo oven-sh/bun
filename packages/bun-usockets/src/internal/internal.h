@@ -247,6 +247,13 @@ void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
 
+#ifdef LIBUS_USE_KQUEUE
+/* Arm an EV_CLEAR read filter on a socket with no readable interest so the
+ * peer's FIN/RST still reaches the dispatcher (kqueue's stand-in for epoll's
+ * implicit EPOLLHUP/EPOLLERR). See the definition in epoll_kqueue.c. */
+void us_internal_kqueue_socket_arm_read_sentinel(us_socket_r s);
+#endif
+
 int us_internal_handle_dns_results(us_loop_r loop);
 
 /* Sockets are polls */
@@ -307,6 +314,8 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  unsigned char read_eof : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

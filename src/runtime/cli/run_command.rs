@@ -1013,7 +1013,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
@@ -1476,6 +1476,9 @@ impl Run {
                         Some(entry),
                     )
                 }
+                bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                    ctx.debug.watch_kill_signal,
+                );
             }
             _ => {}
         }
@@ -2900,7 +2903,7 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -2962,7 +2965,7 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -2997,7 +3000,7 @@ impl RunCommand {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -3031,7 +3034,7 @@ impl RunCommand {
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
             let mut out_buf = PathBuffer::uninit();
@@ -3184,9 +3187,9 @@ impl RunCommand {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
         // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd(unsafe {
+        let cwd = bun_core::getcwd_or_exe_dir(unsafe {
             &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
-        })?;
+        });
         let cwd_len = cwd.as_bytes().len();
         entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
 
@@ -3660,6 +3663,12 @@ impl RunCommand {
                     .flatten()
                 {
                     if let Some(entries) = bin_dir.get_entries_const() {
+                        // `.data` iteration must hold `entries_mutex`
+                        // (uncontended on this single-threaded CLI path).
+                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                            .fs
+                            .entries_mutex
+                            .lock_guard();
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3668,8 +3677,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
@@ -3715,6 +3725,12 @@ impl RunCommand {
                 .flatten()
             {
                 if let Some(entries) = dir_info.get_entries_const() {
+                    // `.data` iteration must hold `entries_mutex`
+                    // (uncontended on this single-threaded CLI path).
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
@@ -3731,8 +3747,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {

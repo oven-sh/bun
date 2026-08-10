@@ -128,6 +128,10 @@ pub struct Process {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub(crate) event_loop: EventLoopHandle,
+    /// How the waiter thread delivers this process's exit to a JS VM
+    /// (`None` when owned by a mini event loop, which it posts to directly).
+    #[cfg(unix)]
+    pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
 }
 
 impl Drop for Process {
@@ -223,6 +227,7 @@ impl Process {
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
+            js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
             status,
@@ -518,6 +523,7 @@ impl Process {
                 Status::Exited(Exited {
                     code: exit_code,
                     signal: 0,
+                    raw: exit_status as u32,
                 }),
                 &rusage,
             );
@@ -699,6 +705,10 @@ pub struct Exited {
     /// `SignalCode` discriminants are 1..=31; storing it as the
     /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
     pub signal: u8,
+    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
+    /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
+    #[cfg(windows)]
+    pub raw: u32,
 }
 
 impl Status {
@@ -989,6 +999,20 @@ pub mod waiter_thread_posix {
         pub(crate) rusage: Rusage,
     }
 
+    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+        const TAG: TaskTag = T::TASK_TAG;
+        /// An exit status the waiter thread posted whose delivery will not run:
+        /// drop it and the strong ref it carried for the JS thread.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — the box `ResultTask::new` made; `subprocess`
+            // holds the ref taken before `append()`.
+            unsafe {
+                let t = bun_core::heap::take(this);
+                T::release_ref_from_waiter_thread(t.subprocess);
+            }
+        }
+    }
+
     impl<T: ProcessLike> ResultTask<T> {
         #[inline]
         pub(crate) fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
@@ -1047,6 +1071,14 @@ pub mod waiter_thread_posix {
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
         fn event_loop(&self) -> EventLoopHandle;
+        /// The poster for a JS-owned process (see `Process::js_poster`).
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
+        /// Waiter thread, VM gone: release the strong ref the result would have
+        /// consumed on the JS thread.
+        ///
+        /// # Safety
+        /// `this` is a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self);
         /// # Safety
         /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1065,6 +1097,15 @@ pub mod waiter_thread_posix {
         #[inline]
         fn event_loop(&self) -> EventLoopHandle {
             self.event_loop
+        }
+        #[inline]
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
+            self.js_poster.as_ref()
+        }
+        #[inline]
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { Process::deref(this) };
         }
         #[inline]
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1137,17 +1178,25 @@ pub mod waiter_thread_posix {
                         remove = true;
 
                         match T::event_loop(process_ref) {
-                            EventLoopHandle::Js { owner } => {
-                                let ct = ConcurrentTask::create(Task::new(
-                                    T::TASK_TAG,
-                                    ResultTask::<T>::new(ResultTask {
-                                        result,
-                                        subprocess: process,
-                                        rusage,
-                                    })
-                                    .cast(),
-                                ));
-                                owner.enqueue_task_concurrent(ct);
+                            EventLoopHandle::Js { .. } => {
+                                let rt = ResultTask::<T>::new(ResultTask {
+                                    result,
+                                    subprocess: process,
+                                    rusage,
+                                });
+                                let ct = ConcurrentTask::create(Task::init(rt));
+                                let poster = T::js_poster(process_ref)
+                                    .expect("JS-owned process has a poster");
+                                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                                    // VM torn down: nobody will observe this exit. Free the
+                                    // task and drop the ref its delivery would have released.
+                                    // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
+                                    unsafe {
+                                        drop(bun_core::heap::take(ct.as_ptr()));
+                                        drop(bun_core::heap::take(rt));
+                                        T::release_ref_from_waiter_thread(process);
+                                    }
+                                }
                             }
                             EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
@@ -2064,6 +2113,25 @@ mod spawn_process_body {
                 Process::deref(process);
             }
             return Ok(Err(err));
+        }
+        // The process handle is open on this thread's loop until `close()`; a
+        // thread teardown closes it through us (the child keeps running, as with
+        // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
+        unsafe fn stop_for_vm_teardown(p: *mut c_void) {
+            // SAFETY: recorded for this live Process; the handle leaves the list
+            // when `close()` issues its uv_close.
+            unsafe { (*p.cast::<Process>()).close() };
+        }
+        // SAFETY: `process` is live; poller was just set to the spawned Uv handle.
+        unsafe {
+            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
+                unreachable!()
+            };
+            uv::open_handles::set_owner(
+                core::ptr::from_mut(uv_proc).cast(),
+                process.cast(),
+                Some(stop_for_vm_teardown),
+            );
         }
 
         // SAFETY: process is valid, poller is Uv

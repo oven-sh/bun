@@ -579,12 +579,13 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
-        // Wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-        // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
+    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
+    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
+    /// allocation: OOM, or a termination request landing in it.
+    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
         // SAFETY: `global` is live; slice ptr/len describe a valid range whose
         // ownership is transferred to JSC (freed via the deallocator).
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 slice.as_mut_ptr(),
@@ -596,13 +597,13 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
     /// `Buffer` without copying. Ownership transfers to JSC; freed via
     /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
     /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
-    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
+    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
         let len = bytes.len();
         // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
         // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
@@ -611,7 +612,7 @@ impl JSValue {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 ptr,
@@ -623,7 +624,7 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
@@ -638,11 +639,11 @@ impl JSValue {
         bytes: core::ptr::NonNull<[u8]>,
         ctx: *mut c_void,
         free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let len = bytes.len();
         // SAFETY: `global` is live; `bytes` describes a valid range whose
         // ownership transfers to JSC and is released via `free` on collection.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 bytes.as_ptr().cast::<u8>(),
@@ -650,7 +651,7 @@ impl JSValue {
                 ctx,
                 Some(free),
             )
-        }
+        })
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
@@ -2598,6 +2599,14 @@ impl JSValue {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
     }
 
+    /// Force a typed array out of JSC's "fast" mode so its data pointer stays
+    /// stable for the view's lifetime (fast-mode storage is abandoned when the
+    /// backing buffer is materialized). Returns `false` only when `self` is a
+    /// view whose backing buffer could not be allocated; non-views are a no-op.
+    pub fn materialize_array_buffer_view_buffer(self) -> bool {
+        Bun__JSValue__materializeArrayBufferViewBuffer(self)
+    }
+
     // ── Formatting. ────────────────────────────────────
     #[inline]
     pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
@@ -2724,6 +2733,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
+    safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

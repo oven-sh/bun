@@ -40,7 +40,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsClass, codegen_cached_accessors, host_call, host_fn};
+pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call, host_fn};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -445,6 +445,8 @@ pub mod js_array_iterator;
 pub mod js_global_object;
 #[path = "JSPropertyIterator.rs"]
 pub mod js_property_iterator;
+#[path = "NodeCompileCache.rs"]
+pub mod node_compile_cache;
 #[path = "SystemError.rs"]
 pub mod system_error;
 #[path = "URL.rs"]
@@ -474,8 +476,6 @@ pub mod bun_heap_profiler;
 pub mod bun_string_jsc;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
-#[path = "ConcurrentPromiseTask.rs"]
-pub mod concurrent_promise_task;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
@@ -484,8 +484,6 @@ pub mod ffi;
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
-#[path = "WorkTask.rs"]
-pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
@@ -654,6 +652,27 @@ impl<T> JsResultExt for JsResult<T> {
             if e != JsError::Terminated {
                 global.report_uncaught_exception_from_error(e);
             }
+        }
+    }
+}
+
+/// The one sanctioned way to turn a `JsResult<JSValue>` into a bare `JSValue`:
+/// **only in host-function / getter return position**, where JSC's convention
+/// is that an empty value means "the exception is pending on the VM". Anywhere
+/// else (a promise settlement, a callback argument, a property store) an empty
+/// `JSValue` is not a value — carry the `JsResult` to that boundary instead
+/// (`JSPromise::settle`, `?`). `unwrap_or(JSValue::ZERO)` is banned by
+/// test/internal/source-lints for that reason.
+pub trait HostReturn {
+    fn or_pending_exception(self) -> JSValue;
+}
+
+impl HostReturn for JsResult<JSValue> {
+    #[inline]
+    fn or_pending_exception(self) -> JSValue {
+        match self {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
         }
     }
 }
@@ -1315,8 +1334,13 @@ pub use self::saved_source_map as SavedSourceMap;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "VirtualMachine.rs"]
 pub mod virtual_machine;
+#[path = "VmHandle.rs"]
+pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
+pub use self::vm_handle::{
+    ConcurrentPoster, LoopHandle, LoopKind, Postable, Posted, VmHandle, post_job,
+};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1353,15 +1377,14 @@ pub use self::js_property_iterator::{
 #[path = "event_loop.rs"]
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
-#[path = "any_task_job.rs"]
-pub mod any_task_job;
-pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
+pub mod job;
 pub use self::event_loop::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
-    ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
-    GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
-    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, JsTerminated,
+    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
+    WorkPool, WorkPoolTask,
 };
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1626,7 +1649,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;
@@ -1661,7 +1684,7 @@ impl ZigStringJsc for bun_core::ZigString {
             let _ = global
                 .err(
                     crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                    format_args!("Cannot create a string longer than 2147483647 characters"),
                 )
                 .throw();
             return JSValue::ZERO;

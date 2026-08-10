@@ -4048,10 +4048,6 @@ impl H2FrameParser {
 
         let mut offset: usize = 0;
         let global_object = self.handlers.get().global();
-        if self.handlers.get().vm.is_shutting_down() {
-            return Ok(None);
-        }
-
         let stream_id = stream.id;
         let headers = JSValue::create_empty_array(&global_object, 0)?;
         headers.ensure_still_alive();
@@ -5358,6 +5354,11 @@ impl H2FrameParser {
         if global.has_exception() {
             return Some(stream);
         }
+        // The callback runs arbitrary JS while `stream` is held (here and by every
+        // caller): arm the dispatch guard so a reentrant read() cannot free the box at
+        // depth 0. Bare guard, not enter_stream_dispatch — rst_stream reached from the
+        // callback takes its own `&mut` to this stream, so ours must wait for the return.
+        let _dispatch = self.enter_dispatch();
         match callback.call(
             &global,
             ctx_value,
@@ -5367,13 +5368,19 @@ impl H2FrameParser {
             Ok(returned) => {
                 // streamStart returns the JS stream it created; storing it here saves the
                 // setStreamContext host call the JS layer used to make per stream.
-                if returned.is_object() {
+                // Skipped when the callback closed the stream: free_resources dropped its
+                // sctx root, and re-rooting would pin the dead JS stream until session death.
+                if returned.is_object()
+                    && !self
+                        .pending_engine_stream_closes
+                        .get()
+                        .contains(&stream_identifier)
+                {
                     self.sctx.with_mut(|m| {
                         m.insert(stream_identifier, StrongOptional::create(returned, &global));
                     });
-                    // SAFETY: stream is *mut Stream from self.streams; valid while the map
-                    // entry exists
-                    unsafe { (*stream).set_context(returned, &global) };
+                    self.enter_stream_dispatch(stream)
+                        .set_context(returned, &global);
                 }
             }
         }

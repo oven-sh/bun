@@ -214,11 +214,6 @@ impl Handlers {
     // corker: Corker = .{},
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(());
         };
@@ -230,11 +225,6 @@ impl Handlers {
     }
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(true);
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(false);
         };
@@ -259,11 +249,6 @@ impl Handlers {
         if self.mode != SocketMode::Server {
             return true;
         }
-        // Nothing to release once the process is exiting, and the listener's
-        // JS wrapper may already be gone.
-        if self.vm.is_shutting_down() {
-            return false;
-        }
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
@@ -276,11 +261,6 @@ impl Handlers {
     }
 
     pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return false;
-        }
-
         let global_object = self.global_object;
         // Termination raised inside the preceding callback.call() cannot be
         // cleared; entering JS again trips executeCallImpl's assertNoException.

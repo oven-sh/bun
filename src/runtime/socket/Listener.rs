@@ -320,6 +320,12 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                if let Some(handles) = crate::jsc_hooks::active_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                        (),
+                    ));
+                }
                 return Ok(this_value);
             }
         }
@@ -583,6 +589,12 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                (),
+            ));
+        }
 
         Ok(this_value)
     }
@@ -822,11 +834,23 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM (or the finished `--isolate` file) is being torn down: stop
+    /// listening and close accepted connections now, while script can still
+    /// run their close handlers, instead of from the GC finalizer.
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
+        Self::do_stop(this, true);
+    }
+
     fn do_stop(this: &Self, force_close: bool) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                this,
+            )));
+        }
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -870,6 +894,13 @@ impl Listener {
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
+        if !matches!(listener, ListenerType::None) {
+            if let Some(handles) = crate::jsc_hooks::active_handles() {
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                    &*self,
+                )));
+            }
+        }
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
@@ -1737,9 +1768,8 @@ impl WindowsNamedPipeListeningContext {
         // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
         // (the `uv_pipe` field) is taken through the root pointer below.
         let this_ref = unsafe { &*this };
-        let shutting_down = this_ref.vm.is_shutting_down();
-        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
-            // connection dropped or vm is shutting down or we are deiniting/closing
+        if status != uv::ReturnCode::ZERO || this_ref.listener.is_none() {
+            // connection dropped, or we are deiniting/closing
             return;
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
@@ -1959,9 +1989,6 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
         return core::ptr::null_mut();
     }
     let handlers = tls.get_handlers();
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
@@ -2052,9 +2079,6 @@ extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();

@@ -1129,12 +1129,40 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 #endif // OS(DARWIN) / __linux__
 
 // Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
-extern "C" __attribute__((weak)) int Bun__startupSnapshotPlacementWanted(void);
+// Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`, which
+// const-asserts these three numbers): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
+// say "marked to take a snapshot" and "carries one" are read here, because this runs before main, from the allocator.
+static constexpr size_t kOffsetsSize = 40;
+static constexpr size_t kOffsetsFlagsOffset = 28;
+static constexpr size_t kOffsetsSnapshotLengthOffset = 36;
+static constexpr uint32_t kTakeStartupSnapshotFlag = 1u << 4;
+static constexpr char kPayloadTrailer[16] = { '\n', '-', '-', '-', '-', ' ', 'B', 'u', 'n', '!', ' ', '-', '-', '-', '-', '\n' };
+
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
-    if (Bun__startupSnapshotPlacementWanted)
-        return Bun__startupSnapshotPlacementWanted(); // marked to take a snapshot, or carrying one
-    return BUN_COMPILED.size != 0; // no runtime linked in (dependency-only build): any payload
+    // Deterministic placement is only wanted by an executable that is marked to take a snapshot or carries one; an ordinary
+    // compiled executable answers no and pays nothing.
+    const uint8_t* base;
+    uint64_t len;
+#if OS(DARWIN)
+    base = BUN_COMPILED.data;
+    len = BUN_COMPILED.size;
+#else
+    if (!BUN_COMPILED.size)
+        return 0;
+    const BlobHeader* header = reinterpret_cast<const BlobHeader*>(static_cast<uintptr_t>(BUN_COMPILED.size)); // the payload's address
+    base = header->data;
+    len = header->size;
+#endif
+    if (len < kOffsetsSize + sizeof kPayloadTrailer)
+        return 0;
+    if (memcmp(base + len - sizeof kPayloadTrailer, kPayloadTrailer, sizeof kPayloadTrailer) != 0)
+        return 0;
+    const uint8_t* offsets = base + len - sizeof kPayloadTrailer - kOffsetsSize;
+    uint32_t flags, snapshotLength;
+    memcpy(&flags, offsets + kOffsetsFlagsOffset, sizeof flags);
+    memcpy(&snapshotLength, offsets + kOffsetsSnapshotLengthOffset, sizeof snapshotLength);
+    return (flags & kTakeStartupSnapshotFlag) != 0 || snapshotLength != 0;
 }
 
 #elif defined(_WIN32)

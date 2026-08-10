@@ -656,8 +656,32 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    process.stderr.write(message + "\n");
+    const stream = process.stderr;
+    // Node's writeOut goes through console.error, whose kWriteToConsole (ported in
+    // ConsoleObject.ts) keeps a failing stderr from taking the process down: a sync throw
+    // (files, TTYs) is swallowed and an async 'error' (EPIPE on a pipe) gets a one-shot noop
+    // listener. Same here, or `bun x.js 2>&1 | head` dies on its first warning.
+    try {
+      if (stream.listenerCount("error") === 0) stream.once("error", noop);
+      stream.write(message + "\n", err => {
+        if (err !== null && !stream._writableState.errorEmitted && stream.listenerCount("error") === 0) {
+          stream.once("error", noop);
+        }
+      });
+    } catch (e) {
+      if (
+        e != null &&
+        typeof e === "object" &&
+        e.name === "RangeError" &&
+        e.message === "Maximum call stack size exceeded."
+      )
+        throw e;
+    } finally {
+      stream.removeListener("error", noop);
+    }
   }
+
+  function noop() {}
 
   return function onWarning(warning) {
     if (!(warning instanceof Error)) return;

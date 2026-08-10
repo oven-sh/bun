@@ -9,7 +9,7 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
     SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
@@ -833,63 +833,38 @@ impl UDPSocket {
         );
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_broadcast(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
+    fn throw_setsockopt_errno(global_this: &JSGlobalObject, errno: SystemErrno) -> JsError {
+        global_this.throw_value(
+            bun_sys::Error::from_code_int(errno as c_int, bun_sys::Tag::setsockopt)
                 .to_js(global_this),
-            ));
-        }
+        )
+    }
 
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected 1 argument, got {}",
-                arguments.len()
-            )));
-        }
-
-        let enabled = arguments[0].to_boolean();
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_broadcast(enabled);
-
+    fn check_setsockopt(global_this: &JSGlobalObject, res: c_int) -> JsResult<()> {
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
-
-        Ok(arguments[0])
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_multicast_loopback(
+    fn require_socket(&self, global_this: &JSGlobalObject) -> JsResult<&mut uws::udp::Socket> {
+        let Some(socket) = self.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        Ok(uws::udp::Socket::opaque_mut(socket))
+    }
+
+    fn set_bool_opt(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
+        function: fn(&mut uws::udp::Socket, bool) -> c_int,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         }
 
@@ -907,22 +882,44 @@ impl UDPSocket {
         // test-dgram-multicast-loopback.js). Throw EBADF to match the
         // `closed` branch above instead of panicking.
         let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_loopback(enabled);
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+        let res = function(uws::udp::Socket::opaque_mut(socket), enabled);
+        Self::check_setsockopt(global_this, res)?;
 
         Ok(arguments[0])
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_broadcast(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::set_bool_opt(
+            this,
+            global_this,
+            callframe,
+            uws::udp::Socket::set_broadcast,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_multicast_loopback(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::set_bool_opt(
+            this,
+            global_this,
+            callframe,
+            uws::udp::Socket::set_multicast_loopback,
+        )
     }
 
     fn set_membership(
@@ -932,12 +929,9 @@ impl UDPSocket {
         drop: bool,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         }
 
@@ -951,20 +945,15 @@ impl UDPSocket {
 
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(global_this, 0, arguments[0], &mut addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EINVAL,
             ));
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
+        let socket = this.require_socket(global_this)?;
 
         let res = if arguments.len() > 1
             && this.parse_addr(global_this, 0, arguments[1], &mut interface)?
@@ -974,15 +963,12 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            socket.set_membership(&addr, Some(&interface), drop)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            socket.set_membership(&addr, None, drop)
         };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+        Self::check_setsockopt(global_this, res)?;
 
         Ok(JSValue::TRUE)
     }
@@ -1012,12 +998,9 @@ impl UDPSocket {
         drop: bool,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         }
 
@@ -1034,23 +1017,17 @@ impl UDPSocket {
         // `assume_init()` on the full 128-byte storage would be UB.
         let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(global_this, 0, arguments[0], &mut source_addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EINVAL,
             ));
         }
 
         let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(global_this, 0, arguments[1], &mut group_addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EINVAL,
             ));
         }
 
@@ -1062,9 +1039,7 @@ impl UDPSocket {
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
+        let socket = this.require_socket(global_this)?;
 
         let res = if arguments.len() > 2
             && this.parse_addr(global_this, 0, arguments[2], &mut interface)?
@@ -1074,25 +1049,12 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                Some(&interface),
-                drop,
-            )
+            socket.set_source_specific_membership(&source_addr, &group_addr, Some(&interface), drop)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                None,
-                drop,
-            )
+            socket.set_source_specific_membership(&source_addr, &group_addr, None, drop)
         };
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+        Self::check_setsockopt(global_this, res)?;
 
         Ok(JSValue::TRUE)
     }
@@ -1122,12 +1084,9 @@ impl UDPSocket {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         }
 
@@ -1152,16 +1111,9 @@ impl UDPSocket {
             return Ok(JSValue::FALSE);
         }
 
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+        let socket = this.require_socket(global_this)?;
+        let res = socket.set_multicast_interface(&addr);
+        Self::check_setsockopt(global_this, res)?;
 
         Ok(JSValue::TRUE)
     }
@@ -1201,12 +1153,9 @@ impl UDPSocket {
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
+            return Err(Self::throw_setsockopt_errno(
+                global_this,
+                SystemErrno::EBADF,
             ));
         }
 
@@ -1219,15 +1168,9 @@ impl UDPSocket {
         }
 
         let ttl = arguments[0].coerce_to_i32(global_this)?;
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = function(uws::udp::Socket::opaque_mut(socket), ttl);
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+        let socket = this.require_socket(global_this)?;
+        let res = function(socket, ttl);
+        Self::check_setsockopt(global_this, res)?;
 
         Ok(JSValue::js_number(ttl as f64))
     }

@@ -57,10 +57,12 @@ async function build(): Promise<void> {
       missing.push(name);
     }
   }
-  // The root package depends on every platform package at this exact version, so a
-  // platform without an asset has to stop the release before anything is published.
+  // The root package pins every platform package at this exact version, so publishing without one breaks it too.
   if (missing.length) {
-    throw new Error(`Release "${release.tag_name}" is missing assets: ${missing.join(", ")}`);
+    throw new Error(
+      `Release "${release.tag_name}" is missing assets: ${missing.join(", ")}\n` +
+        "Nothing was published: every platform in src/platform.ts must have its zip on the release before any package is published.",
+    );
   }
   await buildRootModule();
   for (const [platform, asset] of assets) {

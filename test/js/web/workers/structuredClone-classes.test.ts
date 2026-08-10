@@ -96,14 +96,23 @@ describe("serialize & deserialize", () => {
         stdin: serialized,
         stdout: "pipe",
         // Test types that declare expectedAfterWireBytesRoundtrip expect the
-        // child's deserialize() to die with an uncaught error; don't echo that
-        // expected failure into the test runner's stderr.
-        stderr: "expectedAfterWireBytesRoundtrip" in testType ? "ignore" : "inherit",
+        // child's deserialize() to die with an uncaught error; capture stderr
+        // for assertion instead of echoing the expected failure.
+        stderr: "expectedAfterWireBytesRoundtrip" in testType ? "pipe" : "inherit",
       });
-      const cloned = result.stdout.length > 0 ? deserialize(result.stdout) : undefined;
       if ("expectedAfterWireBytesRoundtrip" in testType) {
-        testType.expectedAfterWireBytesRoundtrip!(original, cloned);
+        // The child must reject the payload with a clean uncaught throw:
+        // no signal (a crash here is the abort class this guards against),
+        // nothing on stdout, and the rejection message on stderr.
+        expect({
+          signalCode: result.signalCode ?? null,
+          exitCode: result.exitCode,
+          stdoutLength: result.stdout.length,
+          stderrHasRejection: result.stderr.toString().includes("Unable to deserialize data."),
+        }).toEqual({ signalCode: null, exitCode: 1, stdoutLength: 0, stderrHasRejection: true });
+        testType.expectedAfterWireBytesRoundtrip!(original, undefined);
       } else {
+        const cloned = deserialize(result.stdout);
         testType.expectedAfterClone(original, cloned, TransferMode.no, true);
       }
     });

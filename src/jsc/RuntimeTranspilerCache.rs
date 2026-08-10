@@ -51,10 +51,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: ModuleInfo is attached on every runtime ESM transpile (not only
-/// under --isolate). Older entries have `esm_record_byte_length == 0`, so a
-/// cache HIT would fall back to JSC's own analyze and re-raise the type-only
-/// re-export error this version fixes (#7384).
+/// Version 26: ModuleInfo is written for every runtime ESM transpile, not only
+/// under --isolate; older entries have an empty esm_record (#7384).
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

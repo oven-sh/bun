@@ -499,6 +499,92 @@ describe("dns.reverse", () => {
   });
 });
 
+// Node validates the address with inet_pton before dispatching:
+// the callback API throws EINVAL synchronously, the promises API rejects.
+describe("dns.reverse with invalid IP", () => {
+  const UV_EINVAL = isWindows ? -4071 : -22;
+  const invalidIPs = ["300.300.300.300", "1.1.1.300", "not-an-ip", "fe80:::1", ""];
+
+  it.each(invalidIPs)("dns.reverse(%j) throws EINVAL synchronously", ip => {
+    let err = null;
+    try {
+      dns.reverse(ip, () => {
+        throw new Error("callback should not be called");
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({
+      code: "EINVAL",
+      errno: UV_EINVAL,
+      syscall: "getHostByAddr",
+      message: ip === "" ? "getHostByAddr EINVAL" : `getHostByAddr EINVAL ${ip}`,
+    });
+    if (ip !== "") {
+      expect(err.hostname).toBe(ip);
+    }
+  });
+
+  it.each(invalidIPs)("dns.promises.reverse(%j) rejects with EINVAL", async ip => {
+    // Must reject, not throw synchronously, to match Node.
+    const promise = dns.promises.reverse(ip);
+    expect(promise).toBeInstanceOf(Promise);
+    expect(
+      await promise.then(
+        () => null,
+        err => err,
+      ),
+    ).toMatchObject({
+      code: "EINVAL",
+      syscall: "getHostByAddr",
+    });
+  });
+
+  it("new dns.Resolver().reverse throws EINVAL synchronously", () => {
+    const resolver = new dns.Resolver();
+    let err = null;
+    try {
+      resolver.reverse("300.300.300.300", () => {});
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "EINVAL", syscall: "getHostByAddr" });
+  });
+
+  it("new dns.promises.Resolver().reverse rejects with EINVAL", async () => {
+    const resolver = new dns_promises.Resolver();
+    const promise = resolver.reverse("300.300.300.300");
+    expect(promise).toBeInstanceOf(Promise);
+    expect(
+      await promise.then(
+        () => null,
+        err => err,
+      ),
+    ).toMatchObject({
+      code: "EINVAL",
+      syscall: "getHostByAddr",
+    });
+  });
+
+  it("dns.reverse with a non-string still throws ERR_INVALID_ARG_TYPE", () => {
+    let err = null;
+    try {
+      dns.reverse(42, () => {});
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+
+    err = null;
+    try {
+      dns.promises.reverse(42);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+  });
+});
+
 test("dns.promises.reverse", async () => {
   {
     let hostnames = await dns.promises.reverse("8.8.8.8");

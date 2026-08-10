@@ -5060,16 +5060,19 @@ impl Resolver {
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
         let ip_str = ip_value.to_js_string(global_this)?;
-        if ip_str.length() == 0 {
-            return Err(global_this.throw_invalid_argument_type(
-                "reverse",
-                "ip",
-                "non-empty string",
-            ));
-        }
-
         let ip_slice = ip_str.to_slice_clone(global_this)?;
         let ip = ip_slice.slice();
+
+        // Node validates the address with `inet_pton` before dispatching and
+        // throws `getHostByAddr EINVAL` synchronously; c-ares would otherwise
+        // report the parse failure as ENOTIMP via the callback.
+        if !bun::ip_address::is_ip_address(ip) {
+            return Err(global_this.throw_value(super::cares_jsc::einval_error_to_js(
+                global_this,
+                b"getHostByAddr",
+                ip,
+            )?));
+        }
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {

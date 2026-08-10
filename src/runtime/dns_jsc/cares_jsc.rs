@@ -828,6 +828,40 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     Ok(instance)
 }
 
+/// `EINVAL` DNSException in Node's shape (`errno` is the libuv code, message
+/// `"<syscall> EINVAL <hostname>"`) for inputs Node rejects before reaching
+/// c-ares, e.g. a `dns.reverse` argument that is not an IP address.
+pub(crate) fn einval_error_to_js(
+    global_this: &JSGlobalObject,
+    syscall: &'static [u8],
+    hostname: &[u8],
+) -> JsResult<JSValue> {
+    let message = if hostname.is_empty() {
+        bstr::String::create_format(format_args!("{} EINVAL", BStr::new(syscall)))
+    } else {
+        bstr::String::create_format(format_args!(
+            "{} EINVAL {}",
+            BStr::new(syscall),
+            BStr::new(hostname)
+        ))
+    };
+    let instance = SystemError {
+        errno: -bun_sys::UV_E::INVAL,
+        code: bstr::String::static_(b"EINVAL").into(),
+        message: message.into(),
+        syscall: bstr::String::static_(syscall).into(),
+        hostname: bstr::String::clone_utf8(hostname).into(),
+        ..Default::default()
+    }
+    .to_error_instance(global_this);
+    instance.put(
+        global_this,
+        b"name",
+        bstr::String::static_(b"DNSException").to_js(global_this)?,
+    );
+    Ok(instance)
+}
+
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
 // `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]

@@ -60,6 +60,20 @@ function withTranslatedError(error: any) {
   return error;
 }
 
+// Native reverse() throws synchronously for an address that is not an IP,
+// which is what the callback API needs; the promises API rejects instead,
+// matching Node. Type errors (non-string ip) still throw synchronously.
+function reverseOrReject(resolver, ip) {
+  try {
+    return resolver.reverse(ip);
+  } catch (error) {
+    if (error?.syscall === "getHostByAddr") {
+      return Promise.$reject(error);
+    }
+    throw error;
+  }
+}
+
 function getServers() {
   return dns.getServers();
 }
@@ -852,7 +866,7 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    return translateErrorCode(reverseOrReject(dns, ip));
   },
 
   Resolver: class Resolver {
@@ -944,7 +958,7 @@ const promises = {
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return translateErrorCode(reverseOrReject(Resolver.#getResolver(this), ip));
     }
 
     setLocalAddress(first, second) {

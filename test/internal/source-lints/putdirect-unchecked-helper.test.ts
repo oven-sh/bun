@@ -21,11 +21,12 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   obj->putDirectIndex(globalObject, i, v);
 //
 // The rules below name the helper families that can return an empty value:
-// create*/.toJS taking a global object as the first argument, and
-// constructEmptyArray (which has RETURN_IF_EXCEPTION(scope, nullptr) inside).
-// vm-first helpers like jsString(vm, ...) and jsNumber(...) cannot throw and
-// stay fine inline. The Rust flavor of the same invariant is linted by
-// empty-jsvalue-laundering.test.ts.
+// create*/.toJS taking a global object as the first argument, constructEmptyArray
+// (which has RETURN_IF_EXCEPTION(scope, nullptr) inside), and zero-argument
+// construct*/create* calls (the scope-capturing local lambdas process.report
+// builds its sections with). vm-first helpers like jsString(vm, ...) and
+// jsNumber(...) cannot throw and stay fine inline. The Rust flavor of the same
+// invariant is linted by empty-jsvalue-laundering.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const cxxSources = globAllSources().cxx;
@@ -61,6 +62,11 @@ const BANNED: { name: string; re: RegExp; hint: string }[] = [
     re: /(?:^|[\s(,!&*]|::)constructEmptyArray\s*\(/,
     hint: "constructEmptyArray returns null with an exception pending; hoist and RETURN_IF_EXCEPTION before the putDirect*",
   },
+  {
+    name: "construct*()/create*() inline",
+    re: /(?:^|[\s(,!&*])(?:construct|create)[A-Z]\w*\s*\(\s*\)/,
+    hint: "a zero-arg scope-capturing helper returns an empty JSValue on exception; hoist and RETURN_IF_EXCEPTION before the putDirect*",
+  },
 ];
 
 const offenders: string[] = [];
@@ -71,7 +77,10 @@ for (const abs of cxxSources) {
   if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
   const content = await file(abs).text();
-  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Blank comments out instead of deleting them so reported line numbers stay accurate.
+  const stripped = content
+    .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, " "))
+    .replace(/\/\/[^\n]*/g, "");
   for (const m of stripped.matchAll(PUT_CALL)) {
     const argText = m[1];
     for (const { name, re, hint } of BANNED) {

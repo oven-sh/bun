@@ -128,7 +128,7 @@ console.write(JSON.stringify(lines));`,
   });
 });
 
-for (const [operation, cleanup] of [
+describe.each([
   [
     "return()",
     `const result = await iterator.return();
@@ -144,8 +144,8 @@ try {
   if (error !== reason) throw error;
 }`,
   ],
-]) {
-  it.concurrent(`releases the console iterator after ${operation} before next()`, async () => {
+])("%s", (_operation, cleanup) => {
+  it.concurrent("releases the console iterator before next()", async () => {
     expect(
       await runConsoleIterator(
         `const iterator = console[Symbol.asyncIterator]();
@@ -165,7 +165,7 @@ console.write(JSON.stringify(lines));`,
     });
   });
 
-  it.concurrent(`releases the console iterator after ${operation} following next()`, async () => {
+  it.concurrent("releases the console iterator following next()", async () => {
     expect(
       await runConsoleIterator(
         `const iterator = console[Symbol.asyncIterator]();
@@ -185,4 +185,4 @@ console.write(JSON.stringify(lines));`,
       signalCode: null,
     });
   });
-}
+});

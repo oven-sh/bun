@@ -989,9 +989,7 @@ describe("multiline array layout", () => {
     // escapes plus quotes, so these must not pack several per line.
     const escaped = Array.from({ length: 8 }, () => "\n".repeat(20));
     const line = `  "${"\\n".repeat(20)}"`;
-    expect(Bun.inspect(escaped)).toBe(
-      "[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]",
-    );
+    expect(Bun.inspect(escaped)).toBe("[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]");
   });
 
   it("separates multiline objects after a primitive with },\\n{", () => {

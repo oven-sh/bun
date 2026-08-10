@@ -17,6 +17,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
+#include "Path.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
@@ -231,8 +232,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
 
     return JSValue::encode(jsString(globalObject, prefix, code, suffix));
 }
-extern "C" void Bun__Node__Path_joinWTF(BunString* lhs, const char* rhs,
-    size_t len, BunString* result);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -275,14 +274,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
-        BunString lhs = Bun::toString(val);
-        BunString result;
-        Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1, &result);
-        val = result.toWTFString();
-        if (!val.isNull()) {
-            ASSERT(val.impl()->refCount() == 2);
-            val.impl()->deref();
-        }
+        WTF::StringView paths[] = { val, "noop.js"_s };
+#if OS(WINDOWS)
+        val = Bun::NodePath::join(true, paths);
+#else
+        val = Bun::NodePath::join(false, paths);
+#endif
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -551,14 +548,12 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
 #if OS(WINDOWS)
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+        dirname = Bun::NodePath::dirname(globalObject, true, parent.filename);
 #else
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+        dirname = Bun::NodePath::dirname(globalObject, false, parent.filename);
 #endif
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));
     }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
+const common = require("../test/common");
 
 describe("path.parse", () => {
   test("general", () => {
@@ -199,19 +200,7 @@ describe("path.parse", () => {
           {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
-            // TODO: Make our error messages use util.inspect like Node:
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/lib/internal/errors.js#L1370-L1440
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/test/common/index.js#L815
-            //
-            // Node's error message template is:
-            //  `The "pathObject" argument must be of type object. Received ${inspect(input, { depth: -1 })}`
-            //
-            // For example, when we throw for path.format(null) our error message is:
-            //   The "pathObject" property must be of type object, got object
-            //
-            // While Node's error message is:
-            //   The "pathObject" argument must be of type object. Received null
-            message: `The "pathObject" property must be of type object, got ${typeof pathObject}`,
+            message: `The "pathObject" argument must be of type object.${common.invalidArgTypeHelper(pathObject)}`,
           },
         );
       });

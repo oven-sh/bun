@@ -1,47 +1,78 @@
 // Hardcoded module "node:path"
 const { validateString } = require("internal/validators");
 
-const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
-const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
-const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
-const posix = {
-  resolve: bindingPosix.resolve.bind(bindingPosix),
-  normalize: bindingPosix.normalize.bind(bindingPosix),
-  isAbsolute: bindingPosix.isAbsolute.bind(bindingPosix),
-  join: bindingPosix.join.bind(bindingPosix),
-  relative: bindingPosix.relative.bind(bindingPosix),
-  toNamespacedPath: toNamespacedPathPosix,
-  dirname: bindingPosix.dirname.bind(bindingPosix),
-  basename: bindingPosix.basename.bind(bindingPosix),
-  extname: bindingPosix.extname.bind(bindingPosix),
-  format: bindingPosix.format.bind(bindingPosix),
-  parse: bindingPosix.parse.bind(bindingPosix),
-  sep: "/",
-  delimiter: ":",
-  win32: undefined as typeof win32,
-  posix: undefined as typeof posix,
-  _makeLong: toNamespacedPathPosix,
+// Path.cpp implements everything except the functions below, which are small
+// enough that a native call would cost more than the work they do.
+const [posix, win32] = $cpp("Path.cpp", "createNodePathBinding");
+
+const ArrayIsArray = Array.isArray;
+
+const CHAR_FORWARD_SLASH = 47;
+const CHAR_BACKWARD_SLASH = 92;
+const CHAR_COLON = 58;
+const CHAR_UPPERCASE_A = 65;
+const CHAR_UPPERCASE_Z = 90;
+const CHAR_LOWERCASE_A = 97;
+const CHAR_LOWERCASE_Z = 122;
+
+function isPathSeparator(code) {
+  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
+}
+
+function isWindowsDeviceRoot(code) {
+  return (
+    (code >= CHAR_UPPERCASE_A && code <= CHAR_UPPERCASE_Z) || (code >= CHAR_LOWERCASE_A && code <= CHAR_LOWERCASE_Z)
+  );
+}
+
+// Wrapped so both keep the name "isAbsolute" after bundling.
+const [posixIsAbsolute, win32IsAbsolute] = (() => {
+  const posix = function isAbsolute(path) {
+    validateString(path, "path");
+    return path.length > 0 && path.charCodeAt(0) === CHAR_FORWARD_SLASH;
+  };
+  return [
+    posix,
+    function isAbsolute(path) {
+      validateString(path, "path");
+      const len = path.length;
+      if (len === 0) return false;
+
+      const code = path.charCodeAt(0);
+      return (
+        isPathSeparator(code) ||
+        // Possible device root
+        (len > 2 &&
+          isWindowsDeviceRoot(code) &&
+          path.charCodeAt(1) === CHAR_COLON &&
+          isPathSeparator(path.charCodeAt(2)))
+      );
+    },
+  ];
+})();
+
+const posixToNamespacedPath = function toNamespacedPath(path) {
+  // Non-op on posix systems
+  return path;
 };
-const win32 = {
-  resolve: bindingWin32.resolve.bind(bindingWin32),
-  normalize: bindingWin32.normalize.bind(bindingWin32),
-  isAbsolute: bindingWin32.isAbsolute.bind(bindingWin32),
-  join: bindingWin32.join.bind(bindingWin32),
-  relative: bindingWin32.relative.bind(bindingWin32),
-  toNamespacedPath: toNamespacedPathWin32,
-  dirname: bindingWin32.dirname.bind(bindingWin32),
-  basename: bindingWin32.basename.bind(bindingWin32),
-  extname: bindingWin32.extname.bind(bindingWin32),
-  format: bindingWin32.format.bind(bindingWin32),
-  parse: bindingWin32.parse.bind(bindingWin32),
-  sep: "\\",
-  delimiter: ";",
-  win32: undefined as typeof win32,
-  posix,
-  _makeLong: toNamespacedPathWin32,
-};
-posix.win32 = win32.win32 = win32;
-posix.posix = posix;
+
+function formatExt(ext) {
+  return ext ? `${ext[0] === "." ? "" : "."}${ext}` : "";
+}
+
+// Kept in JS: property loads and string concatenation on a user object are
+// exactly what the JIT's inline caches are for.
+function _format(sep, pathObject) {
+  if (pathObject === null || ArrayIsArray(pathObject) || typeof pathObject !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
+  }
+  const dir = pathObject.dir || pathObject.root;
+  const base = pathObject.base || `${pathObject.name || ""}${formatExt(pathObject.ext)}`;
+  if (!dir) {
+    return base;
+  }
+  return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
+}
 
 type Glob = import("bun").Glob;
 
@@ -75,7 +106,24 @@ function matchesGlob(isWindows, path, pattern) {
   return glob.match(path);
 }
 
+posix.isAbsolute = posixIsAbsolute;
+posix.toNamespacedPath = posixToNamespacedPath;
+posix.format = _format.bind(null, "/");
 posix.matchesGlob = matchesGlob.bind(null, false);
+posix.sep = "/";
+posix.delimiter = ":";
+
+win32.isAbsolute = win32IsAbsolute;
+win32.format = _format.bind(null, "\\");
 win32.matchesGlob = matchesGlob.bind(null, true);
+win32.sep = "\\";
+win32.delimiter = ";";
+
+posix.win32 = win32.win32 = win32;
+posix.posix = win32.posix = posix;
+
+// Legacy internal API, docs-only deprecated: DEP0080
+win32._makeLong = win32.toNamespacedPath;
+posix._makeLong = posix.toNamespacedPath;
 
 export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");

@@ -13,7 +13,6 @@ use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
-use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
@@ -289,7 +288,6 @@ pub struct RareData {
     // lazy RareData creation raced with worker spawn.
     spawn_sync_event_loop_: Option<Box<SpawnSyncEventLoop>>,
 
-    pub path_buf: PathBuf,
 }
 
 pub(crate) type FilePollStore = Async::file_poll::Store;
@@ -335,47 +333,9 @@ impl Default for RareData {
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
-            path_buf: PathBuf::default(),
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PathBuf
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
-/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-#[derive(Default)]
-pub struct PathBuf {
-    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
-}
-
-impl PathBuf {
-    const S: usize = MAX_PATH_BYTES;
-
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn get(&mut self, min_len: usize) -> &mut [u8] {
-        if min_len <= 2 * Self::S {
-            &mut **self
-                .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
-        } else if min_len <= 8 * Self::S {
-            &mut **self
-                .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
-        } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
-        }
-    }
-}
-
-// Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PipeReadBuffer / constants
@@ -1074,7 +1034,7 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // temp_pipe_read_buffer / h2_padded_frame_buffer / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

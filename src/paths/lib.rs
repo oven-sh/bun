@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
-// `Platform` is used as a const-generic param in resolve_path.rs and
-// downstream (`bun_runtime::node::path::normalize_string_t`).
+// `Platform` is used as a const-generic param in resolve_path.rs and downstream.
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
@@ -112,7 +111,7 @@ fn disk_designator_windows(p: &[u8]) -> &[u8] {
 
 /// Character types valid in path slices (u8 / u16). Canonical definition;
 /// `resolve_path`, `Path::PathUnit`, `bun_sys::make_path::MakePathUnit`,
-/// `bun_runtime::node::path::PathCharCwd`, and `bun_core::Ch` all extend it.
+/// and `bun_core::Ch` all extend it.
 mod path_char;
 pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };

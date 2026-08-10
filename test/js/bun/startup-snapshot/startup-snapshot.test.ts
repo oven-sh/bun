@@ -105,11 +105,21 @@ snapshotTest("the frozen heap holds up under JSC's GC verifier", async () => {
   const img = join(String(dir), "s.snapshot");
   const fixture = join(import.meta.dir, "gctime-fixture.js");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_JSC_verifyGC: "1" }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_JSC_verifyGC: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(code).toBe(0);
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(err).toContain("[snapshot] restored");
   expect(out).toContain("; #3 "); // the third verified full collection completed

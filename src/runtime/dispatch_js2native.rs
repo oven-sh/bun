@@ -61,17 +61,15 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// `undefined` ⇒ neither flag given, NODE_USE_SYSTEM_CA decides; only `--no-use-system-ca` beats the env var.
+/// The decision this thread's TLS contexts are built with, so
+/// `tls.getCACertificates('default')` reports what connections trust.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    Ok(
-        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
-            Some(v) => JSValue::js_boolean(v),
-            None => JSValue::UNDEFINED,
-        },
-    )
+    Ok(JSValue::js_boolean(
+        bun_jsc::virtual_machine::VirtualMachine::get().tls_use_system_ca(),
+    ))
 }
 
 /// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers

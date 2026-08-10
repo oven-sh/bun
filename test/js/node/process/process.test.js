@@ -2280,6 +2280,24 @@ describe("default warning printer survives a failing stderr", () => {
     expect(stderr).toMatch(/Warning: one[\s\S]*Warning: two/);
     expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
   });
+
+  it.concurrent("process.stderr replaced by a bare { write } object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr = { write(s) { console.log("mock:" + s.trimEnd()); return true; } };
+         process.emitWarning("w");
+         setImmediate(() => console.log("alive"));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive\n$/);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
 });
 
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {

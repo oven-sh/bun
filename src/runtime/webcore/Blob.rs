@@ -6276,9 +6276,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     Blob::new(Blob::init_with_store(store, global_this))
 }
 
-/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
-/// string literal with process lifetime (not freed by deinit — the caller
-/// passes one of the image/* constants).
+/// Same as Blob__fromBytes but stamps content_type with a copy of `mime`.
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
@@ -6293,7 +6291,8 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
 ) -> *mut Blob {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
-    // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
+    // SAFETY: caller guarantees `mime` is a NUL-terminated C string valid for
+    // this call; the bytes are copied below.
     let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
         // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;

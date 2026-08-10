@@ -1,6 +1,8 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -471,9 +473,13 @@ describe("structuredClone with Blob and File", () => {
       const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
       const at = good.indexOf(probe);
       expect(at).toBeGreaterThan(0);
-      // Sanity: both entry points accept the unmodified image.
-      expect(deserialize(good)).toBeInstanceOf(Blob);
-      expect(v8.deserialize(good)).toBeInstanceOf(Blob);
+      // File-backed records in caller-supplied buffers are rejected outright
+      // (NUL or not), so the unmodified image throws too. The point of the
+      // NUL payload below is that the rejection is a clean JS error and the
+      // path never reaches the syscall layer where debug builds used to
+      // abort in ZStr::as_cstr.
+      expect(() => deserialize(good)).toThrow();
+      expect(() => v8.deserialize(good)).toThrow();
 
       const bad = Buffer.from(good);
       bad.set(Buffer.from("/e\0tc/host\0s____", "latin1"), at);
@@ -536,11 +542,10 @@ describe("structuredClone with Blob and File", () => {
     });
 
     // The File-store variant of the Blob record carries a raw fd on the wire.
-    // `Bun.file(fd)` enforces `0 <= fd <= i32::MAX`; the deserializer must
-    // apply the same range so a crafted record cannot materialize a Blob over
-    // an fd that no JS could construct. On posix, fd == -1 reaches the
-    // `raw != -1` assert in `Fd::as_borrowed_fd` and aborts the process at
-    // the first `.size` / body-mixin touch.
+    // Caller-supplied buffers cannot rebuild an fd-backed Blob at all, and the
+    // rejection must be a clean JS error for every fd value: on posix,
+    // fd == -1 used to reach the `raw != -1` assert in `Fd::as_borrowed_fd`
+    // and abort the process at the first `.size` / body-mixin touch.
     describe.skipIf(isWindows)("crafted File blob fd (posix)", () => {
       // Robustness against header/framing changes: serialize a file-backed
       // blob over a distinctive sentinel fd, locate its 4-byte image in the
@@ -601,11 +606,214 @@ describe("structuredClone with Blob and File", () => {
         expect(exitCode).toBe(0);
       });
 
-      test("fd >= 0 still deserializes", () => {
+      test("fd >= 0 is rejected from caller-supplied buffers too", () => {
         for (const fd of [0, 1, fdSentinel]) {
-          expect(deserialize(craftFd(fd))).toBeInstanceOf(Blob);
-          expect(v8.deserialize(craftFd(fd))).toBeInstanceOf(Blob);
+          expect(() => deserialize(craftFd(fd))).toThrow();
+          expect(() => v8.deserialize(craftFd(fd))).toThrow();
         }
+      });
+    });
+
+    // The File store variant of the Blob record carries either a literal path
+    // or a raw fd number (s3:// keys ride the path form). Honoring either from
+    // a caller-supplied byte buffer (bun:jsc deserialize, node:v8 deserialize,
+    // child-process IPC) hands whoever crafted the buffer a live handle to an
+    // arbitrary file, an arbitrary open descriptor of the receiving process,
+    // or an S3 key resolved under the receiver's credentials. File-backed
+    // records only deserialize for byte streams produced by an in-process
+    // serialize (structuredClone / postMessage); raw buffers are rejected.
+    describe("file-backed stores in caller-supplied buffers", () => {
+      test("wire bytes naming a file path do not mint a readable file handle", () => {
+        using dir = tempDir("blob-deser-path", {
+          "secret.txt": "this is the secret file contents",
+        });
+        // Serializing a path-backed Blob is still allowed; only reconstructing
+        // one from the resulting raw bytes is not.
+        const payload = serialize(Bun.file(join(String(dir), "secret.txt")));
+        expect(() => deserialize(payload)).toThrow();
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+      });
+
+      test("wire bytes naming a file descriptor are rejected", () => {
+        using dir = tempDir("blob-deser-fd", {
+          "fd.txt": "fd-backed contents",
+        });
+        const fd = openSync(join(String(dir), "fd.txt"), "r");
+        try {
+          const payload = serialize(Bun.file(fd));
+          expect(() => deserialize(payload)).toThrow();
+          expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      test("wire bytes naming an s3:// path are rejected", () => {
+        // Patch the serialized path in-place to an `s3://` URL of the same
+        // length; an honored payload would mint an S3-credential-backed blob.
+        const placeholder = "/tmp/aaaaaaaaaa";
+        const s3Path = "s3://bucket/key";
+        expect(s3Path.length).toBe(placeholder.length);
+        const payload = Buffer.from(serialize(Bun.file(placeholder)));
+        const index = payload.indexOf(Buffer.from(placeholder));
+        expect(index).toBeGreaterThan(-1);
+        payload.set(Buffer.from(s3Path), index);
+        expect(() => deserialize(payload)).toThrow();
+        expect(() => v8.deserialize(payload)).toThrow();
+      });
+
+      test("bytes-backed Blob and File still round-trip through deserialize", async () => {
+        const blob = deserialize(serialize(new Blob(["hello"], { type: "text/plain" })));
+        expect(blob).toBeInstanceOf(Blob);
+        expect(await blob.text()).toBe("hello");
+
+        const file = v8.deserialize(v8.serialize(new File(["x"], "a.txt")));
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("x");
+      });
+
+      test("structuredClone of Bun.file still yields a readable file-backed blob", async () => {
+        using dir = tempDir("blob-clone-path", {
+          "data.txt": "in-process clone keeps the file reference",
+        });
+        const cloned = structuredClone(Bun.file(join(String(dir), "data.txt")));
+        expect(await cloned.text()).toBe("in-process clone keeps the file reference");
+      });
+
+      test("crafted size past i64::MAX cannot abort the receiver", async () => {
+        // Hand-built File record with size = 2^63. Pre-fix this deserialized
+        // into a Blob whose unclamped `size` made `.slice()` panic on the
+        // i64 cast (abort). The record must be rejected at deserialize; run
+        // in a child so a regression surfaces as a test failure instead of
+        // killing the runner.
+        const u32 = (n: number) => {
+          const b = Buffer.alloc(4);
+          b.writeUInt32LE(n);
+          return b;
+        };
+        const u64 = (n: bigint) => {
+          const b = Buffer.alloc(8);
+          b.writeBigUInt64LE(n);
+          return b;
+        };
+        const path = Buffer.from("/nonexistent");
+        const crafted = Buffer.concat([
+          Buffer.from(serialize(0)).subarray(0, 4), // outer serializer version header
+          Buffer.from([0xfe, 4]), // Blob tag 254, blob serialization version 4
+          u64(0n), // offset
+          u32(0), // content-type length
+          Buffer.from([0, 0]), // content_type_was_set, store tag = File
+          u64(1n << 63n), // size
+          Buffer.from([1]), // pathlike tag = Path
+          u32(path.length),
+          path,
+          Buffer.from([0]), // is_jsdom_file
+          Buffer.alloc(8), // lastModified
+        ]);
+
+        const childScript = `
+          const { deserialize } = require("bun:jsc");
+          const v8 = require("node:v8");
+          const payload = Buffer.from(process.argv[1], "base64");
+          for (const de of [deserialize, buf => v8.deserialize(Buffer.from(buf))]) {
+            let outcome;
+            try {
+              const blob = de(payload);
+              blob.slice(0, 10); // pre-fix: aborts on the unclamped size
+              outcome = { threw: false, size: String(blob.size) };
+            } catch (e) {
+              outcome = { threw: true };
+            }
+            process.stdout.write(JSON.stringify(outcome) + "\\n");
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", childScript, crafted.toString("base64")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const expected = { threw: true };
+        expect({
+          stderr,
+          outcomes: stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(l => JSON.parse(l)),
+        }).toEqual({ stderr: "", outcomes: [expected, expected] });
+        expect(exitCode).toBe(0);
+      });
+
+      test.skipIf(isWindows)("a crafted IPC frame from a child does not mint a file handle in the parent", async () => {
+        // The confused-deputy shape: the child never receives a Blob from JS;
+        // it writes a raw advanced-serialization frame containing a
+        // path-backed Blob record straight onto the IPC pipe. The parent's
+        // decoder must reject the record (it closes the channel) rather than
+        // deliver a live file handle to the parent's message handler.
+        using dir = tempDir("ipc-blob-gate", {
+          "secret.txt": "ipc-secret-contents",
+          "parent.js": `
+            const childPath = process.argv[2];
+            const secretPath = process.argv[3];
+            const child = Bun.spawn({
+              cmd: [process.execPath, childPath, secretPath],
+              env: process.env,
+              serialization: "advanced",
+              stdout: "inherit",
+              stderr: "inherit",
+              ipc(message, c) {
+                console.log(JSON.stringify({ isBlob: message instanceof Blob, value: message instanceof Blob ? "<blob>" : String(message) }));
+                if (message === "hello") c.send("go");
+              },
+            });
+            await child.exited;
+            console.log(JSON.stringify({ done: true }));
+          `,
+          "child.js": `
+            const fs = require("node:fs");
+            const { serialize } = require("bun:jsc");
+            const secretPath = process.argv[2];
+            process.on("message", m => {
+              if (m !== "go") return;
+              // Receiving "go" proves the ordered IPC writer already flushed
+              // the handshake, so the raw frame below lands after it. The
+              // runtime consumes NODE_CHANNEL_FD before user code runs; with
+              // no extra fds in the spawn, the channel is always fd 3.
+              const payload = Buffer.from(serialize(Bun.file(secretPath)));
+              const frame = Buffer.alloc(5 + payload.byteLength);
+              frame[0] = 2; // SerializedMessage
+              frame.writeUInt32LE(payload.byteLength, 1);
+              payload.copy(frame, 5);
+              fs.writeSync(3, frame);
+              try { process.send("sentinel-after-frame"); } catch {}
+              process.exit(0);
+            });
+            process.send("hello");
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "parent.js"), join(String(dir), "child.js"), join(String(dir), "secret.txt")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const lines = stdout
+          .split("\n")
+          .filter(Boolean)
+          .map(l => JSON.parse(l));
+        // The handshake message arrives; the crafted frame must never surface
+        // as a message (let alone a Blob). The sentinel sent after the bad
+        // frame is allowed to be dropped with the closed channel.
+        expect(lines[0]).toEqual({ isBlob: false, value: "hello" });
+        expect(lines.some(l => l.isBlob)).toBe(false);
+        expect(lines.at(-1)).toEqual({ done: true });
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
       });
     });
 

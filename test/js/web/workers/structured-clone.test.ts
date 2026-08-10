@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "bun:jsc";
-import { openSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
@@ -367,21 +367,64 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         const cloned = await structuredCloneFn(blob);
         await compareBlobs(blob, cloned);
       });
-      test("file from path", async () => {
-        const blob = Bun.file(join(import.meta.dir, "example.txt"));
-        const cloned = await structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
-      });
-      test("file from fd", async () => {
-        const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-        const blob = Bun.file(fd);
-        const cloned = await structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
-      });
+      // Path/fd-backed Blobs only round-trip through the in-process
+      // structuredClone path. The two bun:jsc serialize/deserialize variants
+      // hand the deserializer a raw byte buffer, and reconstructing a file
+      // handle from caller-supplied bytes is rejected (the path/fd embedded in
+      // the payload cannot be trusted).
+      if (structuredCloneFn === structuredClone) {
+        test("file from path", async () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          const cloned = await structuredCloneFn(blob);
+          expect(cloned.lastModified).toBe(blob.lastModified);
+          expect(cloned.name).toBe(blob.name);
+          expect(cloned.size).toBe(blob.size);
+        });
+        test("file from fd", async () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            const cloned = await structuredCloneFn(blob);
+            expect(cloned.lastModified).toBe(blob.lastModified);
+            expect(cloned.name).toBe(blob.name);
+            expect(cloned.size).toBe(blob.size);
+          } finally {
+            closeSync(fd);
+          }
+        });
+      } else if (structuredCloneFn === jscSerializeRoundtrip) {
+        test("file from path is rejected", () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          expect(() => structuredCloneFn(blob)).toThrow();
+        });
+        test("file from fd is rejected", () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            expect(() => structuredCloneFn(blob)).toThrow();
+          } finally {
+            closeSync(fd);
+          }
+        });
+      } else {
+        // Cross-process: the child's deserialize() rejects the payload and
+        // dies with an uncaught error, which surfaces here as the
+        // child-exited error from the framing loop. The round trip never
+        // yields a file-backed Blob.
+        test("file from path is rejected", async () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(/child exited/);
+        });
+        test("file from fd is rejected", async () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(/child exited/);
+          } finally {
+            closeSync(fd);
+          }
+        });
+      }
       describe("dom file", async () => {
         test("without lastModified", async () => {
           const file = new File(["hi"], "example.txt", { type: "text/plain" });

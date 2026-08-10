@@ -2000,9 +2000,19 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         }
         DecodeStep::Fail(IPCDecodeError::OutOfMemory) => {
             Output::print_errorln("IPC message is too long.");
+            send_queue
+                .get_global_this()
+                .clear_exception_except_termination();
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {
+            // The bad frame is fully handled here by closing the channel; a
+            // deserializer/JSONParse exception left pending on the VM would
+            // surface later as an unrelated uncaught error (and trips the
+            // exception-scope assert in debug builds).
+            send_queue
+                .get_global_this()
+                .clear_exception_except_termination();
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }

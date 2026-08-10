@@ -2260,7 +2260,8 @@ public:
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
-    )
+        ,
+        bool isFromUntrustedBytes)
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -2270,6 +2271,7 @@ public:
             wasmModules, wasmMemoryHandles
 #endif
         );
+        deserializer.m_isFromUntrustedBytes = isFromUntrustedBytes;
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -3563,7 +3565,7 @@ private:
         //     return JSValue();
 
         // read bun types
-        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
+        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end, m_isFromUntrustedBytes)) {
             JSValue deserialized = JSValue::decode(value.value());
             if (deserialized.isEmpty()) {
                 fail();
@@ -3921,6 +3923,10 @@ private:
 
     JSGlobalObject* const m_globalObject;
     const bool m_isDOMGlobalObject;
+    // True when the wire bytes were supplied by the caller as a raw buffer
+    // (bun:jsc / node:v8 deserialize(), IPC) rather than produced by an
+    // in-process SerializedScriptValue::create().
+    bool m_isFromUntrustedBytes { false };
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
@@ -4830,7 +4836,8 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         ,
         nullptr, nullptr
 #endif
-    );
+        ,
+        /* isFromUntrustedBytes */ true);
 
     if (arrayBuffer->isShared()) {
         arrayBuffer->unpin();
@@ -5069,7 +5076,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                                                ,
         m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
 #endif
-    );
+        ,
+        m_isFromUntrustedBytes);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     // Deserialize may throw an exception. Similar to serialize (SerializedScriptValue::create),

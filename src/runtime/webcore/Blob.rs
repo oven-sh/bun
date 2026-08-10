@@ -183,6 +183,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        is_from_untrusted_bytes: bool,
     ) -> JsResult<JSValue>
     where
         Self: Sized;
@@ -812,6 +813,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        is_from_untrusted_bytes: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
         // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
@@ -824,8 +826,17 @@ impl BlobExt for Blob {
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-        let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        let result = match on_structured_clone_deserialize(
+            global_this,
+            &mut buffer_stream,
+            is_from_untrusted_bytes,
+        ) {
             Ok(v) => v,
+            Err(crate::Error::UntrustedFileBlob) => {
+                return Err(global_this.throw(format_args!(
+                    "Cannot deserialize a file-backed Blob from serialized bytes; file references can only be cloned in-process via structuredClone or postMessage"
+                )));
+            }
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
             }
@@ -1994,10 +2005,15 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
+        // Saturate rather than abort: `size` is untrusted (it can come off the
+        // wire or from a remote Content-Length), so a value past i64::MAX must
+        // clamp instead of panicking the int cast.
+        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
+
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = size_i64;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -2014,11 +2030,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_start = (start.wrapping_add(size_i64)).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_start = start.min(size_i64);
                 }
             }
         }
@@ -2027,11 +2041,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_end = (end.wrapping_add(size_i64)).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_end = end.min(size_i64);
                 }
             }
         }
@@ -4123,6 +4135,7 @@ fn read_slice<B: AsRef<[u8]>>(
 fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
+    is_from_untrusted_bytes: bool,
 ) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -4178,6 +4191,15 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+
+            // A path/fd-backed Blob reconstructed from caller-supplied bytes
+            // would grant access to an arbitrary file path, open descriptor,
+            // or `s3://` credential scope; only in-process serialized bytes
+            // may rebuild one.
+            if is_from_untrusted_bytes {
+                return Err(crate::Error::UntrustedFileBlob);
+            }
+
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
             }

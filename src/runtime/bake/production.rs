@@ -1494,7 +1494,7 @@ impl Eq for InputFile {}
 
 /// Value side is `OutputFile.Index` — left as a placeholder until the
 /// bundle is indexed; the bundler never reads it.
-pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
+pub(crate) type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
 
 /// After a production bundle is generated, prerendering needs to be able to
 /// look up the generated chunks associated with each route's `OpaqueFileId`

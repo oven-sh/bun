@@ -608,6 +608,18 @@ impl EventLoop {
         unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }.expect("event_loop_handle")
     }
 
+    /// `usockets_loop()` without the panic, for callers that can run before `ensure_waker`.
+    pub fn try_usockets_loop(&self) -> Option<*mut uws::Loop> {
+        #[cfg(windows)]
+        {
+            self.uws_loop.map(|l| l.as_ptr())
+        }
+        #[cfg(not(windows))]
+        {
+            self.vm_ref().event_loop_handle
+        }
+    }
+
     pub fn usockets_loop(&self) -> *mut uws::Loop {
         // Panic on null rather than returning it — callers immediately
         // materialize `&mut *`, so a null return would be instant UB instead

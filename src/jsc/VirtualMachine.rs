@@ -293,9 +293,15 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
-    /// Nanoseconds after `origin_timer` at which THIS thread's loop first polled; 0 until then, which
+    /// `us_loop_idle_clock_ns()` when THIS thread's loop began; 0 until then, which
     /// eventLoopUtilization() reports as node's "loop has not begun" zeros. Read cross-thread.
     pub loop_start_ns: core::sync::atomic::AtomicU64,
+    /// The loop's idle counter when `loop_start_ns` was stamped: parking before the loop "began"
+    /// (a watcher waiting for the first file, a debugger pause) is not loop idle time.
+    pub loop_idle_base_ns: core::sync::atomic::AtomicU64,
+    /// `bun run` sets this while the entry graph loads: the ticks that resolve imports are not the
+    /// loop beginning (node stamps loopStart after the entry point's synchronous evaluation).
+    pub loop_start_deferred: core::sync::atomic::AtomicBool,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -1996,6 +2002,8 @@ pub type RuntimeState = *mut c_void;
 
 unsafe extern "C" {
     safe fn us_default_use_system_ca() -> i32;
+    safe fn us_default_ca_mode() -> i32;
+    safe fn us_resolve_ca_mode(requested: i32) -> i32;
 }
 
 impl VirtualMachine {
@@ -2016,11 +2024,11 @@ impl VirtualMachine {
         }
     }
 
-    /// This thread's decision differs from the process default, so anything keyed on "the default
-    /// TLS context" (fetch's shared client context) must use a variant of its own.
+    /// This thread's decision resolves to a different store than the process default, so anything
+    /// keyed on "the default TLS context" (fetch's shared client context) must use a variant of its own.
     pub fn tls_use_system_ca_differs_from_process(&self) -> bool {
-        self.use_system_ca
-            .is_some_and(|v| v != (us_default_use_system_ca() != 0))
+        self.use_system_ca.is_some()
+            && us_resolve_ca_mode(self.tls_use_system_ca_option()) != us_default_ca_mode()
     }
 }
 
@@ -2479,6 +2487,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).loop_start_ns).write(core::sync::atomic::AtomicU64::new(0));
+            addr_of_mut!((*vm).loop_idle_base_ns).write(core::sync::atomic::AtomicU64::new(0));
+            addr_of_mut!((*vm).loop_start_deferred)
+                .write(core::sync::atomic::AtomicBool::new(false));
             let (origin_timer, origin_timestamp) = process_origin();
             addr_of_mut!((*vm).origin_timer).write(origin_timer);
             addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);
@@ -2657,30 +2668,50 @@ impl VirtualMachine {
     #[inline]
     pub fn mark_loop_started(&self) {
         use core::sync::atomic::Ordering;
-        if self.loop_start_ns.load(Ordering::Relaxed) == 0 {
-            let ns = (self.origin_timer.elapsed().as_nanos() as u64).max(1);
-            let _ =
-                self.loop_start_ns
-                    .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
+        if self.loop_start_ns.load(Ordering::Relaxed) != 0
+            || self.loop_start_deferred.load(Ordering::Relaxed)
+        {
+            return;
         }
+        // SAFETY: `event_loop` is this VM's own loop; the idle counter is read atomically.
+        let idle = unsafe { (*self.event_loop).try_usockets_loop() }
+            .map_or(0, |l| unsafe { uws::us_loop_idle_ns(l) });
+        // Base first: a reader that sees the start stamped also sees the base it belongs to.
+        self.loop_idle_base_ns.store(idle, Ordering::Release);
+        let ns = uws::us_loop_idle_clock_ns().max(1);
+        let _ = self
+            .loop_start_ns
+            .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
+    }
+
+    /// `bun run`: hold the stamp back while the entry graph loads, then place it explicitly.
+    pub fn defer_loop_start(&self, deferred: bool) {
+        self.loop_start_deferred
+            .store(deferred, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Milliseconds since this thread's loop began polling; `None` before that.
     pub fn loop_elapsed_ms(&self) -> Option<f64> {
-        Self::loop_elapsed_ms_from(&self.loop_start_ns, self.origin_timer)
+        Self::loop_elapsed_ms_from(&self.loop_start_ns)
     }
 
-    /// The same computation from the two fields alone, for a reader on another thread that must not
-    /// form a `&VirtualMachine` (see `WebWorker__getELU`).
-    pub fn loop_elapsed_ms_from(
-        loop_start_ns: &core::sync::atomic::AtomicU64,
-        origin_timer: std::time::Instant,
-    ) -> Option<f64> {
+    /// `raw_idle_ns` (this thread's `us_loop_idle_ns`) minus the idle accumulated before the loop began.
+    pub fn loop_idle_ms_from(
+        loop_idle_base_ns: &core::sync::atomic::AtomicU64,
+        raw_idle_ns: u64,
+    ) -> f64 {
+        let base = loop_idle_base_ns.load(core::sync::atomic::Ordering::Acquire);
+        raw_idle_ns.saturating_sub(base) as f64 / 1_000_000.0
+    }
+
+    /// From the field alone, for a reader on another thread that must not form a `&VirtualMachine`
+    /// (see `WebWorker__getELU`).
+    pub fn loop_elapsed_ms_from(loop_start_ns: &core::sync::atomic::AtomicU64) -> Option<f64> {
         let start = loop_start_ns.load(core::sync::atomic::Ordering::Acquire);
         if start == 0 {
             return None;
         }
-        let now = origin_timer.elapsed().as_nanos() as u64;
+        let now = uws::us_loop_idle_clock_ns();
         Some(now.saturating_sub(start) as f64 / 1_000_000.0)
     }
 

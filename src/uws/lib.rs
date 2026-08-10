@@ -419,7 +419,7 @@ pub mod ssl_wrapper {
                         // Same roots variant the context was built with (its creator's
                         // --use-system-ca decision is recorded on the SSL_CTX).
                         if let Some(roots) = NonNull::new(us_get_shared_default_ca_store(
-                            us_ssl_ctx_use_system_ca(ctx.as_ptr()),
+                            us_ssl_ctx_ca_mode(ctx.as_ptr()),
                         )) {
                             let _ = boring_sys::SSL_set0_verify_cert_store(
                                 ssl.as_ptr(),
@@ -1229,9 +1229,9 @@ pub mod ssl_wrapper {
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
-        safe fn us_get_shared_default_ca_store(use_system_ca: i32) -> *mut boring_sys::X509_STORE;
+        safe fn us_get_shared_default_ca_store(ca_mode: i32) -> *mut boring_sys::X509_STORE;
         /// The system-CA decision an SSL_CTX built by usockets was created with.
-        fn us_ssl_ctx_use_system_ca(ctx: *mut boring_sys::SSL_CTX) -> i32;
+        fn us_ssl_ctx_ca_mode(ctx: *mut boring_sys::SSL_CTX) -> i32;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
@@ -1264,7 +1264,7 @@ pub mod ssl_wrapper {
 // loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
-pub use bun_uws_sys::loop_::{LoopHandler, us_loop_idle_ns, us_wakeup_loop};
+pub use bun_uws_sys::loop_::{LoopHandler, us_loop_idle_clock_ns, us_loop_idle_ns, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN};
 
 /// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the

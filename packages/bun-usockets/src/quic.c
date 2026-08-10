@@ -1159,7 +1159,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
      * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
      * the system store on macOS/Windows. The shared store is never mutated on
      * this path, and set_cert_store takes the getter's up-ref. */
-    SSL_CTX_set_cert_store(ssl, us_get_shared_default_ca_store(us_default_use_system_ca()));
+    SSL_CTX_set_cert_store(ssl, us_get_shared_default_ca_store(us_default_ca_mode()));
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)

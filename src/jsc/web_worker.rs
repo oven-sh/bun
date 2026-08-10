@@ -532,19 +532,19 @@ impl WebWorker {
         let loop_ptr = this.elu_loop.get();
         let mut live = !vm_ptr.is_null() && !loop_ptr.is_null();
         if live {
-            // SAFETY: both published under `vm_lock`, held here; the idle counter and loop start are
-            // atomic and `origin_timer` was fixed before the publish. Raw reads only: the worker
-            // thread owns `&mut`.
+            // SAFETY: both published under `vm_lock`, held here; the idle counter, loop start and
+            // idle base are atomics. Raw field reads only: the worker thread owns `&mut`.
             unsafe {
                 // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
-                let idle_ms = bun_uws::us_loop_idle_ns(loop_ptr) as f64 / 1_000_000.0;
-                let elapsed = VirtualMachine::loop_elapsed_ms_from(
-                    &*(&raw const (*vm_ptr).loop_start_ns),
-                    *(&raw const (*vm_ptr).origin_timer),
-                );
+                let raw_idle_ns = bun_uws::us_loop_idle_ns(loop_ptr);
+                let elapsed =
+                    VirtualMachine::loop_elapsed_ms_from(&*(&raw const (*vm_ptr).loop_start_ns));
                 match elapsed {
                     Some(elapsed_ms) => {
-                        *out_idle_ms = idle_ms;
+                        *out_idle_ms = VirtualMachine::loop_idle_ms_from(
+                            &*(&raw const (*vm_ptr).loop_idle_base_ns),
+                            raw_idle_ns,
+                        );
                         *out_elapsed_ms = elapsed_ms;
                     }
                     None => live = false,
@@ -709,12 +709,15 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // node resolves a thread's CA option from its execArgv, else from that thread's own env; the
-        // same source `tls.getCACertificates("default")` reports from, so both halves agree.
+        // node resolves a thread's CA option from its execArgv, else from that thread's own env — the
+        // source `tls.getCACertificates("default")` reports from too. Only NODE_USE_SYSTEM_CA=1 is a
+        // decision; otherwise the thread stays on the process default (`None`), which keeps OpenSSL's
+        // default lookups (#23735) and lets the reporting side fall back to the env the same way.
         let env_use_system_ca = match self.env_use_system_ca {
             -1 => map.get(b"NODE_USE_SYSTEM_CA") == Some(b"1".as_slice()),
             v => v == 1,
-        };
+        }
+        .then_some(true);
 
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
@@ -740,14 +743,12 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
-                use_system_ca: Some(
-                    if own_exec_argv.is_some() {
-                        exec_argv.use_system_ca
-                    } else {
-                        parent.use_system_ca
-                    }
-                    .unwrap_or(env_use_system_ca),
-                ),
+                use_system_ca: if own_exec_argv.is_some() {
+                    exec_argv.use_system_ca
+                } else {
+                    parent.use_system_ca
+                }
+                .or(env_use_system_ca),
                 ..Default::default()
             },
         )?;

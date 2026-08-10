@@ -1628,9 +1628,10 @@ unsafe fn parse_worker_exec_argv(
                 continue;
             }
         }
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
+        // execArgv holds no positionals: a bare token is the value of a flag this parser doesn't model
+        // (`-r ./preload.js`, `--conditions x`), so skip it rather than ending the scan.
         if bytes.first() != Some(&b'-') {
-            break;
+            continue;
         }
         if bytes == b"--" {
             break;

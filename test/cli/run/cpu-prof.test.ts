@@ -193,6 +193,12 @@ describe.concurrent("--cpu-prof", () => {
         await new Promise(r => json.on("exit", r));
         const md = new Worker(spin, { eval: true, execArgv: ["--cpu-prof-md", "--cpu-prof-dir=mdprofiles"] });
         await new Promise(r => md.on("exit", r));
+        // Flags after another option's separate value (as in [...process.execArgv, ...]) still count.
+        const afterValue = new Worker(spin, {
+          eval: true,
+          execArgv: ["--conditions", "custom", "--cpu-prof", "--cpu-prof-dir", "aftervalue", "--cpu-prof-name", "late.cpuprofile"],
+        });
+        await new Promise(r => afterValue.on("exit", r));
       `,
     });
 
@@ -214,6 +220,7 @@ describe.concurrent("--cpu-prof", () => {
     const mdFiles = readdirSync(join(String(dir), "mdprofiles"));
     expect(mdFiles).toHaveLength(1);
     expect(mdFiles[0]).toMatch(/^CPU\..*\.md$/);
+    expect(readdirSync(join(String(dir), "aftervalue"))).toEqual(["late.cpuprofile"]);
     expect(exitCode).toBe(0);
   });
 

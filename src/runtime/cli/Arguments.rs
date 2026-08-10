@@ -768,14 +768,19 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 pub(crate) static Bun__Node__NoUseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// `--use-system-ca` was passed (as opposed to NODE_USE_SYSTEM_CA, which also sets
+/// `Bun__Node__UseSystemCA`): only a flag is a per-thread option that workers inherit.
+static Bun__Node__UseSystemCAFlag: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// The main thread's explicit CA intent; `None` leaves NODE_USE_SYSTEM_CA to
-/// decide. `--use-bundled-ca`/`--use-openssl-ca` are deliberately not
-/// `Some(false)` — node lets the env var win under those.
+/// decide (per thread, from that thread's env). `--use-bundled-ca`/`--use-openssl-ca`
+/// are deliberately not `Some(false)` — node lets the env var win under those.
 pub(crate) fn main_use_system_ca() -> Option<bool> {
     if Bun__Node__NoUseSystemCA.load(core::sync::atomic::Ordering::Relaxed) {
         return Some(false);
     }
-    if Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed) {
+    if Bun__Node__UseSystemCAFlag.load(core::sync::atomic::Ordering::Relaxed) {
         return Some(true);
     }
     None
@@ -1484,6 +1489,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Bun__Node__NoUseSystemCA.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         let use_system_ca = args.flag(b"--use-system-ca");
+        Bun__Node__UseSystemCAFlag.store(use_system_ca, core::sync::atomic::Ordering::Relaxed);
         let use_openssl_ca = args.flag(b"--use-openssl-ca");
         let use_bundled_ca = args.flag(b"--use-bundled-ca");
 

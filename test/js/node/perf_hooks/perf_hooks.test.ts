@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
 
@@ -153,6 +153,29 @@ test("eventLoopUtilization is zero before the loop starts and counts only loop t
     },
     stderr: "",
   });
+  expect(exitCode).toBe(0);
+});
+
+// Same with an entry point that imports: the ticks that load the graph are not the loop starting.
+test("eventLoopUtilization is still zero at the top level of an entry point with imports", async () => {
+  using dir = tempDir("elu-imports", {
+    "util.js": `export const x = 1;`,
+    "main.js": `
+      import { x } from "./util.js";
+      import { performance } from "perf_hooks";
+      const end = Date.now() + 50; while (Date.now() < end) {}
+      console.log(JSON.stringify(performance.eventLoopUtilization()), x);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"idle":0,"active":0,"utilization":0} 1', stderr: "" });
   expect(exitCode).toBe(0);
 });
 

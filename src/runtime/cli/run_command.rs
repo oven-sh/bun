@@ -1491,6 +1491,9 @@ impl Run {
             }
         }
 
+        // Ticks that load the entry graph are not the loop beginning: eventLoopUtilization() stays at
+        // node's pre-loop zeros through the entry point's synchronous evaluation.
+        vm.defer_loop_start(true);
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
@@ -1552,6 +1555,8 @@ impl Run {
         }
 
         // ── core run-loop ──────────────────────────────────────────────────
+        vm.defer_loop_start(false);
+        vm.mark_loop_started();
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {

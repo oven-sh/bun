@@ -86,8 +86,11 @@ pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> J
     // panics rather than return null) and this runs on its thread. Raw *mut, no &Loop — a
     // &mut PosixLoop is live above us via tick_with_timeout for the whole tick.
     // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
-    let idle_ms =
-        unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) } as f64 / 1_000_000.0;
+    let raw_idle_ns = unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) };
+    let idle_ms = bun_jsc::virtual_machine::VirtualMachine::loop_idle_ms_from(
+        &vm.loop_idle_base_ns,
+        raw_idle_ns,
+    );
     let Some(elapsed_ms) = vm.loop_elapsed_ms() else {
         return Ok(JSValue::NULL);
     };

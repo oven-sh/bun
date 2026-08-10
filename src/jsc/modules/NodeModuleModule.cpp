@@ -31,14 +31,12 @@ using namespace JSC;
 BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
@@ -131,13 +129,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])
 {
     return N;
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDebugNoop,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleCall,
@@ -288,13 +279,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,

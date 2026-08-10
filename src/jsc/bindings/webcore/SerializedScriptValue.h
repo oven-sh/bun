@@ -188,7 +188,7 @@ private:
     FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
 
-    // Set by createFromWireBytes so deserialization can refuse file-path/fd records from caller-supplied bytes.
+    // Set by createFromWireBytes so deserialization refuses file/fd/s3-backed Blob records; fromArrayBuffer passes the flag directly.
     bool m_isFromUntrustedBytes { false };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};

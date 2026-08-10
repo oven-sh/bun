@@ -164,22 +164,20 @@ On the Rust side, the enum is mirrored as a `#[repr(u8)]` enum. Bindgen
 the `.bind.ts` declaration order:
 
 ```rust
-pub mod js_bindings {
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Formatter {
-        EscapePowershell = 0,
-        HighlightJavascript = 1,
-        HighlightJavascriptRedacted = 2,
-    }
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Formatter {
+    EscapePowershell = 0,
+    HighlightJavascript = 1,
+    HighlightJavascriptRedacted = 2,
+}
 
-    pub fn fmt_string(
-        global: &JSGlobalObject,
-        code: &[u8],
-        formatter_id: Formatter,
-    ) -> JsResult<bun_core::String> {
-        // ...
-    }
+pub fn fmt_string(
+    global: &JSGlobalObject,
+    code: &[u8],
+    formatter_id: Formatter,
+) -> JsResult<bun_core::String> {
+    // ...
 }
 ```
 

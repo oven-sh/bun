@@ -124,8 +124,8 @@ function builtinType<T>() {
 /** Contains all primitive types provided by the bindings generator */
 export namespace t {
   /**
-   * Can only be used as an argument type.
-   * Tells the code generator to pass `*JSC.JSGlobalObject` as a parameter
+   * Can only be used as an argument type. The generated host function passes the
+   * `JSGlobalObject*` for this argument.
    */
   export const globalObject = builtinType<never>()("globalObject");
   /**

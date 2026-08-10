@@ -1233,8 +1233,10 @@ impl JSValkeyClient {
         if let Some(this_value) = self.this_value.get().try_get() {
             let hello_value = match protocol_jsc::resp_value_to_js(value, &global_object) {
                 Ok(v) => v,
-                // The HELLO reply did not convert: that is this connect's failure. Reject the
-                // connection promise with it (a stop just unwinds; the socket entry stands down).
+                // The HELLO reply did not convert: that is this connect's failure (a stop just
+                // unwinds; the socket entry stands down). Reject the connection promise with the
+                // error, then fail and close the connection as a failed handshake does, so the
+                // client's state matches the rejected promise.
                 Err(err) => {
                     let error = global_object.take_exception(err);
                     if error.is_termination_exception() || !global_object.script_allowed() {
@@ -1248,14 +1250,13 @@ impl JSValkeyClient {
                         );
                         JSPromise::opaque_mut(promise.as_promise().unwrap())
                             .reject(&global_object, Ok(error))?;
-                        self.client_mut().flags.connection_promise_returns_client = false;
-                    } else {
-                        let _ = self
-                            .vm()
-                            .as_mut()
-                            .uncaught_exception(&global_object, error, false);
                     }
-                    return Ok(());
+                    let client = self.client_mut();
+                    client.flags.connection_promise_returns_client = false;
+                    client.flags.is_authenticated = false;
+                    client.flags.is_manually_closed = true;
+                    let _close = scopeguard::guard(BackRef::new(self), |p| p.client_mut().close());
+                    return self.client_mut().fail_with_js_value(&global_object, error);
                 }
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);

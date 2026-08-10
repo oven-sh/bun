@@ -527,7 +527,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
-        array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+        // toJS returns null with an exception pending (including a termination
+        // request surfacing at one of its trap checks), so it must be checked
+        // before putDirectIndex consumes the value.
+        auto* requestValue = request.toJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(globalObject, i++, requestValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

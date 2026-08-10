@@ -786,6 +786,13 @@ pub(crate) fn main_use_system_ca() -> Option<bool> {
     None
 }
 
+/// `--use-openssl-ca`: process-wide, as in node. The default store is then OpenSSL's
+/// own lookups instead of the bundled roots (root_certs.cpp), so the reporting path
+/// has to leave the bundled and system sets out as well.
+pub(crate) fn use_openssl_ca() -> bool {
+    Bun__Node__CAStore.load(core::sync::atomic::Ordering::Relaxed) == BunCAStore::Openssl as u8
+}
+
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing

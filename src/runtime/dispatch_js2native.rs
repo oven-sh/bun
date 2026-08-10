@@ -77,6 +77,16 @@ pub(crate) fn bun_get_use_system_ca(
     )
 }
 
+/// Process-wide `--use-openssl-ca`, under which the default store holds neither the bundled nor
+/// the system roots; `getCACertificates('default')` leaves them out to match, as node's does:
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L157
+pub(crate) fn bun_get_use_openssl_ca(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(crate::cli::Arguments::use_openssl_ca()))
+}
+
 /// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
 /// performance.eventLoopUtilization() is defined in terms of (node derives
 /// active as now - loopStart - idle) — or `null` before the loop has begun.

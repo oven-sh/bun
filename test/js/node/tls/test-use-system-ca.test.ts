@@ -178,6 +178,49 @@ describe("--use-system-ca", () => {
     expect(exitCode).toBe(0);
   });
 
+  // getCACertificates('default') describes the store above, so it follows the same rules
+  // (node's lib/tls.js cacheDefaultCACertificates): bundled by default, bundled plus system under
+  // --use-system-ca, and nothing from either set under --use-openssl-ca, whose roots are not
+  // enumerable. Counts are relative to 'bundled' so the host's own stores do not matter.
+  test.each([
+    [[], "bundled"],
+    [["--no-use-system-ca"], "bundled"],
+    [["--use-openssl-ca"], "none"],
+    [["--use-system-ca"], "bundled+system"],
+  ])("getCACertificates('default') with flags %j reports %s", async (flags, expected) => {
+    using dir = tempDir("ca-report", { "cert.pem": tls.cert });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        ...flags,
+        "-e",
+        `
+        const tls = require("tls");
+        console.log(JSON.stringify({
+          def: tls.getCACertificates("default").length,
+          bundled: tls.getCACertificates("bundled").length,
+          system: tls.getCACertificates("system").length,
+        }));
+        `,
+      ],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        SSL_CERT_FILE: join(String(dir), "cert.pem"),
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { def, bundled, system } = JSON.parse(stdout);
+    expect(bundled).toBeGreaterThan(0);
+    expect(def).toBe({ none: 0, bundled, "bundled+system": bundled + system }[expected]);
+    expect(exitCode).toBe(0);
+  });
+
   // Clients that fall back to the thread's default client context (WebSocket has no per-connection
   // CA option) must follow the worker's --use-system-ca exactly like tls.connect and fetch do.
   // The harness cert is self-signed with a 127.0.0.1 SAN, so it can stand in as the "system" root

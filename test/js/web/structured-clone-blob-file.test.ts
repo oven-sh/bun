@@ -795,7 +795,12 @@ describe("structuredClone with Blob and File", () => {
           `,
         });
         await using proc = Bun.spawn({
-          cmd: [bunExe(), join(String(dir), "parent.js"), join(String(dir), "child.js"), join(String(dir), "secret.txt")],
+          cmd: [
+            bunExe(),
+            join(String(dir), "parent.js"),
+            join(String(dir), "child.js"),
+            join(String(dir), "secret.txt"),
+          ],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",

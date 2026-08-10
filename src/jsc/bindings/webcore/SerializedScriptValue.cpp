@@ -5076,7 +5076,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                                                ,
         m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
 #endif
-        ,
+                                      ,
         m_isFromUntrustedBytes);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

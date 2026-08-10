@@ -2197,7 +2197,9 @@ impl<'a> PackageInstaller<'a> {
                                 ),
                             ),
                         );
-                        // Opt-in: symbolizing the debug binary costs seconds per failed package.
+                        // Opt-in: these are ordinary user-facing failures, and this dump lands in
+                        // the install output on every platform (on Linux through llvm-symbolizer,
+                        // which also costs seconds per failed package).
                         #[cfg(bun_debug)]
                         if PackageInstaller.is_visible() {
                             bun_crash_handler::dump_stack_trace(

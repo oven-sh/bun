@@ -458,8 +458,9 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err4 = await new Response(stderr4).text();
-  // Debug builds used to follow this line with a stack trace (stdout on Linux,
-  // stderr elsewhere); neither stream may carry it unless opted into.
+  // Debug builds used to follow this line with a stack trace (on stdout via
+  // llvm-symbolizer on Linux, on stderr elsewhere); neither stream may carry it
+  // unless BUN_DEBUG_PackageInstaller=1 is set.
   expect(err4.split(/\r?\n/)).toEqual([
     `FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`,
     "",

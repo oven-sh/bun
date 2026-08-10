@@ -950,12 +950,26 @@ describe("multiline array layout", () => {
       "718a-9b80-c98ea7731663",
       "019fea1c-0817-718b-94eb-b67f04ba1ede",
     ];
-    expect(Bun.inspect(uuids)).toBe("[\n" + uuids.map(u => `  "${u}",`).join("\n").slice(0, -1) + "\n]");
+    expect(Bun.inspect(uuids)).toBe(
+      "[\n" +
+        uuids
+          .map(u => `  "${u}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
   });
 
   it("wraps long string arrays even when fewer than 10 entries", () => {
     const strings = Array.from({ length: 8 }, (_, i) => `long-string-number-${i}-aaaaaaaaaaaa`);
-    expect(Bun.inspect(strings)).toBe("[\n" + strings.map(s => `  "${s}",`).join("\n").slice(0, -1) + "\n]");
+    expect(Bun.inspect(strings)).toBe(
+      "[\n" +
+        strings
+          .map(s => `  "${s}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
   });
 
   it("separates multiline objects with },\\n{ instead of }, {", () => {
@@ -969,7 +983,7 @@ describe("multiline array layout", () => {
     expect(out).toBe(
       [
         "[",
-        '  {',
+        "  {",
         '    id: "1ced6c78-1309-49f1-a111-de1010956fc1",',
         "  },",
         "  {",

@@ -4352,8 +4352,7 @@ pub mod formatter {
                 let estimated: usize = match tag.tag {
                     TagPayload::String | TagPayload::StringPossiblyFormatted => {
                         // Length only; the bytes are not materialized.
-                        let str =
-                            OwnedString::new(BunString::from_js(element, self.global_this)?);
+                        let str = OwnedString::new(BunString::from_js(element, self.global_this)?);
                         str.length() + 2
                     }
                     TagPayload::Integer => {
@@ -4398,8 +4397,7 @@ pub mod formatter {
                 // The single-line rendering would overflow the line budget, so
                 // open the bracket in multiline form immediately instead of
                 // leaving the first element dangling after `[ `.
-                force_multiline: one_per_line
-                    && self.estimated_line_length + total_len + 2 > 80,
+                force_multiline: one_per_line && self.estimated_line_length + total_len + 2 > 80,
             })
         }
 

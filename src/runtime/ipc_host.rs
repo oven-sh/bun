@@ -234,8 +234,7 @@ pub(crate) fn do_send(
             }
         }
     }
-    // serialize() already detached a non-keepOpen net.Socket from its native handle, so if that
-    // handle is not going out after all nothing else will ever close it (node: postSend on error).
+    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it here (node: postSend on error).
     let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
         if target.is_object() {
             match target.get(global_object, "close") {
@@ -338,8 +337,7 @@ pub(crate) fn emit_handle_ipc_message(
         }
         let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = get_ipc_instance(vm) else {
-            // Adopting a server/dgram handle takes a loop turn; a message that arrived right before
-            // the channel's EOF is still delivered, as node delivers it.
+            // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
             Process__emitMessageEvent(global_this, message, handle);
             return Ok(JSValue::UNDEFINED);
         };

@@ -1475,9 +1475,7 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // The ipc callback stays: a received server/dgram handle finishes adopting a loop turn
-            // later and still has to be delivered after the channel's EOF (node delivers it too).
-
+            // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)

@@ -1279,8 +1279,7 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// A user-initiated disconnect(). Like node, the channel reports disconnected at once but the
-    /// close waits while a handle is awaiting its ack, so the messages queued behind it still go out.
+    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
     pub fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()

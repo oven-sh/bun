@@ -101,8 +101,7 @@ function removeWorker(worker) {
   }
 }
 
-// `channelGone`: the worker's channel has closed, so nothing it still holds will be acked. A
-// primary-initiated disconnect() is not that yet — the channel stays up until the pending acks arrive.
+// channelGone: the channel is closed, so nothing the worker still holds can be acked (a primary disconnect() keeps it up until the acks arrive).
 function removeHandlesForWorker(worker, channelGone) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 

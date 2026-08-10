@@ -6,20 +6,13 @@
 // `Debugger.setBreakpoint` replies "Could not resolve breakpoint".
 // See oven-sh/WebKit#405.
 //
-// Kept in its own file (rather than inspect.test.ts) because inspect.test.ts
-// is `[ASAN] [TIMEOUT]` in test/expectations.txt and several of its
-// `localhost`-based websocket cases are environment-sensitive; this file runs
-// clean on its own.
-//
-// Skipped on the CI ASAN lane only: the WebSocket inspector transport is
-// known to be unreliable there (see test/expectations.txt for inspect.test.ts).
-// Gated on isCI && isASAN (not bare isASAN) so a local `bun bd` debug+ASAN
-// build still runs these, matching test/cli/hot/watch-many-dirs.test.ts. The
-// JSC switch-arm fix being tested is in C++ and behaves identically with or
-// without ASAN; it is still exercised on every other CI lane.
+// Kept in its own file rather than inspect.test.ts, which runs without
+// validateExceptionChecks (test/no-validate-exceptions.txt) and has several
+// environment-sensitive `localhost` websocket cases; this file runs clean on
+// its own.
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 async function runDebuggerProbe(extraArgs: readonly string[], expectedSourceType: string | null) {
@@ -74,6 +67,15 @@ test("t", () => { expect(x).toBe(1); });
           }
         } catch {}
       }
+    }
+    if (!urlFound && stderrLineBuf.trim()) {
+      try {
+        const u = new URL(stderrLineBuf.trim());
+        if (u.protocol === "ws:" || u.protocol === "wss:") {
+          urlFound = true;
+          urlResolve(u);
+        }
+      } catch {}
     }
     if (!urlFound) urlReject(new Error(`Inspector URL not found: ${JSON.stringify(stderrBuf)}`));
   })().catch(err => {
@@ -154,7 +156,7 @@ test("t", () => { expect(x).toBe(1); });
     ]);
 
     const pausedPromise = waitForEvent("Debugger.paused");
-    send("Inspector.initialized").catch(() => {});
+    send("Inspector.initialized").catch(err => failAll(err instanceof Error ? err : new Error(String(err))));
     const paused = await pausedPromise;
     expect(paused.reason).toBe("DebuggerStatement");
 
@@ -237,19 +239,13 @@ test("t", () => { expect(x).toBe(1); });
   }
 }
 
-test.concurrent.skipIf(isCI && isASAN)(
-  "bun test --isolate: Debugger.scriptParsed reports a module and breakpoints resolve",
-  async () => {
-    await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
-  },
-);
+test.concurrent("bun test --isolate: Debugger.scriptParsed reports a module and breakpoints resolve", async () => {
+  await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
+});
 
 // Sanity: without --isolate the provider is plain Module, the isolation cache
 // is empty (hence null), and this has always worked; pinning it alongside
 // ensures the --isolate case is being compared against the correct baseline.
-test.concurrent.skipIf(isCI && isASAN)(
-  "bun test (no --isolate): Debugger.scriptParsed reports a module and breakpoints resolve",
-  async () => {
-    await runDebuggerProbe([], null);
-  },
-);
+test.concurrent("bun test (no --isolate): Debugger.scriptParsed reports a module and breakpoints resolve", async () => {
+  await runDebuggerProbe([], null);
+});

@@ -915,7 +915,7 @@ pub fn materialize(
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
-            format_args!("JSON document is too deeply nested"),
+            format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: root.loc,
@@ -1934,7 +1934,7 @@ mod tests {
         let full = probe(doc, Which::Utf8);
         let immutable = probe(doc, Which::Immutable);
         assert_eq!(full, immutable);
-        let name_key_offset = doc.windows(6).position(|w| w == b"\"name\"").unwrap();
+        let name_key_offset = bun_core::strings::index_of(doc, b"\"name\"").unwrap();
         assert!(
             full.starts_with(&format!("name@{name_key_offset}=\"pkg\"\n")),
             "{full:?}"

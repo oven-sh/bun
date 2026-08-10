@@ -2481,6 +2481,29 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("JSX tag names containing '-' or ':' are string tags regardless of case", () => {
+    // Matches esbuild/Babel/TypeScript: a dashed (custom element) or namespaced
+    // name is never a component reference, even when it starts uppercase.
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+    for (const [tag, expected] of [
+      ["Foo-Bar", `"Foo-Bar"`],
+      ["Ns:Comp", `"Ns:Comp"`],
+      ["my-el", `"my-el"`],
+      ["svg:path", `"svg:path"`],
+      ["Foo", `Foo`],
+      ["div", `"div"`],
+    ]) {
+      expect(bun.transformSync(`export var foo = <${tag} />`)).toBe(
+        `export var foo = jsxDEV_7x81h0kn(${expected}, {}, undefined, false, undefined, this);\n`,
+      );
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/30958
   // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
   // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer

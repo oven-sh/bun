@@ -695,6 +695,25 @@ impl All {
         }
     }
 
+    /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
+    /// more) and the timeout objects are drained: hand the embedded
+    /// `uv_timer_t`/`uv_idle_t` to `uv_close` so their nodes leave the loop's
+    /// handle queue when the teardown closes the loop — before this struct's
+    /// storage is freed.
+    #[cfg(windows)]
+    pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
+        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        if !self.uv_timer.data.is_null() {
+            self.uv_timer.stop();
+            self.uv_timer.close(timer_closed);
+        }
+        if !self.uv_idle.data.is_null() {
+            self.uv_idle.stop();
+            self.uv_idle.close(idle_closed);
+        }
+    }
+
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
@@ -715,6 +734,10 @@ impl All {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
+        debug_assert!(
+            !self.uv_timer.is_closing(),
+            "timer scheduled after teardown closed the heap's uv timer"
+        );
 
         let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.
@@ -1168,6 +1191,41 @@ impl All {
         }
         #[cfg(windows)]
         let _ = uws_loop;
+    }
+
+    /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still
+    /// in either heap, whatever its kind. Owners keep their nodes (now
+    /// `CANCELLED`, which their own `state == ACTIVE` checks respect); nothing
+    /// can fire afterwards even if the loop turns again.
+    ///
+    /// # Safety
+    /// `this` is the live per-thread `All`; JS thread; never on a VM that keeps running.
+    pub(crate) unsafe fn disarm_all_for_vm_teardown(this: *mut Self) {
+        let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        // SAFETY: fn contract.
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — reachable nodes are live while linked.
+            let (child, next) = unsafe { ((*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            nodes.push(node);
+        }
+        for node in nodes {
+            // SAFETY: collected from the live heap above; `remove` relinks the
+            // others but every node stays a valid allocation owned elsewhere.
+            unsafe { (*this).remove(node) };
+        }
     }
 
     /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`

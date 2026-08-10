@@ -6,15 +6,10 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_core::{self, Output, ZBox, strings};
 use bun_glob as glob;
-use bun_io::KeepAlive;
-use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    WorkPool, WorkPoolTask,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
@@ -677,125 +672,50 @@ impl PromiseResult {
     }
 }
 
-/// Context must provide:
-///   - `run` — runs on thread pool, stores result in `self`
-///   - `run_from_js` — returns value to resolve/reject
-///   - `Drop` — cleanup
-pub trait TaskContext: Send {
-    /// Dispatch tag for this context's `AsyncTask<Self>` variant.
-    const TAG: TaskTag;
+/// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
+/// stores its result on `self`; `run_from_js` turns it into the promise's
+/// value. It is the off-thread part of an `AsyncTask<C>` job.
+pub trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
 
-/// Generic async task that handles all the boilerplate for thread pool tasks.
-pub struct AsyncTask<C: TaskContext> {
-    ctx: C,
-    promise: JSPromiseStrong,
-    vm: *mut VirtualMachine,
-    task: WorkPoolTask,
-    concurrent_task: ConcurrentTask,
-    keep_alive: KeepAlive,
-}
+/// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
+pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
-impl<C: TaskContext> Taskable for AsyncTask<C> {
-    const TAG: TaskTag = C::TAG;
-}
-
-impl<C: TaskContext> AsyncTask<C> {
-    fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
-        let vm: *mut VirtualMachine = global.bun_vm_ptr();
-        let this = Box::new(AsyncTask {
-            ctx,
-            promise: JSPromiseStrong::init(global),
-            vm,
-            task: WorkPoolTask {
-                callback: Self::run_callback,
-                node: Default::default(),
-            },
-            concurrent_task: ConcurrentTask::default(),
-            keep_alive: KeepAlive::default(),
-        });
-        let raw = bun_core::heap::into_raw(this);
-        // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
-        // loop alive until `run_from_js` unrefs after the threadpool work completes.
-        unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
-        Ok(raw)
+impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
+    type OffThread = C;
+    type Js = JSPromiseStrong;
+    fn run(
+        ctx: &mut C,
+        _vm: &bun_jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        ctx.run();
+        Some(done)
     }
-
-    fn schedule(this: *mut Self) {
-        // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
-        // task field is intrusive and stable since `this` is heap-allocated.
-        WorkPool::schedule(unsafe { &raw mut (*this).task });
-    }
-
-    /// Read the pending promise's `JSValue` from a freshly-`create`d task.
-    ///
-    /// Centralises the `*mut Self → field` deref so the four
-    /// `start_*_task` callers stay safe. Sound because every caller passes the
-    /// pointer returned by [`create`](Self::create) (heap-allocated, sole owner
-    /// on the JS thread) and reads the promise *before* [`schedule`] hands the
-    /// allocation to the thread pool — i.e. `this` is live and unaliased.
-    #[inline]
-    fn promise_value(this: *mut Self) -> JSValue {
-        // SAFETY: see fn doc — `this` is the live, unscheduled `heap::into_raw`
-        // allocation from `create()`.
-        unsafe { (*this).promise.value() }
-    }
-
-    /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
-    /// field type at the struct-init site in `create`).
-    fn run_callback(work_task: *mut WorkPoolTask) {
-        // SAFETY: `work_task` points to the `task` field of an `AsyncTask<C>`
-        // allocated by `create` — only ever invoked by the thread pool against
-        // a task it scheduled, so provenance covers the full allocation.
-        let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
-        // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
-        unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
-        unsafe {
-            let ct = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            (*(*this).vm).enqueue_task_concurrent(ct);
-        }
-    }
-
-    /// # Safety
-    /// `this` must be the live `heap::into_raw` allocation produced by
-    /// [`create`](Self::create), called exactly once on the JS thread after
-    /// `run_callback` enqueues it. Takes ownership of the allocation.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: see fn-level safety contract.
-        let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
-
-        // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
-        // exit (ctx implements Drop).
-
-        let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
-        let global = vm.global();
-        let promise = owned.promise.swap();
-        let result = match owned.ctx.run_from_js(global) {
+    fn then(mut ctx: C, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let promise = promise.swap();
+        let result = match ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return promise.reject(global, Ok(global.take_exception(e)));
+                return Ok(promise.reject(global, Err(e))?);
             }
         };
-        result.fulfill(global, promise)
+        Ok(result.fulfill(global, promise)?)
+    }
+}
+
+impl<C: TaskContext> AsyncTask<C> {
+    /// Schedule `ctx` on the work pool; returns the promise it settles.
+    fn start(global: &JSGlobalObject, ctx: C) -> JSValue {
+        let promise = JSPromiseStrong::init(global);
+        let value = promise.value();
+        bun_jsc::Job::<Self>::schedule(&global.js_thread(), ctx, promise);
+        value
     }
 }
 
@@ -822,8 +742,6 @@ pub struct ExtractContext {
 }
 
 impl TaskContext for ExtractContext {
-    const TAG: TaskTag = task_tag::ArchiveExtractTask;
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -889,7 +807,7 @@ fn start_extract_task(
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
-    let task = ExtractTask::create(
+    Ok(ExtractTask::start(
         global,
         ExtractContext {
             store,
@@ -897,11 +815,7 @@ fn start_extract_task(
             glob_patterns,
             result: ExtractResult::Err(ExtractError::ReadError),
         },
-    )?;
-
-    let promise_js = ExtractTask::promise_value(task);
-    ExtractTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -932,8 +846,6 @@ pub struct BlobContext {
 }
 
 impl TaskContext for BlobContext {
-    const TAG: TaskTag = task_tag::ArchiveBlobTask;
-
     fn run(&mut self) {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
@@ -960,7 +872,7 @@ impl TaskContext for BlobContext {
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
-                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())
+                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())?
                     }
                 }))
             }
@@ -984,7 +896,7 @@ impl TaskContext for BlobContext {
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
-                    ))
+                    )?)
                 }
             }),
         }
@@ -1002,7 +914,7 @@ fn start_blob_task(
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
-    let task = BlobTask::create(
+    Ok(BlobTask::start(
         global,
         BlobContext {
             store,
@@ -1010,11 +922,7 @@ fn start_blob_task(
             output_type,
             result: BlobResult::Uncompressed,
         },
-    )?;
-
-    let promise_js = BlobTask::promise_value(task);
-    BlobTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1044,8 +952,6 @@ pub struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
-    const TAG: TaskTag = task_tag::ArchiveWriteTask;
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -1110,7 +1016,7 @@ fn start_write_task(
     // Ref store if using store reference — already done by caller via Arc::clone into WriteData::Store.
     // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.
 
-    let task = WriteTask::create(
+    Ok(WriteTask::start(
         global,
         WriteContext {
             data,
@@ -1118,11 +1024,7 @@ fn start_write_task(
             compress,
             result: WriteResult::Success,
         },
-    )?;
-
-    let promise_js = WriteTask::promise_value(task);
-    WriteTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 struct FileEntry {
@@ -1252,8 +1154,6 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
-    const TAG: TaskTag = task_tag::ArchiveFilesTask;
-
     fn run(&mut self) {
         self.result = match self.do_run() {
             Ok(r) => r,
@@ -1312,18 +1212,14 @@ fn start_files_task(
     // Ownership: On error, caller's errdefer frees glob_patterns.
     // On success, ownership transfers to FilesContext, which frees them in deinit().
 
-    let task = FilesTask::create(
+    Ok(FilesTask::start(
         global,
         FilesContext {
             store,
             glob_patterns,
             result: FilesResult::Err(FilesError::ReadError),
         },
-    )?;
-
-    let promise_js = FilesTask::promise_value(task);
-    FilesTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 // ============================================================================
@@ -1393,12 +1289,12 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     }
 
     // Reject paths with ".." components
-    for component in pathname.split(|b| *b == b'/') {
+    for component in strings::split(pathname, b"/") {
         if component == b".." {
             return false;
         }
         // Also check Windows-style separators
-        for win_component in component.split(|b| *b == b'\\') {
+        for win_component in strings::split(component, b"\\") {
             if win_component == b".." {
                 return false;
             }

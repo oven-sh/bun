@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import zlib from "node:zlib";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
@@ -772,3 +772,50 @@ test("errored pipeline releases the compression coder eagerly", async () => {
   expect(deltaMiB).toBeLessThan(64);
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// Chunks > 128 KiB run the codec on a WorkPool thread. VM teardown
+// (Heap::lastChanceToFinalize) runs the cell's CFinalizer even while that
+// transform is mid-flight — it must release the cell's reference, not free
+// the coder under the pool thread (heap-use-after-free in the brotli encoder,
+// caught by ASAN). BUN_DESTRUCT_VM_ON_EXIT=1 (which CI's test runner sets)
+// makes process.exit() take that teardown path on the main thread. ASAN-only:
+// without ASAN the stray write into freed pages is not reliably observable.
+// The 30s timeout covers the debug/ASAN child's startup plus teardown.
+test.skipIf(!isASAN)(
+  "process.exit during an in-flight off-thread transform does not free the coder under the pool thread",
+  async () => {
+    const src = `
+      const s = new CompressionStream("brotli");
+      const w = s.writable.getWriter();
+      const big = new Uint8Array(6 << 20);
+      for (let i = 0; i < big.length; i += 3) big[i] = (i * 2654435761) >>> 24;
+      w.write(big).catch(() => {});
+      w.close().catch(() => {});
+      s.readable.getReader().read().catch(() => {});
+      // One macrotask turn so the write's transform step has dispatched to the
+      // pool; the 6 MiB brotli step runs for seconds, so exit lands mid-flight.
+      setTimeout(() => {
+        console.log("exiting");
+        process.exit(0);
+      }, 15);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        // Exiting mid-transform deliberately abandons the in-flight task (and
+        // the coder reference it holds); LSAN would report that bounded leak.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stdout).toContain("exiting");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

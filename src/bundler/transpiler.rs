@@ -459,6 +459,14 @@ impl<'a> Transpiler<'a> {
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => Ok(r),
+            // Nothing that long names a directory whose cache could be stale
+            // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
+            Err(err)
+                if self.fs().top_level_dir.len() + entry_point.len() + 4
+                    > bun_paths::MAX_PATH_BYTES =>
+            {
+                Err(err)
+            }
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
@@ -758,16 +766,23 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
-                    return Ok(());
+                // Copy the listing's basenames out under `entries_mutex`,
+                // refreshing it at our generation in the same critical
+                // section: concurrent resolvers rewrite the `DirEntry` map in
+                // place under that lock, and `dot_env::Loader::load` does
+                // file I/O between probes.
+                let dir = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                        Some(entries) => dot_env::DirEntryKeys(
+                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
+                        ),
+                        None => return Ok(()),
+                    }
                 };
-                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
-                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -781,7 +796,7 @@ impl<'a> Transpiler<'a> {
                 } else {
                     dot_env::DotEnvFileSuffix::Development
                 };
-                env.load(dir, &env_files, suffix, skip_default_env)?;
+                env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;
@@ -848,7 +863,6 @@ pub struct ParseResult<'a> {
     pub loader: options::Loader,
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
-    pub input_fd: Option<FD>,
     pub empty: bool,
     // `PendingResolution` does not yet
     // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
@@ -890,7 +904,6 @@ impl<'a> ParseResult<'a> {
             loader: options::Loader::File,
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: Default::default(),
-            input_fd: None,
             empty: true,
             pending_imports: Default::default(),
             runtime_transpiler_cache: None,
@@ -905,7 +918,6 @@ impl<'a> ParseResult<'a> {
         arena: &'a bun_alloc::Arena,
         source: bun_ast::Source,
         loader: options::Loader,
-        input_fd: Option<FD>,
         source_contents_backing: resolver::cache::Contents,
     ) -> Self {
         ParseResult {
@@ -913,7 +925,6 @@ impl<'a> ParseResult<'a> {
             loader,
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
-            input_fd,
             empty: true,
             pending_imports: Default::default(),
             runtime_transpiler_cache: None,
@@ -1353,7 +1364,6 @@ impl<'a> Transpiler<'a> {
         // the unique live `&mut Log` for the duration of the parse.
         let log: &mut bun_ast::Log = self.log_mut();
 
-        let mut input_fd: Option<FD> = None;
         // Owns the heap allocation backing `source.contents` for the
         // non-shared-buffer file-read and `data:` URL paths. Threaded into the
         // returned `ParseResult` so it drops with the result instead of being
@@ -1453,7 +1463,6 @@ impl<'a> Transpiler<'a> {
                     return None;
                 }
             };
-            input_fd = Some(entry.fd);
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
                 *file_fd_ptr = entry.fd;
             }
@@ -1487,7 +1496,6 @@ impl<'a> Transpiler<'a> {
                 arena,
                 source.clone(),
                 loader,
-                input_fd,
                 source_backing,
             ));
         }
@@ -1500,7 +1508,6 @@ impl<'a> Transpiler<'a> {
                     arena,
                     source.clone(),
                     loader,
-                    input_fd,
                     source_backing,
                 ));
             }
@@ -1517,7 +1524,6 @@ impl<'a> Transpiler<'a> {
                         arena,
                         source.clone(),
                         options::Loader::Wasm,
-                        input_fd,
                         source_backing,
                     ));
                 }
@@ -1680,7 +1686,6 @@ impl<'a> Transpiler<'a> {
                         ast: *value,
                         source: source.clone(),
                         loader,
-                        input_fd,
                         runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
                         pending_imports: Default::default(),
@@ -1692,7 +1697,6 @@ impl<'a> Transpiler<'a> {
                         runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
-                        input_fd,
                         already_bundled: AlreadyBundled::None,
                         pending_imports: Default::default(),
                         empty: false,
@@ -1763,7 +1767,6 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        input_fd,
                         pending_imports: Default::default(),
                         runtime_transpiler_cache: None,
                         empty: false,
@@ -1776,11 +1779,11 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Yaml
             | options::Loader::Json
             | options::Loader::Jsonc
-            | options::Loader::Json5 => {
+            | options::Loader::Json5
+            | options::Loader::Xml => {
                 return parse_data_loader(
                     source,
                     loader,
-                    input_fd,
                     source_backing,
                     arena,
                     log,
@@ -1788,16 +1791,15 @@ impl<'a> Transpiler<'a> {
                 );
             }
             options::Loader::Text => {
-                return parse_text_loader(source, loader, input_fd, source_backing, arena);
+                return parse_text_loader(source, loader, source_backing, arena);
             }
             options::Loader::Md => {
-                return parse_md_loader(source, loader, input_fd, source_backing, arena, log);
+                return parse_md_loader(source, loader, source_backing, arena, log);
             }
             options::Loader::Wasm => {
                 return parse_wasm_loader(
                     source,
                     loader,
-                    input_fd,
                     source_backing,
                     arena,
                     &path,
@@ -1832,7 +1834,6 @@ impl<'a> Transpiler<'a> {
 fn parse_data_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
-    input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     log: &mut bun_ast::Log,
@@ -1876,7 +1877,18 @@ fn parse_data_loader<'a>(
                 Err(_) => return None,
             }
         }
-        // SAFETY: outer match arm guarantees one of the five.
+        options::Loader::Xml => {
+            let options = bun_parsers::xml::Options {
+                compact: true,
+                encoding: bun_parsers::xml::InputEncoding::File,
+            };
+            bun_core::analytics::Features::xml_parse_inc();
+            match bun_parsers::xml::XML::parse(source, log, arena, options) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
+        // SAFETY: outer match arm guarantees one of the six.
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
@@ -2070,7 +2082,6 @@ fn parse_data_loader<'a>(
         ast,
         source: source.clone(),
         loader,
-        input_fd,
         already_bundled: AlreadyBundled::None,
         pending_imports: Default::default(),
         runtime_transpiler_cache: None,
@@ -2084,7 +2095,6 @@ fn parse_data_loader<'a>(
 fn parse_text_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
-    input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
 ) -> Option<ParseResult<'a>> {
@@ -2112,7 +2122,6 @@ fn parse_text_loader<'a>(
         ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
-        input_fd,
         already_bundled: AlreadyBundled::None,
         pending_imports: Default::default(),
         runtime_transpiler_cache: None,
@@ -2126,7 +2135,6 @@ fn parse_text_loader<'a>(
 fn parse_md_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
-    input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     log: &mut bun_ast::Log,
@@ -2170,7 +2178,6 @@ fn parse_md_loader<'a>(
         ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
-        input_fd,
         already_bundled: AlreadyBundled::None,
         pending_imports: Default::default(),
         runtime_transpiler_cache: None,
@@ -2184,7 +2191,6 @@ fn parse_md_loader<'a>(
 fn parse_wasm_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
-    input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     path: &bun_paths::fs::Path<'static>,
@@ -2208,7 +2214,6 @@ fn parse_wasm_loader<'a>(
             ast: bun_ast::Ast::empty_in(arena),
             source: source.clone(),
             loader,
-            input_fd,
             already_bundled: AlreadyBundled::None,
             pending_imports: Default::default(),
             runtime_transpiler_cache: None,
@@ -2872,6 +2877,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Toml
             | options::Loader::Yaml
             | options::Loader::Json5
+            | options::Loader::Xml
             | options::Loader::Text
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture

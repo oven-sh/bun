@@ -1089,6 +1089,7 @@ pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
     None,
+    JsxImport,
     Runtime,
     ReactCompiler,
     DirnameFilename,

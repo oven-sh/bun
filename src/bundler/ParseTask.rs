@@ -843,6 +843,37 @@ pub mod parse_worker {
                 let _ = temp_log.clone_to_with_recycled(log, true);
                 return result;
             }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
+                    let rows: Expr = bun_parsers::xml::XML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::xml::Options {
+                            compact: true,
+                            encoding: bun_parsers::xml::InputEncoding::File,
+                        },
+                    )?;
+                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .unwrap(),
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
             Loader::Text => {
                 let root = Expr::init(
                     E::String {
@@ -2811,15 +2842,27 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                owner.enqueue_task_concurrent(
+            bun_event_loop::AnyEventLoop::Js { .. } => {
+                let ct =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    }),
-                );
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // Owning JS VM torn down mid-bundle: free the hop and the result.
+                    // SAFETY: refused ⇒ we own the task box and the leaked result.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        drop(bun_core::heap::take(result));
+                    }
+                }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;

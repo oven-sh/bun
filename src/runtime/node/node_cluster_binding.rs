@@ -465,7 +465,12 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     return Ok(last_neg_errno());
                 }
                 set_cloexec_nonblock(fd);
-                let len = core::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
+                let len = if path_bytes.first() == Some(&0) {
+                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
+                } else {
+                    core::mem::size_of::<libc::sockaddr_un>()
+                } as libc::socklen_t;
                 if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
                     let e = last_neg_errno();
                     close_fd(fd);

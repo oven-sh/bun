@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
@@ -457,6 +457,48 @@ server.listen(0, '127.0.0.1', () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
         out: { aWasNull: true, bCalled: false },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "sending a tls.TLSSocket throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
+    async () => {
+      using dir = tempDir("ipc-handle-tls-socket", {
+        "cert.pem": tls.cert,
+        "key.pem": tls.key,
+        "parent.js": `
+const { fork } = require('node:child_process');
+const tlsMod = require('node:tls');
+const fs = require('node:fs');
+const child = fork('child.js');
+const finish = out => { console.log(JSON.stringify(out)); child.kill(); process.exit(0); };
+child.on('message', m => finish({ childReceived: m }));
+const server = tlsMod.createServer({ key: fs.readFileSync('key.pem'), cert: fs.readFileSync('cert.pem') }, serverSide => {
+  try { child.send('tls', serverSide); } catch (err) { report('serverCode', err.code); }
+});
+const codes = {};
+function report(side, code) { codes[side] = code; if ('serverCode' in codes && 'clientCode' in codes) finish({ ...codes, childReceived: null }); }
+server.listen(0, '127.0.0.1', () => {
+  const clientSide = tlsMod.connect({ port: server.address().port, host: '127.0.0.1', rejectUnauthorized: false }, () => {
+    try { child.send('tls', clientSide); } catch (err) { report('clientCode', err.code); }
+  });
+});
+`,
+        "child.js": `process.on('message', m => process.send('unexpected:' + m)); setInterval(() => {}, 1000);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { serverCode: "ERR_INVALID_HANDLE_TYPE", clientCode: "ERR_INVALID_HANDLE_TYPE", childReceived: null },
         stderr: expect.any(String),
       });
       expect(exitCode).toBe(0);

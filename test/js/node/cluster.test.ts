@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isIPv6, isWindows, joinP, tempDir, tempDirWithFiles, tls as tlsCerts } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isIPv6,
+  isLinux,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+  tls as tlsCerts,
+} from "harness";
 import net from "node:net";
 
 test.concurrent("cloneable and transferable equals", async () => {
@@ -438,6 +449,108 @@ if (cluster.isPrimary) {
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("policy is SCHED_NONE: true");
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
+});
+
+test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
+  using dir = tempDir("cluster-shared-relisten", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    if (m.port) { const c = net.connect(m.port, "127.0.0.1"); c.on("error", () => {}); return; }
+    console.log(JSON.stringify(m));
+    worker.kill();
+    process.exit(0);
+  });
+} else {
+  const first = net.createServer(sock => {
+    // Close while this connection is still open, then re-listen on the same port immediately.
+    const port = first.address().port;
+    first.close();
+    const second = net.createServer();
+    second.on("error", err => { sock.destroy(); process.send({ relisten: err.code }); });
+    second.listen(port, "127.0.0.1", () => { sock.destroy(); process.send({ relisten: "ok", samePort: second.address().port === port }); });
+  });
+  first.listen(0, "127.0.0.1", () => process.send({ port: first.address().port }));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { relisten: "ok", samePort: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
+  using dir = tempDir("cluster-shared-unix-address", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const path = require("node:path");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const SOCK = path.join(__dirname, "srv.sock");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+} else {
+  const server = net.createServer();
+  server.listen(SOCK, () => process.send({ address: server.address(), expected: SOCK }));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim());
+  expect({ address: out.address, stderr }).toEqual({ address: out.expected, stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!isLinux)("SCHED_NONE: an abstract-namespace listen is reachable by clients", async () => {
+  using dir = tempDir("cluster-shared-abstract", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const NAME = "\\0bun-cluster-abstract-" + (process.env.ABSTRACT_ID || process.pid);
+if (cluster.isPrimary) {
+  const worker = cluster.fork({ ABSTRACT_ID: String(process.pid) });
+  worker.on("message", () => {
+    const c = net.connect(NAME, () => { console.log(JSON.stringify({ connect: "ok" })); c.destroy(); worker.kill(); process.exit(0); });
+    c.on("error", err => { console.log(JSON.stringify({ connect: err.code })); worker.kill(); process.exit(0); });
+  });
+} else {
+  net.createServer(s => s.end()).listen(NAME, () => process.send("listening"));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({ out: { connect: "ok" }, stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

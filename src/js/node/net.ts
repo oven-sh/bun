@@ -3563,6 +3563,14 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // A shared cluster handle is released when the listener stops, as node's handle.close() does,
+      // not once connections drain: a close()+listen() on the same address must not race the primary.
+      const clusterHandle = this[kClusterHandle];
+      if (clusterHandle) {
+        this[kClusterHandle] = null;
+        this[kClusterUnixPath] = undefined;
+        clusterHandle.close();
+      }
     } else {
       this._handle.close();
     }
@@ -3599,7 +3607,7 @@ Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
 Server.prototype.address = function address() {
   const server = this._handle;
   if (server) {
-    const unix = server.unix;
+    const unix = server.unix || this[kClusterUnixPath];
     if (unix) {
       return unix;
     }
@@ -4113,7 +4121,8 @@ function listenInCluster(
     if (handle && typeof sharedFd === "number") {
       server[kClusterHandle] = handle;
       handle[kClusterOwner] = server;
-      server.once("close", closeClusterHandle.bind(null, handle));
+      // The primary owns the socket file; the adopted fd only needs to report it from address().
+      server[kClusterUnixPath] = path;
       try {
         server[kRealListen](
           undefined,
@@ -4132,6 +4141,7 @@ function listenInCluster(
         handle.adopted = true;
       } catch (err) {
         server[kClusterHandle] = null;
+        server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
         setTimeout(emitErrorNextTick, 1, server, err);
@@ -4144,12 +4154,9 @@ function listenInCluster(
 
 const kClusterListeningId = Symbol("kClusterListeningId");
 const kClusterHandle = Symbol("kClusterHandle");
+const kClusterUnixPath = Symbol("kClusterUnixPath");
 const kClusterFauxListen = Symbol("kClusterFauxListen");
 const { kClusterOwner } = require("internal/shared");
-
-function closeClusterHandle(handle) {
-  handle.close();
-}
 
 Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   this[kClusterHandle] = handle;

@@ -20,6 +20,8 @@ export function serialize(message, handle, _options) {
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {
+    // Only plain TCP sockets cross processes; a TLS session cannot (node: ERR_INVALID_HANDLE_TYPE).
+    if (typeof handle[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_HANDLE_TYPE();
     const native = handle._handle;
     if (!native) return null;
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];

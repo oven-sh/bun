@@ -433,10 +433,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    int poll_rc = us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE);
-    if (poll_rc != 0) {
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        int saved_errno = LIBUS_ERR;
         us_poll_free(p, group->loop);
-        *error = poll_rc < 0 ? -poll_rc : poll_rc;
+        *error = saved_errno;
         return 0;
     }
 

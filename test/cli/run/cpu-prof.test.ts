@@ -151,6 +151,34 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  // With default names each thread gets its own file, and the tid segment is worker.threadId
+  // (CPU.<date>.<time>.<pid>.<tid>.<seq>.cpuprofile), so the two profiles can be told apart as node's can.
+  test("--cpu-prof is inherited by workers and writes one profile per thread, named by threadId", async () => {
+    using dir = tempDir("cpu-prof-worker-inherit", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        console.log(w.threadId);
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "profiles", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const workerThreadId = stdout.trim();
+
+    const tids = readdirSync(join(String(dir), "profiles"))
+      .map(f => f.match(/^CPU\.\d+\.\d+\.\d+\.(\d+)\.\d+\.cpuprofile$/)?.[1])
+      .sort();
+    expect({ tids, exitCode }).toEqual({ tids: ["0", workerThreadId], exitCode: 0 });
+  });
+
   // node's --cpu-prof options are per-Environment: a worker's own execArgv decides where and under
   // which name its profile is written, independently of the (unprofiled) parent.
   test("--cpu-prof-dir and --cpu-prof-name in a worker's execArgv are honoured", async () => {

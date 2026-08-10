@@ -70,6 +70,8 @@ pub struct WebWorker {
     exec_argv_ptr: *const WTFStringImpl,
     exec_argv_len: usize,
     inherit_exec_argv: bool,
+    /// `NODE_USE_SYSTEM_CA` from the worker's own `env` option (1 / 0), or -1 when it inherits the env.
+    env_use_system_ca: i8,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
@@ -282,6 +284,7 @@ impl WebWorker {
         inherit_exec_argv: bool,
         exec_argv_ptr: *const WTFStringImpl,
         exec_argv_len: usize,
+        env_use_system_ca: i8,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
     ) -> *mut WebWorker {
@@ -349,6 +352,7 @@ impl WebWorker {
             exec_argv_ptr,
             exec_argv_len,
             inherit_exec_argv,
+            env_use_system_ca,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
             name: if name_str.is_empty() {
@@ -526,13 +530,25 @@ impl WebWorker {
         this.vm_lock.lock();
         let vm_ptr = this.vm_ptr();
         let loop_ptr = this.elu_loop.get();
-        let live = !vm_ptr.is_null() && !loop_ptr.is_null();
+        let mut live = !vm_ptr.is_null() && !loop_ptr.is_null();
         if live {
-            // SAFETY: both published under `vm_lock`, held here; the idle counter is atomic and
-            // `loop_start` was fixed before the publish. Raw reads only: the worker thread owns `&mut`.
+            // SAFETY: both published under `vm_lock`, held here; the idle counter and loop start are
+            // atomic and `origin_timer` was fixed before the publish. Raw reads only: the worker
+            // thread owns `&mut`.
             unsafe {
-                *out_idle_ms = bun_uws::us_loop_idle_ns(loop_ptr) as f64 / 1_000_000.0;
-                *out_elapsed_ms = (*vm_ptr).loop_start.elapsed().as_secs_f64() * 1000.0;
+                // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
+                let idle_ms = bun_uws::us_loop_idle_ns(loop_ptr) as f64 / 1_000_000.0;
+                let elapsed = VirtualMachine::loop_elapsed_ms_from(
+                    &*(&raw const (*vm_ptr).loop_start_ns),
+                    *(&raw const (*vm_ptr).origin_timer),
+                );
+                match elapsed {
+                    Some(elapsed_ms) => {
+                        *out_idle_ms = idle_ms;
+                        *out_elapsed_ms = elapsed_ms;
+                    }
+                    None => live = false,
+                }
             }
         }
         this.vm_lock.unlock();
@@ -560,6 +576,11 @@ impl WebWorker {
     #[inline]
     pub(crate) fn execution_context_id(&self) -> u32 {
         self.execution_context_id
+    }
+
+    /// The `worker.threadId` node exposes (context ids start at 1 on the main thread).
+    pub(crate) fn thread_id(&self) -> u32 {
+        self.execution_context_id.saturating_sub(1)
     }
 
     /// The C++ `WorkerMessagingProxy`, handed to `Zig__GlobalObject__create` so
@@ -688,6 +709,13 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
+        // node resolves a thread's CA option from its execArgv, else from that thread's own env; the
+        // same source `tls.getCACertificates("default")` reports from, so both halves agree.
+        let env_use_system_ca = match self.env_use_system_ca {
+            -1 => map.get(b"NODE_USE_SYSTEM_CA") == Some(b"1".as_slice()),
+            v => v == 1,
+        };
+
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
@@ -712,11 +740,14 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
-                use_system_ca: if own_exec_argv.is_some() {
-                    exec_argv.use_system_ca
-                } else {
-                    parent.use_system_ca
-                },
+                use_system_ca: Some(
+                    if own_exec_argv.is_some() {
+                        exec_argv.use_system_ca
+                    } else {
+                        parent.use_system_ca
+                    }
+                    .unwrap_or(env_use_system_ca),
+                ),
                 ..Default::default()
             },
         )?;
@@ -755,12 +786,12 @@ impl WebWorker {
                     md_format: exec_argv.cpu_prof_md,
                     json_format: exec_argv.cpu_prof,
                     interval: exec_argv.cpu_prof_interval.unwrap_or(defaults.interval),
-                    thread_id: self.execution_context_id,
+                    thread_id: self.thread_id(),
                 })
             } else if own_exec_argv.is_none() {
                 self.parent_cpu_profiler_config.as_ref().map(|c| {
                     crate::bun_cpu_profiler::CPUProfilerConfig {
-                        thread_id: self.execution_context_id,
+                        thread_id: self.thread_id(),
                         ..c.clone()
                     }
                 })
@@ -918,6 +949,9 @@ impl WebWorker {
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
+        // A worker's script runs inside its already-running loop (node's worker bootstrap is a loop
+        // iteration), so its ELU counts from here; the main thread's counts from its first poll.
+        vm.mark_loop_started();
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {

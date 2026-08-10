@@ -121,6 +121,41 @@ test("export surface matches Node v26.3.0", () => {
   ).toEqual(["PerformanceNodeTiming"]);
 });
 
+// node: all zeros until the event loop has begun (i.e. during the entry point's synchronous
+// evaluation, however long it spins); real numbers once the loop is running. Verified against
+// node v26.3.0.
+test("eventLoopUtilization is zero before the loop starts and counts only loop time after", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { performance } = require("perf_hooks");
+      const end = Date.now() + 50; while (Date.now() < end) {}
+      const before = performance.eventLoopUtilization();
+      setTimeout(() => {
+        const after = performance.eventLoopUtilization();
+        console.log(JSON.stringify({ before, activeExcludesTopLevelSpin: after.active < 50, idleSeen: after.idle > 0, utilInRange: after.utilization > 0 && after.utilization < 1 }));
+      }, 20);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: {
+      before: { idle: 0, active: 0, utilization: 0 },
+      activeExcludesTopLevelSpin: true,
+      idleSeen: true,
+      utilInRange: true,
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The options defaults must not read through a polluted Object.prototype.
 // Node uses kEmptyObject for both; verified against Node v26.3.0.
 test("timerify and createHistogram survive Object.prototype option pollution", async () => {

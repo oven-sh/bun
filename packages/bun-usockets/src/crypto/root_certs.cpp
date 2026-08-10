@@ -27,6 +27,9 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 // External variables from the CLI arguments
 extern "C" bool Bun__Node__UseSystemCA;
 extern "C" bool Bun__Node__NoUseSystemCA;
+// BunCAStore discriminant (Arguments.rs): 1 == --use-openssl-ca.
+extern "C" uint8_t Bun__Node__CAStore;
+static const uint8_t BUN_CA_STORE_OPENSSL = 1;
 
 // The process-wide default: --no-use-system-ca beats everything, then --use-system-ca, then
 // NODE_USE_SYSTEM_CA=1. A thread (node: Environment) started with its own flag overrides this for
@@ -230,7 +233,7 @@ extern "C" X509_STORE *us_get_default_ca_store(int use_system_ca) {
   // calls set_default_paths under --use-openssl-ca and otherwise adds the
   // system roots only when use_system_ca is set.
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099-L1109
-  if (use_system_ca && !X509_STORE_set_default_paths(store)) {
+  if ((use_system_ca || Bun__Node__CAStore == BUN_CA_STORE_OPENSSL) && !X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
   }

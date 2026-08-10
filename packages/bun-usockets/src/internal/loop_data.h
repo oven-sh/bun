@@ -83,6 +83,8 @@ struct us_internal_loop_data_t {
      * is us_loop_t's first member, so a field here shifts num_polls. */
     unsigned long long idle_ns;
     unsigned long long idle_entry_ns;
+    /* Seqlock over the park-exit update of the two fields above (odd while in progress). */
+    unsigned long long idle_seq;
 #endif
     struct us_socket_group_t *iterator;
     char *recv_buf;

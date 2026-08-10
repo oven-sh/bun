@@ -1306,6 +1306,10 @@ describe.concurrent(() => {
     expect(flags.has("--no_warnings")).toBe(true);
     expect(flags.has("--require=./foo.js")).toBe(true);
     expect(flags.has("--not-a-real-flag")).toBe(false);
+    // Every supported CA flag, including the --no- negation, is env-allowed as in node.
+    expect(
+      ["--use-system-ca", "--no-use-system-ca", "--use-openssl-ca", "--use-bundled-ca"].filter(f => flags.has(f)),
+    ).toEqual(["--use-system-ca", "--no-use-system-ca", "--use-openssl-ca", "--use-bundled-ca"]);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);
     // Node freezes the prototype and constructor too; the vendored upstream

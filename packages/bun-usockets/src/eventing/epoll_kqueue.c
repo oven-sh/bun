@@ -538,12 +538,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 
     if (will_idle_inside_event_loop) {
-        /* Clock read first so zero+add are adjacent seq_cst ops: a reader between them under-counts
-         * (bounded by one park) rather than double-counts. seq_cst — release would not order the add
-         * before the store on ARM. */
+        /* us_loop_idle_ns (another thread) retries while idle_seq is odd or changed underneath it, so
+         * it never observes the entry cleared without the park added (a non-monotonic sample). */
+        __atomic_add_fetch(&loop->data.idle_seq, 1, __ATOMIC_SEQ_CST);
+        /* Clock read inside the odd window: a reader's own clock read (taken before it validated an
+         * even seq) is then never later than the park length we record, so samples stay monotonic. */
         uint64_t now = us_internal_monotonic_ns();
         __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_SEQ_CST);
         __atomic_add_fetch(&loop->data.idle_ns, now - idle_start_ns, __ATOMIC_SEQ_CST);
+        __atomic_add_fetch(&loop->data.idle_seq, 1, __ATOMIC_SEQ_CST);
     }
 
     /* Before anything can allocate again. */

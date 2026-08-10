@@ -24,8 +24,7 @@ pub struct CPUProfilerConfig {
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
-    /// 0 for the main thread; a worker's execution context id otherwise. Only
-    /// used to keep concurrently-written default filenames distinct.
+    /// `worker.threadId` (0 on the main thread): the tid segment of node's default profile names.
     pub thread_id: u32,
 }
 

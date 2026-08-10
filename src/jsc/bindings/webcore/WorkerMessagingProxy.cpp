@@ -66,6 +66,8 @@ void* WebWorker__create(
     bool defaultExecArgv,
     StringImpl** execArgvPtr,
     size_t execArgvLen,
+    // NODE_USE_SYSTEM_CA as seen by the worker's own `env` option: 1 / 0, or -1 when it inherits the env.
+    int8_t envUseSystemCa,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
@@ -140,6 +142,12 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
+    int8_t envUseSystemCa = -1;
+    if (m_options.env) {
+        auto it = m_options.env->find("NODE_USE_SYSTEM_CA"_s);
+        envUseSystemCa = it != m_options.env->end() && it->value == "1"_s ? 1 : 0;
+    }
+
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
@@ -159,6 +167,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         !m_options.execArgv.has_value(),
         execArgv.data(),
         execArgv.size(),
+        envUseSystemCa,
         preloadModules.begin(),
         preloadModules.size());
     m_options.preloadModules.clear();

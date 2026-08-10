@@ -79,15 +79,18 @@ pub(crate) fn bun_get_use_system_ca(
 
 /// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
 /// performance.eventLoopUtilization() is defined in terms of (node derives
-/// active as now - loopStart - idle).
+/// active as now - loopStart - idle) — or `null` before the loop has begun.
 pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: the VM owns this loop (installed by `ensure_waker` before any JS ran; `usockets_loop`
     // panics rather than return null) and this runs on its thread. Raw *mut, no &Loop — a
     // &mut PosixLoop is live above us via tick_with_timeout for the whole tick.
+    // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
     let idle_ms =
         unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) } as f64 / 1_000_000.0;
-    let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
+    let Some(elapsed_ms) = vm.loop_elapsed_ms() else {
+        return Ok(JSValue::NULL);
+    };
     let arr = JSValue::create_empty_array(global, 2)?;
     arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
     arr.put_index(global, 1, JSValue::js_number(idle_ms))?;

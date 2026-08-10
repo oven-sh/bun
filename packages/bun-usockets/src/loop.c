@@ -123,13 +123,17 @@ uint64_t us_loop_idle_ns(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
     return uv_metrics_idle_time(loop->uv_loop);
 #else
-    uint64_t idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_SEQ_CST);
-    uint64_t entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_SEQ_CST);
-    if (entry > 0) {
-        uint64_t now = us_internal_monotonic_ns();
-        if (now > entry)
-            idle += now - entry;
+    uint64_t idle, entry, now;
+    for (;;) {
+        uint64_t seq = __atomic_load_n(&loop->data.idle_seq, __ATOMIC_SEQ_CST);
+        if (seq & 1) continue;
+        idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_SEQ_CST);
+        entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_SEQ_CST);
+        now = entry > 0 ? us_internal_monotonic_ns() : 0;
+        if (__atomic_load_n(&loop->data.idle_seq, __ATOMIC_SEQ_CST) == seq) break;
     }
+    if (entry > 0 && now > entry)
+        idle += now - entry;
     return idle;
 #endif
 }

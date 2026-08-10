@@ -137,15 +137,54 @@ describe("--use-system-ca", () => {
     },
   );
 
+  // OpenSSL's default lookups (SSL_CERT_FILE here) are part of the default store only under
+  // --use-system-ca / --use-openssl-ca, as in node; the bare default trusts the bundled roots alone.
+  test.each([
+    [[], "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
+    [["--use-openssl-ca"], "trusted"],
+    [["--use-system-ca"], "trusted"],
+  ])("SSL_CERT_FILE with flags %j -> %s", async (flags, expected) => {
+    using dir = tempDir("use-openssl-ca", { "cert.pem": tls.cert, "key.pem": tls.key });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        ...flags,
+        "-e",
+        `
+        const tls = require("tls");
+        const fs = require("fs");
+        const server = tls.createServer({ cert: fs.readFileSync("cert.pem"), key: fs.readFileSync("key.pem") }, s => s.end());
+        server.listen(0, "127.0.0.1", () => {
+          const c = tls.connect({ port: server.address().port, host: "127.0.0.1" }, () => { console.log("trusted"); c.destroy(); server.close(); });
+          c.on("error", e => { console.log("rejected:" + e.code); server.close(); });
+        });
+        `,
+      ],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        SSL_CERT_FILE: join(String(dir), "cert.pem"),
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: expected, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // Clients that fall back to the thread's default client context (WebSocket has no per-connection
   // CA option) must follow the worker's --use-system-ca exactly like tls.connect and fetch do.
   // The harness cert is self-signed with a 127.0.0.1 SAN, so it can stand in as the "system" root
   // via SSL_CERT_FILE on every platform.
-  test("a Worker's --use-system-ca governs its WebSocket connections too", async () => {
+  test("a Worker's --use-system-ca (flag, or its own env when flagless) governs its WebSocket connections too", async () => {
     using dir = tempDir("use-system-ca-ws", { "cert.pem": tls.cert, "key.pem": tls.key });
     await using proc = spawn({
       cmd: [
         bunExe(),
+        "--no-use-system-ca",
         "-e",
         `
         const { Worker } = require("worker_threads");
@@ -171,15 +210,18 @@ describe("--use-system-ca", () => {
           });
           Promise.all([outcome, socket]).then(([webSocket, tlsConnect]) => parentPort.postMessage({ webSocket, tlsConnect }));
         \`;
-        const run = execArgv => new Promise((resolve, reject) => {
-          const w = new Worker(workerSrc, { eval: true, execArgv, workerData: { port: server.port } });
+        const run = (execArgv, env) => new Promise((resolve, reject) => {
+          const w = new Worker(workerSrc, { eval: true, execArgv, env, workerData: { port: server.port } });
           w.once("message", resolve);
           w.once("error", reject);
         });
         (async () => {
           const withSystem = await run(["--use-system-ca"]);
           const withoutSystem = await run(["--no-use-system-ca"]);
-          console.log(JSON.stringify({ withSystem, withoutSystem }));
+          // Flagless workers resolve from their own env, not from the parent's --no-use-system-ca.
+          const viaEnv = await run([], { ...process.env, NODE_USE_SYSTEM_CA: "1" });
+          const viaEnvUnset = await run([], { ...process.env, NODE_USE_SYSTEM_CA: undefined });
+          console.log(JSON.stringify({ withSystem, withoutSystem, viaEnv, viaEnvUnset }));
           server.stop(true);
         })();
         `,
@@ -200,6 +242,8 @@ describe("--use-system-ca", () => {
       result: {
         withSystem: { webSocket: "message:hello", tlsConnect: "authorized" },
         withoutSystem: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+        viaEnv: { webSocket: "message:hello", tlsConnect: "authorized" },
+        viaEnvUnset: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
       },
       stderr: "",
     });

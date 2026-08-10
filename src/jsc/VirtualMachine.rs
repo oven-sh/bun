@@ -293,8 +293,9 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
-    /// When THIS thread's loop started, for performance.eventLoopUtilization().
-    pub loop_start: std::time::Instant,
+    /// Nanoseconds after `origin_timer` at which THIS thread's loop first polled; 0 until then, which
+    /// eventLoopUtilization() reports as node's "loop has not begun" zeros. Read cross-thread.
+    pub loop_start_ns: core::sync::atomic::AtomicU64,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -2477,7 +2478,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
-            addr_of_mut!((*vm).loop_start).write(std::time::Instant::now());
+            addr_of_mut!((*vm).loop_start_ns).write(core::sync::atomic::AtomicU64::new(0));
             let (origin_timer, origin_timestamp) = process_origin();
             addr_of_mut!((*vm).origin_timer).write(origin_timer);
             addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);
@@ -2650,10 +2651,44 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// This thread's loop has begun: the main thread stamps it on its first poll (node's uv_run, after
+    /// the entry point's synchronous evaluation); a worker stamps it before its script, whose
+    /// bootstrap already runs inside the loop.
+    #[inline]
+    pub fn mark_loop_started(&self) {
+        use core::sync::atomic::Ordering;
+        if self.loop_start_ns.load(Ordering::Relaxed) == 0 {
+            let ns = (self.origin_timer.elapsed().as_nanos() as u64).max(1);
+            let _ =
+                self.loop_start_ns
+                    .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
+        }
+    }
+
+    /// Milliseconds since this thread's loop began polling; `None` before that.
+    pub fn loop_elapsed_ms(&self) -> Option<f64> {
+        Self::loop_elapsed_ms_from(&self.loop_start_ns, self.origin_timer)
+    }
+
+    /// The same computation from the two fields alone, for a reader on another thread that must not
+    /// form a `&VirtualMachine` (see `WebWorker__getELU`).
+    pub fn loop_elapsed_ms_from(
+        loop_start_ns: &core::sync::atomic::AtomicU64,
+        origin_timer: std::time::Instant,
+    ) -> Option<f64> {
+        let start = loop_start_ns.load(core::sync::atomic::Ordering::Acquire);
+        if start == 0 {
+            return None;
+        }
+        let now = origin_timer.elapsed().as_nanos() as u64;
+        Some(now.saturating_sub(start) as f64 / 1_000_000.0)
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
+        self.mark_loop_started();
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
             unsafe { (hooks.auto_tick)(self) };
@@ -2671,6 +2706,7 @@ impl VirtualMachine {
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
+        self.mark_loop_started();
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `self` is the live per-thread VM (hook contract).
             unsafe { (hooks.auto_tick_active)(self) };

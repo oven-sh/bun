@@ -2006,8 +2006,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {
-            // Closing the channel handles the bad frame; a decode exception
-            // left pending would surface as an unrelated uncaught error.
+            // A pending decode exception would surface as an unrelated uncaught error; closing the channel is the handling.
             send_queue
                 .get_global_this()
                 .clear_exception_except_termination();

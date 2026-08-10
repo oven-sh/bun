@@ -188,8 +188,7 @@ private:
     FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
 
-    // Set by createFromWireBytes: deserialization rejects tags that would mint
-    // capabilities (file paths / fds) out of caller-supplied bytes.
+    // Set by createFromWireBytes so deserialization can refuse file-path/fd records from caller-supplied bytes.
     bool m_isFromUntrustedBytes { false };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};

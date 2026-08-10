@@ -1998,6 +1998,5 @@ extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
     exit(1);
 }
 
-
 #endif // BUN_STARTUP_SNAPSHOT_SUPPORTED
 #pragma clang diagnostic pop

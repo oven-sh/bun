@@ -235,7 +235,11 @@ impl JobContext for ClipboardJob {
     type Js = RequestHandle;
 
     /// Clipboard thread (see `serial_queue`).
-    fn run(this: &mut ClipboardOp, _vm: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(
+        this: &mut ClipboardOp,
+        _vm: &Borrow,
+        done: Completion<Self>,
+    ) -> Option<Completion<Self>> {
         this.outcome = Some(match &this.op {
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
                 Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),

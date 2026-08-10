@@ -1514,6 +1514,15 @@ impl<T> PkgMap<T> {
     /// level (the tree node containing the bundled package) is searched. This
     /// mirrors `Tree::hoist_dependency`, which never walks past a bundled
     /// dependency's hoist root when it re-derives optional peer edges.
+    ///
+    /// Only directly bundled packages (entries with `"bundled": true`) bound
+    /// the walk. A transitive dependency of a bundled package inherits the
+    /// bundle's hoist root in `Tree.rs` too, but it serializes at a path like
+    /// `a/c` with no bundled marker, byte-identical to a package nested at
+    /// `a/c` by an ordinary version conflict whose hoist root is the lockfile
+    /// root. The path alone cannot distinguish the two; bounding there would
+    /// need per-entry hoist roots reconstructed from the edge that placed
+    /// each package.
     fn find_resolution_bounded_at_bundle(
         &self,
         pkg_path: &[u8],

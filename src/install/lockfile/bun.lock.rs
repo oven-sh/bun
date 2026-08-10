@@ -1506,6 +1506,33 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
     ) -> Result<&T, ResolveError> {
+        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
+    }
+
+    /// Like `find_resolution`, but stops the upward walk at the bundle hoist
+    /// root: once a directory on the walk is a bundled package, only one more
+    /// level (the tree node containing the bundled package) is searched. This
+    /// mirrors `Tree::hoist_dependency`, which never walks past a bundled
+    /// dependency's hoist root when it re-derives optional peer edges.
+    fn find_resolution_bounded_at_bundle(
+        &self,
+        pkg_path: &[u8],
+        dep: &Dependency,
+        string_buf: &[u8],
+        path_buf: &mut [u8],
+        bundled_pkgs: &PkgPathSet,
+    ) -> Result<&T, ResolveError> {
+        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
+    }
+
+    fn find_resolution_impl(
+        &self,
+        pkg_path: &[u8],
+        dep: &Dependency,
+        string_buf: &[u8],
+        path_buf: &mut [u8],
+        bundled_pkgs: Option<&PkgPathSet>,
+    ) -> Result<&T, ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1516,6 +1543,7 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
+        let mut at_bundle_root = false;
         let mut valid = true;
         while valid {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
@@ -1525,8 +1553,12 @@ impl<T> PkgMap<T> {
                 return Ok(entry);
             }
 
-            if offset == 0 {
+            if offset == 0 || at_bundle_root {
                 return Err(ResolveError::Unresolvable);
+            }
+
+            if let Some(bundled_pkgs) = bundled_pkgs {
+                at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
@@ -2957,8 +2989,25 @@ pub(crate) fn parse_into_binary_lockfile(
                 let res_id = match peer_res_id {
                     Some(id) => id,
                     None => {
-                        match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
-                        {
+                        // Optional peer edges are re-derived by the hoister
+                        // (`Package::clone` resets them), which never searches
+                        // past a bundle hoist root. Bound the path walk the
+                        // same way so a loaded lockfile resolves them exactly
+                        // like a fresh install does; otherwise the frozen
+                        // lockfile `eql` check sees a tree the fresh resolve
+                        // would never produce (#37346).
+                        let found = if dep.behavior.is_optional_peer() {
+                            pkg_map.find_resolution_bounded_at_bundle(
+                                pkg_path,
+                                dep,
+                                string_buf,
+                                &mut path_buf[..],
+                                &bundled_pkgs,
+                            )
+                        } else {
+                            pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
+                        };
+                        match found {
                             Ok(&id) => id,
                             Err(ResolveError::InvalidPackageKey) => {
                                 log.add_error(Some(source), row.key_loc, b"Invalid package path");

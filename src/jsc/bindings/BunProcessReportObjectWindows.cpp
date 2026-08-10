@@ -82,8 +82,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
 
         // Command line
-        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);
+        JSValue commandLine = JSValue::decode(Bun__Process__createExecArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), commandLine, 0);
 
         // Node version
         header->putDirect(vm, Identifier::fromString(vm, "nodejsVersion"_s), jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);

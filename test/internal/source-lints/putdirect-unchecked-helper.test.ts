@@ -21,12 +21,20 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   obj->putDirectIndex(globalObject, i, v);
 //
 // The rules below name the helper families that can return an empty value:
-// create*/.toJS taking a global object as the first argument, constructEmptyArray
-// (which has RETURN_IF_EXCEPTION(scope, nullptr) inside), and zero-argument
-// construct*/create* calls (the scope-capturing local lambdas process.report
-// builds its sections with). vm-first helpers like jsString(vm, ...) and
-// jsNumber(...) cannot throw and stay fine inline. The Rust flavor of the same
-// invariant is linted by empty-jsvalue-laundering.test.ts.
+// create*/.toJS taking a global object as the first argument (including
+// underscore-qualified extern shims like Bun__Process__createExecArgv, whose
+// Rust side returns JSValue::ZERO on a thrown or terminated error),
+// constructEmptyArray (which has RETURN_IF_EXCEPTION(scope, nullptr) inside),
+// and zero-argument construct*/create* calls (the scope-capturing local lambdas
+// process.report builds its sections with).
+//
+// vm-first calls are deliberately not flagged: the common vm-first builders
+// (jsString, jsNumber, constructArch, constructInternalProperty) are infallible,
+// and the name alone cannot tell the rare fallible ones apart (constructVersions
+// and constructProcessReleaseObject carried scopes and were hoisted by hand), so
+// a rule would be mostly false positives. A vm-first helper that gains a throw
+// scope needs its inline call sites hoisted by review. The Rust flavor of the
+// same invariant is linted by empty-jsvalue-laundering.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const cxxSources = globAllSources().cxx;
@@ -49,7 +57,7 @@ const GLOBALISH = String.raw`(?:globalObject|globalThis|lexicalGlobalObject)\b`;
 const BANNED: { name: string; re: RegExp; hint: string }[] = [
   {
     name: "create*(globalObject, ...) inline",
-    re: new RegExp(String.raw`(?:^|[\s(,!&*]|->|\.|::)create[A-Z]\w*\s*\(\s*${GLOBALISH}`),
+    re: new RegExp(String.raw`(?:^|[\s(,!&*]|->|\.|::)(?:\w+__)?create[A-Z]\w*\s*\(\s*${GLOBALISH}`),
     hint: "hoist into a local and RETURN_IF_EXCEPTION before the putDirect*",
   },
   {
@@ -201,6 +209,12 @@ const detects: { label: string; rule: string; line: number; cpp: string }[] = [
     line: 6,
     cpp: `/*\n * license\n * header\n */\nvoid f() {\n    obj->putDirectIndex(globalObject, 0, createFoo(globalObject));\n}\n`,
   },
+  {
+    label: "an underscore-qualified extern create* shim",
+    rule: "create*(globalObject, ...) inline",
+    line: 2,
+    cpp: `void f() {\n    header->putDirect(vm, name, JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);\n}\n`,
+  },
 ];
 const ignores: { label: string; cpp: string }[] = [
   {
@@ -222,6 +236,10 @@ const ignores: { label: string; cpp: string }[] = [
   {
     label: "a banned shape inside a string literal",
     cpp: `void f() {\n    obj->putDirect(vm, name, jsString(vm, "createFoo(globalObject)"_s), 0);\n}\n`,
+  },
+  {
+    label: "a vm-first construct* builder, which this lint does not model",
+    cpp: `void f() {\n    array->putDirectIndex(exec, i++, constructInternalProperty(vm, exec, name, value));\n}\n`,
   },
 ];
 

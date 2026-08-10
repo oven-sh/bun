@@ -3441,6 +3441,12 @@ pub mod formatter {
     // body is therefore its own `#[inline(never)]` function.
     // ───────────────────────────────────────────────────────────────────────
 
+    /// See [`Formatter::array_layout`].
+    struct ArrayLayout {
+        one_per_line: bool,
+        force_multiline: bool,
+    }
+
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
             let mut opts = TagOptions::HIDE_GLOBAL;
@@ -4307,6 +4313,96 @@ pub mod formatter {
             Ok(())
         }
 
+        /// Layout decision for one array, made before printing it.
+        ///
+        /// Mirrors Node's `groupArrayElements` heuristic: once an array wraps
+        /// onto multiple lines, several elements share a line only when the
+        /// entries are uniformly short primitives; otherwise each element gets
+        /// its own line (and consecutive multiline elements separate as
+        /// `},\n{` instead of `}, {`).
+        fn array_layout(
+            &self,
+            value: JSValue,
+            len: u64,
+            js_type: jsc::JSType,
+            tag_opts: TagOptions,
+        ) -> JsResult<ArrayLayout> {
+            use crate::StringJsc as _;
+            // Only the first 100 elements are printed; ignore the rest.
+            let limit = len.min(100);
+            let mut max_len: usize = 0;
+            let mut total_len: usize = 0;
+            let mut count: usize = 0;
+            let mut measurable = true;
+            let mut i: u32 = 0;
+            while u64::from(i) < limit {
+                let element = value.get_direct_index(self.global_this, i);
+                if element.is_empty() {
+                    if js_type.is_array() {
+                        match value.next_present_index(i + 1) {
+                            Some(next) if u64::from(next) < limit => i = next,
+                            _ => break,
+                        }
+                    } else {
+                        i += 1;
+                    }
+                    continue;
+                }
+                let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
+                let estimated: usize = match tag.tag {
+                    TagPayload::String | TagPayload::StringPossiblyFormatted => {
+                        // Length only; the bytes are not materialized.
+                        let str =
+                            OwnedString::new(BunString::from_js(element, self.global_this)?);
+                        str.length() + 2
+                    }
+                    TagPayload::Integer => {
+                        bun_core::fmt::digit_count(i64::from(element.as_int32()))
+                    }
+                    TagPayload::Double => bun_core::fmt::count_float(element.as_number()),
+                    TagPayload::Boolean => 4 + usize::from(!element.to_boolean()),
+                    TagPayload::Null => 4,
+                    TagPayload::Undefined => 9,
+                    _ => {
+                        if !tag.tag.is_primitive() {
+                            return Ok(ArrayLayout {
+                                one_per_line: true,
+                                force_multiline: false,
+                            });
+                        }
+                        // Symbol / BigInt: width unknown without
+                        // materializing; keep the packed layout.
+                        measurable = false;
+                        0
+                    }
+                };
+                count += 1;
+                total_len += estimated + 2;
+                max_len = max_len.max(estimated);
+                i += 1;
+            }
+
+            if !measurable || count <= 6 {
+                return Ok(ArrayLayout {
+                    one_per_line: false,
+                    force_multiline: false,
+                });
+            }
+            // ", " between packed elements.
+            let actual_max = max_len + 2;
+            let packs = actual_max * 3 + (self.indent as usize + 1) * 2 < 80
+                && (total_len / actual_max > 5 || max_len <= 6);
+            let one_per_line = !packs;
+            Ok(ArrayLayout {
+                one_per_line,
+                // The single-line rendering would overflow the line budget, so
+                // open the bracket in multiline form immediately instead of
+                // leaving the first element dangling after `[ `.
+                force_multiline: one_per_line
+                    && self.estimated_line_length + total_len + 2 > 80,
+            })
+        }
+
         #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
@@ -4318,6 +4414,29 @@ pub mod formatter {
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
             let tag_opts = self.tag_opts();
+
+            let len = value.get_length(self.global_this)?;
+
+            // TODO: DerivedArray does not get passed along in JSType, and it's
+            // not clear why.
+
+            if len == 0 {
+                if writer_.write_all(b"[]").is_err() {
+                    self.failed = true;
+                }
+                self.add_for_new_line(2);
+                return Ok(());
+            }
+
+            let layout = if self.single_line {
+                ArrayLayout {
+                    one_per_line: false,
+                    force_multiline: false,
+                }
+            } else {
+                self.array_layout(value, len, js_type, tag_opts)?
+            };
+
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4329,20 +4448,9 @@ pub mod formatter {
                 };
             }
 
-            let len = value.get_length(self.global_this)?;
-
-            // TODO: DerivedArray does not get passed along in JSType, and it's
-            // not clear why.
-
-            if len == 0 {
-                writer.write_all(b"[]");
-                writer.add_for_new_line(2);
-                return Ok(());
-            }
-
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
-                len > 10;
+                len > 10 || layout.force_multiline;
             {
                 self.indent += 1;
                 self.depth += 1;
@@ -4440,11 +4548,13 @@ pub mod formatter {
                             writer.print_comma::<C>();
                             if !self.single_line
                                 && (self.ordered_properties
+                                    || (layout.one_per_line && was_good_time)
                                     || writer.good_time_for_a_new_line(self.indent))
                             {
                                 was_good_time = true;
                                 writer.write_all(b"\n");
                                 writer.write_indent(self.indent);
+                                writer.reset_line(self.indent);
                             } else {
                                 writer.space();
                             }
@@ -4472,11 +4582,14 @@ pub mod formatter {
 
                     writer.print_comma::<C>();
                     if !self.single_line
-                        && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
+                        && (self.ordered_properties
+                            || (layout.one_per_line && was_good_time)
+                            || writer.good_time_for_a_new_line(self.indent))
                     {
                         writer.write_all(b"\n");
                         was_good_time = true;
                         writer.write_indent(self.indent);
+                        writer.reset_line(self.indent);
                     } else {
                         writer.space();
                     }
@@ -4501,11 +4614,13 @@ pub mod formatter {
                         writer.print_comma::<C>();
                         if !self.single_line
                             && (self.ordered_properties
+                                || (layout.one_per_line && was_good_time)
                                 || writer.good_time_for_a_new_line(self.indent))
                         {
                             writer.write_all(b"\n");
                             was_good_time = true;
                             writer.write_indent(self.indent);
+                            writer.reset_line(self.indent);
                         } else {
                             writer.space();
                         }

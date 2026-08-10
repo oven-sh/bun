@@ -21,6 +21,7 @@ import {
   serialize,
   setRandomSeed,
   setTimeZone,
+  totalAllocatedHeapBytes,
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
@@ -64,6 +65,24 @@ describe("bun:jsc", () => {
     const usage = memoryUsage();
     expect(usage.current).toBeGreaterThan(0);
     expect(usage.peak).toBeGreaterThan(0);
+  });
+  it("totalAllocatedHeapBytes", () => {
+    const before = totalAllocatedHeapBytes();
+    expect(before).toBeGreaterThanOrEqual(0);
+
+    // Allocate enough to guarantee the counter moves even if a GC cycle
+    // resets JSC's internal per-cycle counter mid-loop.
+    let sink: unknown[] = [];
+    for (let i = 0; i < 10_000; i++) {
+      sink.push({ i, arr: new Array(16).fill(i) });
+    }
+    const after = totalAllocatedHeapBytes();
+    expect(after).toBeGreaterThan(before);
+
+    // Monotonic: a full GC frees memory but must not decrease the total.
+    fullGC();
+    expect(totalAllocatedHeapBytes()).toBeGreaterThanOrEqual(after);
+    expect(sink.length).toBe(10_000);
   });
   it("getRandomSeed", () => {
     expect(getRandomSeed()).toBeDefined();

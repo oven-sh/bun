@@ -461,7 +461,7 @@ impl JSBundleCompletionTask {
         {
             if !compile_options.compile_target.is_default() {
                 return CompileResult::fail_fmt(format_args!(
-                    "compile.snapshot has to run the executable, which a cross-compiled one can't do here; build without it and run `bun build --snapshot --outfile <exe>` on the target platform"
+                    "snapshot has to run the executable, which a cross-compiled one can't do here; build without it and run `bun build --snapshot --outfile <exe>` on the target platform"
                 ));
             }
             match crate::cli::build_command::run_startup_snapshot_step(

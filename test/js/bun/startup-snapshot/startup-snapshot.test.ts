@@ -97,6 +97,38 @@ overlapTest(
   },
 );
 
+snapshotTest("a strict build refuses servers and UDP sockets, not just listen/connect", async () => {
+  using dir = tempDir("bun-snapshot-strict-servers", {});
+  await using p = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "strict-servers-fixture.js")],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).toContain("[js] serve refused");
+  expect(out).toContain("[js] udp refused");
+});
+
+snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived for a launch on a terminal", async () => {
+  using dir = tempDir("bun-snapshot-colors", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "colors-fixture.js");
+  const outFile = join(String(dir), "colors.txt");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, NO_COLOR: undefined, BUN_STARTUP_SNAPSHOT_IN: img, COLORS_OUT: outFile }, // bunEnv sets NO_COLOR; this launch is the one that may color
+    terminal: { cols: 80, rows: 24, data() {} },
+  });
+  expect(await p.exited).toBe(0);
+  expect(await Bun.file(outFile).text()).toBe("true"); // the builder's "false" is what a stale property would carry
+});
+
 snapshotTest("an array from the snapshot can grow past its capacity after restore", async () => {
   using dir = tempDir("bun-snapshot-butterfly", {});
   const img = join(String(dir), "s.snapshot");

@@ -1956,8 +1956,12 @@ struct ExecutablePayload {
 fn read_executable_payload(exe_path: &[u8]) -> Result<ExecutablePayload, CompileResult> {
     let file = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())
-        .map_err(|_| {
-            CompileResult::fail_fmt(format_args!("could not read {}", bstr::BStr::new(exe_path)))
+        .map_err(|err| {
+            CompileResult::fail_fmt(format_args!(
+                "could not read {}: {}",
+                bstr::BStr::new(exe_path),
+                err
+            ))
         })?;
     // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
     let tpos = bun_core::strings::last_index_of(&file, TRAILER).ok_or_else(|| {

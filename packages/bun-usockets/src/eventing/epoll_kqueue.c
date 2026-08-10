@@ -1034,6 +1034,12 @@ void us_loop_reinit_for_snapshot(struct us_loop_t *loop) {
             int events = us_poll_events(p);
             us_poll_init(p, efd, us_internal_poll_type(p));
             us_poll_start(p, loop, events ? events : LIBUS_SOCKET_READABLE);
+            /* Same upgrade as us_internal_async_set(): the callback's leave_poll_ready (no drain) came with the snapshot and is
+             * only correct for an edge-triggered registration; level-triggered, the undrained eventfd would wake the loop forever. */
+            struct epoll_event event;
+            event.events = EPOLLIN | EPOLLET;
+            event.data.ptr = p;
+            epoll_ctl(loop->fd, EPOLL_CTL_MOD, efd, &event);
         }
     }
 }

@@ -108,7 +108,10 @@ pub fn io_policy() -> IoPolicy {
 }
 /// Whether the policy admits an operation of this class, which the gate then records.
 pub fn io_allowed(kind: &str) -> bool {
-    let local_class = matches!(kind, "node:fs" | "Bun.spawn" | "Bun.listen" | "dns");
+    let local_class = matches!(
+        kind,
+        "node:fs" | "Bun.spawn" | "Bun.listen" | "Bun.serve" | "Bun.udpSocket" | "dns"
+    );
     match io_policy() {
         IoPolicy::Strict => false,
         IoPolicy::Local => local_class,

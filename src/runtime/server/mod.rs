@@ -2761,6 +2761,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `global_this()` returns a borrow of the separate STATIC allocation,
         // not `*this`.
         let global = this_ref.global_this();
+        if global
+            .throw_disabled_in_snapshot_error_if_needed("Bun.serve")
+            .is_err()
+        {
+            return JSValue::ZERO; // thrown; every server (node:http included) listens through here
+        }
 
         let app: *mut uws_sys::NewApp<SSL>;
         let route_list_value;

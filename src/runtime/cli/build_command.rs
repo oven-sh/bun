@@ -1516,7 +1516,13 @@ pub(crate) fn run_startup_snapshot_step(
         let mut buf = bun_paths::PathBuffer::uninit();
         let mut p = match bun_sys::get_fd_path(dir, &mut buf) {
             Ok(p) => p.to_vec(),
-            Err(_) => b".".to_vec(),
+            Err(_) if dir == bun_sys::Fd::cwd() => b".".to_vec(), // AT_FDCWD has no path; "./name" is right
+            Err(err) => {
+                return Err(format!(
+                    "could not resolve the output directory to run the executable from: {err}"
+                )
+                .into_bytes());
+            }
         };
         p.push(b'/');
         p.extend_from_slice(name);

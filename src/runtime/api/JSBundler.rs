@@ -241,7 +241,10 @@ pub mod js_bundler {
             )));
         }
         this.snapshot = CompileStartupSnapshot::Auto;
-        if let Some(mode) = value.get_own(global_this, &BunString::static_str("mode"))? {
+        if let Some(mode) = value
+            .get_own(global_this, &BunString::static_str("mode"))?
+            .filter(|v| !v.is_undefined())
+        {
             let mode = mode.to_bun_string(global_this)?;
             this.snapshot = if mode.eql_comptime("auto") {
                 CompileStartupSnapshot::Auto
@@ -253,7 +256,10 @@ pub mod js_bundler {
                 )));
             };
         }
-        if let Some(io) = value.get_own(global_this, &BunString::static_str("io"))? {
+        if let Some(io) = value
+            .get_own(global_this, &BunString::static_str("io"))?
+            .filter(|v| !v.is_undefined())
+        {
             let io = io.to_bun_string(global_this)?;
             this.snapshot_io = if io.eql_comptime("strict") {
                 CompileStartupSnapshotIo::Strict

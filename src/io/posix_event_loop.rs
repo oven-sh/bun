@@ -1383,6 +1383,18 @@ pub struct Store {
 
 #[cfg(not(windows))]
 impl Store {
+    /// Live polls in the inline hive. At `HIVE_SIZE` there may also be overflow polls, which nothing can enumerate after a
+    /// restore, so a freeze at that point is refused (`snapshot_blockers`).
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    pub fn inline_hive_is_full(&self) -> bool {
+        let mut it = self.hive.hive.used.iter_set();
+        let mut n = 0usize;
+        while it.next().is_some() {
+            n += 1;
+        }
+        n >= HIVE_SIZE
+    }
+
     /// snapshot restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn rearm_for_snapshot(&mut self, loop_: &mut Loop) -> (usize, usize) {

@@ -349,6 +349,8 @@ snapshotTest(
     const got = JSON.parse(line!.slice("[js] restored ".length));
     expect(got.pid).toBe(p.pid); // not the builder's, even though the builder read it
     expect(got.execPath).toBe(bunExe());
+    expect(got.bunCwd.endsWith("/b")).toBe(true); // Bun.cwd was reified in "a" during the build
+    // enableANSIColors is refreshed by the same loop as Bun.cwd above; telling it apart would need a pty-backed launch (both runs here are piped).
     expect(got.argv).toEqual(["restored-arg", "--flag"]);
     expect(got.bunArgv).toEqual(["restored-arg", "--flag"]);
     expect(got.marker).toBe("restorer");

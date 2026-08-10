@@ -684,7 +684,11 @@ impl EventLoop {
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
-                if bun_core::startup_snapshot::snapshot_requested() {
+                // Only at the outermost tick: a nested tick (wait_for_promise) still has the outer callback's frames below it,
+                // so it just returns and lets the termination keep unwinding; the outermost one gets here with a count of 0.
+                if self.entered_event_loop_count == 0
+                    && bun_core::startup_snapshot::snapshot_requested()
+                {
                     // The termination was ours: every JS frame is gone; hand off to the runtime to write the snapshot.
                     (crate::virtual_machine::runtime_hooks()
                         .expect("hooks")

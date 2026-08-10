@@ -4,7 +4,7 @@ const capturedEnv = process.env; // a reference held across the snapshot (dotenv
 const copiedEnv = { ...process.env }; // a copy cannot; the build reports that it was made
 function ctx() {
   // pid/execPath are read here during the build on purpose: reading reifies them, and the restored process must still get its own
-  return { pid: process.pid, execPath: process.execPath, argv: process.argv.slice(2), bunArgv: Bun.argv.slice(2), marker: process.env.LAUNCH_MARKER, viaCapturedRef: capturedEnv.LAUNCH_MARKER, viaCopy: copiedEnv.LAUNCH_MARKER, home: os.homedir(), cwd: process.cwd(), execArgv: process.execArgv };
+  return { pid: process.pid, execPath: process.execPath, bunCwd: Bun.cwd, colors: Bun.enableANSIColors, argv: process.argv.slice(2), bunArgv: Bun.argv.slice(2), marker: process.env.LAUNCH_MARKER, viaCapturedRef: capturedEnv.LAUNCH_MARKER, viaCopy: copiedEnv.LAUNCH_MARKER, home: os.homedir(), cwd: process.cwd(), execArgv: process.execArgv };
 }
 console.log("[js] build " + JSON.stringify(ctx()));
 process.on("restore", () => { console.log("[js] restored " + JSON.stringify(ctx())); process.exit(0); });

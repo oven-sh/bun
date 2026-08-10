@@ -615,6 +615,8 @@ static void fileSnapshotHeap(JSC::VM& vm)
     }
     std::sort(snapshotRuns.begin(), snapshotRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
     std::sort(frozenRanges.begin(), frozenRanges.end());
+    if (snapshotFd >= 0 && snapshotFd != fd)
+        close(snapshotFd); // a previous filesnap's; its mappings stay valid without the descriptor
     snapshotFd = fd;
     if (const char* prot = getenv("BUN_FILESNAP_PROTECT")) {
         // Debug: make snapshot blocks of one subspace read-only so the first writer faults with a backtrace.
@@ -965,45 +967,45 @@ static void dumpDirtyMap(JSC::VM& vm)
             size_t liveCount = 0;
             mi_prof_visit_live([](uintptr_t, size_t, const uintptr_t*, uint8_t, void* arg) -> bool { ++*static_cast<size_t*>(arg); return true; }, &liveCount);
             Raw raw { (Rec*)mmap(nullptr, (liveCount + 1024) * sizeof(Rec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0), liveCount + 1024, 0 };
-            if (raw.recs == MAP_FAILED) {
+            if (raw.recs == MAP_FAILED)
                 fprintf(stderr, "[owners] could not allocate the record buffer; report skipped\n");
-                return;
-            }
-            mi_prof_visit_live([](uintptr_t addr, size_t, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
-                Raw* r = static_cast<Raw*>(arg);
-                if (r->n >= r->cap) return false;
-                Rec& rec = r->recs[r->n++];
-                rec.addr = addr;
-                rec.n = std::min<uint8_t>(nframes, 14);
-                memcpy(rec.frames, frames, rec.n * sizeof(uintptr_t));
-                return true;
-            },
-                &raw);
-            struct Ix {
-                std::unordered_map<uintptr_t, const Rec*> byAddr;
-            } ix;
-            ix.byAddr.reserve(raw.n);
-            for (size_t i = 0; i < raw.n; i++)
-                ix.byAddr.emplace(raw.recs[i].addr, &raw.recs[i]);
-            char path2[512];
-            snprintf(path2, sizeof path2, "%s/changed-owners.%d.tsv", s_dir, getpid());
-            if (FILE* f2 = fopen(path2, "w")) {
-                size_t hit = 0;
-                for (uintptr_t b : changedBlocks) {
-                    auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
-                    uint32_t sz = (it != s_liveBlocks.end() && it->first == b) ? it->second : 0;
-                    auto s = ix.byAddr.find(b);
-                    if (s == ix.byAddr.end()) continue;
-                    hit++;
-                    fprintf(f2, "%u\t1\t0\t", sz);
-                    for (size_t k = 0; k < s->second->n; k++)
-                        fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second->frames[k]);
-                    fprintf(f2, "\n");
+            else {
+                mi_prof_visit_live([](uintptr_t addr, size_t, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
+                    Raw* r = static_cast<Raw*>(arg);
+                    if (r->n >= r->cap) return false;
+                    Rec& rec = r->recs[r->n++];
+                    rec.addr = addr;
+                    rec.n = std::min<uint8_t>(nframes, 14);
+                    memcpy(rec.frames, frames, rec.n * sizeof(uintptr_t));
+                    return true;
+                },
+                    &raw);
+                struct Ix {
+                    std::unordered_map<uintptr_t, const Rec*> byAddr;
+                } ix;
+                ix.byAddr.reserve(raw.n);
+                for (size_t i = 0; i < raw.n; i++)
+                    ix.byAddr.emplace(raw.recs[i].addr, &raw.recs[i]);
+                char path2[512];
+                snprintf(path2, sizeof path2, "%s/changed-owners.%d.tsv", s_dir, getpid());
+                if (FILE* f2 = fopen(path2, "w")) {
+                    size_t hit = 0;
+                    for (uintptr_t b : changedBlocks) {
+                        auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
+                        uint32_t sz = (it != s_liveBlocks.end() && it->first == b) ? it->second : 0;
+                        auto s = ix.byAddr.find(b);
+                        if (s == ix.byAddr.end()) continue;
+                        hit++;
+                        fprintf(f2, "%u\t1\t0\t", sz);
+                        for (size_t k = 0; k < s->second->n; k++)
+                            fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second->frames[k]);
+                        fprintf(f2, "\n");
+                    }
+                    fclose(f2);
+                    fprintf(stderr, "[owners-fast] %zu of %zu changed blocks had samples -> %s\n", hit, changedBlocks.size(), path2);
                 }
-                fclose(f2);
-                fprintf(stderr, "[owners-fast] %zu of %zu changed blocks had samples -> %s\n", hit, changedBlocks.size(), path2);
+                munmap(raw.recs, raw.cap * sizeof(Rec));
             }
-            munmap(raw.recs, raw.cap * sizeof(Rec));
         }
         // Owners of mutated payload: join live profiler samples with the byte diff.
         if (getenv("MIMALLOC_PROF_SAMPLE_RATE") && getenv("BUN_MEMDEBUG_SLOW_OWNERS")) {

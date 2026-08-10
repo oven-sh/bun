@@ -1829,6 +1829,15 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
 /// What still ties this process to work in flight; the snapshot is only written when this is empty.
 fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<String> {
     let mut out = Vec::new();
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    if vm
+        .rare_data()
+        .file_polls
+        .as_deref()
+        .is_some_and(|store| store.inline_hive_is_full())
+    {
+        out.push("128 or more open file polls (the ones beyond the inline table could not be re-armed after a restore) — close some before snapshotting".into());
+    }
     let el = vm.event_loop_shared();
     if vm.active_tasks > 0 {
         out.push(format!(

@@ -1217,6 +1217,8 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
     };
     static const LaunchDerivedProp props[] = {
         { "argv"_s, BunObject_lazyPropCb_wrap_argv },
+        { "cwd"_s, BunObject_lazyPropCb_wrap_cwd },
+        { "enableANSIColors"_s, BunObject_lazyPropCb_wrap_enableANSIColors },
     };
     for (auto& p : props) {
         JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);

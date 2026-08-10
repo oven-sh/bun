@@ -3,13 +3,13 @@ title: "TypeScript"
 description: "Using TypeScript with Bun, including type definitions and compiler options"
 ---
 
-To install the TypeScript definitions for Bun's built-in APIs, install `@types/bun`.
+Install `@types/bun` to get TypeScript definitions for Bun's built-in APIs.
 
 ```sh
 bun add -d @types/bun # dev dependency
 ```
 
-At this point, you should be able to reference the `Bun` global in your TypeScript files without seeing errors in your editor.
+You can now reference the `Bun` global in your TypeScript files without seeing errors in your editor.
 
 ```ts
 console.log(Bun.version);
@@ -17,7 +17,7 @@ console.log(Bun.version);
 
 ## Suggested `compilerOptions`
 
-Bun supports things like top-level await, JSX, and extensioned `.ts` imports, which TypeScript doesn't allow by default. Below is a set of recommended `compilerOptions` for a Bun project, so you can use these features without seeing compiler warnings from TypeScript.
+Bun supports top-level await, JSX, and imports with `.ts` extensions, which TypeScript doesn't allow by default. The following `compilerOptions` are recommended for a Bun project, so you can use these features without compiler warnings from TypeScript.
 
 ```jsonc
 {
@@ -52,7 +52,7 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 }
 ```
 
-If you run `bun init` in a new directory, this `tsconfig.json` will be generated for you. (The stricter flags are disabled by default.)
+Running `bun init` in a new directory generates this `tsconfig.json` for you. (The stricter flags are disabled by default.)
 
 ```sh
 bun init

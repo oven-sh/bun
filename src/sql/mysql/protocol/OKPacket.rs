@@ -2,16 +2,12 @@
 use crate::mysql::StatusFlags;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
-use crate::shared::Data;
 
 pub struct OKPacket {
     pub header: u8,
     pub affected_rows: u64,
     pub last_insert_id: u64,
     pub status_flags: StatusFlags,
-    pub warnings: u16,
-    pub info: Data,
-    pub session_state_changes: Data,
     pub packet_size: u32,
 }
 
@@ -38,12 +34,12 @@ impl OKPacket {
         // Status flags
         self.status_flags = StatusFlags::from_int(reader.int::<u16>()?);
         // Warnings
-        self.warnings = reader.int::<u16>()?;
+        reader.int::<u16>()?;
 
         // Info (EOF-terminated string)
         if !reader.peek().is_empty() && (self.packet_size as usize) > read_size {
             let remaining = (self.packet_size as usize) - read_size;
-            self.info = reader.read(remaining as _)?;
+            reader.read(remaining as _)?;
         }
         Ok(())
     }

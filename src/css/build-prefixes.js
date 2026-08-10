@@ -679,7 +679,7 @@ ${rows}
 impl Feature {
     /// Returns whether all of the given browser targets support this feature
     /// natively, without fallback.
-    pub fn is_compatible(self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &Browsers) -> bool {
         let Some(min) = &MIN_VERSIONS[self as usize] else {
             return false;
         };
@@ -698,7 +698,7 @@ ${checks}
 
     /// Returns whether *any* of the given browser targets supports this
     /// feature natively.
-    pub fn is_partially_compatible(self, targets: &Browsers) -> bool {
+    pub(crate) fn is_partially_compatible(self, targets: &Browsers) -> bool {
         let Some(min) = &MIN_VERSIONS[self as usize] else {
             return false;
         };

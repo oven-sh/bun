@@ -3,6 +3,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import net from "node:net";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -367,6 +368,87 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+// A direct stream's pull() that throws synchronously reaches handle_reject
+// AFTER do_render_stream already wrote the 200 status+headers. handle_reject
+// gated only on has_responded() (response ended), not has_written_status(),
+// so the server's error() handler was asked to produce a second Response and
+// render_metadata wrote its status/headers into the in-flight body. Debug
+// builds hit the !has_written_status assert in do_write_status and aborted;
+// release builds spliced the error() header block into the chunked body.
+describe("sync pull() throw after status is written does not re-render error()", () => {
+  function fixture(pullBody: string) {
+    return `
+      const net = require("node:net");
+      let errorHandlerCalls = 0;
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        error() {
+          errorHandlerCalls++;
+          return new Response("FROM-ERROR-HANDLER", { status: 500, headers: { "x-err": "1" } });
+        },
+        fetch() {
+          return new Response(new ReadableStream({
+            type: "direct",
+            pull(c) { ${pullBody} },
+          }));
+        },
+      });
+      const wire = await new Promise(resolve => {
+        let buf = "";
+        const s = net.connect(server.port, "127.0.0.1", () => {
+          s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        s.on("data", d => (buf += d.toString("latin1")));
+        s.on("close", () => resolve(buf));
+        s.on("error", () => resolve(buf));
+      });
+      server.stop(true);
+      console.log(JSON.stringify({ wire, errorHandlerCalls }));
+    `;
+  }
+
+  test("body bytes already flushed: connection is force-closed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`c.write("PARTIAL-BYTES"); c.flush(); throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // error() cannot replace a response whose status is committed; the
+    // connection is force-closed so the client observes failure instead of
+    // the error() header block spliced where a chunk-size line belongs.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire).not.toContain("Something went wrong");
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test("no body bytes flushed: stream is ended without splicing error() headers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // Status 200 was already written; the stream is ended empty. The error()
+    // response's status (500), headers, and body must not appear on the wire.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire.startsWith("HTTP/1.1 200 OK\r\n")).toBe(true);
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns
@@ -583,4 +665,67 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
   Bun.gc(true);
   const counts = heapStats().objectTypeCounts;
   expect((counts.ReadableStream ?? 0) - baseline).toBeLessThan(10);
+});
+
+// https://github.com/oven-sh/bun/issues/36940
+// close() while the sink still holds unflushed bytes deferred the final send
+// to the auto-flusher, which ended the response through uWS (writing the
+// terminating 0\r\n\r\n chunk) and then finalize() ended the stream a second
+// time, writing another terminator. On a keep-alive connection the stray
+// terminator is parsed as the start of the next response.
+test("close() with unflushed data writes the chunked terminator exactly once", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname === "/plain") {
+        return new Response("ok");
+      }
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            // Write enough for chunked encoding, in pieces small enough that
+            // bytes are still buffered below the high-water mark when close()
+            // runs.
+            for (let i = 0; i < 8; i++) {
+              await c.write(new Uint8Array(100).fill(0x78));
+            }
+            c.close();
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      );
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const sock = net.connect(server.port, "127.0.0.1");
+  let raw = "";
+  let sentSecond = false;
+  sock.setNoDelay(true);
+  sock.on("connect", () => {
+    sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+  });
+  sock.on("data", d => {
+    raw += d.toString("latin1");
+    // Once the first (chunked) response has terminated, reuse the connection.
+    // The stray terminator was flushed together with the real one, so it is
+    // already in `raw` by the time the second response arrives.
+    if (!sentSecond && raw.includes("0\r\n\r\n")) {
+      sentSecond = true;
+      sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    }
+  });
+  sock.on("close", () => resolve(raw));
+  sock.on("error", reject);
+  const data = await promise;
+
+  // The chunked body is all "x"; the second response is framed by
+  // Content-Length. Exactly one terminating chunk must appear in the stream.
+  expect(data.split("0\r\n\r\n").length - 1).toBe(1);
+  // The bytes right after the terminator are the next response, not another
+  // terminator.
+  const afterTerminator = data.slice(data.indexOf("0\r\n\r\n") + 5);
+  expect(afterTerminator.slice(0, 12)).toBe("HTTP/1.1 200");
+  expect(afterTerminator).toEndWith("ok");
 });

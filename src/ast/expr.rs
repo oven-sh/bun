@@ -6,11 +6,10 @@ use core::fmt;
 
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::{ArrayHashMap, VecExt};
-use bun_core::ZStr;
+use bun_collections::VecExt;
 use bun_core::{self};
 
-use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
+use crate::{DebugOnlyDisabler, E, G, Op, Ref};
 use bun_alloc::ArenaVecExt as _;
 // Re-export so downstream crates can name `ast::expr::StoreRef` (some callers
 // route through `expr::`).
@@ -57,6 +56,11 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
+            Data::EDot(e) => e.optional_chain.is_none(),
+            Data::EIndex(e) => e.optional_chain.is_none(),
+            Data::ECall(e) => e.optional_chain.is_none(),
             _ => true,
         }
     }
@@ -105,23 +109,9 @@ impl Expr {
     pub fn data_store_create() {
         data::Store::create();
     }
-
-    /// Debug-only "Store must be init'd" guard. The re-entrancy `Disabler`
-    /// check lives in `Store::append`.
-    #[inline]
-    pub fn data_store_assert() {
-        data::Store::assert();
-    }
 }
 
 impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        Ok(Expr {
-            loc: self.loc,
-            data: Data::clone_in(self.data, bump)?,
-        })
-    }
-
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
@@ -132,23 +122,6 @@ impl Expr {
             loc: self.loc,
             data: self.data.deep_clone_no_detach(bump)?,
         })
-    }
-
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
-            Stmt::alloc(S::Return { value: Some(this) }, this.loc)
-        });
-
-        Ok(Expr::init(
-            E::Arrow {
-                body: G::FnBody {
-                    loc: this.loc,
-                    stmts: crate::StoreSlice::new_mut(stmts),
-                },
-                ..Default::default()
-            },
-            this.loc,
-        ))
     }
 
     // `Expr::fromBlob` is JSC-tier — it parses JSON via `bun_parsers` and
@@ -181,26 +154,116 @@ impl Default for Query {
 impl Expr {
     #[inline]
     pub fn is_array(&self) -> bool {
-        matches!(self.data, Data::EArray(_))
+        matches!(self.data, Data::EArray(_) | Data::EArrayJSON(_))
     }
     #[inline]
     pub fn is_object(&self) -> bool {
-        matches!(self.data, Data::EObject(_))
+        matches!(self.data, Data::EObject(_) | Data::EObjectJSON(_))
     }
     #[inline]
     pub fn is_string(&self) -> bool {
         matches!(self.data, Data::EString(_))
     }
 
+    /// Materialize an immutable JSON leaf/container value as an `Expr`.
+    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+        match value {
+            E::JsonValue::Null => Expr::init(E::Null, loc),
+            E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
+            E::JsonValue::Number(n) => Expr::init(*n, loc),
+            E::JsonValue::String(s) => Expr::init(
+                E::String {
+                    data: *s,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            E::JsonValue::Object(o) => Expr {
+                loc,
+                data: Data::EObjectJSON(*o),
+            },
+            E::JsonValue::Array(a) => Expr {
+                loc,
+                data: Data::EArrayJSON(*a),
+            },
+        }
+    }
+
+    /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
+    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+        let _: Result<(), core::convert::Infallible> =
+            self.try_for_each_property(|key, loc, value| {
+                f(key, loc, value);
+                Ok(())
+            });
+    }
+
+    /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
+    pub fn try_for_each_property<Error>(
+        &self,
+        mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        match &self.data {
+            Data::EObject(obj) => {
+                for property in obj.properties.slice() {
+                    let (Some(key_expr), Some(value)) =
+                        (property.key.as_ref(), property.value.as_ref())
+                    else {
+                        continue;
+                    };
+                    let Some(key) = key_expr.as_utf8_string_literal() else {
+                        continue;
+                    };
+                    f(key, key_expr.loc, *value)?;
+                }
+            }
+            Data::EObjectJSON(obj) => {
+                for property in obj.get().properties() {
+                    f(
+                        property.key.slice(),
+                        property.key_loc,
+                        Expr::from_json_value(&property.value, property.key_loc),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Number of properties of an object expression in either representation; 0 otherwise.
+    pub fn property_count(&self) -> usize {
+        match &self.data {
+            Data::EObject(obj) => obj.properties.len_u32() as usize,
+            Data::EObjectJSON(obj) => obj.get().properties().len(),
+            _ => 0,
+        }
+    }
+
     /// Look up `name` among the properties of an object-literal expression.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
-        let Data::EObject(obj) = &self.data else {
-            return None;
-        };
-        if obj.properties.len_u32() == 0 {
-            return None;
+        match &self.data {
+            Data::EObject(obj) => {
+                if obj.properties.len_u32() == 0 {
+                    return None;
+                }
+                obj.as_property(name)
+            }
+            Data::EObjectJSON(obj) => {
+                let (i, prop) = obj
+                    .get()
+                    .properties()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.key.slice() == name)?;
+                Some(Query {
+                    expr: Expr::from_json_value(&prop.value, prop.key_loc),
+                    loc: prop.key_loc,
+                    i: i as u32,
+                })
+            }
+            _ => None,
         }
-        obj.as_property(name)
     }
 
     pub fn get(&self, name: &[u8]) -> Option<Expr> {
@@ -218,9 +281,19 @@ impl Expr {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                Some(ArrayIterator {
+                Some(ArrayIterator::Full {
                     array: *array,
                     index: 0,
+                })
+            }
+            Data::EArrayJSON(array) => {
+                if array.get().items().is_empty() {
+                    return None;
+                }
+                Some(ArrayIterator::Json {
+                    array: *array,
+                    index: 0,
+                    loc: self.loc,
                 })
             }
             _ => None,
@@ -252,14 +325,6 @@ impl Expr {
         }
     }
 
-    #[inline]
-    pub fn as_string_z<'b>(&self, bump: &'b Bump) -> Result<Option<&'b ZStr>, AllocError> {
-        match &self.data {
-            Data::EString(str) => Ok(Some(str.string_z(bump)?)),
-            _ => Ok(None),
-        }
-    }
-
     pub fn as_bool(&self) -> Option<bool> {
         match self.data {
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(b.value),
@@ -279,6 +344,13 @@ impl Expr {
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
+        if let Data::EObjectJSON(obj) = &self.data {
+            return obj
+                .get()
+                .properties()
+                .iter()
+                .any(|p| bun_core::eql_any_comptime(p.key.slice(), names));
+        }
         let Data::EObject(obj) = &self.data else {
             return false;
         };
@@ -307,7 +379,7 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub(crate) fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -315,6 +387,17 @@ impl Expr {
                 }
                 Some(array.items.slice()[index as usize])
             }
+            Data::EArrayJSON(array) => {
+                let items = array.get().items();
+                let item = items.get(index as usize)?;
+                Some(Expr::from_json_value(item, self.loc))
+            }
+            Data::EObjectJSON(object) => object
+                .get()
+                .properties()
+                .iter()
+                .find(|p| p.key.slice() == index_str)
+                .map(|p| Expr::from_json_value(&p.value, p.key_loc)),
             Data::EObject(object) => {
                 for prop in object.properties.slice_const() {
                     let Some(key) = &prop.key else { continue };
@@ -373,10 +456,10 @@ impl Expr {
             return None;
         }
 
-        if let Some(idx) = bun_core::index_of_any(name, b"[.") {
+        if let Some(idx) = bun_core::strings::index_of_any(name, b"[.") {
             match name[idx] {
                 b'[' => {
-                    let end_idx = bun_core::index_of_char(name, b']')? as usize;
+                    let end_idx = bun_core::strings::index_of_char_usize(name, b']')? as usize;
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
@@ -420,9 +503,8 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be an object.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
-        debug_assert!(self.is_object());
+        debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
         };
@@ -458,14 +540,13 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be an object.
     pub fn set_string(
         expr: &mut Expr,
         _bump: &Bump,
         name: &[u8],
         value: &[u8],
     ) -> Result<(), AllocError> {
-        debug_assert!(expr.is_object());
+        debug_assert!(matches!(expr.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut expr.data else {
             unreachable!()
         };
@@ -510,16 +591,6 @@ impl Expr {
         Ok(())
     }
 
-    pub fn get_boolean(expr: &Expr, name: &[u8]) -> Option<bool> {
-        if let Some(query) = expr.as_property(name) {
-            match query.expr.data {
-                Data::EBoolean(b) | Data::EBranchBoolean(b) => return Some(b.value),
-                _ => {}
-            }
-        }
-        None
-    }
-
     pub fn get_string<'b>(
         &self,
         bump: &'b Bump,
@@ -554,121 +625,12 @@ impl Expr {
         }
     }
 
-    pub fn get_string_cloned_z<'b>(
-        expr: &Expr,
-        bump: &'b Bump,
-        name: &[u8],
-    ) -> Result<Option<&'b ZStr>, AllocError> {
-        match expr.as_property(name) {
-            Some(q) => q.expr.as_string_z(bump),
-            None => Ok(None),
-        }
-    }
-
     // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
     pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
         let q = self.as_property(name)?;
-        match q.expr.data {
-            Data::EArray(array) => {
-                if array.items.len_u32() == 0 {
-                    return None;
-                }
-                Some(ArrayIterator { array, index: 0 })
-            }
-            _ => None,
-        }
-    }
-
-    pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
-        if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
-            match &existing.data {
-                Data::EArray(array) => {
-                    if let Some(next) = rope.next_ref() {
-                        let array = *array;
-                        if let Some(end) = array.items.last() {
-                            return end.get_rope(next);
-                        }
-                    }
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-                Data::EObject(_) => {
-                    if let Some(next) = rope.next_ref() {
-                        if let Some(end) = existing.get_rope(next) {
-                            return Some(end);
-                        }
-                    }
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-                _ => {
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-            }
-        }
-        None
-    }
-
-    pub fn as_property_string_map<'b>(
-        expr: &Expr,
-        name: &[u8],
-        bump: &'b Bump,
-    ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
-        let Data::EObject(obj_) = &expr.data else {
-            return None;
-        };
-        if obj_.properties.len_u32() == 0 {
-            return None;
-        }
-        let query = obj_.as_property(name)?;
-        let Data::EObject(obj) = &query.expr.data else {
-            return None;
-        };
-
-        let mut count: usize = 0;
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-            count += (key.len() > 0 && value.len() > 0) as usize;
-        }
-
-        if count == 0 {
-            return None;
-        }
-        let mut map = ArrayHashMap::<&'b [u8], &'b [u8]>::default();
-        if map.ensure_total_capacity(count).is_err() {
-            return None;
-        }
-
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-
-            if !(key.len() > 0 && value.len() > 0) {
-                continue;
-            }
-
-            map.insert(key, value);
-        }
-
-        Some(Box::new(map))
+        q.expr.as_array()
     }
 }
 
@@ -676,21 +638,37 @@ impl Expr {
 // ArrayIterator
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ArrayIterator {
+pub enum ArrayIterator {
     /// Arena-backed handle (`StoreRef` invariant: pointee lives until arena
     /// reset). Stored by value so the iterator carries no borrowed lifetime.
-    pub array: StoreRef<E::Array>,
-    pub index: u32,
+    Full {
+        array: StoreRef<E::Array>,
+        index: u32,
+    },
+    Json {
+        array: StoreRef<E::ArrayJSON>,
+        index: u32,
+        loc: Loc,
+    },
 }
 
 impl ArrayIterator {
     pub fn next(&mut self) -> Option<Expr> {
-        if self.index >= self.array.items.len_u32() {
-            return None;
+        match self {
+            ArrayIterator::Full { array, index } => {
+                if *index >= array.items.len_u32() {
+                    return None;
+                }
+                let result = array.items.slice()[*index as usize];
+                *index += 1;
+                Some(result)
+            }
+            ArrayIterator::Json { array, index, loc } => {
+                let item = array.get().items().get(*index as usize)?;
+                *index += 1;
+                Some(Expr::from_json_value(item, *loc))
+            }
         }
-        let result = self.array.items.slice()[self.index as usize];
-        self.index += 1;
-        Some(result)
     }
 }
 
@@ -731,7 +709,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn as_string_hash(
+    pub(crate) fn as_string_hash(
         &self,
         bump: &Bump,
         hash_fn: fn(&[u8]) -> u64,
@@ -856,58 +834,6 @@ impl Expr {
         }
     }
 
-    // `ctx` is passed by `&mut` so a single `&mut P` (the parser state) can be
-    // reborrowed for each callback invocation without `Copy`.
-    pub fn join_all_with_comma_callback<C: ?Sized>(
-        all: &[Expr],
-        ctx: &mut C,
-        callback: fn(ctx: &mut C, expr: Expr) -> Option<Expr>,
-    ) -> Option<Expr> {
-        match all.len() {
-            0 => None,
-            1 => callback(ctx, all[0]),
-            2 => {
-                let result = Expr::join_with_comma(
-                    callback(ctx, all[0]).unwrap_or(Expr {
-                        data: Data::EMissing(E::Missing {}),
-                        loc: all[0].loc,
-                    }),
-                    callback(ctx, all[1]).unwrap_or(Expr {
-                        data: Data::EMissing(E::Missing {}),
-                        loc: all[1].loc,
-                    }),
-                );
-                if result.is_missing() {
-                    return None;
-                }
-                Some(result)
-            }
-            _ => {
-                let mut i: usize = 1;
-                let mut expr = callback(ctx, all[0]).unwrap_or(Expr {
-                    data: Data::EMissing(E::Missing {}),
-                    loc: all[0].loc,
-                });
-
-                while i < all.len() {
-                    expr = Expr::join_with_comma(
-                        expr,
-                        callback(ctx, all[i]).unwrap_or(Expr {
-                            data: Data::EMissing(E::Missing {}),
-                            loc: all[i].loc,
-                        }),
-                    );
-                    i += 1;
-                }
-
-                if expr.is_missing() {
-                    return None;
-                }
-                Some(expr)
-            }
-        }
-    }
-
     pub fn extract_numeric_values_in_safe_range(left: &Data, right: &Data) -> Option<[f64; 2]> {
         let l_value = left.extract_numeric_value()?;
         let r_value = right.extract_numeric_value()?;
@@ -956,16 +882,6 @@ impl Expr {
         Some([l_string, r_string])
     }
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Static state
-// ───────────────────────────────────────────────────────────────────────────
-
-// Debug-only allocation counter: in release the `lock xadd` per node was a
-// contended cache line bouncing across the bundler worker pool on every Expr
-// allocation.
-#[cfg(debug_assertions)]
-pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // We don't need to dynamically allocate booleans: `E::Boolean` is inline in
 // `Data`, not a pointer to a pooled singleton.
@@ -1028,6 +944,8 @@ impl_into_expr_data_boxed! {
     JSXElement => EJsxElement,
     BigInt => EBigInt,
     Object => EObject,
+    ObjectJSON => EObjectJSON,
+    ArrayJSON => EArrayJSON,
     Spread => ESpread,
     Template => ETemplate,
     RegExp => ERegExp,
@@ -1132,8 +1050,6 @@ impl Expr {
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr {
             loc,
@@ -1143,8 +1059,6 @@ impl Expr {
 
     #[inline]
     pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr {
             loc,
@@ -1181,15 +1095,6 @@ impl Expr {
     pub fn is_primitive_literal(&self) -> bool {
         Tag::is_primitive_literal(self.data.tag())
     }
-
-    #[inline]
-    pub fn is_ref(this: &Expr, ref_: Ref) -> bool {
-        match this.data {
-            Data::EImportIdentifier(ii) => ii.ref_.eql(ref_),
-            Data::EIdentifier(i) => i.ref_.eql(ref_),
-            _ => false,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1212,6 +1117,8 @@ pub enum Tag {
     EArrow,
     EJsxElement,
     EObject,
+    EObjectJSON,
+    EArrayJSON,
     ESpread,
     ETemplate,
     ERegExp,
@@ -1265,128 +1172,29 @@ impl Tag {
         )
     }
 
-    pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray | Tag::EObject | Tag::ENull | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }
-
-    pub fn is_array(self) -> bool {
-        matches!(self, Tag::EArray)
-    }
-    pub fn is_unary(self) -> bool {
-        matches!(self, Tag::EUnary)
-    }
-    pub fn is_binary(self) -> bool {
-        matches!(self, Tag::EBinary)
-    }
-    pub fn is_this(self) -> bool {
-        matches!(self, Tag::EThis)
-    }
-    pub fn is_class(self) -> bool {
-        matches!(self, Tag::EClass)
-    }
-    pub fn is_boolean(self) -> bool {
-        matches!(self, Tag::EBoolean | Tag::EBranchBoolean)
-    }
-    pub fn is_super(self) -> bool {
-        matches!(self, Tag::ESuper)
-    }
-    pub fn is_null(self) -> bool {
-        matches!(self, Tag::ENull)
-    }
-    pub fn is_undefined(self) -> bool {
-        matches!(self, Tag::EUndefined)
-    }
-    pub fn is_new(self) -> bool {
-        matches!(self, Tag::ENew)
-    }
-    pub fn is_new_target(self) -> bool {
-        matches!(self, Tag::ENewTarget)
-    }
-    pub fn is_function(self) -> bool {
-        matches!(self, Tag::EFunction)
-    }
-    pub fn is_import_meta(self) -> bool {
-        matches!(self, Tag::EImportMeta)
-    }
-    pub fn is_call(self) -> bool {
-        matches!(self, Tag::ECall)
-    }
-    pub fn is_dot(self) -> bool {
-        matches!(self, Tag::EDot)
-    }
-    pub fn is_index(self) -> bool {
-        matches!(self, Tag::EIndex)
-    }
-    pub fn is_arrow(self) -> bool {
-        matches!(self, Tag::EArrow)
-    }
-    pub fn is_identifier(self) -> bool {
-        matches!(self, Tag::EIdentifier)
-    }
-    pub fn is_import_identifier(self) -> bool {
-        matches!(self, Tag::EImportIdentifier)
-    }
-    pub fn is_private_identifier(self) -> bool {
-        matches!(self, Tag::EPrivateIdentifier)
-    }
-    pub fn is_jsx_element(self) -> bool {
-        matches!(self, Tag::EJsxElement)
-    }
-    pub fn is_missing(self) -> bool {
-        matches!(self, Tag::EMissing)
-    }
-    pub fn is_number(self) -> bool {
-        matches!(self, Tag::ENumber)
-    }
-    pub fn is_big_int(self) -> bool {
-        matches!(self, Tag::EBigInt)
-    }
-    pub fn is_object(self) -> bool {
-        matches!(self, Tag::EObject)
-    }
-    pub fn is_spread(self) -> bool {
-        matches!(self, Tag::ESpread)
-    }
-    pub fn is_string(self) -> bool {
-        matches!(self, Tag::EString)
-    }
-    pub fn is_template(self) -> bool {
-        matches!(self, Tag::ETemplate)
-    }
-    pub fn is_reg_exp(self) -> bool {
-        matches!(self, Tag::ERegExp)
-    }
-    pub fn is_await(self) -> bool {
-        matches!(self, Tag::EAwait)
-    }
-    pub fn is_yield(self) -> bool {
-        matches!(self, Tag::EYield)
-    }
-    pub fn is_if(self) -> bool {
-        matches!(self, Tag::EIf)
-    }
-    pub fn is_require_resolve_string(self) -> bool {
-        matches!(self, Tag::ERequireResolveString)
-    }
-    pub fn is_import(self) -> bool {
-        matches!(self, Tag::EImport)
-    }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Tag {
+    /// Human-readable variant name for diagnostics (`"string"`, `"boolean"`, …).
+    pub fn type_name(self) -> &'static str {
+        match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1408,7 +1216,7 @@ impl fmt::Display for Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
@@ -1420,8 +1228,14 @@ impl fmt::Display for Tag {
             Tag::EThis => "this",
             Tag::EClass => "class",
             Tag::ERequireString => "require",
-            other => <&'static str>::from(*other),
-        })
+            other => <&'static str>::from(other),
+        }
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.type_name())
     }
 }
 
@@ -1430,34 +1244,10 @@ impl fmt::Display for Tag {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl Expr {
-    pub fn is_boolean(&self) -> bool {
-        match self.data {
-            Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
-            Data::EIf(ex) => ex.yes.is_boolean() && ex.no.is_boolean(),
-            Data::EUnary(ex) => ex.op == crate::OpCode::UnNot || ex.op == crate::OpCode::UnDelete,
-            Data::EBinary(ex) => match ex.op {
-                crate::OpCode::BinStrictEq
-                | crate::OpCode::BinStrictNe
-                | crate::OpCode::BinLooseEq
-                | crate::OpCode::BinLooseNe
-                | crate::OpCode::BinLt
-                | crate::OpCode::BinGt
-                | crate::OpCode::BinLe
-                | crate::OpCode::BinGe
-                | crate::OpCode::BinInstanceof
-                | crate::OpCode::BinIn => true,
-                crate::OpCode::BinLogicalOr => ex.left.is_boolean() && ex.right.is_boolean(),
-                crate::OpCode::BinLogicalAnd => ex.left.is_boolean() && ex.right.is_boolean(),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+    pub(crate) fn at<T: IntoExprData>(&self, t: T) -> Expr {
         Expr::init(t, self.loc)
     }
 
@@ -1465,7 +1255,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
+    pub(crate) fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -1481,11 +1271,6 @@ impl Expr {
     #[inline]
     pub fn has_value_for_this_in_call(&self) -> bool {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
-    }
-
-    #[inline]
-    pub fn is_property_access(&self) -> bool {
-        self.has_value_for_this_in_call()
     }
 
     /// The given "expr" argument should be the operand of a "!" prefix operator
@@ -1508,9 +1293,9 @@ impl Expr {
                 }));
             }
             Data::EBigInt(b) => {
-                return Some(expr.at(E::Boolean {
-                    value: b.value == b"0",
-                }));
+                if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
+                    return Some(expr.at(E::Boolean { value: equal }));
+                }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1570,7 +1355,7 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub(crate) fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1580,7 +1365,13 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::EBigInt(bigint) => {
+                if E::BigInt::has_radix(&bigint.value) {
+                    None
+                } else {
+                    Some(bigint.value.slice())
+                }
+            }
             Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
             Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
@@ -1607,15 +1398,6 @@ impl Expr {
         })
     }
 
-    pub fn is_optional_chain(&self) -> bool {
-        match self.data {
-            Data::EDot(d) => d.optional_chain.is_some(),
-            Data::EIndex(i) => i.optional_chain.is_some(),
-            Data::ECall(c) => c.optional_chain.is_some(),
-            _ => false,
-        }
-    }
-
     #[inline]
     pub fn known_primitive(&self) -> PrimitiveType {
         self.data.known_primitive()
@@ -1640,23 +1422,7 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub const STATIC: enumset::EnumSet<PrimitiveType> = enumset::enum_set!(
-        PrimitiveType::Mixed
-            | PrimitiveType::Null
-            | PrimitiveType::Undefined
-            | PrimitiveType::Boolean
-            | PrimitiveType::Number
-            | PrimitiveType::String // for our purposes, bigint is dynamic
-                                    // it is technically static though
-                                    // | PrimitiveType::Bigint
-    );
-
-    #[inline]
-    pub fn is_static(this: PrimitiveType) -> bool {
-        Self::STATIC.contains(this)
-    }
-
-    pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
+    pub(crate) fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
         if right_known == PrimitiveType::Unknown || left_known == PrimitiveType::Unknown {
             return PrimitiveType::Unknown;
         }
@@ -1693,6 +1459,8 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
+    EObjectJSON(StoreRef<E::ObjectJSON>),
+    EArrayJSON(StoreRef<E::ArrayJSON>),
     ESpread(StoreRef<E::Spread>),
     ETemplate(StoreRef<E::Template>),
     ERegExp(StoreRef<E::RegExp>),
@@ -1867,11 +1635,6 @@ impl Data {
     pub fn is_e_string(&self) -> bool {
         matches!(self, Data::EString(_))
     }
-    /// True if this is an `ENumber`.
-    #[inline]
-    pub fn is_e_number(&self) -> bool {
-        matches!(self, Data::ENumber(_))
-    }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
     // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
@@ -1880,14 +1643,6 @@ impl Data {
     pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
         if let Data::EUnary(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_unary_mut(&mut self) -> Option<&mut E::Unary> {
-        if let Data::EUnary(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -1917,14 +1672,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_class_mut(&mut self) -> Option<&mut E::Class> {
-        if let Data::EClass(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_new(&self) -> Option<StoreRef<E::New>> {
         if let Data::ENew(v) = *self {
             Some(v)
@@ -1933,25 +1680,9 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_new_mut(&mut self) -> Option<&mut E::New> {
-        if let Data::ENew(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_function(&self) -> Option<StoreRef<E::Function>> {
         if let Data::EFunction(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_function_mut(&mut self) -> Option<&mut E::Function> {
-        if let Data::EFunction(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -1997,25 +1728,9 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_index_mut(&mut self) -> Option<&mut E::Index> {
-        if let Data::EIndex(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_arrow(&self) -> Option<StoreRef<E::Arrow>> {
         if let Data::EArrow(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_arrow_mut(&mut self) -> Option<&mut E::Arrow> {
-        if let Data::EArrow(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -2029,14 +1744,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_jsx_element_mut(&mut self) -> Option<&mut E::JSXElement> {
-        if let Data::EJsxElement(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_spread(&self) -> Option<StoreRef<E::Spread>> {
         if let Data::ESpread(v) = *self {
             Some(v)
@@ -2045,40 +1752,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_spread_mut(&mut self) -> Option<&mut E::Spread> {
-        if let Data::ESpread(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_template(&self) -> Option<StoreRef<E::Template>> {
         if let Data::ETemplate(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_template_mut(&mut self) -> Option<&mut E::Template> {
-        if let Data::ETemplate(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_reg_exp(&self) -> Option<StoreRef<E::RegExp>> {
-        if let Data::ERegExp(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_await(&self) -> Option<StoreRef<E::Await>> {
-        if let Data::EAwait(v) = *self {
             Some(v)
         } else {
             None
@@ -2093,22 +1768,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_yield(&self) -> Option<StoreRef<E::Yield>> {
-        if let Data::EYield(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_yield_mut(&mut self) -> Option<&mut E::Yield> {
-        if let Data::EYield(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_if(&self) -> Option<StoreRef<E::If>> {
         if let Data::EIf(v) = *self {
             Some(v)
@@ -2117,48 +1776,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_if_mut(&mut self) -> Option<&mut E::If> {
-        if let Data::EIf(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_import(&self) -> Option<StoreRef<E::Import>> {
         if let Data::EImport(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_import_mut(&mut self) -> Option<&mut E::Import> {
-        if let Data::EImport(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_big_int(&self) -> Option<StoreRef<E::BigInt>> {
-        if let Data::EBigInt(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
-        if let Data::EInlinedEnum(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_name_of_symbol(&self) -> Option<StoreRef<E::NameOfSymbol>> {
-        if let Data::ENameOfSymbol(v) = *self {
             Some(v)
         } else {
             None
@@ -2185,56 +1804,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_private_identifier(&self) -> Option<E::PrivateIdentifier> {
-        if let Data::EPrivateIdentifier(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_commonjs_export_identifier(&self) -> Option<E::CommonJSExportIdentifier> {
-        if let Data::ECommonjsExportIdentifier(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_boolean(&self) -> Option<E::Boolean> {
-        if let Data::EBoolean(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_number(&self) -> Option<E::Number> {
         if let Data::ENumber(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_require_string(&self) -> Option<E::RequireString> {
-        if let Data::ERequireString(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_require_resolve_string(&self) -> Option<E::RequireResolveString> {
-        if let Data::ERequireResolveString(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_import_meta_main(&self) -> Option<E::ImportMetaMain> {
-        if let Data::EImportMetaMain(v) = *self {
             Some(v)
         } else {
             None
@@ -2250,25 +1821,40 @@ impl Data {
     }
 }
 
+fn json_value_deep_clone(
+    value: &E::JsonValue,
+    loc: Loc,
+    bump: &Bump,
+) -> Result<Expr, bun_alloc::AllocError> {
+    Ok(match value {
+        E::JsonValue::String(s) => {
+            let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
+            Expr::allocate(bump, E::EString::init(bytes), loc)
+        }
+        E::JsonValue::Object(o) => Expr {
+            loc,
+            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump)?,
+        },
+        E::JsonValue::Array(a) => Expr {
+            loc,
+            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
+        },
+        _ => Expr::from_json_value(value, loc),
+    })
+}
+
 impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
-        self.tag().into()
+        self.tag().type_name()
     }
 
     // Per-variant `as_*` accessors live alongside the enum decl above
     // (`e_string`/`e_object`/...).
-    pub fn as_e_identifier(&self) -> Option<E::Identifier> {
+    pub(crate) fn as_e_identifier(&self) -> Option<E::Identifier> {
         if let Data::EIdentifier(i) = self {
             Some(*i)
-        } else {
-            None
-        }
-    }
-    pub fn as_e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
-        if let Data::EInlinedEnum(i) = *self {
-            Some(i)
         } else {
             None
         }
@@ -2279,51 +1865,6 @@ impl Data {
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
 
 impl Data {
-    /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
-    /// arena slot) but don't recurse into children.
-    ///
-    /// The `E::*` payloads do not derive `Clone` (they hold raw arena
-    /// pointers / `Vec`), so this does a `core::ptr::read` of the payload,
-    /// which is sound because every
-    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
-    /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
-        macro_rules! shallow {
-            ($variant:ident, $el:expr) => {{
-                // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
-                // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy.
-                let copied = unsafe { core::ptr::read($el.as_ptr()) };
-                let item = bump.alloc(copied);
-                return Ok(Data::$variant(StoreRef::from_bump(item)));
-            }};
-        }
-        match &this {
-            Data::EArray(el) => shallow!(EArray, el),
-            Data::EUnary(el) => shallow!(EUnary, el),
-            Data::EBinary(el) => shallow!(EBinary, el),
-            Data::EClass(el) => shallow!(EClass, el),
-            Data::ENew(el) => shallow!(ENew, el),
-            Data::EFunction(el) => shallow!(EFunction, el),
-            Data::ECall(el) => shallow!(ECall, el),
-            Data::EDot(el) => shallow!(EDot, el),
-            Data::EIndex(el) => shallow!(EIndex, el),
-            Data::EArrow(el) => shallow!(EArrow, el),
-            Data::EJsxElement(el) => shallow!(EJsxElement, el),
-            Data::EObject(el) => shallow!(EObject, el),
-            Data::ESpread(el) => shallow!(ESpread, el),
-            Data::ETemplate(el) => shallow!(ETemplate, el),
-            Data::ERegExp(el) => shallow!(ERegExp, el),
-            Data::EAwait(el) => shallow!(EAwait, el),
-            Data::EYield(el) => shallow!(EYield, el),
-            Data::EIf(el) => shallow!(EIf, el),
-            Data::EImport(el) => shallow!(EImport, el),
-            Data::EBigInt(el) => shallow!(EBigInt, el),
-            Data::EString(el) => shallow!(EString, el),
-            Data::EInlinedEnum(el) => shallow!(EInlinedEnum, el),
-            _ => Ok(this),
-        }
-    }
-
     /// Deep-clone this subtree into `bump`.
     ///
     /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
@@ -2354,6 +1895,53 @@ impl Data {
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     close_bracket_loc: el.close_bracket_loc,
+                });
+                Ok(Data::EArray(StoreRef::from_bump(item)))
+            }
+            Data::EObjectJSON(el) => {
+                let el = el.get();
+                let rows = el.properties();
+                let value_locs = el.value_locs();
+                let mut properties: G::PropertyList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, row) in rows.iter().enumerate() {
+                    let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
+                    let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
+                    properties.push(G::Property {
+                        key: Some(Expr::allocate(
+                            bump,
+                            E::EString::init(key_bytes),
+                            row.key_loc,
+                        )),
+                        value: Some(json_value_deep_clone(&row.value, value_loc, bump)?),
+                        kind: G::PropertyKind::Normal,
+                        initializer: None,
+                        ..Default::default()
+                    });
+                }
+                let item = bump.alloc(E::Object {
+                    properties,
+                    is_single_line: el.is_single_line,
+                    close_brace_loc: el.close_brace_loc,
+                    ..Default::default()
+                });
+                Ok(Data::EObject(StoreRef::from_bump(item)))
+            }
+            Data::EArrayJSON(el) => {
+                let el = el.get();
+                let rows = el.items();
+                let item_locs = el.item_locs();
+                let mut items: crate::ExprNodeList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, value) in rows.iter().enumerate() {
+                    let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
+                    items.push(json_value_deep_clone(value, loc, bump)?);
+                }
+                let item = bump.alloc(E::Array {
+                    items,
+                    is_single_line: el.is_single_line,
+                    close_bracket_loc: el.close_bracket_loc,
+                    ..Default::default()
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }
@@ -2539,7 +2127,7 @@ impl Data {
             }
             Data::EIf(el) => {
                 let item = bump.alloc(E::If {
-                    test_: el.test_.deep_clone_no_detach(bump)?,
+                    test: el.test.deep_clone_no_detach(bump)?,
                     yes: el.yes.deep_clone_no_detach(bump)?,
                     no: el.no.deep_clone_no_detach(bump)?,
                 });
@@ -2578,7 +2166,7 @@ impl Data {
             _ => Ok(this),
         }
     }
-} // end `impl Data` (clone_in/deep_clone)
+} // end `impl Data` (deep_clone)
 
 impl Data {
     /// `hasher` should be something with `fn update(&[u8])`;
@@ -2637,6 +2225,23 @@ impl Data {
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
+            Data::EObjectJSON(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.properties().len() as u32);
+                for p in e.properties().iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            Data::EArrayJSON(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.items().len() as u32);
+                for item in e.items().iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
             Data::EDot(e) => {
                 // Encode `Option<#[repr(u8)] OptionalChain>` as its niche byte
                 // (Some(Start)=0, Some(Continuation)=1, None=2) — same bytes
@@ -2740,7 +2345,7 @@ impl Data {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub fn can_be_const_value(&self) -> bool {
+    pub(crate) fn can_be_const_value(&self) -> bool {
         match self {
             Data::ENumber(_)
             | Data::EBoolean(_)
@@ -2758,7 +2363,7 @@ impl Data {
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).
-    pub fn can_be_moved(&self) -> bool {
+    pub(crate) fn can_be_moved(&self) -> bool {
         match self {
             // TODO: identifiers can be removed if unused, however code that
             // moves expressions around sometimes does so incorrectly when
@@ -2956,10 +2561,6 @@ impl Data {
         }
     }
 
-    pub fn merge_known_primitive(&self, rhs: &Data) -> PrimitiveType {
-        self.merge_known_primitive_with_check(rhs, bun_core::StackCheck::init())
-    }
-
     fn merge_known_primitive_with_check(
         &self,
         rhs: &Data,
@@ -3037,7 +2638,7 @@ impl Data {
         }
     }
 
-    pub fn extract_numeric_value(&self) -> Option<f64> {
+    pub(crate) fn extract_numeric_value(&self) -> Option<f64> {
         match self {
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
@@ -3048,7 +2649,7 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
+    pub(crate) fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
         match data {
             Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
@@ -3071,36 +2672,26 @@ impl Data {
 // Equality
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Default)]
-pub struct Equality {
-    pub equal: bool,
-    pub ok: bool,
-
-    /// This extra flag is unfortunately required for the case of visiting the expression
-    /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
-    pub is_require_main_and_module: bool,
+#[derive(Clone, Copy)]
+pub enum Equality {
+    /// Nothing is known about the equality of the two operands.
+    Unknown,
+    Equal,
+    NotEqual,
+    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
+    /// caller rewrites this to an import_meta_main node.
+    RequireMainAndModule,
 }
 
-impl Equality {
-    pub const TRUE: Equality = Equality {
-        ok: true,
-        equal: true,
-        is_require_main_and_module: false,
-    };
-    pub const FALSE: Equality = Equality {
-        ok: true,
-        equal: false,
-        is_require_main_and_module: false,
-    };
-    pub const UNKNOWN: Equality = Equality {
-        ok: false,
-        equal: false,
-        is_require_main_and_module: false,
-    };
+impl From<bool> for Equality {
+    #[inline]
+    fn from(equal: bool) -> Self {
+        if equal {
+            Equality::Equal
+        } else {
+            Equality::NotEqual
+        }
+    }
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
@@ -3131,9 +2722,6 @@ pub trait EqlParser {
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
 impl Data {
-    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
-    // values. If "ok" is true, the equality or inequality of the two values is
-    // stored in "equal".
     pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
@@ -3143,110 +2731,76 @@ impl Data {
 
             Data::ENull(_) | Data::EUndefined(_) => {
                 let right_tag = right.tag();
-                let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
-                    || right_tag.is_primitive_literal();
-
-                if !K::STRICT {
-                    return Equality {
-                        equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
-                        ok,
-                        ..Default::default()
-                    };
+                if !matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                    && !right_tag.is_primitive_literal()
+                {
+                    return Equality::Unknown;
                 }
-
-                return Equality {
-                    equal: right_tag == left.tag(),
-                    ok,
-                    ..Default::default()
-                };
+                return Equality::from(if K::STRICT {
+                    right_tag == left.tag()
+                } else {
+                    matches!(right_tag, Tag::ENull | Tag::EUndefined)
+                });
             }
             Data::EBoolean(l) | Data::EBranchBoolean(l) => match right {
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value == r.value,
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value == r.value);
                 }
                 Data::ENumber(num) => {
                     if K::STRICT {
                         // "true === 1" is false
                         // "false === 0" is false
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
-                    return Equality {
-                        ok: true,
-                        equal: if l.value {
-                            num.value() == 1.0
-                        } else {
-                            num.value() == 0.0
-                        },
-                        ..Default::default()
-                    };
+                    return Equality::from(if l.value {
+                        num.value() == 1.0
+                    } else {
+                        num.value() == 0.0
+                    });
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::ENumber(l) => match right {
                 Data::ENumber(r) => {
-                    return Equality {
-                        ok: true,
-                        equal: l.value() == r.value(),
-                        ..Default::default()
-                    };
+                    return Equality::from(l.value() == r.value());
                 }
                 Data::EInlinedEnum(r) => {
                     if let Data::ENumber(rn) = &r.value.data {
-                        return Equality {
-                            ok: true,
-                            equal: l.value() == rn.value(),
-                            ..Default::default()
-                        };
+                        return Equality::from(l.value() == rn.value());
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
                     if !K::STRICT {
-                        return Equality {
-                            ok: true,
-                            // "1 == true" is true
-                            // "0 == false" is true
-                            equal: if r.value {
-                                l.value() == 1.0
-                            } else {
-                                l.value() == 0.0
-                            },
-                            ..Default::default()
-                        };
+                        // "1 == true" is true
+                        // "0 == false" is true
+                        return Equality::from(if r.value {
+                            l.value() == 1.0
+                        } else {
+                            l.value() == 0.0
+                        });
                     }
                     // "1 === true" is false
                     // "0 === false" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 Data::ENull(_) | Data::EUndefined(_) => {
                     // "(not null or undefined) == undefined" is false
-                    return Equality::FALSE;
+                    return Equality::NotEqual;
                 }
                 _ => {}
             },
             Data::EBigInt(l) => {
-                if let Data::EBigInt(r) = right {
-                    if bun_core::immutable::eql_long(&l.value, &r.value, true) {
-                        return Equality::TRUE;
-                    }
-                    // 0x0000n == 0n is true
-                    return Equality {
-                        ok: false,
-                        ..Default::default()
-                    };
-                } else {
-                    return Equality {
-                        ok: matches!(right, Data::ENull(_) | Data::EUndefined(_)),
-                        equal: false,
-                        ..Default::default()
-                    };
-                }
+                return match right {
+                    Data::EBigInt(r) => match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality::from(equal),
+                        None => Equality::Unknown,
+                    },
+                    Data::ENull(_) | Data::EUndefined(_) => Equality::NotEqual,
+                    _ => Equality::Unknown,
+                };
             }
             Data::EString(l) => {
                 // `StoreRef<EString>` is a Copy pointer; rebind mutably so
@@ -3257,40 +2811,32 @@ impl Data {
                         let mut r = *r;
                         r.resolve_rope_if_needed(p.arena());
                         l.resolve_rope_if_needed(p.arena());
-                        return Equality {
-                            ok: true,
-                            equal: r.eql_string(&l),
-                            ..Default::default()
-                        };
+                        return Equality::from(r.eql_string(&l));
                     }
                     Data::EInlinedEnum(inlined) => {
                         if let Data::EString(r) = inlined.value.data {
                             let mut r = r;
                             r.resolve_rope_if_needed(p.arena());
                             l.resolve_rope_if_needed(p.arena());
-                            return Equality {
-                                ok: true,
-                                equal: r.eql_string(&l),
-                                ..Default::default()
-                            };
+                            return Equality::from(r.eql_string(&l));
                         }
                     }
                     Data::ENull(_) | Data::EUndefined(_) => {
-                        return Equality::FALSE;
+                        return Equality::NotEqual;
                     }
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
                             if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             if r.value() == 1.0 && l.eql_comptime(b"1") {
-                                return Equality::TRUE;
+                                return Equality::Equal;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
-                            return Equality::UNKNOWN;
+                            return Equality::Unknown;
                         } else {
-                            return Equality::FALSE;
+                            return Equality::NotEqual;
                         }
                     }
                     _ => {}
@@ -3303,18 +2849,14 @@ impl Data {
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
                         if id.ref_.eql(p.module_ref()) {
-                            return Equality {
-                                ok: true,
-                                equal: true,
-                                is_require_main_and_module: true,
-                            };
+                            return Equality::RequireMainAndModule;
                         }
                     }
                 }
             }
         }
 
-        Equality::UNKNOWN
+        Equality::Unknown
     }
 }
 
@@ -3339,6 +2881,8 @@ crate::new_store!(
         E::JSXElement,
         E::Number,
         E::Object,
+        E::ObjectJSON,
+        E::ArrayJSON,
         E::Spread,
         E::TemplatePart,
         E::Template,

@@ -506,6 +506,53 @@ describe("bundler", () => {
     run: { stdout: "bbb" },
   });
 
+  itBundled("barrel/NamespaceReExportCycleThroughStarTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        import { keep } from 'looplib/w.js';
+        import { other } from 'looplib/g.js';
+        import { x, y, deepValue } from 'looplib';
+        console.log(typeof x + " " + y + " " + keep + " " + deepValue + " " + other);
+      `,
+      "/node_modules/looplib/package.json": JSON.stringify({
+        name: "looplib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/looplib/index.js": /* js */ `
+        export * from './t.js';
+      `,
+      "/node_modules/looplib/t.js": /* js */ `
+        export { x } from './w.js';
+        export * from './r.js';
+        export * from './g.js';
+      `,
+      "/node_modules/looplib/w.js": /* js */ `
+        import * as ns from './t.js';
+        export { ns as x };
+        export { keep } from './keep.js';
+      `,
+      "/node_modules/looplib/keep.js": /* js */ `
+        export const keep = "KEEP";
+      `,
+      "/node_modules/looplib/r.js": /* js */ `
+        export const y = "Y";
+      `,
+      "/node_modules/looplib/g.js": /* js */ `
+        export { deepValue } from './deep.js';
+        export { other } from './other.js';
+      `,
+      "/node_modules/looplib/deep.js": /* js */ `
+        export const deepValue = "DEEP";
+      `,
+      "/node_modules/looplib/other.js": /* js */ `
+        export const other = "OTHER";
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "object Y KEEP DEEP OTHER" },
+  });
+
   // --- Ported from Rolldown: self-re-export ---
   // barrel re-exports a symbol from itself
 
@@ -1590,5 +1637,117 @@ describe("bundler", () => {
     bytecode: true,
     compile: true,
     run: { stdout: "ok" },
+  });
+
+  // Regression for #36832: a namespace import of a barrel must re-request every
+  // re-exported name from the module it comes from, even when that module sits
+  // behind a second barrel that was already parsed with only a partial request
+  // set. Parse-completion order decides which case you get, so this test
+  // biases the order: the file holding "import * as ns" is made large enough
+  // that every small barrel file is parsed (and its unused re-exports
+  // deferred) long before the namespace request arrives. Without the fix the
+  // inner barrel's deferred records are never un-deferred, the module body is
+  // silently dropped, and the output references undeclared symbols.
+  itBundled("barrel/NamespaceImportUndefersChainedBarrels", {
+    files: {
+      "/entry.js": /* js */ `
+        import { alpha } from 'pkg-a';
+        import { use } from './big.js';
+        console.log(alpha, use());
+      `,
+      "/big.js":
+        `import * as ns from 'pkg-a';\n` +
+        `export function use() { return take(ns); }\n` +
+        `function take(obj) { return obj.beta; }\n` +
+        Array.from({ length: 5000 }, (_, i) => `export const filler_${i} = ${i};`).join("\n"),
+      "/node_modules/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-a/index.js": /* js */ `
+        export { alpha } from './alpha.js';
+        export { beta } from 'pkg-b';
+      `,
+      "/node_modules/pkg-a/alpha.js": /* js */ `
+        import { gamma } from 'pkg-b';
+        export const alpha = "alpha_" + gamma;
+      `,
+      "/node_modules/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-b/index.js": /* js */ `
+        export { gamma } from './gamma.js';
+        export { beta } from './beta.js';
+      `,
+      "/node_modules/pkg-b/gamma.js": /* js */ `
+        export const gamma = "gamma";
+      `,
+      "/node_modules/pkg-b/beta.js": /* js */ `
+        export const beta = "BETA_VALUE_MARKER";
+      `,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      // The body of pkg-b/beta.js must land in the output; when its record
+      // stays deferred the module is dropped while ns.beta still references
+      // its symbol.
+      api.expectFile("/out/entry.js").toContain("BETA_VALUE_MARKER");
+    },
+    run: { stdout: "alpha_gamma BETA_VALUE_MARKER" },
+  });
+
+  // Companion to the test above for the `export *` shape of #36832: the inner
+  // barrel parses first (discovered directly by the entry) and defers its
+  // unrequested re-exports before the star exporter or the namespace import
+  // are known. The namespace request must still reach the `export *` target
+  // and un-defer its records.
+  itBundled("barrel/NamespaceImportRequestsExportStarTargets", {
+    files: {
+      "/entry.js": /* js */ `
+        import { gamma } from 'pkg-b';
+        import { use } from './big.js';
+        console.log(gamma, use());
+      `,
+      "/big.js":
+        `import * as ns from 'pkg-a';\n` +
+        `export function use() { return take(ns); }\n` +
+        `function take(obj) { return obj.beta; }\n` +
+        Array.from({ length: 5000 }, (_, i) => `export const filler_${i} = ${i};`).join("\n"),
+      "/node_modules/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-a/index.js": /* js */ `
+        export * from 'pkg-b';
+      `,
+      "/node_modules/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-b/index.js": /* js */ `
+        export { gamma } from './gamma.js';
+        export { beta } from './beta.js';
+      `,
+      "/node_modules/pkg-b/gamma.js": /* js */ `
+        export const gamma = "gamma";
+      `,
+      "/node_modules/pkg-b/beta.js": /* js */ `
+        export const beta = "BETA_STAR_MARKER";
+      `,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("BETA_STAR_MARKER");
+    },
+    run: { stdout: "gamma BETA_STAR_MARKER" },
   });
 });

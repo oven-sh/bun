@@ -1,5 +1,6 @@
+use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
     CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
     update_package_json_and_install_with_manager,
@@ -25,7 +26,14 @@ impl InstallCommand {
     #[cold]
     #[inline(never)]
     fn handle_error(e: Error) -> Result<(), Error> {
-        if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") {
+        if matches!(
+            e,
+            crate::Error::InstallFailed
+                | crate::Error::InvalidPackageJSON
+                | crate::Error::Install(
+                    bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
+                )
+        ) {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded
             // startup in `Cli::start()` before any command (including this
             // one) is dispatched; no other `&mut` to it is live here.
@@ -63,7 +71,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             fn on_analyze(
                 &mut self,
                 result: &mut DependenciesScannerResult<'_, '_>,
-            ) -> Result<(), Error> {
+            ) -> Result<(), bun_bundler::Error> {
                 let this = self;
                 // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
                 //
@@ -103,7 +111,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 // SAFETY: see above — same invariant covers `this.ctx`.
                 let ctx = unsafe { &mut *this.ctx };
 
-                install_with_cli(ctx, cli.clone())?;
+                install_with_cli(ctx, cli.clone()).map_err(bun_bundler::Error::from)?;
 
                 Global::exit(0);
             }
@@ -164,7 +172,8 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
             );
             Output::flush();
         }
-        return update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd);
+        return update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd)
+            .map_err(Into::into);
     }
 
     if manager.options.should_print_command_name() {

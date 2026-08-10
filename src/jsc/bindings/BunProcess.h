@@ -51,6 +51,18 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Lazy install guard for the JS onWarning 'warning' listener.
+    bool m_warningListenerInstalled = false;
+    // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
+    bool m_emitEnvNonstringWarning = true;
+    // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
+    // function-local static would be shared across worker threads, so a
+    // worker's exit would suppress the main thread's 'exit' event.
+    bool m_isExiting = false;
+    // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
+    // Environment's own JS, so every worker warns once itself.
+    bool m_warnedProcessBinding = false;
+    bool m_warnedErrname = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -71,6 +83,7 @@ public:
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+    void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);
@@ -127,7 +140,11 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+
+// Routes its argument onto the uncaught-exception path. Used by the
+// process.nextTick drain and, via $newCppFunction, by the node-style
+// callback shims in src/js.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 } // namespace Bun

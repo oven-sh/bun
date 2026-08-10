@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { access, chmod, lstat, readdir, readlink, rm, stat, symlink, writeFile } from "fs/promises";
+import { access, chmod, lstat, mkdir, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -682,6 +682,149 @@ it.skipIf(isWindows)(
       console.error("stderr:", stderr);
     }
     expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "skips a package bin entry whose name contains a NUL byte and links the remaining entries",
+  async () => {
+    using dir = tempDir("bin-name-nul-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-name-nul-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-nul-bin",
+        version: "1.0.0",
+        bin: { ["extra" + String.fromCharCode(0) + "ignoredtail"]: "./cli.js", "good-bin": "./cli.js" },
+      }),
+      "packages/dep/cli.js": `#!/usr/bin/env node\nconsole.log("ok");\n`,
+    });
+    const installDir = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect((await readdir(join(installDir, "node_modules", ".bin"))).sort()).toEqual(["good-bin"]);
+
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "does not link a bin target that resolves outside the package through a symlinked directory",
+  async () => {
+    using dir = tempDir("bin-target-symlinked-dir-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-dir-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-linked-dir-bin",
+        version: "1.0.0",
+        bin: { "linked-dir-tool": "lnk/tool.js" },
+      }),
+    });
+    const installDir = await realpath(String(dir));
+
+    const outsideDir = `${installDir}/abcdefghijkl${installDir}/packages/dep/y`;
+    await mkdir(outsideDir, { recursive: true });
+    const toolPath = join(outsideDir, "tool.js");
+    await writeFile(toolPath, `#!/usr/bin/env node\nconsole.log("ok");\n`);
+    await chmod(toolPath, 0o600);
+    await symlink(outsideDir, join(installDir, "packages", "dep", "lnk"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect((await stat(toolPath)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(installDir, "node_modules", ".bin")).catch(() => [])).toEqual([]);
+
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "rejects a GitHub tarball whose root directory name contains a path separator",
+  async () => {
+    const tarball = createTarball([
+      { name: "pkg.root/extra/", type: "dir" },
+      {
+        name: "pkg.root/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      { name: "pkg.root/index.js", type: "file", content: "module.exports = 1;" },
+    ]);
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        if (url.pathname.includes("/repos/")) {
+          return Response.json({ default_branch: "main" });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("github-tarball-root-name-test", {
+      "package.json": JSON.stringify({
+        name: "test-app",
+        version: "1.0.0",
+        dependencies: { "test-package": "github:user/repo#main" },
+      }),
+    });
+    const installDir = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        GITHUB_API_URL: `http://localhost:${server.port}`,
+        BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain('tarball root directory "pkg.root/extra" is not a valid folder name');
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
   },
   60000,
 );

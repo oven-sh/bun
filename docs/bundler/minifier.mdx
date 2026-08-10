@@ -15,7 +15,7 @@ Use the `--minify` flag to enable all minification modes:
 bun build ./index.ts --minify --outfile=out.js
 ```
 
-The `--minify` flag automatically enables:
+The `--minify` flag enables:
 
 - Whitespace minification
 - Syntax minification
@@ -36,7 +36,7 @@ The `--production` flag also:
 
 ### Granular control
 
-You can enable specific minification modes individually:
+Enable specific minification modes individually:
 
 ```bash
 # Only remove whitespace
@@ -80,7 +80,7 @@ await Bun.build({
 
 ## Minification Modes
 
-Bun's minifier has three independent modes that can be enabled separately or combined.
+Bun's minifier has three independent modes that you can enable separately or together.
 
 ### Whitespace minification (`--minify-whitespace`)
 
@@ -336,7 +336,7 @@ Evaluates template literals with constant expressions.
 
 **Mode:** `--minify-syntax`
 
-Converts simple template literals to regular strings.
+Converts template literals with no substitutions to regular strings.
 
 ```ts Input
 `Hello World`
@@ -534,12 +534,9 @@ Simplifies unary operations.
 ```js Output
 123
 123
-123
-123
-x
+- -x
 ~~x
 !!x
-x
 ```
 
 ### Double negation removal
@@ -665,7 +662,7 @@ const x=0;
 
 **Mode:** Always active
 
-Respects `/*@__PURE__*/` annotations for tree shaking.
+Respects `/*@__PURE__*/` annotations for tree shaking (removing unused code).
 
 ```ts Input
 const x = /*@__PURE__*/ expensive();
@@ -827,7 +824,7 @@ const arrow = (a, b) => a + b;
 ```
 
 ```js Output
-function myFunction(a,b){return a+b}const arrow=(a,b)=>a+b;
+function myFunction(param1,param2){return param1+param2}const arrow=(a,b)=>a+b;
 ```
 
 ### Parentheses minimization
@@ -846,20 +843,6 @@ a + (b * c)
 (a+b)*c
 a+b*c
 x
-```
-
-### Property mangling
-
-**Mode:** `--minify-identifiers` (with configuration)
-
-Renames object properties to shorter names when configured.
-
-```ts Input
-obj.longPropertyName
-```
-
-```js Output (with property mangling enabled)
-obj.a
 ```
 
 ### Template literal value folding
@@ -929,11 +912,11 @@ new Array(x, y)
 Inlines property access for objects with a single property.
 
 ```ts Input
-({fn: () => console.log('hi')}).fn()
+({fn: () => console.log('hi')}).fn
 ```
 
 ```js Output
-(() => console.log('hi'))()
+() => console.log('hi')
 ```
 
 ### String charCodeAt constant folding
@@ -1102,25 +1085,9 @@ const obj = { [Keys.FOO]: value }
 const obj={foo:value}
 ```
 
-### String number to numeric index
-
-**Mode:** `--minify-syntax`
-
-Converts string numeric property access to numeric index.
-
-```ts Input
-obj["0"]
-arr["5"]
-```
-
-```js Output
-obj[0]
-arr[5]
-```
-
 ### Arrow function body shortening
 
-**Mode:** Always active
+**Mode:** `--minify-syntax`
 
 Uses expression body syntax when an arrow function only returns a value.
 
@@ -1148,26 +1115,6 @@ Uses shorthand syntax when property name and value identifier match.
 ```js Output
 { x, y }
 { name, age }
-```
-
-### Method shorthand
-
-**Mode:** Always active
-
-Uses method shorthand syntax in object literals.
-
-```ts Input
-{
-  foo: function() {},
-  bar: async function() {}
-}
-```
-
-```js Output
-{
-  foo() {},
-  async bar() {}
-}
 ```
 
 ### Drop debugger statements
@@ -1209,11 +1156,11 @@ x=void 0;
 
 **Mode:** `--drop=<name>`
 
-Removes calls to specified global functions or methods.
+Removes calls to specified global functions and their methods.
 
 ```ts Input
 assert(condition);
-obj.assert(test);
+assert.equal(a, b);
 ```
 
 ```js Output with --drop=assert
@@ -1223,7 +1170,7 @@ void 0;
 
 ## Keep Names
 
-When minifying identifiers, you may want to preserve original function and class names for debugging purposes. Use the `--keep-names` flag:
+To keep original function and class names for debugging while minifying identifiers, use the `--keep-names` flag:
 
 ```bash
 bun build ./index.ts --minify --keep-names --outfile=out.js
@@ -1242,7 +1189,7 @@ await Bun.build({
 });
 ```
 
-This preserves the `.name` property on functions and classes while still minifying the actual identifier names in the code.
+`--keep-names` preserves the `.name` property on functions and classes while still minifying the identifiers themselves.
 
 ## Combined Example
 
@@ -1275,7 +1222,7 @@ const a=42,b=()=>{const c=!0,d=void 0;return c?a:d},e=b();
 
 **Use individual modes for:**
 
-- **`--minify-whitespace`:** Quick size reduction without semantic changes
+- **`--minify-whitespace`:** Size reduction without semantic changes
 - **`--minify-syntax`:** Smaller output while keeping readable identifiers for debugging
 - **`--minify-identifiers`:** Maximum size reduction (combine with `--keep-names` for better stack traces)
 

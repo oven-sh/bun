@@ -23,24 +23,29 @@ pub(crate) fn view(
     spec_: &[u8],
     property_path: Option<&[u8]>,
     json_output: bool,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
             if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
-                // Note: reshaped for borrowck — copy into the function-scope
-                // bump so `name` doesn't keep `manager` borrowed across the
-                // `&mut self` calls (`http_proxy`, `tls_reject_unauthorized`) below.
-                break 'brk &*bump
-                    .alloc_slice_copy(&manager.root_package_json_name_at_time_of_init);
+                break 'brk &manager.root_package_json_name_at_time_of_init;
             }
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
                 // into the resolver's directory cache for the process lifetime.
-                if !manager.root_dir.has_comptime_query(b"package.json") {
+                // `.data` probes must hold `entries_mutex` (uncontended on
+                // this single-threaded CLI path).
+                let has_package_json = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    manager.root_dir.has_comptime_query(b"package.json")
+                };
+                if !has_package_json {
                     break 'from_package_json;
                 }
                 let fd = manager.root_dir.fd;
@@ -56,7 +61,7 @@ pub(crate) fn view(
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
-                let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
+                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
                 if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
@@ -72,10 +77,7 @@ pub(crate) fn view(
         break 'brk spec_;
     });
 
-    // Note: reshaped for borrowck — clone the registry scope so it doesn't
-    // keep `manager` borrowed across `http_proxy` / `tls_reject_unauthorized`
-    // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
-    let scope = manager.scope_for_package_name(name).clone();
+    let scope = manager.scope_for_package_name(name);
 
     let mut url_buf = PathBuffer::uninit();
     let encoded_name = buf_print(
@@ -125,7 +127,6 @@ pub(crate) fn view(
         url,
         headers.entries,
         header_buf,
-        &raw mut response_buf,
         b"",
         http_proxy,
         None,
@@ -133,7 +134,7 @@ pub(crate) fn view(
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());
@@ -141,7 +142,7 @@ pub(crate) fn view(
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 
@@ -161,7 +162,7 @@ pub(crate) fn view(
 
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
-        &scope,
+        scope,
         &mut log,
         response_buf.list.as_slice(),
         name,

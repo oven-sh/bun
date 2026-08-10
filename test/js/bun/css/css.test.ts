@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   attrTest,
@@ -97,6 +97,35 @@ describe("css tests", () => {
         padding: var(--custom-padding);
        }`,
     );
+
+    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
+    // when minifying, which would open/close a comment and swallow the rest of
+    // the stylesheet.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    minify_test(":root { --a: x / *= y }", ":root{--a:x/ *= y}");
+    // A lone `/` or `*` delim must still minify without extra whitespace.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // Non-minified output is unchanged.
+    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -139,6 +168,19 @@ describe("css tests", () => {
 }`,
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
+
+    // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
+    // A NaN escaping a top-level calculation is censored to zero; it must never be
+    // serialized as the literal `NaNpx`, which browsers reject.
+    minify_test(`a { width: calc(NaN * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 0px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 1px - infinity * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: min(NaN * 1px, 2px) }`, `a{width:min(0px,2px)}`);
+    minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
+    minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
+    minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
+    minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
@@ -3106,7 +3148,7 @@ describe("css tests", () => {
       `,
       indoc`
         .foo {
-          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: #af5cae linear-gradient(#c65d07, #00817d);
           background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
         }
       `,
@@ -5226,6 +5268,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
@@ -7018,6 +7062,46 @@ describe("css tests", () => {
     );
   });
 
+  describe("animation", () => {
+    // The animation name is serialized last, in canonical order.
+    minify_test(".foo { animation: anim 2s }", ".foo{animation:2s anim}");
+    minify_test(".foo { animation: 0.25s ease-out forwards anim }", ".foo{animation:.25s ease-out forwards anim}");
+    minify_test(".foo { animation: none }", ".foo{animation:none}");
+
+    // Name-less shorthands must keep their components (must NOT collapse to
+    // `none`) — a lone trailing `none` is dropped as redundant.
+    minify_test(".foo { animation: 2s }", ".foo{animation:2s}");
+    minify_test(".foo { animation: 2s ease-in-out }", ".foo{animation:2s ease-in-out}");
+    minify_test(
+      ".foo { animation: 3s linear 1s infinite alternate }",
+      ".foo{animation:3s linear 1s infinite alternate}",
+    );
+    minify_test(".foo { animation: 2s none }", ".foo{animation:2s}");
+    // 0s duration must still be emitted when a nonzero delay follows.
+    minify_test(".foo { animation: 0s 2s foo }", ".foo{animation:0s 2s foo}");
+
+    // Multiple comma-separated animations.
+    minify_test(".foo { animation: spin 1s, 2s slide }", ".foo{animation:1s spin,2s slide}");
+
+    // Vendor-prefixed shorthand.
+    minify_test(".foo { -webkit-animation: spin 1s }", ".foo{-webkit-animation:1s spin}");
+
+    // Timeline component in the shorthand: round-trips a dashed-ident timeline
+    // and drops the default `auto` timeline.
+    minify_test(".foo { animation: 1s spin --my-timeline }", ".foo{animation:1s spin --my-timeline}");
+    minify_test(".foo { animation: 1s spin auto }", ".foo{animation:1s spin}");
+
+    // animation-name longhand.
+    minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");
+    minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
+    minify_test('.foo { animation-name: "foo" }', ".foo{animation-name:foo}");
+
+    // CSS-wide keywords must NOT be consumed as an animation name.
+    minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
+    minify_test(".foo { animation: unset }", ".foo{animation:unset}");
+    minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+  });
+
   describe("transform", () => {
     minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
     minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
@@ -7831,5 +7915,27 @@ describe("css tests", () => {
     test("style attributes reject at-rules", () => {
       expect(() => attrTest("color: red; @bogus; background: green", "", false)).toThrow("Unknown at-rule @bogus");
     });
+  });
+
+  test("deeply nested rules keep two spaces of indentation per level", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _test } = require("bun:internal-for-testing").cssInternals;
+let css = "color: red";
+for (let i = 0; i < 150; i++) css = ".a { " + css + " }";
+const output = _test(css, "");
+const line = output.split("\\n").find(l => l.includes("color: red"));
+console.log(line.length - line.trimStart().length);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
   });
 });

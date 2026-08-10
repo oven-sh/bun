@@ -159,7 +159,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
         },
       });
       const [raw, tls] = socket.upgradeTLS({
-        tls: tlsCert,
+        tls: { ...tlsCert, ca: tlsCert.cert },
         socket: {
           drain(s) {
             s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
@@ -187,6 +187,72 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   // they all pin and the count stays ≥ baseline + 10.
   const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
   expect(count).toBeLessThanOrEqual(baseline + 2);
+});
+
+test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {
+  // UpgradedDuplex keeps the origin stream and its four native listener
+  // thunks reachable via WriteBarrier slots on the JSTLSSocket wrapper.
+  // Holding each as a separate Strong handle makes every TLS-over-duplex
+  // connection add five HandleSet entries that live as long as the native
+  // struct, independent of the wrapper's GC lifetime.
+  //
+  // heapStats().protectedObjectTypeCounts reports HandleSet-rooted values by
+  // class, so with Strong handles N live upgrades contribute +4N Function and
+  // +N origin objects; with visited slots they contribute none (the
+  // wrapper's own self-reference is the only per-upgrade Strong).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const tls = require("node:tls");
+        const { Duplex } = require("node:stream");
+        const { heapStats } = require("bun:jsc");
+
+        const protectedCounts = () => {
+          const c = heapStats().protectedObjectTypeCounts;
+          return { Function: c.Function ?? 0, Object: c.Object ?? 0 };
+        };
+
+        // Warm up so lazy module state doesn't skew the delta.
+        const warm = tls.connect({
+          socket: new Duplex({ read() {}, write(_c, _e, cb) { cb(); } }),
+          rejectUnauthorized: false,
+        });
+
+        Bun.gc(true);
+        const before = protectedCounts();
+
+        const N = 20;
+        const live = [];
+        for (let i = 0; i < N; i++) {
+          const origin = new Duplex({ read() {}, write(_c, _e, cb) { cb(); } });
+          live.push(tls.connect({ socket: origin, rejectUnauthorized: false }));
+        }
+
+        Bun.gc(true);
+        const after = protectedCounts();
+
+        console.log(JSON.stringify({
+          N,
+          fn: after.Function - before.Function,
+          obj: after.Object - before.Object,
+        }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { N, fn, obj } = JSON.parse(stdout.trim());
+  // Without the visited slots these are fn≈4N and obj≈N. A small constant
+  // slack absorbs any unrelated Strong created during the loop.
+  expect(fn).toBeLessThan(N);
+  expect(obj).toBeLessThan(N);
+  expect(exitCode).toBe(0);
+  void stderr;
 });
 
 test("node:net reconnect after connectError does not accumulate wrappers", async () => {

@@ -38,15 +38,6 @@ namespace WebCore {
 PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecutionContext, Ref<PerformanceObserverCallback>&& callback)
     : m_callback(WTF::move(callback))
 {
-    // if (is<Document>(scriptExecutionContext)) {
-    //     auto& document = downcast<Document>(scriptExecutionContext);
-    //     if (auto* window = document.domWindow())
-    //         m_performance = &window->performance();
-    // } else if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-    //     auto& workerGlobalScope = downcast<WorkerGlobalScope>(scriptExecutionContext);
-    //     m_performance = &workerGlobalScope.performance();
-    // } else
-    //     ASSERT_NOT_REACHED();
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
 }
 
@@ -88,7 +79,7 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         if (init.buffered) {
             isBuffered = true;
             auto oldSize = m_entriesToDeliver.size();
-            m_performance->appendBufferedEntriesByType(*init.type, m_entriesToDeliver, *this);
+            m_performance->appendBufferedEntriesByType(*init.type, m_entriesToDeliver);
             auto begin = m_entriesToDeliver.begin();
             auto oldEnd = begin + oldSize;
             auto end = m_entriesToDeliver.end();

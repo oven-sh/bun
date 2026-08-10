@@ -23,6 +23,17 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
     data_to_js(&this.data, global)
 }
 
+/// The inverse of [`js_err`], for host functions returning a data-format
+/// parse (JSON/XML rows never produce the identifier / macro variants).
+pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
+    match e {
+        ToJSError::OutOfMemory => JsError::OutOfMemory,
+        ToJSError::JSError => JsError::Thrown,
+        ToJSError::JSTerminated => JsError::Terminated,
+        _ => global.throw(format_args!("Cannot convert value to JS")),
+    }
+}
+
 /// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
 /// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
 /// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
@@ -59,6 +70,8 @@ fn data_to_js_with_check(
     match this {
         ExprData::EArray(e) => array_to_js(e, global, stack_check),
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
+        ExprData::EObjectJSON(e) => object_json_to_js(e, global),
+        ExprData::EArrayJSON(e) => array_json_to_js(e, global),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -82,7 +95,7 @@ fn data_to_js_with_check(
     }
 }
 
-pub(crate) fn array_to_js(
+fn array_to_js(
     this: &E::Array,
     global: &JSGlobalObject,
     stack_check: StackCheck,
@@ -103,11 +116,11 @@ pub(crate) fn array_to_js(
     Ok(array)
 }
 
-pub(crate) fn number_to_js(this: E::Number) -> JSValue {
+fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value())
 }
 
-pub(crate) fn object_to_js(
+fn object_to_js(
     this: &E::Object,
     global: &JSGlobalObject,
     stack_check: StackCheck,
@@ -143,12 +156,73 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
-/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
-/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+#[allow(improper_ctypes)] // reached through JsonValue → ObjectJSON.tape; C++ never touches it
+unsafe extern "C" {
+    fn Bun__JSONRows__toJS(
+        global: *const JSGlobalObject,
+        root: *const E::JsonValue,
+        props: *const E::PropertyJSON,
+        items: *const E::JsonValue,
+        encoding: u8,
+    ) -> JSValue;
+}
+
+/// For `JSONRowsToJS.cpp`: a UTF-8 tape string that strict UTF-8 decoding
+/// rejected, i.e. WTF-8 carrying a lone surrogate from a JSON `\uD800`-style
+/// escape. Decoded the way every other WTF-8 string in the runtime is.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__JSONRows__wtf8ToJS(
+    global: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+) -> JSValue {
+    // SAFETY: the C++ caller passes a live tape string.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    match utf8_bytes_to_js(bytes, global) {
+        Ok(value) => value,
+        // Only the string's to_js can fail here (JSError / JSTerminated): the
+        // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
+        Err(_) => JSValue::ZERO,
+    }
+}
+
+/// The whole document under `root` in one call into C++ (keys and short
+/// values go through the VM's JSON atom-string cache, as for `JSON.parse`).
+fn json_rows_to_js(
+    root: E::JsonValue,
+    tape: &E::JsonTape,
+    global: &JSGlobalObject,
+) -> Result<JSValue, ToJSError> {
+    let (props, items) = tape.raw_rows();
+    let encoding = tape.encoding as u8;
+    // SAFETY: `root`, `props` and `items` all belong to `tape`, which is complete
+    // and outlives the call; the C++ side only reads them.
+    bun_jsc::from_js_host_call(global, || unsafe {
+        Bun__JSONRows__toJS(global, &raw const root, props, items, encoding)
+    })
+    .map_err(js_err)
+}
+
+fn object_json_to_js(this: &E::ObjectJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    let root = E::JsonValue::Object(bun_ast::StoreRef::from_raw(
+        core::ptr::from_ref(this).cast_mut(),
+    ));
+    json_rows_to_js(root, this.tape(), global)
+}
+
+fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    let root = E::JsonValue::Array(bun_ast::StoreRef::from_raw(
+        core::ptr::from_ref(this).cast_mut(),
+    ));
+    json_rows_to_js(root, this.tape(), global)
+}
+
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
-    if let Some(utf16) = utf16 {
+    if bytes.is_empty() {
+        let empty = BunString::EMPTY;
+        return bun_string_jsc::to_js(&empty, global).map_err(js_err);
+    }
+    if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
         let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         chars.copy_from_slice(&utf16);
         bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)

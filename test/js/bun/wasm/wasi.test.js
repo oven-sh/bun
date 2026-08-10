@@ -24,6 +24,92 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
+  using dir = tempDir("wasi-set-rights", {
+    "inside.txt": "inside",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EPERM = 63;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const allRights = BigInt.asIntN(64, BigInt("0xffffffffffffffff"));
+
+  const stdinRights = wasi.FD_MAP.get(0).rights;
+  const baseBefore = stdinRights.base;
+  const inheritingBefore = stdinRights.inheriting;
+
+  expect(wasi.wasiImport.fd_fdstat_set_rights(0, allRights, allRights)).toBe(WASI_EPERM);
+  expect(wasi.FD_MAP.get(0).rights).toEqual({ base: baseBefore, inheriting: inheritingBefore });
+
+  expect(wasi.wasiImport.fd_fdstat_set_rights(0, WASI_RIGHT_FD_READ, BigInt(0))).toBe(WASI_ESUCCESS);
+  expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
+});
+
+it("random_get fills only the requested window", () => {
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const bufPtr = 1024;
+  const bufLen = 16;
+
+  const before = new Uint8Array(wasi.memory.buffer.slice(0));
+  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+  const after = new Uint8Array(wasi.memory.buffer);
+
+  // Every byte outside [bufPtr, bufPtr + bufLen) must be untouched: passing the
+  // whole ArrayBuffer randomized all of linear memory.
+  let changedOutside = 0;
+  for (let i = 0; i < after.length; i++) {
+    if (i >= bufPtr && i < bufPtr + bufLen) continue;
+    if (after[i] !== before[i]) changedOutside++;
+  }
+  expect(changedOutside).toBe(0);
+
+  // ...and the window itself is filled (all-zero is a 1-in-2^128 false failure).
+  expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
+});
+
+it("path_open reports the host errno to the guest when the open fails", () => {
+  using dir = tempDir("wasi-path-open-errno", {
+    "exists.txt": "x",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_EEXIST = 20;
+  const WASI_O_CREAT = 1 << 0;
+  const WASI_O_EXCL = 1 << 2;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 16384;
+  const sentinel = 0x12345678;
+
+  const len = memory.write("exists.txt", pathPtr);
+  view.setUint32(fdPtr, sentinel, true);
+
+  expect(
+    wasi.wasiImport.path_open(
+      preopenFd,
+      0,
+      pathPtr,
+      len,
+      WASI_O_CREAT | WASI_O_EXCL,
+      WASI_RIGHT_FD_READ,
+      BigInt(0),
+      0,
+      fdPtr,
+    ),
+  ).toBe(WASI_EEXIST);
+  expect(new DataView(wasi.memory.buffer).getUint32(fdPtr, true)).toBe(sentinel);
+  expect(wasi.FD_MAP.has(4)).toBe(false);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

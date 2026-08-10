@@ -9,7 +9,7 @@ use bun_jsc::{
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
-use bun_md::parser::ParserError;
+use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
 
 // `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
@@ -54,11 +54,21 @@ fn parser_err_to_js(
         ParserError::InputTooLarge => global_this.throw_range_error(
             input_len as i64,
             RangeErrorOptions {
-                max: md::types::OFF::MAX as i64,
+                max: MAX_INPUT_LEN as i64,
                 field_name: b"input.byteLength",
                 ..Default::default()
             },
         ),
+        // The document, not the input length, overflowed the parser's u32
+        // block offsets, so an `input.byteLength` bound would be misleading.
+        ParserError::TooManyBlocks => global_this
+            .err(
+                bun_jsc::ErrCode::OUT_OF_RANGE,
+                format_args!(
+                    "markdown input requires more block metadata than the parser can address (4 GiB)"
+                ),
+            )
+            .throw(),
     }
 }
 
@@ -99,12 +109,35 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     )
 }
 
+/// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
+/// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
+/// testable without 4 GiB of input. Returns the previous limit.
+#[bun_jsc::host_fn]
+pub(crate) fn set_max_markdown_block_bytes_for_testing(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [limit_value] = callframe.arguments_as_array::<1>();
+    if !limit_value.is_number() {
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "setMaxMarkdownBlockBytesForTesting expects a number"
+        )));
+    }
+    let limit = usize::try_from(limit_value.coerce_to_int64(global_this)?.max(0))
+        .expect("non-negative i64 fits usize");
+    let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
+    Ok(JSValue::js_number(prev as f64))
+}
+
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
 #[bun_jsc::host_fn]
-pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render_to_ansi(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -172,10 +205,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn render_to_html(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -278,7 +308,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
 #[bun_jsc::host_fn]
-pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -328,10 +358,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
 #[bun_jsc::host_fn]
-pub(crate) fn render_react(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }
 
@@ -1594,7 +1621,7 @@ impl<'a> JsCallbackRenderer<'a> {
 }
 
 /// Slice the language token out of a fenced-code info string.
-pub(crate) fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end = info_beg;
     while (lang_end as usize) < src_text.len() {
         let c = src_text[lang_end as usize];

@@ -1,9 +1,8 @@
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
-};
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -17,12 +16,12 @@ const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
 pub struct Buffered {
-    pub buf: [u8; 3],
-    pub len: u8,
+    pub(crate) buf: [u8; 3],
+    pub(crate) len: u8,
 }
 
 impl Buffered {
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.buf[0..self.len as usize]
     }
 }
@@ -32,11 +31,20 @@ impl Buffered {
 #[bun_jsc::JsClass]
 pub struct TextDecoder {
     // used for utf8 decoding
-    pub buffered: Cell<Buffered>,
+    pub(crate) buffered: Cell<Buffered>,
 
     // used for utf16 decoding
-    pub lead_byte: Cell<Option<u8>>,
-    pub lead_surrogate: Cell<Option<u16>>,
+    pub(crate) lead_byte: Cell<Option<u8>>,
+    pub(crate) lead_surrogate: Cell<Option<u16>>,
+
+    // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
+    // True once the stream's BOM decision is made: its first scalar was either
+    // a suppressed U+FEFF or something else, so no later U+FEFF may be dropped.
+    bom_seen: Cell<bool>,
+    // https://encoding.spec.whatwg.org/#textdecoder-do-not-flush-flag
+    // True when the previous `decode()` was a `{stream: true}` chunk, so the
+    // next call continues that stream instead of starting a new one.
+    do_not_flush: Cell<bool>,
 
     // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
     // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
@@ -46,9 +54,9 @@ pub struct TextDecoder {
 
     // Read-only after construction (set in `constructor` before the JS wrapper
     // exists) — left bare.
-    pub ignore_bom: bool,
-    pub fatal: bool,
-    pub encoding: EncodingLabel,
+    pub(crate) ignore_bom: bool,
+    pub(crate) fatal: bool,
+    pub(crate) encoding: EncodingLabel,
 }
 
 impl Default for TextDecoder {
@@ -57,6 +65,8 @@ impl Default for TextDecoder {
             buffered: Cell::new(Buffered::default()),
             lead_byte: Cell::new(None),
             lead_surrogate: Cell::new(None),
+            bom_seen: Cell::new(false),
+            do_not_flush: Cell::new(false),
             codec: Cell::new(None),
             ignore_bom: false,
             fatal: false,
@@ -79,22 +89,22 @@ impl Drop for TextDecoder {
 // pub const toJS / fromJS / fromJSDirect — provided by #[bun_jsc::JsClass] codegen.
 
 impl TextDecoder {
-    pub fn new(init: TextDecoder) -> Box<TextDecoder> {
+    pub(crate) fn new(init: TextDecoder) -> Box<TextDecoder> {
         Box::new(init)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_boolean(self.ignore_bom)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_boolean(self.fatal)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
@@ -134,7 +144,10 @@ impl TextDecoder {
     }
 
     #[inline(always)]
-    pub fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(first: u16, second: u16) -> u16 {
+    pub(crate) fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(
+        first: u16,
+        second: u16,
+    ) -> u16 {
         if BIG_ENDIAN {
             (first << 8) | second
         } else {
@@ -142,7 +155,7 @@ impl TextDecoder {
         }
     }
 
-    pub fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
+    pub(crate) fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
         &self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
@@ -201,9 +214,12 @@ impl TextDecoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn decode(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+    pub(crate) fn decode(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
 
         // Evaluate options.stream before reading the input bytes. Reading `stream`
         // can invoke a user-defined getter that detaches/transfers the input's
@@ -211,7 +227,15 @@ impl TextDecoder {
         // `decodeSlice` reading through a stale pointer into memory that may have
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
-            if arguments.len() > 1 && arguments[1].is_object() {
+            if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+                // https://webidl.spec.whatwg.org/#es-dictionary step 1
+                if !arguments[1].is_object() {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"options",
+                        b"object",
+                        arguments[1],
+                    ));
+                }
                 if let Some(stream_value) =
                     arguments[1].fast_get(global_this, jsc::BuiltinName::stream)?
                 {
@@ -225,6 +249,7 @@ impl TextDecoder {
         // Hoisted out of the labeled block — `ArrayBuffer::slice` borrows from
         // the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
         let array_buffer;
+        let owned_input;
         let input_slice: &[u8] = 'input_slice: {
             if arguments.is_empty() || arguments[0].is_undefined() {
                 break 'input_slice b"";
@@ -232,6 +257,10 @@ impl TextDecoder {
 
             if let Some(ab) = arguments[0].as_array_buffer(global_this) {
                 array_buffer = ab;
+                if array_buffer.shared || array_buffer.resizable {
+                    owned_input = Box::<[u8]>::from(array_buffer.slice());
+                    break 'input_slice &owned_input;
+                }
                 break 'input_slice array_buffer.slice();
             }
 
@@ -240,23 +269,19 @@ impl TextDecoder {
             )));
         };
 
+        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
+        // a decode() after a flushing one starts a new stream. This runs AFTER
+        // the input check: a type error must leave the stream state untouched.
+        if !self.do_not_flush.replace(stream) {
+            self.bom_seen.set(false);
+        }
+
         // Dispatch the runtime `stream` bool to a const-generic flush parameter.
         if !stream {
             self.decode_slice::<true>(global_this, input_slice)
         } else {
             self.decode_slice::<false>(global_this, input_slice)
         }
-    }
-
-    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
-    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
-    /// path in `decode()` when `stream` is absent.
-    pub fn decode_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        uint8array: &mut JSUint8Array,
-    ) -> JsResult<JSValue> {
-        self.decode_slice::<true>(global_this, uint8array.slice())
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -290,33 +315,42 @@ impl TextDecoder {
                 })
             }
             EncodingLabel::Utf8 => {
-                let maybe_without_bom =
-                    if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
-                        &buffer_slice[3..]
-                    } else {
-                        buffer_slice
-                    };
-
-                let (input, deinit): (&[u8], bool);
+                // Prepend the partial UTF-8 sequence carried over from the
+                // previous `{stream: true}` chunk; the BOM check below must
+                // see the JOINED bytes (a BOM may be split across chunks).
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
-                if buffered.len > 0 {
+                let joined: &[u8] = if buffered.len > 0 {
                     let buffered_len = buffered.len as usize;
-                    let mut joined =
-                        vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
-                    joined[0..buffered_len].copy_from_slice(buffered.slice());
-                    joined[buffered_len..][0..maybe_without_bom.len()]
-                        .copy_from_slice(maybe_without_bom);
+                    let mut storage =
+                        vec![0u8; buffered_len + buffer_slice.len()].into_boxed_slice();
+                    storage[0..buffered_len].copy_from_slice(buffered.slice());
+                    storage[buffered_len..].copy_from_slice(buffer_slice);
                     self.buffered.set(Buffered::default());
-                    joined_owned = joined;
-                    input = &joined_owned;
-                    deinit = true;
+                    joined_owned = storage;
+                    &joined_owned
                 } else {
-                    joined_owned = Box::default();
-                    let _ = &joined_owned;
-                    input = maybe_without_bom;
-                    deinit = false;
-                }
+                    buffer_slice
+                };
+
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: suppress
+                // at most one LEADING U+FEFF per stream. A strict BOM prefix ("",
+                // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
+                const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
+                let set_bom_seen: bool;
+                let input: &[u8] = if self.ignore_bom || self.bom_seen.get() {
+                    set_bom_seen = false;
+                    joined
+                } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
+                    set_bom_seen = true;
+                    rest
+                } else if UTF8_BOM.starts_with(joined) {
+                    set_bom_seen = false;
+                    joined
+                } else {
+                    set_bom_seen = true;
+                    joined
+                };
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
                 let maybe_decode_result = if self.fatal {
@@ -328,13 +362,15 @@ impl TextDecoder {
                 let maybe_decode_result = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
-                        // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                        // `joined_owned` drops at scope exit.
                         if self.fatal {
                             if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
                                 return Err(global_this
                                     .err(
                                         jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                        format_args!("Invalid byte sequence"),
+                                        format_args!(
+                                            "The encoded data was not valid for encoding utf-8"
+                                        ),
                                     )
                                     .throw());
                             }
@@ -345,8 +381,15 @@ impl TextDecoder {
                     }
                 };
 
+                // "BOM seen" is only written by "serialize I/O queue", which a
+                // thrown fatal decode never reaches, so only commit it once the
+                // decode succeeded.
+                if set_bom_seen {
+                    self.bom_seen.set(true);
+                }
+
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
-                    // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                    // `joined_owned` drops at scope exit.
                     debug_assert!(self.buffered.get().len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
@@ -375,27 +418,31 @@ impl TextDecoder {
                     return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
                 }
 
-                debug_assert!(input.is_empty() || !deinit);
-
+                // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
+                // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
                 Ok(ZigString::init(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
-                // inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| { ... }
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
-                let bom: &[u8] = if !big_endian {
-                    b"\xff\xfe"
-                } else {
-                    b"\xfe\xff"
-                };
-                let input = if !self.ignore_bom && buffer_slice.starts_with(bom) {
+
+                // When the stream's BOM is whole at the start of this chunk, strip
+                // it from the INPUT (avoids the O(n) `Vec::remove(0)` below). A
+                // carried lead byte or surrogate means these are not its first bytes.
+                let bom: &[u8; 2] = if big_endian { b"\xfe\xff" } else { b"\xff\xfe" };
+                let pre_stripped = !self.ignore_bom
+                    && !self.bom_seen.get()
+                    && self.lead_byte.get().is_none()
+                    && self.lead_surrogate.get().is_none()
+                    && buffer_slice.starts_with(bom);
+                let input = if pre_stripped {
                     &buffer_slice[2..]
                 } else {
                     buffer_slice
                 };
 
-                let (decoded, saw_error) = if big_endian {
+                let (mut decoded, saw_error) = if big_endian {
                     self.decode_utf16::<true, FLUSH>(input)?
                 } else {
                     self.decode_utf16::<false, FLUSH>(input)?
@@ -406,14 +453,27 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // "UTF-16LE" / "UTF-16BE" (NOT `get_label()`,
-                            // which is lowercase "utf-16le"/"utf-16be").
+                            // Node formats the message with the lowercase canonical label.
                             format_args!(
-                                "The encoded data was not valid {} data",
-                                if big_endian { "UTF-16BE" } else { "UTF-16LE" }
+                                "The encoded data was not valid for encoding {}",
+                                if big_endian { "utf-16be" } else { "utf-16le" }
                             ),
                         )
                         .throw());
+                }
+
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
+                // stream's FIRST code unit is dropped as a BOM. `bom_seen` is only
+                // committed here, after the fatal early return, which never reaches it.
+                if pre_stripped {
+                    self.bom_seen.set(true);
+                } else if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                    // The BOM was split across chunks (half of it in `lead_byte`),
+                    // so it is only recognizable as the first decoded code unit.
+                    self.bom_seen.set(true);
+                    if decoded[0] == 0xFEFF {
+                        decoded.remove(0);
+                    }
                 }
 
                 if decoded.is_empty() {
@@ -486,7 +546,7 @@ impl TextDecoder {
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
-                                "The encoded data was not valid {} data",
+                                "The encoded data was not valid for encoding {}",
                                 bstr::BStr::new(encoding_name)
                             ),
                         )
@@ -503,7 +563,7 @@ impl TextDecoder {
     // `#[JsClass]` emits `TextDecoderClass__construct` calling this; do not
     // wrap with `#[bun_jsc::host_fn]` (its Free-kind shim emits a bare
     // `constructor(...)` call that doesn't resolve inside an `impl` block).
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<*mut TextDecoder> {
@@ -515,7 +575,40 @@ impl TextDecoder {
             let str = encoding_value.to_slice(global_this)?;
             // `str` drops at scope exit (matches `defer str.deinit()`).
 
-            if let Some(label) = EncodingLabel::which(str.slice()) {
+            match EncodingLabel::which(str.slice()) {
+                // https://encoding.spec.whatwg.org/#dom-textdecoder: "If
+                // encoding is failure or replacement, then throw a RangeError."
+                Some(label) if label != EncodingLabel::Replacement => decoder.encoding = label,
+                _ => {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                            format_args!(
+                                "Unsupported encoding label \"{}\"",
+                                bstr::BStr::new(str.slice())
+                            ),
+                        )
+                        .throw());
+                }
+            }
+        } else if encoding_value.is_undefined() {
+            // default to utf-8
+            decoder.encoding = EncodingLabel::Utf8;
+        } else {
+            // WebIDL DOMString coercion: any other label value is stringified
+            // and then looked up, so `1` or `{}` reports the same
+            // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
+            // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
+            // ref `from_js` returns has to be wrapped to deref on scope exit.
+            let converted =
+                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let str = converted.to_utf8();
+
+            // Same rule as the string branch above: "If encoding is failure or
+            // replacement, then throw a RangeError."
+            if let Some(label) = EncodingLabel::which(str.slice())
+                && label != EncodingLabel::Replacement
+            {
                 decoder.encoding = label;
             } else {
                 return Err(global_this
@@ -528,18 +621,16 @@ impl TextDecoder {
                     )
                     .throw());
             }
-        } else if encoding_value.is_undefined() {
-            // default to utf-8
-            decoder.encoding = EncodingLabel::Utf8;
-        } else {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("TextDecoder(encoding) label is invalid",)));
         }
 
-        if !options_value.is_undefined() {
+        if !options_value.is_undefined_or_null() {
+            // https://webidl.spec.whatwg.org/#es-dictionary step 1
             if !options_value.is_object() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("TextDecoder(options) is invalid",)));
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"options",
+                    b"object",
+                    options_value,
+                ));
             }
 
             if let Some(fatal) = options_value.get(global_this, b"fatal")? {
@@ -559,4 +650,112 @@ impl TextDecoder {
 
         Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
+}
+
+// ─── extern "C" surface (JSTextDecoderStream.cpp) ─────────────────────────
+// The TextDecoderStream cell owns its decoder directly as a `void*` (no JS
+// `TextDecoder` wrapper cell, no `decode` prototype lookup, no per-chunk
+// `{stream: true}` options object) and drives it through these.
+
+/// Validates `label` (WebIDL DOMString coercion — may run user JS) and
+/// returns a fresh decoder configured for the matching encoding. Returns null
+/// with an exception pending on `global` on a bad label.
+///
+/// For the overwhelmingly common `utf-8` + non-fatal case the C++ side uses
+/// the inline `StreamingUTF8DecodeState` instead of this decoder, so no
+/// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
+/// returned with no exception.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__createForStream(
+    global: &JSGlobalObject,
+    label: JSValue,
+    fatal: bool,
+    ignore_bom: bool,
+    out_utf8_fast_path: *mut bool,
+    out_encoding_label: *mut bun_core::String,
+) -> *mut TextDecoder {
+    // SAFETY: both out-params are stack locals on the caller's frame.
+    unsafe { *out_utf8_fast_path = false };
+    let encoding = if label.is_undefined() {
+        EncodingLabel::Utf8
+    } else {
+        let converted = match bun_core::String::from_js(label, global) {
+            Ok(s) => OwnedString::new(s),
+            Err(_) => return core::ptr::null_mut(),
+        };
+        let str = converted.to_utf8();
+        match EncodingLabel::which(str.slice()) {
+            Some(l) if l != EncodingLabel::Replacement => l,
+            _ => {
+                let _ = global
+                    .err(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!(
+                            "Unsupported encoding label \"{}\"",
+                            bstr::BStr::new(str.slice())
+                        ),
+                    )
+                    .throw();
+                return core::ptr::null_mut();
+            }
+        }
+    };
+    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
+    unsafe { *out_encoding_label = bun_core::String::static_(encoding.get_label()) };
+    if matches!(encoding, EncodingLabel::Utf8) && !fatal {
+        // SAFETY: as above.
+        unsafe { *out_utf8_fast_path = true };
+        return core::ptr::null_mut();
+    }
+    let mut decoder = TextDecoder::default();
+    decoder.fatal = fatal;
+    decoder.ignore_bom = ignore_bom;
+    decoder.encoding = encoding;
+    bun_core::heap::into_raw(TextDecoder::new(decoder))
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
+    if !this.is_null() {
+        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // freed (the C++ cell clears its pointer before calling).
+        unsafe { bun_core::heap::destroy(this) };
+    }
+}
+
+/// The TextDecoderStream transform/flush step. `stream = true` for a mid-
+/// stream chunk, `false` for the final flush. `input` may be null iff
+/// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
+/// the exception pending on `global`.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextDecoder__decodeForStream(
+    this: *mut TextDecoder,
+    global: &JSGlobalObject,
+    input: *const u8,
+    input_len: usize,
+    stream: bool,
+) -> JSValue {
+    // SAFETY: `this` is the live decoder owned by the calling JS cell; driven
+    // only from the JS thread, so `&*this` has no mutable alias.
+    let this = unsafe { &*this };
+    let slice = if input.is_null() {
+        &[][..]
+    } else {
+        // SAFETY: the caller passes a BufferSource's bytes; `slice` does not
+        // escape this call.
+        unsafe { core::slice::from_raw_parts(input, input_len) }
+    };
+    // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2.
+    if !this.do_not_flush.replace(stream) {
+        this.bom_seen.set(false);
+    }
+    let result = if stream {
+        this.decode_slice::<false>(global, slice)
+    } else {
+        this.decode_slice::<true>(global, slice)
+    };
+    result.or_pending_exception()
 }

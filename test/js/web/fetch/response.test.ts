@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (5.83 KB) {
+    "Response (8.0 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -98,6 +98,45 @@ test("Response.redirect status code validation", () => {
   // Check that the correct status is set
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
+});
+
+// https://fetch.spec.whatwg.org/#dom-response-redirect
+// `Location` gets the serialization of the parsed url, not the raw input string.
+test.each([
+  // percent-encoding
+  ["http://example.com/a b", "http://example.com/a%20b"],
+  ["http://x/é", "http://x/%C3%A9"],
+  // ASCII tab and newline are stripped by the URL parser instead of
+  // surfacing as a header-validation TypeError
+  ["http://x/a\nb", "http://x/ab"],
+  ["http://x/a\tb", "http://x/ab"],
+  // scheme/host lowercased, default port removed, dot-segments resolved
+  ["HTTP://U:P@EX.COM:80/p/../q", "http://U:P@ex.com/q"],
+  // empty path serializes as "/"
+  ["http://example.com", "http://example.com/"],
+  // IDN host is punycode-encoded
+  ["http://bücher.example/", "http://xn--bcher-kva.example/"],
+])("Response.redirect(%j) serializes the url into Location", (input, expected) => {
+  expect(Response.redirect(input).headers.get("location")).toBe(expected);
+  // every arity takes the same path into the Location header
+  expect(Response.redirect(input, 307).headers.get("location")).toBe(expected);
+  expect(Response.redirect(input, { status: 308 }).headers.get("location")).toBe(expected);
+});
+
+test("Response.redirect keeps a non-absolute url as-is in Location", () => {
+  // Relative redirect targets are documented Bun behavior (see docs/runtime/http).
+  expect(Response.redirect("/login").headers.get("location")).toBe("/login");
+  expect(Response.redirect("/login?next=1#a").headers.get("location")).toBe("/login?next=1#a");
+  // non-ASCII must round-trip, not come back as a latin-1 view of the UTF-8 bytes
+  expect(Response.redirect("/café").headers.get("location")).toBe("/café");
+});
+
+test("Response.redirect rejects a non-absolute url that is not a valid header value", () => {
+  // A code point above U+00FF cannot be a header value, so this throws the same
+  // TypeError that `new Headers({ location: "/€" })` does, instead of silently
+  // writing a latin-1-corrupted Location ("/â¬").
+  expect(() => Response.redirect("/€")).toThrow("Header 'Location' has invalid value: '/€'");
+  expect(() => Response.redirect("/搜索")).toThrow("Header 'Location' has invalid value: '/搜索'");
 });
 
 test("new Response(123, { statusText: 123 }) does not throw", () => {

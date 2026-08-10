@@ -50,6 +50,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_raw);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validTo);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate);
@@ -72,15 +74,17 @@ static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
     { "publicKey"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_publicKey, 0 } },
     { "raw"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_raw, 0 } },
     { "serialNumber"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_serialNumber, 0 } },
+    { "signatureAlgorithm"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_signatureAlgorithm, 0 } },
+    { "signatureAlgorithmOid"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_signatureAlgorithmOid, 0 } },
     { "subject"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subject, 0 } },
     { "subjectAltName"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subjectAltName, 0 } },
     { "toJSON"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToJSON, 0 } },
     { "toLegacyObject"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToLegacyObject, 0 } },
     { "toString"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToString, 0 } },
     { "validFrom"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFrom, 0 } },
-    { "validFromDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFromDate, 0 } },
+    { "validFromDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFromDate, 0 } },
     { "validTo"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validTo, 0 } },
-    { "validToDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validToDate, 0 } },
+    { "validToDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validToDate, 0 } },
     { "verify"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncVerify, 1 } },
 };
 
@@ -110,34 +114,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     return JSValue::encode(jsString(vm, pemString));
 }
 
-// function getFlags(options = kEmptyObject) {
-//   validateObject(options, 'options');
-//   const {
-//     subject = 'default',  // Can be 'default', 'always', or 'never'
-//     wildcards = true,
-//     partialWildcards = true,
-//     multiLabelWildcards = false,
-//     singleLabelSubdomains = false,
-//   } = { ...options };
-//   let flags = 0;
-//   validateString(subject, 'options.subject');
-//   validateBoolean(wildcards, 'options.wildcards');
-//   validateBoolean(partialWildcards, 'options.partialWildcards');
-//   validateBoolean(multiLabelWildcards, 'options.multiLabelWildcards');
-//   validateBoolean(singleLabelSubdomains, 'options.singleLabelSubdomains');
-//   switch (subject) {
-//     case 'default': /* Matches OpenSSL's default, no flags. */ break;
-//     case 'always': flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT; break;
-//     case 'never': flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT; break;
-//     default:
-//       throw new ERR_INVALID_ARG_VALUE('options.subject', subject);
-//   }
-//   if (!wildcards) flags |= X509_CHECK_FLAG_NO_WILDCARDS;
-//   if (!partialWildcards) flags |= X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
-//   if (multiLabelWildcards) flags |= X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS;
-//   if (singleLabelSubdomains) flags |= X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS;
-//   return flags;
-// }
 static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
     if (options.isUndefined())
@@ -166,10 +142,8 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
     RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = 0;
-    bool any = false;
 
     if (!subject.isUndefined()) {
-        any = true;
         if (!subject.isString()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "subject must be a string"_s);
             return 0;
@@ -180,9 +154,9 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
         auto view = subjectString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (view == "always"_s) {
-            flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT;
+            flags |= ncrypto::X509View::CheckFlags::ALWAYS_CHECK_SUBJECT;
         } else if (view == "never"_s) {
-            flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+            flags |= ncrypto::X509View::CheckFlags::NEVER_CHECK_SUBJECT;
         } else if (view == "default"_s) {
             // Matches OpenSSL's default, no flags.
         } else {
@@ -192,51 +166,42 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
     }
 
     if (!wildcards.isUndefined()) {
-        any = true;
         if (!wildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "wildcards must be a boolean"_s);
             return 0;
         }
 
         if (!wildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_NO_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
     }
 
     if (!partialWildcards.isUndefined()) {
-        any = true;
         if (!partialWildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "partialWildcards must be a boolean"_s);
             return 0;
         }
 
         if (!partialWildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
     }
 
     if (!multiLabelWildcards.isUndefined()) {
-        any = true;
         if (!multiLabelWildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "multiLabelWildcards must be a boolean"_s);
             return 0;
         }
 
         if (multiLabelWildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
     }
 
     if (!singleLabelSubdomains.isUndefined()) {
-        any = true;
         if (!singleLabelSubdomains.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "singleLabelSubdomains must be a boolean"_s);
             return 0;
         }
         if (singleLabelSubdomains.asBoolean())
-            flags |= X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS;
-    }
-
-    if (!any) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "options must have at least one property"_s);
-        return 0;
+            flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
     }
 
     return flags;
@@ -306,9 +271,16 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
 
     Bun::UTF8View hostView(view);
 
-    auto check = thisObject->checkHost(globalObject, hostView.span(), flags);
+    ncrypto::DataPointer peerName;
+    auto check = thisObject->checkHost(globalObject, hostView.span(), flags, &peerName);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
+    // Node returns the subject name that matched, which differs from the query
+    // for wildcard SAN entries and for case-insensitive matches.
+    if (peerName) {
+        auto matched = WTF::String::fromUTF8ReplacingInvalidSequences(peerName.span());
+        return JSValue::encode(jsString(vm, WTF::move(matched)));
+    }
     return JSValue::encode(hostString);
 }
 
@@ -515,6 +487,42 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint512()));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSX509Certificate* thisObject = dynamicDowncast<JSX509Certificate>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "signatureAlgorithm"_s);
+        return {};
+    }
+
+    auto algorithm = thisObject->view().getSignatureAlgorithm();
+    if (!algorithm.has_value())
+        return JSValue::encode(jsUndefined());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(algorithm.value().data()), algorithm.value().size() }))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSX509Certificate* thisObject = dynamicDowncast<JSX509Certificate>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "signatureAlgorithmOid"_s);
+        return {};
+    }
+
+    auto oid = thisObject->view().getSignatureAlgorithmOID();
+    if (!oid.has_value())
+        return JSValue::encode(jsUndefined());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(oid.value().data()), oid.value().size() }))));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
@@ -540,7 +548,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subjectAltName())));
+    JSString* san = thisObject->subjectAltName();
+    RELEASE_AND_RETURN(scope, JSValue::encode(san ? JSValue(san) : jsUndefined()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

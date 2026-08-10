@@ -7,6 +7,14 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     memoryCost: true,
+    // Visited slot holding the shared JSSocketHandlers cell, so the callbacks
+    // stay alive as long as any socket that can still fire them. The duplex*
+    // slots carry the origin stream and the four native listener thunks for a
+    // TLSSocket driven by an upgraded Duplex (UpgradedDuplex); plain TCP
+    // sockets never populate them.
+    values: ssl
+      ? ["handlers", "duplexOrigin", "duplexOnData", "duplexOnEnd", "duplexOnWritable", "duplexOnClose"]
+      : ["handlers"],
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -270,6 +278,9 @@ export default [
     sharedThis: true,
     noConstructor: true,
     JSType: "0b11101110",
+    // Visited slot holding the JSSocketHandlers cell shared with every socket
+    // accepted by this listener.
+    values: ["handlers"],
     proto: {
       stop: {
         fn: "stop",

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("CSS parser should handle extremely large floating-point values without crashing", async () => {
   // Test for regression of issue #21907: "integer part of floating point value out of bounds"
   // This was causing crashes on Windows when processing TailwindCSS with rounded-full class
 
-  const dir = tempDirWithFiles("css-large-float-regression", {
+  await using dir = tempDir("css-large-float-regression", {
     "input.css": `
 /* Tests intFromFloat(i32, value) in serializeDimension */
 .test-rounded-full {

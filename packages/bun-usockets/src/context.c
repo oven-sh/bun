@@ -94,9 +94,17 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         c = nextC;
     }
 
-    struct us_socket_t *s = group->head_sockets;
-    while (s) {
-        struct us_socket_t *nextS = s->next;
+    /* Drive the walk off group->iterator rather than a cached s->next: each
+     * us_socket_close dispatches a JS close/handshake handler that may close a
+     * *sibling*, and the sibling is what a plain cached `next` would point at.
+     * us_internal_socket_group_unlink_socket advances group->iterator past any
+     * socket it unlinks, so parking the next pointer there lets a handler free
+     * it without leaving us a dangling step (same pattern as the timeout sweep
+     * in loop.c). */
+    group->iterator = group->head_sockets;
+    while (group->iterator) {
+        struct us_socket_t *s = group->iterator;
+        group->iterator = s->next;
         if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
             /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
              * (on_close without on_open is wrong), so the Zig wrapper's
@@ -112,8 +120,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         } else {
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
-        s = nextS;
     }
+    group->iterator = 0;
 
     /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
      * with code==0 sends close_notify and, on WANT_READ, leaves the socket
@@ -131,16 +139,25 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     if (group->low_prio_count) {
         /* Don't pre-unlink — leave low_prio_state==1 so us_socket_close takes
          * its low-prio branch (which knows the socket is NOT in head_sockets
-         * and decrements low_prio_count itself). The cached `next` survives
-         * the close because that branch rewires the list before dispatch. */
+         * and decrements low_prio_count itself). That branch unlinks q before
+         * dispatching the JS close/handshake handler, but the handler may
+         * close any OTHER parked socket (whose close_raw then repoints its
+         * `next` at the closed-socket list), so no pointer into the queue
+         * survives a dispatch: re-scan from the head after every close. The
+         * group->iterator trick from the walk above doesn't apply here — the
+         * low-prio close branch never touches it. `budget` keeps a deferred
+         * TLS close (never observed for parked mid-handshake sockets; the
+         * assert below encodes that) from turning the re-scan into a spin. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
-        struct us_socket_t *q = ld->low_prio_head;
-        while (q) {
-            struct us_socket_t *next = q->next;
-            if (q->group == group) {
-                us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        for (uint16_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
+            struct us_socket_t *q = ld->low_prio_head;
+            while (q && q->group != group) {
+                q = q->next;
             }
-            q = next;
+            if (!q) {
+                break;
+            }
+            us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
         US_ASSERT(group->low_prio_count == 0);
     }
@@ -299,6 +316,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
+            if (s->ssl) {
+                us_internal_ssl_socket_relocated(loop, s, new_s);
+            }
         }
         if (c) {
             c->connecting_head = new_s;
@@ -343,6 +363,9 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    s->unclassified_send_failures = 0;
+    s->read_eof = 0;
+    s->fin_deferred = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -486,6 +509,9 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
+    s->read_eof = 0;
+    s->fin_deferred = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -537,28 +563,7 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
 }
 
 static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
-    memset(storage, 0, sizeof(struct sockaddr_storage));
-    struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
-    if (inet_pton(AF_INET, ip_str, &addr4->sin_addr) == 1) {
-        addr4->sin_port = htons(port);
-        addr4->sin_family = AF_INET;
-#ifdef __APPLE__
-        addr4->sin_len = sizeof(struct sockaddr_in);
-#endif
-        return 1;
-    }
-
-    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
-    if (inet_pton(AF_INET6, ip_str, &addr6->sin6_addr) == 1) {
-        addr6->sin6_port = htons(port);
-        addr6->sin6_family = AF_INET6;
-#ifdef __APPLE__
-        addr6->sin6_len = sizeof(struct sockaddr_in6);
-#endif
-        return 1;
-    }
-
-    return 0;
+    return Bun__parseIpAddress(ip_str, (uint16_t) port, storage) != 0;
 }
 
 void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kind,
@@ -583,20 +588,21 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     struct addrinfo_request *ai_req;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
-        if (result->error) {
-            errno = result->error;
-            Bun__addrinfo_freeRequest(ai_req, 1);
-            return NULL;
-        }
-
-        struct addrinfo_result_entry *entries = result->entries;
-        if (entries && entries->info.ai_next == NULL) {
-            struct sockaddr_storage a;
-            init_addr_with_port(&entries->info, port, &a);
-            *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-            Bun__addrinfo_freeRequest(ai_req, s == NULL);
-            return s;
+        /* A cached resolver failure falls through to the connecting-socket path
+         * below (same as a multi-address result) so it is reported through the
+         * same connect-error callback, tagged `error_is_dns`, as an uncached
+         * one. Bun__addrinfo_set on an already-resolved request defers to the
+         * loop's dns_ready_head, never re-enters. */
+        if (!result->error) {
+            struct addrinfo_result_entry *entries = result->entries;
+            if (entries && entries->info.ai_next == NULL) {
+                struct sockaddr_storage a;
+                init_addr_with_port(&entries->info, port, &a);
+                *has_dns_resolved = 1;
+                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
+                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                return s;
+            }
         }
     }
 
@@ -718,6 +724,13 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        /* Preserve the getaddrinfo failure so the connect-error callback can
+         * report the resolver error (ENOTFOUND, ...) instead of the fabricated
+         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
+         * codes and errnos overlap numerically. */
+        c->error = result->error;
+        c->error_is_dns = 1;
         us_connecting_socket_close(c);
         return;
     }
@@ -726,6 +739,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
+        /* Same as the exhausted path in us_internal_socket_after_open: a
+         * real connect failure must not be reported as a caller abort. */
+        c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -762,6 +778,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 if (opened == 0 && c->connecting_head == NULL) {
+                    /* Every resolved address failed to connect. Without this,
+                     * us_connecting_socket_close defaults c->error to
+                     * ECONNABORTED (caller abort) and never invalidates the
+                     * DNS cache entry for the dead host. */
+                    c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }
@@ -805,4 +826,11 @@ struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
         return us_internal_ssl_verify_error(s);
     }
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
+}
+
+const char *us_socket_sni_servername(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_sni_servername(s);
+    }
+    return NULL;
 }

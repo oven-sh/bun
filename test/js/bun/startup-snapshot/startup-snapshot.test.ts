@@ -116,7 +116,12 @@ snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived fo
   const fixture = join(import.meta.dir, "colors-fixture.js");
   const outFile = join(String(dir), "colors.txt");
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(code).toBe(0);
   }

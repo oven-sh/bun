@@ -371,6 +371,38 @@ snapshotTest(
   },
 );
 
+snapshotTest(
+  "Bun.s3 and the stdio blobs reified during the build are this launch's after restore; the env object is refilled in place",
+  async () => {
+    using dir = tempDir("bun-snapshot-reified", {});
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "reified-fixture.js");
+    const aws = { AWS_SECRET_ACCESS_KEY: "unused", AWS_REGION: "us-east-1" };
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, ...aws, MARKER: "build", AWS_ACCESS_KEY_ID: "BUILDKEY", BUN_STARTUP_SNAPSHOT_OUT: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true);
+    }
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, ...aws, MARKER: "launch", AWS_ACCESS_KEY_ID: "LAUNCHKEY", BUN_STARTUP_SNAPSHOT_IN: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out).toContain("env=launch/launch sameEnv=true"); // a captured reference sees the launch's variables
+    expect(out).toContain("s3key=LAUNCHKEY sameS3=false"); // used to sign with BUILDKEY: the reified client was the builder's
+    expect(out).toContain("sameStdout=false");
+    expect(code).toBe(0);
+  },
+);
+
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});
   const img = join(String(dir), "s.snapshot");

@@ -1989,6 +1989,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         unsafe { Bun__Process__recreateStdioAfterSnapshotRestore(vm.global) };
         // After the stdio/color refresh above: Bun.enableANSIColors is derived from it, so re-putting it any earlier would
         // just re-put the builder's answer.
+        vm.rare_data().forget_builder_secrets_for_snapshot_restore(); // before the refresh below: Bun.s3's callback returns the cached client if one is there
         // SAFETY: FFI; same conditions as the call above.
         unsafe { Bun__BunObject__refreshLaunchDerivedProperties(vm.global) };
         Bun__Process__reinstallSignalHandlersAfterSnapshotRestore(); // process.on('SIGINT') etc. registered before the snapshot
@@ -2038,12 +2039,6 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         (*vm_ptr)
             .rare_data()
             .forget_spawn_sync_event_loop_for_snapshot_restore()
-    };
-    // SAFETY: as above.
-    unsafe {
-        (*vm_ptr)
-            .rare_data()
-            .forget_builder_secrets_for_snapshot_restore()
     };
     bun_spawn::process::WaiterThread::reset_after_snapshot_restore(); // the builder's thread is not in this process; spawn starts a new one
     crate::dns_jsc::internal::flush_dns_cache_for_snapshot_restore(); // answers in the snapshot came from the builder's network

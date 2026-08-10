@@ -1208,6 +1208,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    globalObject->armStdioBlobs(); // whether or not Bun itself was reified: the slots behind Bun.stdin/stdout/stderr hold the builder's blobs
     if (!globalObject->m_bunObject.isInitialized())
         return; // never touched during the build: nothing was reified, and making it now would only dirty pages
     JSObject* bunObject = globalObject->bunObject();
@@ -1219,6 +1220,11 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
         { "argv"_s, BunObject_lazyPropCb_wrap_argv },
         { "cwd"_s, BunObject_lazyPropCb_wrap_cwd },
         { "enableANSIColors"_s, BunObject_lazyPropCb_wrap_enableANSIColors },
+        // importing anything from "bun" reifies every entry, so these are present in practically every snapshot
+        { "s3"_s, BunObject_lazyPropCb_wrap_s3 },
+        { "stdin"_s, Bun::BunObject_lazyPropCb_wrap_stdin },
+        { "stdout"_s, Bun::BunObject_lazyPropCb_wrap_stdout },
+        { "stderr"_s, Bun::BunObject_lazyPropCb_wrap_stderr },
     };
     for (auto& p : props) {
         JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);

@@ -235,7 +235,11 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
   using dir = tempDir("bun-snapshot-strict-servers", {});
   await using p = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "strict-servers-fixture.js")],
-    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"), CP_TARGET: join(String(dir), "copy") },
+    env: {
+      ...buildEnv,
+      BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"),
+      CP_TARGET: join(String(dir), "copy"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

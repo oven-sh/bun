@@ -354,7 +354,7 @@ snapshotTest(
       "--outfile",
       join(String(dir), "manual"),
     ]);
-    expect(m.out).toContain("in manual mode the app has to call Bun.startupSnapshot.take()");
+    expect(m.out).toContain("with --snapshot=manual the app has to call Bun.startupSnapshot.take() before it exits");
     expect(m.code).toBe(1);
   },
 );

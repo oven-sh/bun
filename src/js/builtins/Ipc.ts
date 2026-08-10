@@ -26,7 +26,8 @@ export function serialize(message, handle, options) {
     if (!native) return null;
     if (!options?.keepOpen) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
-      if (handle.server) handle.server._connections--;
+      const { server } = handle;
+      if (server) server._connections--;
       handle.setTimeout(0);
       native.data = undefined;
       handle._handle = null;

@@ -2532,6 +2532,9 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     // Parens opened by `if`/`for`/`while`/`with`; a `/` after such a `)` is a regex.
     let mut paren_stack: Vec<bool> = Vec::new();
     let mut last_paren_conditional = false;
+    // Braces opened in statement position (block) vs expression position (object literal).
+    let mut brace_stack: Vec<bool> = Vec::new();
+    let mut last_brace_block = true;
 
     let mut i = 0usize;
     while i < code.len() {
@@ -2594,9 +2597,8 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 && (is_word_char(code[prev_idx - 1]) || matches!(code[prev_idx - 1], b')' | b']'));
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
-            // `}` ends a statement block at top level, but an object literal inside a group.
-            let after_block =
-                prev == b'}' && paren_count <= 0 && bracket_count <= 0 && brace_count <= 0;
+            // `}` ends an expression when it closes an object literal, not a block.
+            let after_block = prev == b'}' && last_brace_block;
             let starts_regex = prev == 0
                 || after_keyword
                 || after_block
@@ -2660,8 +2662,41 @@ fn is_incomplete_code(code: &[u8]) -> bool {
         match ch {
             b'"' | b'\'' => in_string = ch,
             b'`' => in_template = true,
-            b'{' => brace_count += 1,
-            b'}' => brace_count -= 1,
+            b'{' => {
+                brace_count += 1;
+                // `=> {` opens a body; otherwise `{` after an operator, opener,
+                // or expression keyword (not `do`/`else`) is an object literal.
+                let arrow = prev == b'>' && prev_idx > 0 && code[prev_idx - 1] == b'=';
+                let expr_pos = !arrow
+                    && (matches!(
+                        prev,
+                        b'(' | b'['
+                            | b','
+                            | b':'
+                            | b'='
+                            | b'!'
+                            | b'&'
+                            | b'|'
+                            | b'?'
+                            | b'+'
+                            | b'-'
+                            | b'*'
+                            | b'/'
+                            | b'%'
+                            | b'<'
+                            | b'>'
+                            | b'^'
+                            | b'~'
+                    ) || (is_word_char(prev)
+                        && !word_after_dot
+                        && REGEX_KEYWORDS.contains(&&code[word_start..word_end])
+                        && !matches!(&code[word_start..word_end], b"do" | b"else")));
+                brace_stack.push(!expr_pos);
+            }
+            b'}' => {
+                brace_count -= 1;
+                last_brace_block = brace_stack.pop().unwrap_or(true);
+            }
             b'[' => bracket_count += 1,
             b']' => bracket_count -= 1,
             b'(' => {

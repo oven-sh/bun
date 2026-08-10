@@ -765,30 +765,54 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("division after postfix increment and decrement", async () => {
-      const inc = await runRepl(["i = 84; q = (i++ / 2)", "q", ".exit"]);
+      const inc = await runRepl(["i = 84; q = (i++ / 2); q", ".exit"]);
       expect(stripAnsi(inc.stdout)).toContain("42");
+      expect(stripAnsi(inc.stdout)).not.toContain("SyntaxError");
       expect(inc.exitCode).toBe(0);
 
-      const dec = await runRepl(["i = 86; q = (i-- / 2)", "q", ".exit"]);
+      const dec = await runRepl(["i = 86; q = (i-- / 2); q", ".exit"]);
       expect(stripAnsi(dec.stdout)).toContain("43");
+      expect(stripAnsi(dec.stdout)).not.toContain("SyntaxError");
       expect(dec.exitCode).toBe(0);
     });
 
     test("division after an object literal inside brackets", async () => {
-      const { stdout, exitCode } = await runRepl(["q = [{} / 1]", "q", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("NaN");
+      const { stdout, exitCode } = await runRepl(["q = [{} / 1]; q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("NaN");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after an assigned object literal opens a continuation", async () => {
+      const { stdout, exitCode } = await runRepl(["q = {} / ({", "valueOf: () => 2 }); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("NaN");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after a statement block", async () => {
+      const { stdout, exitCode } = await runRepl(['if (true) {} /"/.test(\'"\')', ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("true");
+      expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });
 
     test("division after an object literal inside a function body", async () => {
-      const { stdout, exitCode } = await runRepl(["function g() { return {valueOf: () => 84} / 2 }", "g()", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
+      const { stdout, exitCode } = await runRepl(["function g() { return {valueOf: () => 84} / 2 }; g()", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });
 
     test("division after a non-null assertion", async () => {
-      const { stdout, exitCode } = await runRepl(["q = (84! / 2)", "q", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
+      const { stdout, exitCode } = await runRepl(["q = (84! / 2); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });
 
@@ -801,8 +825,10 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("a method named like a conditional keyword does not make its paren a regex context", async () => {
-      const { stdout, exitCode } = await runRepl(["o = { if: (n) => n }; q = (o.if(84) / 2)", "q", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
+      const { stdout, exitCode } = await runRepl(["o = { if: (n) => n }; q = (o.if(84) / 2); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });
 

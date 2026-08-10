@@ -2765,6 +2765,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .throw_disabled_in_snapshot_error_if_needed("Bun.serve")
             .is_err()
         {
+            // SAFETY: caller contract — `this` is the live boxed server from `init()`; freed here like every other failure below.
+            Self::deinit(this);
             return JSValue::ZERO; // thrown; every server (node:http included) listens through here
         }
 

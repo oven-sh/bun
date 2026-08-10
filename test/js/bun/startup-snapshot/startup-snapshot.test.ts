@@ -216,6 +216,20 @@ snapshotTest(
   },
 );
 
+snapshotTest("a snapshot is refused while a worker thread is running, and says so", async () => {
+  using dir = tempDir("bun-snapshot-worker", {});
+  await using p = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "worker-fixture.js")],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"), BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("worker thread(s) still running");
+  expect(existsSync(join(String(dir), "s.snapshot"))).toBe(false);
+  expect(code).toBe(70); // the runtime's "did not become quiet" exit
+});
+
 snapshotTest("a strict build refuses servers and UDP sockets, not just listen/connect", async () => {
   using dir = tempDir("bun-snapshot-strict-servers", {});
   await using p = Bun.spawn({

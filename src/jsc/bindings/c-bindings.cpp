@@ -1129,6 +1129,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 #endif // OS(DARWIN) / __linux__
 
 // Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
+#if OS(DARWIN) || defined(__linux__) // the only builds whose allocator is given this hook (deps/mimalloc.ts)
 // Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`; the runtime
 // that adds the snapshot fields to it also const-asserts these three numbers, so the two cannot drift apart): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
 // say "marked to take a snapshot" and "carries one" are read here, because this runs before main, from the allocator.
@@ -1171,6 +1172,7 @@ extern "C" __attribute__((visibility("default"), used)) int bun_startup_snapshot
     memcpy(&snapshotLength, offsets + kOffsetsSnapshotLengthOffset, sizeof snapshotLength);
     return (flags & kTakeStartupSnapshotFlag) != 0 || snapshotLength != 0;
 }
+#endif
 
 #elif defined(_WIN32)
 // Windows PE section handling

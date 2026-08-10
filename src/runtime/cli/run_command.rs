@@ -1829,6 +1829,10 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
 /// What still ties this process to work in flight; the snapshot is only written when this is empty.
 fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<String> {
     let mut out = Vec::new();
+    match bun_jsc::web_worker::live_worker_count() {
+        0 => {}
+        n => out.push(format!("{n} worker thread(s) still running — a snapshot cannot contain a thread; terminate them (await worker.terminate()) before snapshotting")),
+    }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     if vm
         .rare_data()

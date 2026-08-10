@@ -190,6 +190,13 @@ impl Drop for WebWorker {
     }
 }
 
+/// Worker threads currently running (from the start of a worker's thread until its shutdown). A snapshot cannot contain a
+/// thread, so the freeze reports any as a blocker.
+static LIVE_WORKERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub fn live_worker_count() -> usize {
+    LIVE_WORKERS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 impl WebWorker {
     pub(crate) fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
@@ -542,6 +549,7 @@ impl WebWorker {
     // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
     // `Cell` / `UnsafeCell` instead.
     fn thread_main(&self) {
+        LIVE_WORKERS.fetch_add(1, Ordering::Relaxed);
         bun_analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
 
         if !self.name.is_empty() {
@@ -982,6 +990,7 @@ impl WebWorker {
     fn shutdown(&self) {
         jsc::mark_binding();
         self.set_status(Status::Terminated);
+        LIVE_WORKERS.fetch_sub(1, Ordering::Relaxed);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 

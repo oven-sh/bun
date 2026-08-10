@@ -89,7 +89,7 @@ describe("zlib native handle bounds checking", () => {
   });
 });
 
-describe("zlib native handle argument validation", () => {
+describe("zlib native handle constructor/init/write argument errors", () => {
   const zlib = require("zlib");
 
   function constructorOf(stream: any) {

@@ -339,12 +339,17 @@ pub mod js_bundler {
                     .get_own(global_this, &BunString::static_str("snapshot"))?
                     .is_some_and(|v| !v.is_undefined_or_null() && v != JSValue::FALSE);
                 let Some(compile_value) = config.get_truthy(global_this, "compile")? else {
-                    if snapshot_requested {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "snapshot requires compile: a snapshot is taken of the compiled executable"
-                        )));
+                    if !snapshot_requested {
+                        return Ok(None);
                     }
-                    return Ok(None);
+                    // `target: "bun-<platform>"` enables compilation without a `compile` key; the snapshot options still apply to it.
+                    if compile_target.is_some() {
+                        parse_startup_snapshot_options(global_this, config, &mut this)?;
+                        return Ok(Some(this));
+                    }
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "snapshot requires compile: a snapshot is taken of the compiled executable"
+                    )));
                 };
                 if snapshot_requested {
                     parse_startup_snapshot_options(global_this, config, &mut this)?;

@@ -272,6 +272,7 @@ snapshotTest(
         "const bad = [",
         "  { snapshot: true },",
         "  { compile: { outfile: exe + '-bad' }, snapshot: 'yes' },",
+        "  { target: 'bun-' + process.platform + '-' + (process.arch === 'arm64' ? 'arm64' : 'x64'), snapshot: 'yes' },", // the target shorthand enables compile: this one must reach snapshot validation
         "  { compile: { outfile: exe + '-bad' }, snapshot: { mode: 'sometimes' } },",
         "  { compile: { outfile: exe + '-bad' }, snapshot: { io: 'everything' } },",
         "];",
@@ -290,8 +291,8 @@ snapshotTest(
     });
     const [stdout, stderr, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(stderr + stdout).toContain("[snapshot] embedded");
-    expect(stdout).toContain("rejected: TypeError: snapshot requires compile");
-    expect(stdout).toContain("rejected: TypeError: snapshot must be true or an object");
+    expect(stdout.match(/rejected: TypeError: snapshot requires compile/g)).toHaveLength(1); // only the config with neither compile nor a bun target
+    expect(stdout.match(/rejected: TypeError: snapshot must be true or an object/g)).toHaveLength(2); // both with compile and with the target shorthand
     expect(stdout).toContain('rejected: TypeError: snapshot.mode must be "auto" or "manual"');
     expect(stdout).toContain('rejected: TypeError: snapshot.io must be "strict", "local" or "network"');
     expect(stdout).not.toContain("accepted");

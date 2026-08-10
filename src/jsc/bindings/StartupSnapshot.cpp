@@ -243,7 +243,7 @@ static void reexecWithoutASLRIfSlid()
     bool needEnv = !snapshotEnvIsSet();
 #if OS(DARWIN)
     constexpr uintptr_t linkBase = 0x100000000ull;
-    if (((uintptr_t)&_mh_execute_header == linkBase && !needEnv) || getenv("BUN_STARTUP_SNAPSHOT_REEXECED"))
+    if ((uintptr_t)&_mh_execute_header == linkBase && !needEnv)
         return;
     setenv("BUN_STARTUP_SNAPSHOT_REEXECED", "1", 1);
     setSnapshotEnvDefaults();
@@ -267,7 +267,7 @@ static void reexecWithoutASLRIfSlid()
     fprintf(stderr, "[snapshot] could not re-exec without ASLR; continuing slid (snapshot build/restore will not work)\n");
 #elif OS(LINUX)
     // Linux: the executable is non-PIE and slid libraries are fixed up, so ASLR stays on; the re-exec only gets the allocator/JIT options into the env before startup reads them.
-    if (getenv("BUN_STARTUP_SNAPSHOT_REEXECED") || !needEnv)
+    if (!needEnv)
         return;
     setenv("BUN_STARTUP_SNAPSHOT_REEXECED", "1", 1);
     setSnapshotEnvDefaults();

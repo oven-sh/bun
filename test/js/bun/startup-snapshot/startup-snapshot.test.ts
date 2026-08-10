@@ -167,7 +167,7 @@ snapshotTest("the frozen heap holds up under JSC's GC verifier", async () => {
   expect(code).toBe(0);
 });
 
-const memoryTest = withSnapshots(isLinux); // RssAnon is the private-memory figure; macOS is covered by the __DATA bound above
+const memoryTest = withSnapshots(isLinux); // RssAnon is a clean private-memory figure; macOS exposes nothing equivalent cheaply, so there the round-trips are checked functionally only
 memoryTest("a restored process holds much less private memory than one that builds the same state itself", async () => {
   using dir = tempDir("bun-snapshot-private-memory", {});
   const img = join(String(dir), "s.snapshot");

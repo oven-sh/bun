@@ -610,12 +610,32 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
+    // A finalizer running while a worker's env drains its finalizers can
+    // register another (here: an external buffer with a finalize_cb). Bun runs
+    // that one in the same cleanup rather than leaving it behind the walk. Bun-
+    // only rather than same-output: node hands an external buffer's finalizer to
+    // the BackingStore deleter, not to the env's tracked references, so a buffer
+    // created during teardown dies with the isolate and node prints late=0.
+    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("worker exited with 0\nlate=1");
+      expect(exitCode).toBe(0);
+    });
+
     // A call that reports napi_closing consumes the calling thread's reference
     // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
     // it can drop the last one -- and then it must free it, or every worker that
     // leaves one behind leaks. An addon that uses the handle after napi_closing
     // (a release, say) therefore touches freed memory, in node as well: the docs
     // say to make no further use of it. Bun-only: reads bun's live tsfn count.
+    // The spawned run takes >10s under a debug+ASAN bun, so the 5s default
+    // times out on slow machines.
     it("frees an orphaned threadsafe function whose last reference a call consumed", async () => {
       await using proc = spawn({
         cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_threadsafe_function_orphan_leak", "[]"],
@@ -645,7 +665,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
         signalCode: null,
       });
-    });
+    }, 30_000);
 
     // napi_create_threadsafe_function once the env has torn its threadsafe
     // functions down (here: from a cleanup hook that a threadsafe function's
@@ -897,6 +917,49 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // Small typed arrays use JSC's "fast" mode, whose GC-heap storage is
+    // abandoned when the backing ArrayBuffer is materialized. The data pointer
+    // NAPI hands out must point at the storage that survives, or native writes
+    // are silently dropped (see issue #37151).
+    it("returns a data pointer whose writes are visible through small typed arrays", async () => {
+      // 999/1000 straddle JSC's fastSizeLimit; 2048 is always wasteful mode.
+      await Promise.all(
+        [16, 999, 1000, 2048].map(async size => {
+          const output = await checkSameOutput("test_typedarray_info_write_visibility", `[new Uint8Array(${size})]`);
+          expect(output).toBe(`length=${size} first=42 last=42`);
+        }),
+      );
+    });
+
+    it("returns a data pointer at the reported byte offset for small typed arrays", async () => {
+      await Promise.all(
+        [
+          "new Uint8Array(0)",
+          "new Uint8Array(64)",
+          "new Int32Array(8)",
+          // offset view derived from a small array
+          "new Uint8Array(64).subarray(16)",
+        ].map(async expr => {
+          const output = await checkSameOutput("test_typedarray_info_byte_offset", `[${expr}]`);
+          expect(output).toEndWith("data_is_arraybuffer_data_plus_byte_offset=true");
+        }),
+      );
+    });
+
+    it("napi_get_buffer_info pointer stays valid after the backing ArrayBuffer is materialized", async () => {
+      await Promise.all(
+        ["Buffer.alloc(32)", "new Uint8Array(32)"].map(async expr => {
+          const output = await checkSameOutput("test_buffer_info_pointer_stability", `[${expr}]`);
+          expect(output).toBe("length=32 first=43 last=43");
+        }),
+      );
+    });
+
+    it("napi_create_buffer and napi_create_buffer_copy pointers stay valid after the backing ArrayBuffer is materialized", async () => {
+      const output = await checkSameOutput("test_create_buffer_pointer_stability", []);
+      expect(output.split(/\r?\n/)).toEqual(["create_buffer last=44", "create_buffer_copy last=45"]);
+    });
+
     it("reports the view's byte offset into its backing buffer", async () => {
       const output = await checkSameOutput(
         "test_typedarray_info_byte_offset",
@@ -968,24 +1031,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     it("has the right lifetime", async () => {
-      await checkSameOutput("test_wrap_lifetime_without_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
-      await checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
-      // check that napi finalizers also run at VM exit, even if they didn't get run by GC
-      await checkSameOutput("test_ref_deleted_in_cleanup", []);
-      // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
-      await checkSameOutput("test_ref_deleted_in_async_finalize", []);
+      await Promise.all([
+        checkSameOutput("test_wrap_lifetime_without_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_wrap_lifetime_with_strong_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []),
+        checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []),
+        // napi finalizers also run at VM exit, even if they didn't get run by GC
+        checkSameOutput("test_ref_deleted_in_cleanup", []),
+        // calling napi_delete_ref in the ref's finalizer is not use-after-free
+        checkSameOutput("test_ref_deleted_in_async_finalize", []),
+      ]);
     });
   });
 
   describe("napi_define_class", () => {
     it("handles edge cases in the constructor", async () => {
-      await checkSameOutput("test_napi_class", []);
-      await checkSameOutput("test_subclass_napi_class", []);
-      await checkSameOutput("test_napi_class_non_constructor_call", []);
-      await checkSameOutput("test_reflect_construct_napi_class", []);
+      await Promise.all([
+        checkSameOutput("test_napi_class", []),
+        checkSameOutput("test_subclass_napi_class", []),
+        checkSameOutput("test_napi_class_non_constructor_call", []),
+        checkSameOutput("test_reflect_construct_napi_class", []),
+      ]);
     });
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
@@ -1715,6 +1782,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("removing non-existent async cleanup hook should not crash", async () => {
       // Test that removing non-existent async hooks doesn't crash
       await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("hook handle stays valid until the addon removes it (#37201)", async () => {
+      // An async cleanup hook releases a threadsafe function whose finalizer
+      // then calls napi_remove_async_cleanup_hook; the handle must not be
+      // freed when the hook returns.
+      const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
+      // Pin the successful lifecycle, so matching Node on a shared failure
+      // (non-zero status in both) cannot pass. printf() via the Windows CRT
+      // emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async cleanup hook fired",
+        "released tsfn: status=0",
+        "tsfn finalize: removing async cleanup hook",
+        "async cleanup hook removed: status=0",
+      ]);
     });
   });
 

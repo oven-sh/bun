@@ -20,6 +20,7 @@
 #pragma once
 
 // #include "DOMWindow.h"
+#include "BunClientData.h"
 #include "DOMWrapperWorld.h"
 #include "EventListener.h"
 #include "EventNames.h"
@@ -34,7 +35,8 @@
 
 namespace WebCore {
 
-class JSEventListener : public EventListener {
+class JSEventListener : public EventListener, public JSVMClientDataClient {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSEventListener); // both bases declare allocators
 public:
     WEBCORE_EXPORT static Ref<JSEventListener> create(JSC::JSObject& listener, JSC::JSObject& wrapper, bool isAttribute, DOMWrapperWorld&);
 
@@ -48,7 +50,7 @@ public:
     bool wasCreatedFromMarkup() const { return m_wasCreatedFromMarkup; }
 
     JSC::JSObject* ensureJSFunction(ScriptExecutionContext&) const;
-    DOMWrapperWorld& isolatedWorld() const { return m_isolatedWorld; }
+    DOMWrapperWorld* isolatedWorld() const { return m_isolatedWorld.get(); }
 
     JSC::JSObject* jsFunction() const final { return m_jsFunction.get(); }
     JSC::JSObject* wrapper() const final { return m_wrapper.get(); }
@@ -80,7 +82,12 @@ protected:
     void handleEvent(ScriptExecutionContext&, Event&) override;
     void setWrapperWhenInitializingJSFunction(JSC::VM&, JSC::JSObject* wrapper) const { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 
+    // JSVMClientDataClient
+    void willDestroyVM() final;
+
 private:
+    void invalidate();
+
     bool m_isAttribute : 1;
     bool m_wasCreatedFromMarkup : 1;
 
@@ -88,7 +95,7 @@ private:
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;
     mutable JSC::Weak<JSC::JSObject> m_wrapper;
 
-    Ref<DOMWrapperWorld> m_isolatedWorld;
+    RefPtr<DOMWrapperWorld> m_isolatedWorld;
 };
 
 // For "onxxx" attributes that automatically set up JavaScript event listeners.
@@ -104,6 +111,9 @@ inline JSC::JSObject* JSEventListener::ensureJSFunction(ScriptExecutionContext& 
 {
     // initializeJSFunction can trigger code that deletes this event listener
     // before we're done. It should always return null in this case.
+    if (!m_isolatedWorld) [[unlikely]]
+        return nullptr;
+
     JSC::VM& vm = m_isolatedWorld->vm();
     Ref protect = const_cast<JSEventListener&>(*this);
     JSC::EnsureStillAliveScope protectedWrapper(m_wrapper.get());

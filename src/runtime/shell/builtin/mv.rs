@@ -651,9 +651,20 @@ impl ShellMvBatchedTask {
 
 impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+    /// Owned by the builtin's `MvState`, which frees it with the interpreter;
+    /// only the keep-alive is this hop's to drop.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the Mv state outlives the queue entry.
+        unsafe { (*this).task.unref_unrun() }
+    }
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+    /// An element of `MvState::Executing.tasks`; as `ShellMvCheckTargetTask`.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: as above.
+        unsafe { (*this).task.unref_unrun() }
+    }
 }
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's

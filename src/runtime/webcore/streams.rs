@@ -23,7 +23,7 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 
 /// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
 /// `HTTPServerWritable.pooled_buffer`.
-pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
+type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
@@ -442,7 +442,7 @@ pub struct WritableHandler {
     pub(crate) handler: WritableHandlerFn,
 }
 
-pub type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
+type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
 impl WritablePending {
     pub(crate) fn run(&mut self) {
@@ -585,10 +585,6 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return;
-        }
-
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
@@ -612,10 +608,27 @@ impl Pending {
         boxed.run();
         drop(boxed);
     }
+
+    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
+    /// the read any more, so drop the promise's root and the parked result.
+    pub(crate) fn release_without_running(this: *mut Pending) {
+        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
+        let mut boxed = unsafe { bun_core::heap::take(this) };
+        boxed.state = PendingState::Used;
+        if let PendingFuture::Promise { promise, .. } = &boxed.future {
+            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        }
+        drop(boxed);
+    }
 }
 
 impl bun_event_loop::Taskable for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+    /// Deferred out of a finalizer or a late completion: do the script-free
+    /// part of what the dispatch would have done.
+    unsafe fn release_unrun(this: *mut Self) {
+        Pending::release_without_running(this);
+    }
 }
 
 pub enum PendingFuture {
@@ -634,7 +647,7 @@ pub struct PendingHandler {
     pub(crate) handler: PendingHandlerFn,
 }
 
-pub type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
+type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -751,7 +764,11 @@ impl StreamResult {
             // `release()` frees `.owned`/`.owned_and_done` ByteLists and
             // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
-            return Ok(JSValue::ZERO);
+            // No value is produced for a VM that is going away; say so the one
+            // way callers (a pull promise's settle) understand: a pending
+            // termination, not an empty "Ok".
+            global_this.vm().ensure_termination_exception_pending();
+            return Err(jsc::JsError::Terminated);
         }
 
         match self {
@@ -831,7 +848,7 @@ pub(crate) mod controller_abi {
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
 /// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
 /// implementors override only the signals they actually handle.
-pub trait UpstreamSource {
+trait UpstreamSource {
     #[inline]
     fn on_ready(&self) {}
     #[inline]
@@ -912,6 +929,10 @@ pub enum SourceHandle {
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
+    /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
+    /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
+    /// deterministic for tests.
+    TestingCancelOnDrain(BackRef<crate::webcore::ByteStream>),
 }
 
 impl SourceHandle {
@@ -954,6 +975,7 @@ impl SourceHandle {
             SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -977,6 +999,7 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            SourceHandle::TestingCancelOnDrain(p) => p.on_cancel(),
             // Remaining variants leave `on_ready` at the trait default (no-op).
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
@@ -996,7 +1019,8 @@ impl SourceHandle {
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_)
-            | SourceHandle::HTMLRewriter(_) => {}
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 }
@@ -1008,7 +1032,7 @@ impl SourceHandle {
 // Selecting the response type from the const generics would require an
 // associated-type trait keyed on them. The pointer is kept opaque at the
 // type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
-pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
+type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) res: Option<*mut UwsResponse<SSL, HTTP3>>,

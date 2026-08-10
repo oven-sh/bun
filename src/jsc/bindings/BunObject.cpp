@@ -705,16 +705,16 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     if (strict.isBoolean() && strict.asBoolean()) {
         if (skipPrototype.isBoolean() && skipPrototype.asBoolean()) {
-            bool isEqual = Bun__deepEquals<true, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+            bool isEqual = Bun__deepEquals<true, false, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsBoolean(isEqual));
         }
 
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<true, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        bool isEqual = Bun__deepEquals<false, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
@@ -944,6 +944,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
     markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
+    XML                                            BunObject_lazyPropCb_wrap_XML                                       DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback

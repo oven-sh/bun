@@ -321,8 +321,6 @@ bun_dispatch::link_interface! {
         // bearing enum fields. `FilePoll::init` now goes through
         // `file_polls_ptr()` + `Store::get_init` (write-before-read).
         fn increment_pending_unref_counter();
-        fn ref_concurrently();
-        fn unref_concurrently();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
         fn set_after_event_loop_callback(
             cb: Option<OpaqueCallback>,
@@ -1496,7 +1494,7 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum ApplyAction {
+enum ApplyAction {
     Readable,
     Writable,
     Cancel,

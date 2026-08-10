@@ -5733,7 +5733,7 @@ pub mod formatter {
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    pub trait TypedArrayElement: Copy {
+    trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;

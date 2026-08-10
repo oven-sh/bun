@@ -773,13 +773,13 @@ pub mod lib {
     }
 
     // ── write-open callback surface (libarchive `archive_write_open2`) ─────
-    pub type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
     pub type archive_read_callback =
         unsafe extern "C" fn(*mut Archive, *mut c_void, *mut *const c_void) -> la_ssize_t;
-    pub type archive_write_callback =
+    type archive_write_callback =
         unsafe extern "C" fn(*mut Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
-    pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
-    pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
 
     /// `a` is a live `archive_write_new()` handle. `client_data` is forwarded
     /// opaquely to the callbacks (never dereferenced here); its lifetime must
@@ -1007,7 +1007,7 @@ fn is_symlink_target_safe(
     }
 
     let mut seen_named_component = false;
-    for component in link_target_bytes.split(|c| *c == b'/') {
+    for component in strings::split(link_target_bytes, b"/") {
         match component {
             b"" | b"." => {}
             b".." => {
@@ -1288,7 +1288,7 @@ impl Archiver {
                         if remaining.is_empty() {
                             continue 'loop_;
                         }
-                        match remaining.iter().position(|&b| b == SEP) {
+                        match strings::index_of_char_usize(remaining, SEP) {
                             Some(i) => remaining = &remaining[i..],
                             None => remaining = &remaining[remaining.len()..],
                         }
@@ -1345,7 +1345,7 @@ impl Archiver {
                                     break 'brk __pathname;
                                 }
 
-                                let index = __pathname.iter().position(|&b| b == SEP).unwrap();
+                                let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
                                 break 'brk &__pathname[..index];
                             };
                             let mut temp_buf = [0u8; 1024];
@@ -1481,7 +1481,7 @@ impl Archiver {
                             if remaining.is_empty() {
                                 continue 'loop_;
                             }
-                            match remaining.iter().position(|&c| c == sep) {
+                            match strings::index_of_scalar(remaining, sep) {
                                 Some(j) => remaining = &remaining[j..],
                                 None => remaining = &remaining[remaining.len()..],
                             }

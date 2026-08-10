@@ -1402,7 +1402,7 @@ pub mod rescle {
 
             // Basic validation: check format and ranges
             let mut parts_count: u32 = 0;
-            for part in v.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
+            for part in bun_core::strings::tokenize(v, b".") {
                 if parts_count >= 4 {
                     return Err(RescleError::InvalidVersionFormat.into());
                 }

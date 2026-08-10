@@ -11,6 +11,7 @@ test.skipIf(!isWindows)("detached child does not inherit the parent's listening 
     "parent.mjs": `
       import { spawn } from "node:child_process";
       import { createServer } from "node:http";
+      import { tmpdir } from "node:os";
 
       const server = createServer((_request, response) => response.end("ok"));
       await new Promise((resolve, reject) => {
@@ -20,7 +21,11 @@ test.skipIf(!isWindows)("detached child does not inherit the parent's listening 
       const port = server.address().port;
 
       // Spawn a detached child while the listen socket is open, then exit.
+      // cwd: the child outlives the test and would otherwise inherit this temp
+      // dir as its working directory, making tempDir cleanup fail with EBUSY on
+      // Windows while the killed child is still tearing down.
       const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 100000)"], {
+        cwd: tmpdir(),
         detached: true,
         stdio: "ignore",
         windowsHide: true,

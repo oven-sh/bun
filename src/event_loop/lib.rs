@@ -36,7 +36,9 @@ pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 pub use DeferredTaskQueue as deferred_task_queue;
 
 pub use MiniEventLoop::PipeReadBuffer;
-pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
+pub use any_event_loop::{
+    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
+};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
@@ -59,7 +61,7 @@ bun_dispatch::link_interface! {
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);
-        fn enqueue_task_concurrent(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
+        fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;

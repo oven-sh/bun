@@ -345,6 +345,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("ReturnValue", () => {
+    it("keeps the returned value alive when the scope it was created in closes", async () => {
+      await checkSameOutput("test_v8_return_value_from_inner_scope");
+    });
+  });
+
   describe("MaybeLocal", () => {
     it("correctly handles ToLocal and ToLocalChecked operations", async () => {
       await checkSameOutput("test_v8_maybe_local");

@@ -200,9 +200,10 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
-// Worker crashes are classified as panics by fatal signal, which Windows
-// never surfaces (a crash there is exit code 3, indistinguishable from
-// process.exit) — see is_panic_status. So this contract is POSIX-only.
+// POSIX classifies worker crashes as panics by fatal signal — see
+// is_panic_status. (On Windows a crash caught by Bun's crash handler exits
+// with code 3, indistinguishable from process.exit(3); the Windows
+// classification below works on raw NTSTATUS exit codes instead.)
 test.skipIf(isWindows)(
   "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
   async () => {
@@ -229,6 +230,80 @@ test.skipIf(isWindows)(
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("a test worker process crashed with");
     expect(stderr).toContain("Aborting");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
+// Windows delivers no signals: a native fault that bypasses Bun's crash
+// handler (__fastfail — UCRT abort(), Rust aborts in addons, /GS checks)
+// terminates the worker with the raw NTSTATUS as its exit code. The
+// coordinator must recognize that as a crash and abort the run like the
+// fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and carry
+// on as if the test had called process.exit(9).
+test.skipIf(!isWindows)(
+  "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and aborts",
+  async () => {
+    using dir = tempDir("parallel-ntstatus", {
+      // Hangs forever so its worker is still mid-file when the sibling
+      // crashes: the abort must terminate it (TerminateProcess) rather than
+      // wait for it, or the run would stall past the banner.
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      // A deliberate crash must not upload a report (see the POSIX test above).
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN, reported untruncated and in hex
+    expect(stderr).toContain("(worker crashed: exit code 0xC0000409)");
+    expect(stderr).toContain("a test worker process crashed with exit code 0xC0000409");
+    expect(stderr).toContain("Aborting");
+    // the hung sibling was torn down and accounted, not waited on
+    expect(stderr).toContain("aborted: sibling worker panicked");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
+// POSIX twin of the NTSTATUS test: fastfail resets the SIGABRT disposition
+// and raises it, so the worker dies by the raw signal with no crash-handler
+// banner, and the fatal-signal classification aborts the run.
+test.skipIf(isWindows)(
+  "--parallel: a worker dying of a raw SIGABRT (fastfail) aborts the run",
+  async () => {
+    using dir = tempDir("parallel-fastfail-posix", {
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      // A deliberate crash must not upload a report (see the POSIX test above).
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(worker crashed: SIGABRT)");
+    expect(stderr).toContain("a test worker process crashed with SIGABRT");
+    expect(stderr).toContain("Aborting");
+    expect(stderr).toContain("aborted: sibling worker panicked");
     expect(exitCode).not.toBe(0);
   },
   isASAN || isDebug ? 60_000 : 20_000,
@@ -798,6 +873,55 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   expect(stderr).toContain("[output truncated:");
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
+}, 90_000);
+
+test("--parallel: back-to-back huge result lines drain in linear time without corrupting the channel", async () => {
+  // Two tests whose status lines each come in just under the 64MB IPC frame
+  // cap, from the same worker. The second frame is queued while the first
+  // backlog is still draining, so this exercises the write cursor, the
+  // amortized compaction, and appends to a partially-sent backlog. The 60s
+  // kill is the regression signal: draining the backlog by memmoving the
+  // whole remainder after every partial write is quadratic in frame size,
+  // and on macOS (~8KB socketpair buffers) one 64MB frame alone took ~90s
+  // of memmove.
+  const TITLE_LENGTH = 60_000_000;
+  using dir = tempDir("parallel-huge-backlog", {
+    "huge.test.js": `import {test,expect} from "bun:test";
+      test(Buffer.alloc(${TITLE_LENGTH}, "A").toString(), () => expect(1).toBe(2));
+      test(Buffer.alloc(${TITLE_LENGTH}, "B").toString(), () => expect(1).toBe(2));`,
+    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // Both huge tests failed normally: the channel survived both frames (no
+  // worker "crashed"), both 60MB status lines arrived intact (each stays
+  // just under the 64MB frame cap, so no truncation), and ok.test.js's pass
+  // survived on the other worker.
+  expect(stderr).not.toContain("crashed");
+  // Each title must arrive as one contiguous run of exactly TITLE_LENGTH
+  // characters: a shorter run (dropped bytes) leaves indexOf at -1, and a
+  // longer run (duplicated bytes) puts the title's letter right after the
+  // first match. Checked via index math so a failure doesn't dump 60MB
+  // strings into the log.
+  for (const letter of ["A", "B"]) {
+    const title = Buffer.alloc(TITLE_LENGTH, letter).toString();
+    const start = stderr.indexOf(title);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(stderr[start + TITLE_LENGTH]).not.toBe(letter);
+  }
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("2 fail");
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 }, 90_000);
 

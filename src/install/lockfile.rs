@@ -1736,20 +1736,29 @@ impl<'a> Printer<'a> {
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
-        let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        let entries: &mut Fs::DirEntry = match entries_option {
-            Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
+        // with the `&mut self` borrow `read_directory` took.
+        let entries_option: *const Fs::EntriesOption =
+            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let entries = {
+            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
+            match unsafe { &*entries_option } {
+                Fs::EntriesOption::Entries(e) => {
+                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
+                }
+                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+            }
         };
 
         let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
-        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            &*entries,
+            &entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,
@@ -2476,9 +2485,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_semver::semver_string`; imported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -3071,12 +3080,8 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// --default` need not re-sort.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
     std::sync::LazyLock::new(|| {
-        const DATA: &str = include_str!("default-trusted-dependencies.txt");
-        let mut names: Vec<&'static [u8]> = DATA
-            .split([' ', '\r', '\n', '\t'])
-            .filter(|s| !s.is_empty())
-            .map(str::as_bytes)
-            .collect();
+        const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
+        let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
         names.sort_unstable();
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,

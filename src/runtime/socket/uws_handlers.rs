@@ -406,7 +406,7 @@ where
         {
             // `ns` is the live heap `NewSocket` stashed by `on_create`. The
             // `on_*` handlers may free it, so they take `ThisPtr`, never `&mut`.
-            swallow(api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason));
+            api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason);
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
@@ -436,12 +436,7 @@ where
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<ThisPtr<api::NewSocket<SSL>>>>()
         {
-            swallow(api::NewSocket::on_handshake(
-                ns,
-                wrap::<SSL>(s),
-                ok as i32,
-                err,
-            ));
+            api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err);
         }
     }
 }
@@ -455,7 +450,7 @@ where
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&mut Owner` as the first parameter; each driver's
 /// `SocketHandler<SSL>` zero-sized type implements it.
-pub trait NsSocketEvents<Owner, const SSL: bool> {
+trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }

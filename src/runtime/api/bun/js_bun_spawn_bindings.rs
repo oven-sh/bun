@@ -407,7 +407,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or(JSValue::ZERO);
+            args = secondary_args_value.unwrap_or_default();
         } else if !args.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         } else if let Some(cmd_value_) = args.get_truthy(global_this, "cmd")? {
@@ -1321,6 +1321,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
+    #[cfg(windows)]
+    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -2147,10 +2149,7 @@ fn append_envp_from_js(
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
         let line_bytes = line.as_bytes();
-        let key_end = line_bytes
-            .iter()
-            .position(|&b| b == b'=')
-            .unwrap_or(line_bytes.len());
+        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
             strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
         } else {

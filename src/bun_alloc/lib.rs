@@ -1610,6 +1610,14 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // Under THP `enabled=always` the first write to each 2 MiB stretch would
+    // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
+    // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
+    // SAFETY: `p..p+len` is the mapping created above.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe {
+        libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+    }
     // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
     // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
     // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
@@ -1758,7 +1766,7 @@ const OVERFLOW_GROUP_MAX: usize = 4095;
 const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 type OverflowUsedSize = u16;
 
-pub struct OverflowGroup<Block> {
+struct OverflowGroup<Block> {
     // 16 million files should be good enough for anyone
     // ...right?
     pub(crate) used: OverflowUsedSize,
@@ -1815,7 +1823,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // Const-generic arithmetic (deriving COUNT from another const param) requires
 // `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
-pub struct OverflowListBlock<ValueType, const COUNT: usize> {
+struct OverflowListBlock<ValueType, const COUNT: usize> {
     pub(crate) used: u32,
     // Only `[0..used]` is initialized; writes are raw (no drop glue).
     pub items: [MaybeUninit<ValueType>; COUNT],
@@ -1874,7 +1882,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         self.count
     }
 
@@ -1960,14 +1968,14 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
 /// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
 /// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
 /// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
-pub struct BSSListOverflowBlock<ValueType> {
+struct BSSListOverflowBlock<ValueType> {
     pub(crate) used: AtomicU16,
     pub(crate) prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Only `[0..used]` is initialized.

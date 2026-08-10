@@ -1199,8 +1199,7 @@ impl SendQueue {
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
                         item.complete(&global);
                     }
-                    // Fully written items never stay queued (on_write_complete moves them out), so
-                    // whatever is left, partially written or not, was never delivered.
+                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
                     for item in sq.queue.with_mut(std::mem::take) {
                         item.abort_unsent(&global);
                     }

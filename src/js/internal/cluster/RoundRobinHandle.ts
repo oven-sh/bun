@@ -120,8 +120,7 @@ export default class RoundRobinHandle {
     const pending = this.inFlight.get(worker.id);
     if (pending !== undefined) {
       this.inFlight.delete(worker.id);
-      // The worker may already have adopted this connection (its ack is lost with the channel), so
-      // handing the primary's copy to another worker could serve it twice; drop our copy, as node does.
+      // Possibly already adopted (ack lost with the channel), so never re-served: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/round_robin_handle.js#L77-L97
       pending.close();
     }
 

@@ -677,10 +677,9 @@ fn update_package_json_and_install_with_manager_with_updates(
             .to_vec();
     }
 
-    // Commit the fanned-out workspace members: read back the versions the
-    // install step resolved, write each member's package.json, and refresh its
-    // cache entry. This runs before the catalog pass below, which re-reads the
-    // root from the cache and must compose on top of these dependency edits.
+    // Commit the fanned-out members: write each package.json and refresh its
+    // cache entry. Runs before the catalog pass, which re-reads the root from
+    // the cache and must compose on top of these dependency edits.
     if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         for member in plan.members.iter_mut() {
             commit_workspace_member_update(manager, member)?;

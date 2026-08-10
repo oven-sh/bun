@@ -1992,6 +1992,14 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
+// A pending decode exception would surface as an unrelated uncaught error; closing the channel is the handling.
+fn close_after_decode_failure(send_queue: &SendQueue) {
+    send_queue
+        .get_global_this()
+        .clear_exception_except_termination();
+    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+}
+
 fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
@@ -2000,17 +2008,10 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         }
         DecodeStep::Fail(IPCDecodeError::OutOfMemory) => {
             Output::print_errorln("IPC message is too long.");
-            send_queue
-                .get_global_this()
-                .clear_exception_except_termination();
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+            close_after_decode_failure(send_queue);
         }
         DecodeStep::Fail(_) => {
-            // A pending decode exception would surface as an unrelated uncaught error; closing the channel is the handling.
-            send_queue
-                .get_global_this()
-                .clear_exception_except_termination();
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+            close_after_decode_failure(send_queue);
         }
     }
 }

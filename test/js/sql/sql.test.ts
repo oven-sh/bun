@@ -12819,12 +12819,7 @@ test.concurrent.each(["sql", "postgres", "SQL"])("Bun.%s throwing under stack ex
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const filteredStderr = stderr
-    .split(/\r?\n/)
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-
   expect(stdout).toBe("RangeError: Maximum call stack size exceeded.\nfunction\n");
-  expect(filteredStderr).toBe("");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

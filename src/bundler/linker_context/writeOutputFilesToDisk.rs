@@ -60,9 +60,9 @@ pub(crate) fn generate_chunk_bytecode(
     code: &[u8],
     source_provider_url: BunString,
 ) -> Option<(Box<[u8]>, bun_core::OwnedString)> {
-    source_provider_url.ref_();
-    // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop` releases
-    // the ref bumped above on every exit path.
+    // `source_provider_url` arrives with the +1 from `create_format`, and
+    // bytecode generation only borrows it, so `OwnedString` adopts that ref
+    // and releases it on every exit path.
     let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
     let bytecode = crate::bundle_v2::dispatch::generate_cached_bytecode(
         format,

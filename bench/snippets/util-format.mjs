@@ -11,9 +11,14 @@ bench("util.format trailing args", () => util.format("plain", "join", "of", "str
 bench('util.format("%j")', () => util.format("json: %j", { a: 1, b: "two" }));
 bench('util.format("%f %i %%")', () => util.format("%f%% done, batch %i", 85.5, 12));
 
+const longFormat = `${"lorem ipsum dolor sit amet ".repeat(8)}%s ${"consectetur adipiscing elit ".repeat(8)}%d`;
+bench("util.format long format string", () => util.format(longFormat, "value", 42));
+
 bench("util.inspect short string", () => util.inspect("hello world"));
-bench("util.inspect string with quotes", () => util.inspect("it's a \"quoted\" string\nwith a newline"));
+bench("util.inspect string with quotes", () => util.inspect('it\'s a "quoted" string\nwith a newline'));
 bench("util.inspect small object", () => util.inspect({ a: 1, b: "two", c: [1, 2, 3] }));
 bench("util.inspect array of numbers", () => util.inspect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+const longString = `line with 'quotes' and\ttabs\n`.repeat(40);
+bench("util.inspect long string with escapes", () => util.inspect(longString));
 
 await run();

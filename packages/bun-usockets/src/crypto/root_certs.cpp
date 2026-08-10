@@ -227,45 +227,46 @@ extern "C" X509_STORE *us_get_default_ca_store(int use_system_ca) {
   }
 
   // Node's NewRootCertStore: --use-openssl-ca means OpenSSL's default lookups *instead of* the
-  // bundled roots (system roots ignored); otherwise the bundled roots, plus the system roots when
-  // asked. The default lookups double as the system store's SSL_CERT_FILE / SSL_CERT_DIR overrides,
-  // which node's Linux system loader honours too, so they also come along with use_system_ca.
+  // bundled roots (system roots ignored); otherwise the bundled roots, plus the system store when
+  // asked (on Linux that store is what honours SSL_CERT_FILE / SSL_CERT_DIR, see root_certs_linux.cpp;
+  // on macOS / Windows node's is the OS store alone). NODE_EXTRA_CA_CERTS is added in every mode.
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099-L1109
   const int openssl_ca = Bun__Node__CAStore == BUN_CA_STORE_OPENSSL;
-  if ((use_system_ca || openssl_ca) && !X509_STORE_set_default_paths(store)) {
+  if (openssl_ca && !X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
-  X509** root_cert_instances = default_ca_certificates->root_cert_instances;
-  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
 
-  // load all root_cert_instances on the default ca store
-  for (size_t i = 0; !openssl_ca && i < root_certs_size; i++) {
-    X509 *cert = root_cert_instances[i];
-    if (cert == NULL)
-      continue;
-    X509_up_ref(cert);
-    X509_STORE_add_cert(store, cert);
+  if (!openssl_ca) {
+    X509** root_cert_instances = default_ca_certificates->root_cert_instances;
+    for (size_t i = 0; i < root_certs_size; i++) {
+      X509 *cert = root_cert_instances[i];
+      if (cert == NULL)
+        continue;
+      X509_up_ref(cert);
+      X509_STORE_add_cert(store, cert);
+    }
+
+    if (use_system_ca) {
+      STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
+      if (root_system_cert_instances) {
+        for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
+          X509 *cert = sk_X509_value(root_system_cert_instances, i);
+          X509_up_ref(cert);
+          X509_STORE_add_cert(store, cert);
+        }
+      }
+    }
   }
 
+  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);
       X509_up_ref(cert);
       X509_STORE_add_cert(store, cert);
-    }
-  }
-
-  if (use_system_ca && !openssl_ca) {
-    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
-    if (root_system_cert_instances) {
-      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-        X509 *cert = sk_X509_value(root_system_cert_instances, i);
-        X509_up_ref(cert);
-        X509_STORE_add_cert(store, cert);
-      }
     }
   }
 

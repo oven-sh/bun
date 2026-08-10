@@ -179,6 +179,33 @@ test("eventLoopUtilization is still zero at the top level of an entry point with
   expect(exitCode).toBe(0);
 });
 
+// A top-level await is the loop running (node stamps loopStart before its first uv_run): what came
+// before it is still zeros, what comes after reports the time the await parked the loop.
+test("eventLoopUtilization counts the loop time spent in a top-level await", async () => {
+  using dir = tempDir("elu-tla", {
+    "main.mjs": `
+      import { performance } from "perf_hooks";
+      const before = performance.eventLoopUtilization();
+      await new Promise(r => setTimeout(r, 100));
+      const after = performance.eventLoopUtilization();
+      console.log(JSON.stringify({ before, idleAfter: after.idle >= 50, activeAfter: after.active >= 0 }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout), stderr }).toEqual({
+    out: { before: { idle: 0, active: 0, utilization: 0 }, idleAfter: true, activeAfter: true },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The options defaults must not read through a polluted Object.prototype.
 // Node uses kEmptyObject for both; verified against Node v26.3.0.
 test("timerify and createHistogram survive Object.prototype option pollution", async () => {

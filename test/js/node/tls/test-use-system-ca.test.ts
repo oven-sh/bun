@@ -139,13 +139,14 @@ describe("--use-system-ca", () => {
 
   // node's NewRootCertStore: the default store is the bundled roots (plus the system store when asked);
   // OpenSSL's default lookups (SSL_CERT_FILE here) are never part of it on their own, and
-  // --use-openssl-ca selects them *instead* of the bundled roots. --use-system-ca reaches them too,
-  // as node's Linux system loader honours SSL_CERT_FILE / SSL_CERT_DIR.
+  // --use-openssl-ca selects them *instead* of the bundled roots. Only the Linux system store is
+  // made of those lookups; on macOS / Windows the system store is the OS one, so SSL_CERT_FILE stays
+  // untrusted there even under --use-system-ca.
   test.each([
     [[], "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
     [["--no-use-system-ca"], "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
     [["--use-openssl-ca"], "trusted"],
-    [["--use-system-ca"], "trusted"],
+    [["--use-system-ca"], isLinux ? "trusted" : "rejected:DEPTH_ZERO_SELF_SIGNED_CERT"],
   ])("SSL_CERT_FILE with flags %j -> %s", async (flags, expected) => {
     using dir = tempDir("use-openssl-ca", { "cert.pem": tls.cert, "key.pem": tls.key });
     await using proc = spawn({
@@ -225,14 +226,17 @@ describe("--use-system-ca", () => {
   // CA option) must follow the worker's --use-system-ca exactly like tls.connect and fetch do.
   // The harness cert is self-signed with a 127.0.0.1 SAN, so it can stand in as the "system" root
   // via SSL_CERT_FILE on every platform.
-  test("a Worker's --use-system-ca (flag, or its own env when flagless) governs its WebSocket connections too", async () => {
-    using dir = tempDir("use-system-ca-ws", { "cert.pem": tls.cert, "key.pem": tls.key });
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "--no-use-system-ca",
-        "-e",
-        `
+  // SSL_CERT_FILE stands in for the system store, which only the Linux loader reads.
+  test.skipIf(!isLinux)(
+    "a Worker's --use-system-ca (flag, or its own env when flagless) governs its WebSocket connections too",
+    async () => {
+      using dir = tempDir("use-system-ca-ws", { "cert.pem": tls.cert, "key.pem": tls.key });
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "--no-use-system-ca",
+          "-e",
+          `
         const { Worker } = require("worker_threads");
         const server = Bun.serve({
           port: 0,
@@ -271,25 +275,83 @@ describe("--use-system-ca", () => {
           server.stop(true);
         })();
         `,
+        ],
+        env: {
+          ...bunEnv,
+          SSL_CERT_FILE: join(String(dir), "cert.pem"),
+          CERT: join(String(dir), "cert.pem"),
+          KEY: join(String(dir), "key.pem"),
+          NODE_USE_SYSTEM_CA: "0",
+          NODE_EXTRA_CA_CERTS: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim()), stderr }).toEqual({
+        result: {
+          withSystem: { webSocket: "message:hello", tlsConnect: "authorized" },
+          withoutSystem: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+          viaEnv: { webSocket: "message:hello", tlsConnect: "authorized" },
+          viaEnvUnset: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // node_worker.cc: a nested Worker starts from its parent's resolved option, a custom env re-derives
+  // it, and only flags (its own execArgv, or the parent's when it has none) carry over as flags — a
+  // parent's env-derived decision is not inherited past a child's own env.
+  test("nested Workers inherit CA flags but not env-derived decisions", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const tls = require("tls");
+        // Reports whether the thread's default store includes the system roots.
+        const leaf = 'const tls = require("tls"); require("worker_threads").parentPort.postMessage(tls.getCACertificates("default").length > tls.getCACertificates("bundled").length);';
+        // Spawns \`leaf\` with the given options and relays its answer.
+        const middle = \`
+          const { Worker, parentPort, workerData } = require("worker_threads");
+          const w = new Worker(workerData.leaf, { eval: true, ...workerData.leafOptions });
+          w.once("message", m => parentPort.postMessage(m));
+        \`;
+        const ask = (middleOptions, leafOptions) => new Promise((resolve, reject) => {
+          const w = new Worker(middle, { eval: true, ...middleOptions, workerData: { leaf, leafOptions } });
+          w.once("message", resolve);
+          w.once("error", reject);
+        });
+        (async () => {
+          if (tls.getCACertificates("system").length === 0) return console.log(JSON.stringify({ skipped: "no system certificates" }));
+          const out = {
+            envDecisionNotInheritedPastOwnEnv: await ask({ env: { ...process.env, NODE_USE_SYSTEM_CA: "1" } }, { env: {} }),
+            ownEnvWinsOverParentDecision: await ask({}, { env: { NODE_USE_SYSTEM_CA: "1" } }),
+            parentFlagInherited: await ask({ execArgv: ["--use-system-ca"] }, {}),
+            parentFlagBeatsOwnEnv: await ask({ execArgv: ["--use-system-ca"] }, { env: {} }),
+            ownExecArgvDropsParentFlag: await ask({ execArgv: ["--use-system-ca"] }, { execArgv: [], env: {} }),
+          };
+          console.log(JSON.stringify(out));
+        })();
+        `,
       ],
-      env: {
-        ...bunEnv,
-        SSL_CERT_FILE: join(String(dir), "cert.pem"),
-        CERT: join(String(dir), "cert.pem"),
-        KEY: join(String(dir), "key.pem"),
-        NODE_USE_SYSTEM_CA: "0",
-        NODE_EXTRA_CA_CERTS: undefined,
-      },
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: undefined, NODE_EXTRA_CA_CERTS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ result: JSON.parse(stdout.trim()), stderr }).toEqual({
-      result: {
-        withSystem: { webSocket: "message:hello", tlsConnect: "authorized" },
-        withoutSystem: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
-        viaEnv: { webSocket: "message:hello", tlsConnect: "authorized" },
-        viaEnvUnset: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    const out = JSON.parse(stdout.trim());
+    if (out.skipped) return; // node's own tests skip here too
+    expect({ out, stderr }).toEqual({
+      out: {
+        envDecisionNotInheritedPastOwnEnv: false,
+        ownEnvWinsOverParentDecision: true,
+        parentFlagInherited: true,
+        parentFlagBeatsOwnEnv: true,
+        ownExecArgvDropsParentFlag: false,
       },
       stderr: "",
     });

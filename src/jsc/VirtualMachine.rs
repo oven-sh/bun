@@ -85,6 +85,10 @@ pub struct InitOptions {
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Explicit CA intent for this VM; `None` lets NODE_USE_SYSTEM_CA decide.
     pub use_system_ca: Option<bool>,
+    /// The part of `use_system_ca` that came from a flag (this thread's execArgv, or the parent's
+    /// when inheriting): what a child Worker inherits. Ignored on the main thread, whose
+    /// `use_system_ca` is flag-only already.
+    pub use_system_ca_flag: Option<bool>,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     /// When `Some`, [`init`] adopts
@@ -128,6 +132,7 @@ impl Default for InitOptions {
             smol: false,
             eval_mode: false,
             use_system_ca: None,
+            use_system_ca_flag: None,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
@@ -231,6 +236,8 @@ pub struct VirtualMachine {
     /// `None` when neither was given and NODE_USE_SYSTEM_CA decides. Node makes
     /// this an Environment option, so a Worker's execArgv can differ.
     pub use_system_ca: Option<bool>,
+    /// See `Options::use_system_ca_flag`; equals `use_system_ca` on the main thread.
+    pub use_system_ca_flag: Option<bool>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -299,9 +306,6 @@ pub struct VirtualMachine {
     /// The loop's idle counter when `loop_start_ns` was stamped: parking before the loop "began"
     /// (a watcher waiting for the first file, a debugger pause) is not loop idle time.
     pub loop_idle_base_ns: core::sync::atomic::AtomicU64,
-    /// `bun run` sets this while the entry graph loads: the ticks that resolve imports are not the
-    /// loop beginning (node stamps loopStart after the entry point's synchronous evaluation).
-    pub loop_start_deferred: core::sync::atomic::AtomicBool,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -2475,6 +2479,11 @@ impl VirtualMachine {
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             addr_of_mut!((*vm).use_system_ca).write(opts.use_system_ca);
+            addr_of_mut!((*vm).use_system_ca_flag).write(if opts.is_main_thread {
+                opts.use_system_ca
+            } else {
+                opts.use_system_ca_flag
+            });
             // Left at the
             // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
             // watcher event that races the very first entry-point load makes
@@ -2486,8 +2495,6 @@ impl VirtualMachine {
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).loop_start_ns).write(core::sync::atomic::AtomicU64::new(0));
             addr_of_mut!((*vm).loop_idle_base_ns).write(core::sync::atomic::AtomicU64::new(0));
-            addr_of_mut!((*vm).loop_start_deferred)
-                .write(core::sync::atomic::AtomicBool::new(false));
             let (origin_timer, origin_timestamp) = process_origin();
             addr_of_mut!((*vm).origin_timer).write(origin_timer);
             addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);
@@ -2666,9 +2673,7 @@ impl VirtualMachine {
     #[inline]
     pub fn mark_loop_started(&self) {
         use core::sync::atomic::Ordering;
-        if self.loop_start_ns.load(Ordering::Relaxed) != 0
-            || self.loop_start_deferred.load(Ordering::Relaxed)
-        {
+        if self.loop_start_ns.load(Ordering::Relaxed) != 0 {
             return;
         }
         // SAFETY: `event_loop` is this VM's own loop; the idle counter is read atomically.
@@ -2680,12 +2685,6 @@ impl VirtualMachine {
         let _ = self
             .loop_start_ns
             .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
-    }
-
-    /// `bun run`: hold the stamp back while the entry graph loads, then place it explicitly.
-    pub fn defer_loop_start(&self, deferred: bool) {
-        self.loop_start_deferred
-            .store(deferred, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Milliseconds since this thread's loop began polling; `None` before that.
@@ -3256,6 +3255,8 @@ pub struct Options {
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     /// Explicit CA intent; `None` lets NODE_USE_SYSTEM_CA decide.
     pub use_system_ca: Option<bool>,
+    /// See `Options::use_system_ca_flag`.
+    pub use_system_ca_flag: Option<bool>,
     pub is_main_thread: bool,
 }
 
@@ -4032,6 +4033,7 @@ impl VirtualMachine {
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
             use_system_ca: opts.use_system_ca,
+            use_system_ca_flag: opts.use_system_ca_flag,
             ..Default::default()
         };
         let vm = Self::init(init_opts)?;
@@ -4063,6 +4065,7 @@ impl VirtualMachine {
             eval_mode: opts.eval,
             is_main_thread: false,
             use_system_ca: opts.use_system_ca,
+            use_system_ca_flag: opts.use_system_ca_flag,
             // The global is created with the worker's messaging proxy, context id
             // and `mini` so the C++ ZigGlobalObject is born with its options wired.
             worker_ptr: worker.messaging_proxy(),
@@ -4114,6 +4117,7 @@ impl VirtualMachine {
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
             use_system_ca: opts.use_system_ca,
+            use_system_ca_flag: opts.use_system_ca_flag,
             ..Default::default()
         };
         // Note: shares the console / log / event-loop wiring with `init`;

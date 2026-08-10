@@ -61,9 +61,9 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// This thread's own `--use-system-ca` / `--no-use-system-ca`; `undefined` when it has neither, in
-/// which case node resolves the Environment option from that thread's own NODE_USE_SYSTEM_CA
-/// (a Worker's `env` option included), which tls.ts reads:
+/// This thread's resolved `--use-system-ca` decision (see `VirtualMachine::use_system_ca`);
+/// `undefined` when nothing decided it, in which case tls.ts falls back to NODE_USE_SYSTEM_CA the
+/// way the process default store does:
 /// https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L2207
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,

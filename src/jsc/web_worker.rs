@@ -684,6 +684,11 @@ impl WebWorker {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
             transform_options.allow_addons = Some(parent_allows && allow_addons);
         }
+        let use_system_ca_flag = if own_exec_argv.is_some() {
+            exec_argv.use_system_ca
+        } else {
+            parent.use_system_ca_flag
+        };
 
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
@@ -709,12 +714,11 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // node resolves a thread's CA option from its execArgv (inherited from the parent when it has
-        // none of its own), else from that thread's own env — the same source
-        // `tls.getCACertificates("default")` reports from, so both halves agree.
-        let env_use_system_ca = match self.env_use_system_ca {
-            -1 => map.get(b"NODE_USE_SYSTEM_CA") == Some(b"1".as_slice()),
-            v => v == 1,
+        // node_worker.cc: a Worker starts from the parent's resolved option, a custom `env` re-derives
+        // it from that env, and then the flags of its execArgv (the parent's when it has none) win.
+        let use_system_ca_base = match self.env_use_system_ca {
+            -1 => parent.use_system_ca,
+            v => Some(v == 1),
         };
 
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
@@ -741,14 +745,8 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
-                use_system_ca: Some(
-                    if own_exec_argv.is_some() {
-                        exec_argv.use_system_ca
-                    } else {
-                        parent.use_system_ca
-                    }
-                    .unwrap_or(env_use_system_ca),
-                ),
+                use_system_ca: use_system_ca_flag.or(use_system_ca_base),
+                use_system_ca_flag,
                 ..Default::default()
             },
         )?;

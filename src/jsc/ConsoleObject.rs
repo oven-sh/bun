@@ -4363,6 +4363,19 @@ pub mod formatter {
                     continue;
                 }
                 let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
+                if matches!(
+                    tag.cell,
+                    jsc::JSType::NumberObject
+                        | jsc::JSType::BooleanObject
+                        | jsc::JSType::StringObject
+                        | jsc::JSType::DerivedStringObject
+                ) {
+                    // Boxed primitives render as `[Number: 1]` etc., not as
+                    // the value their payload tag suggests.
+                    measurable = false;
+                    i += 1;
+                    continue;
+                }
                 let estimated: usize = match tag.tag {
                     TagPayload::String | TagPayload::StringPossiblyFormatted => {
                         // Rendered width (quotes and escapes included),
@@ -4386,7 +4399,20 @@ pub mod formatter {
                     TagPayload::Integer => {
                         bun_core::fmt::digit_count(i64::from(element.as_int32()))
                     }
-                    TagPayload::Double => bun_core::fmt::count_float(element.as_number()),
+                    TagPayload::Double => {
+                        // Same formatting as `print_double`; Rust's `{}` never
+                        // uses scientific notation, so it would misjudge 1e100.
+                        let num = element.as_number();
+                        if num.is_nan() {
+                            3
+                        } else if num.is_infinite() {
+                            8 + usize::from(num < 0.0)
+                        } else {
+                            let mut buf = [0u8; 124];
+                            bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num)
+                                .len()
+                        }
+                    }
                     TagPayload::Boolean => 4 + usize::from(!element.to_boolean()),
                     TagPayload::Null => 4,
                     TagPayload::Undefined => 9,

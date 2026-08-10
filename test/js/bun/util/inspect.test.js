@@ -992,6 +992,23 @@ describe("multiline array layout", () => {
     expect(Bun.inspect(escaped)).toBe("[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]");
   });
 
+  it("measures doubles with scientific notation at their rendered width", () => {
+    expect(Bun.inspect([1e100, 2e100, 3e100, 4e100, 5e100, 6e100, 7e100])).toBe(
+      "[ 1e+100, 2e+100, 3e+100, 4e+100, 5e+100, 6e+100, 7e+100 ]",
+    );
+  });
+
+  it("keeps the packed fallback for boxed primitives", () => {
+    expect(Bun.inspect(Array.from({ length: 12 }, (_, i) => new Number(i)))).toBe(
+      [
+        "[",
+        "  [Number: 0], [Number: 1], [Number: 2], [Number: 3], [Number: 4], [Number: 5], [Number: 6],",
+        "  [Number: 7], [Number: 8], [Number: 9], [Number: 10], [Number: 11]",
+        "]",
+      ].join("\n"),
+    );
+  });
+
   it("separates multiline objects after a primitive with },\\n{", () => {
     expect(Bun.inspect([1, { a: 1 }, { b: 2 }])).toBe(
       ["[ 1, {", "    a: 1,", "  },", "  {", "    b: 2,", "  }", "]"].join("\n"),

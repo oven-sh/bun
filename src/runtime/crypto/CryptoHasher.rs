@@ -49,6 +49,98 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
     }
 }
 
+/// Parsed form of the optional `digest()`/`hash()` output argument: either a
+/// caller-provided byte sink (`None` → allocate a fresh buffer), or an
+/// encoding name to stringify the digest with.
+enum DigestOutput {
+    Bytes(Option<ArrayBuffer>),
+    Encoding(Encoding),
+}
+
+fn parse_digest_output(
+    global: &JSGlobalObject,
+    output: Option<StringOrBuffer>,
+) -> JsResult<DigestOutput> {
+    let Some(string_or_buffer) = output else {
+        return Ok(DigestOutput::Bytes(None));
+    };
+    if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
+        return Ok(DigestOutput::Bytes(Some(buffer.buffer)));
+    }
+    // `inline else => |*str|` — every non-buffer arm yields a string-like
+    // `defer str.deinit()` — handled by Drop.
+    let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "Unknown encoding: {}",
+                    bstr::BStr::new(string_or_buffer.slice())
+                ),
+            )
+            .throw());
+    };
+    Ok(DigestOutput::Encoding(encoding))
+}
+
+/// Hand-expanded `wrapInstanceMethod` decode for the trailing
+/// `?Node.StringOrBuffer` parameter (instance-method arm:
+/// empty/undefined/null → None).
+fn digest_output_argument(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<Option<StringOrBuffer<'static>>> {
+    let [arg] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() == 0 || arg.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+    match StringOrBuffer::from_js(global, arg)? {
+        Some(v) => Ok(Some(v)),
+        None => Err(global.throw_invalid_arguments(format_args!("expected string or buffer"))),
+    }
+}
+
+/// Hand-expanded static-method decode for the trailing
+/// `(Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)` parameters
+/// (static-method arm: only `undefined` → None for the output).
+///
+/// Both arguments are coerced before either buffer is read: the output is
+/// decoded first, and its buffer view is re-read after the input coercion,
+/// since either coercion can run user code that detaches or resizes the other.
+fn hash_arguments(
+    global: &JSGlobalObject,
+    arguments: &[JSValue],
+) -> JsResult<(BlobOrStringOrBuffer, Option<StringOrBuffer<'static>>)> {
+    let Some(&input_arg) = arguments.first() else {
+        return Err(global.throw_invalid_arguments(format_args!("expected blob, string or buffer")));
+    };
+
+    let mut output: Option<StringOrBuffer> = match arguments.get(1) {
+        Some(&arg) => match StringOrBuffer::from_js(global, arg)? {
+            Some(v) => Some(v),
+            None => {
+                if arg.is_undefined() {
+                    None
+                } else {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("expected string or buffer"))
+                    );
+                }
+            }
+        },
+        None => None,
+    };
+
+    let Some(input) = BlobOrStringOrBuffer::from_js(global, input_arg)? else {
+        return Err(global.throw_invalid_arguments(format_args!("expected blob, string or buffer")));
+    };
+    if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+        buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+    }
+
+    Ok((input, output))
+}
+
 /// `union(enum)` → Rust enum with payload variants.
 /// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated; this is the `m_ctx` payload.
 ///
@@ -218,23 +310,7 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let [arg] = callframe.arguments_as_array::<1>();
-        // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
-            if !arg.is_empty_or_undefined_or_null() {
-                match StringOrBuffer::from_js(global, arg)? {
-                    Some(v) => Some(v),
-                    None => {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let output = digest_output_argument(global, callframe)?;
         Self::digest_(this, global, output)
     }
 
@@ -242,19 +318,9 @@ impl CryptoHasher {
     /// `(algorithm string, input, optional output buffer/encoding)`.
     pub(crate) fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        let mut i = 0usize;
-        let mut next_eat = || {
-            if i < arguments.len() {
-                let v = arguments[i];
-                i += 1;
-                Some(v)
-            } else {
-                None
-            }
-        };
 
         let algorithm_view = {
-            let Some(string_value) = next_eat() else {
+            let Some(&string_value) = arguments.first() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
             if !string_value.is_string_literal() {
@@ -264,41 +330,7 @@ impl CryptoHasher {
         };
         let algorithm = algorithm_view.to_utf8();
 
-        // Node.BlobOrStringOrBuffer
-        let Some(input_arg) = next_eat() else {
-            return Err(
-                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-            );
-        };
-
-        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let mut output: Option<StringOrBuffer> = match next_eat() {
-            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
-                Some(v) => Some(v),
-                None => {
-                    if arg.is_undefined() {
-                        None
-                    } else {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
-                    }
-                }
-            },
-            None => None,
-        };
-
-        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
-            Some(b) => b,
-            None => {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            }
-        };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-        }
-
+        let (input, output) = hash_arguments(global, &arguments[1..])?;
         Self::hash_(global, algorithm.slice(), &input, output)
     }
 
@@ -440,28 +472,11 @@ impl CryptoHasher {
         };
         // `defer evp.deinit()` — handled by Drop on `evp`.
 
-        if let Some(string_or_buffer) = output {
-            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, &mut evp, input, Some(ab));
+        match parse_digest_output(global, output)? {
+            DigestOutput::Bytes(ab) => Self::hash_to_bytes(global, &mut evp, input, ab),
+            DigestOutput::Encoding(encoding) => {
+                Self::hash_to_encoding(global, &mut evp, input, encoding)
             }
-            // `inline else => |*str|` — every non-buffer arm yields a string-like
-            // `defer str.deinit()` — handled by Drop.
-            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
-                return Err(global
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Unknown encoding: {}",
-                            bstr::BStr::new(string_or_buffer.slice())
-                        ),
-                    )
-                    .throw());
-            };
-
-            Self::hash_to_encoding(global, &mut evp, input, encoding)
-        } else {
-            Self::hash_to_bytes(global, &mut evp, input, None)
         }
     }
 
@@ -677,27 +692,9 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
-        if let Some(string_or_buffer) = output {
-            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return this.digest_to_bytes(global, Some(ab));
-            }
-            // `defer str.deinit()` — handled by Drop.
-            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
-                return Err(global
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Unknown encoding: {}",
-                            bstr::BStr::new(string_or_buffer.slice())
-                        ),
-                    )
-                    .throw());
-            };
-
-            this.digest_to_encoding(global, encoding)
-        } else {
-            this.digest_to_bytes(global, None)
+        match parse_digest_output(global, output)? {
+            DigestOutput::Bytes(ab) => this.digest_to_bytes(global, ab),
+            DigestOutput::Encoding(encoding) => this.digest_to_encoding(global, encoding),
         }
     }
 
@@ -904,30 +901,15 @@ impl CryptoHasherZig {
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
-        if let Some(string_or_buffer) = output {
-            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab));
+        match parse_digest_output(global, output)? {
+            DigestOutput::Bytes(ab) => Self::hash_by_name_inner_to_bytes::<A>(global, input, ab),
+            DigestOutput::Encoding(Encoding::Buffer) => {
+                Self::hash_by_name_inner_to_bytes::<A>(global, input, None)
             }
-            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
-                return Err(global
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Unknown encoding: {}",
-                            bstr::BStr::new(string_or_buffer.slice())
-                        ),
-                    )
-                    .throw());
-            };
-
-            if encoding == Encoding::Buffer {
-                return Self::hash_by_name_inner_to_bytes::<A>(global, input, None);
+            DigestOutput::Encoding(encoding) => {
+                Self::hash_by_name_inner_to_string::<A>(global, input, encoding)
             }
-
-            return Self::hash_by_name_inner_to_string::<A>(global, input, encoding);
         }
-        Self::hash_by_name_inner_to_bytes::<A>(global, input, None)
     }
 
     fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
@@ -1178,23 +1160,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let [arg] = callframe.arguments_as_array::<1>();
-        // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
-            if !arg.is_empty_or_undefined_or_null() {
-                match StringOrBuffer::from_js(global, arg)? {
-                    Some(v) => Some(v),
-                    None => {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let output = digest_output_argument(global, callframe)?;
         Self::digest_(this, global, output)
     }
 
@@ -1203,53 +1169,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
     /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub(crate) fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let mut i = 0usize;
-        let mut next_eat = || {
-            if i < arguments.len() {
-                let v = arguments[i];
-                i += 1;
-                Some(v)
-            } else {
-                None
-            }
-        };
-
-        // Node.BlobOrStringOrBuffer
-        let Some(input_arg) = next_eat() else {
-            return Err(
-                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-            );
-        };
-
-        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let mut output: Option<StringOrBuffer> = match next_eat() {
-            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
-                Some(v) => Some(v),
-                None => {
-                    if arg.is_undefined() {
-                        None
-                    } else {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
-                    }
-                }
-            },
-            None => None,
-        };
-
-        let input = match BlobOrStringOrBuffer::from_js(global, input_arg)? {
-            Some(b) => b,
-            None => {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            }
-        };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-        }
-
+        let (input, output) = hash_arguments(global, callframe.arguments())?;
         Self::hash_(global, &input, output)
     }
 
@@ -1285,29 +1205,37 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
 
+    /// Validate the optional caller-provided output buffer and return the
+    /// destination digest array (falling back to `fallback`).
+    fn output_digest<'a>(
+        global: &JSGlobalObject,
+        output: Option<&ArrayBuffer>,
+        fallback: &'a mut H::Digest,
+    ) -> JsResult<&'a mut H::Digest> {
+        let Some(output_buf) = output else {
+            return Ok(fallback);
+        };
+        if output_buf.byte_slice().len() < H::DIGEST {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "TypedArray must be at least {} bytes",
+                H::DIGEST
+            )));
+        }
+        // SAFETY: `byte_slice().len() >= H::DIGEST` checked above;
+        // `H::Digest = [u8; H::DIGEST]`; `output_buf.ptr` is the JSC-owned
+        // writable backing store. Build the `&mut` directly from the raw
+        // `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
+        Ok(unsafe { &mut *output_buf.ptr.cast::<H::Digest>() })
+    }
+
     fn hash_to_bytes(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
-            if bytes_len < H::DIGEST {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "TypedArray must be at least {} bytes",
-                    H::DIGEST
-                )));
-            }
-            // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
-        } else {
-            output_digest_slice = &mut output_digest_buf;
-        }
+        let output_digest_slice =
+            Self::output_digest(global, output.as_ref(), &mut output_digest_buf)?;
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
         // process) or null.
@@ -1333,26 +1261,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             )));
         }
 
-        if let Some(string_or_buffer) = output {
-            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, input, Some(ab));
-            }
-            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
-                return Err(global
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Unknown encoding: {}",
-                            bstr::BStr::new(string_or_buffer.slice())
-                        ),
-                    )
-                    .throw());
-            };
-
-            Self::hash_to_encoding(global, input, encoding)
-        } else {
-            Self::hash_to_bytes(global, input, None)
+        match parse_digest_output(global, output)? {
+            DigestOutput::Bytes(ab) => Self::hash_to_bytes(global, input, ab),
+            DigestOutput::Encoding(encoding) => Self::hash_to_encoding(global, input, encoding),
         }
     }
 
@@ -1423,26 +1334,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 )
                 .throw());
         }
-        if let Some(string_or_buffer) = output {
-            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
-                return this.digest_to_bytes(global, Some(ab));
-            }
-            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
-                return Err(global
-                    .err(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Unknown encoding: {}",
-                            bstr::BStr::new(string_or_buffer.slice())
-                        ),
-                    )
-                    .throw());
-            };
-
-            this.digest_to_encoding(global, encoding)
-        } else {
-            this.digest_to_bytes(global, None)
+        match parse_digest_output(global, output)? {
+            DigestOutput::Bytes(ab) => this.digest_to_bytes(global, ab),
+            DigestOutput::Encoding(encoding) => this.digest_to_encoding(global, encoding),
         }
     }
 
@@ -1452,23 +1346,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
-            if bytes_len < H::DIGEST {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "TypedArray must be at least {} bytes",
-                    H::DIGEST
-                )));
-            }
-            // SAFETY: `bytes_len >= H::DIGEST`; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
-        } else {
-            output_digest_slice = &mut output_digest_buf;
-        }
+        let output_digest_slice =
+            Self::output_digest(global, output.as_ref(), &mut output_digest_buf)?;
 
         self.hashing.with_mut(|h| h.final_(output_digest_slice));
         self.digested.set(true);
@@ -1476,7 +1355,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(output_buf) = output {
             Ok(output_buf.value)
         } else {
-            ArrayBuffer::create_uint8_array(global, output_digest_buf.as_ref())
+            ArrayBuffer::create_uint8_array(global, output_digest_slice.as_ref())
         }
     }
 

@@ -728,6 +728,35 @@ fn js_password_object_hash_sync(
 
 // ─── verify host functions ────────────────────────────────────────────────
 
+/// Parse the optional third `verify(password, hash, algorithm)` argument.
+fn parse_verify_algorithm(
+    global_object: &JSGlobalObject,
+    arguments: &[JSValue],
+) -> JsResult<Option<Algorithm>> {
+    let Some(&arg) = arguments.get(2) else {
+        return Ok(None);
+    };
+
+    if arg.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+
+    if !arg.is_string() {
+        return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
+    }
+
+    let algorithm_string = arg.to_js_string_view(global_object)?;
+
+    let Some(a) = algorithm_from_string(&algorithm_string) else {
+        return Err(global_object.throw_invalid_argument_type(
+            "verify",
+            "algorithm",
+            UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+        ));
+    };
+    Ok(Some(a))
+}
+
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
 fn js_password_object_verify(
@@ -740,24 +769,7 @@ fn js_password_object_verify(
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
-
-        let Some(a) = algorithm_from_string(&algorithm_string) else {
-            return Err(global_object.throw_invalid_argument_type(
-                "verify",
-                "algorithm",
-                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-            ));
-        };
-        algorithm = Some(a);
-    }
+    let algorithm = parse_verify_algorithm(global_object, arguments)?;
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
     //
@@ -815,24 +827,7 @@ fn js_password_object_verify_sync(
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
-
-        let Some(a) = algorithm_from_string(&algorithm_string) else {
-            return Err(global_object.throw_invalid_argument_type(
-                "verify",
-                "algorithm",
-                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-            ));
-        };
-        algorithm = Some(a);
-    }
+    let algorithm = parse_verify_algorithm(global_object, arguments)?;
 
     let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(

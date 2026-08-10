@@ -713,7 +713,7 @@ pub(crate) fn lookup(
         return lib_c::lookup(this, query, global_this);
     }
 
-    let key = get_addr_info_request::PendingCacheKey::init(query);
+    let key = PendingCacheKey::init_query(query);
     let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
     if let CacheHit::Inflight(inflight) = cache {

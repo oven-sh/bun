@@ -1208,9 +1208,9 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    if (!globalObject->m_bunObject.isInitialized())
+        return; // never touched during the build: nothing was reified, and making it now would only dirty pages
     JSObject* bunObject = globalObject->bunObject();
-    if (!bunObject)
-        return;
     struct LaunchDerivedProp {
         ASCIILiteral name;
         JSValue (*make)(VM&, JSObject*);

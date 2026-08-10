@@ -1948,6 +1948,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         let vm = unsafe { &mut *vm_ptr };
         // SAFETY: `vm.jsc_vm` is the snapshot's live JSC VM, now owned by this thread.
         unsafe { Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm.jsc_vm) };
+        bun_core::StackCheck::configure_thread(); // the runtime's own recursion guard is a thread-local: empty here until set, i.e. no guard at all
     }
     {
         // The resolver/node:fs "top level dir" is the builder's cwd; re-read where this process runs.

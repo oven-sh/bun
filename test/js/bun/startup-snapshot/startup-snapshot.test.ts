@@ -212,6 +212,26 @@ snapshotTest(
   },
 );
 
+snapshotTest("main() registered twice is rejected the same way whether or not a snapshot is being taken", async () => {
+  using dir = tempDir("bun-snapshot-main-twice", {});
+  const fixture = join(import.meta.dir, "main-twice-fixture.js");
+  const plain = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, PLAIN: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(plain.stdout.toString()).toBe("[js] first main ran\n[js] second main rejected\n"); // used to run both
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).toBe("[js] second main rejected\n"); // kept aside, and the second one rejected rather than replacing it
+});
+
 snapshotTest(
   "main() throwing in a restored process exits 1 with the error printed, exactly like a normal boot",
   async () => {
@@ -275,6 +295,43 @@ snapshotTest("an unhandled rejection in a restored process exits 1, exactly like
   expect(err).toContain("unhandled after restore");
   expect(code).toBe(plain.exitCode); // 1; a restored process used to exit 0 here
 });
+
+snapshotTest(
+  "the runtime's recursion guard is armed in a restored process: deep input is an error, not a crash",
+  async () => {
+    using dir = tempDir("bun-snapshot-deep", {});
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "deep-nesting-fixture.js");
+    const plain = Bun.spawnSync({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, PLAIN: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const plainOut = plain.stdout.toString();
+    expect(plainOut).toContain("[js] error:"); // the guard turns it into an error in a normal boot
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true);
+    }
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out).toBe(plainOut); // used to die of a real stack overflow here: the guard's per-thread state was never set up
+    expect(code).toBe(0);
+  },
+);
 
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});

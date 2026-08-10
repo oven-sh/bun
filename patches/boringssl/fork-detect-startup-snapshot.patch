@@ -1,6 +1,6 @@
 --- a/crypto/rand/fork_detect.cc
 +++ b/crypto/rand/fork_detect.cc
-@@ -171,6 +171,16 @@
+@@ -171,6 +171,18 @@
    return current_generation;
  }
  
@@ -9,28 +9,32 @@
 +// since the once flag above already reads as done.
 +extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {
 +  if (g_fork_detect_addr == nullptr) return;  // never initialized (this process's once will), or WIPEONFORK was unavailable there (stays in the always-reseed fallback)
++  uint64_t generation_in_builder = g_fork_generation;
 +  g_fork_detect_addr = nullptr;
 +  g_fork_generation = 0;
 +  init_fork_detect();
++  g_fork_generation = generation_in_builder + 1;  // a restore duplicates the address space like a fork: anything cached against the builder's value must reseed
 +}
 +
  void bssl::CRYPTO_fork_detect_force_madv_wipeonfork_for_testing(int on) {
    g_force_madv_wipeonfork = 1;
    g_force_madv_wipeonfork_enabled = on;
-@@ -197,6 +207,12 @@
+@@ -197,6 +209,14 @@
    g_atfork_fork_generation = 1;
  }
  
 +// Bun: see the WIPEONFORK variant; here the build process's atfork registration does not exist in this process.
 +extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {
 +  if (g_atfork_fork_generation == 0) return;  // as above: nothing to redo if the build process never initialized it
++  uint64_t generation_in_builder = g_atfork_fork_generation;
 +  init_pthread_fork_detection();
++  g_atfork_fork_generation = generation_in_builder + 1;  // as above
 +}
 +
  uint64_t bssl::CRYPTO_get_fork_generation() {
    CRYPTO_once(&g_pthread_fork_detection_once, init_pthread_fork_detection);
  
-@@ -210,6 +226,7 @@
+@@ -210,6 +230,7 @@
  // assume address space duplication is not a concern and adding entropy to
  // every RAND_bytes call is not needed.
  uint64_t bssl::CRYPTO_get_fork_generation() { return 0xc0ffee; }
@@ -38,7 +42,7 @@
  
  #else
  
-@@ -218,5 +235,6 @@
+@@ -218,5 +239,6 @@
  // space duplication could have occurred on any call entropy must be added to
  // every RAND_bytes call.
  uint64_t bssl::CRYPTO_get_fork_generation() { return 0; }

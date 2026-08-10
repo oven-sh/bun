@@ -119,12 +119,18 @@ fn main(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             "Bun.startupSnapshot.main() expects a function"
         )));
     }
+    let slot = &mut VirtualMachine::get()
+        .as_mut()
+        .rare_data()
+        .startup_snapshot_main;
+    if slot.has() {
+        // The snapshot run could only keep one; the ordinary launch agrees rather than quietly behaving differently.
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Bun.startupSnapshot.main() was already called: a program has one main function"
+        )));
+    }
+    slot.set(global, callback);
     if bun_core::startup_snapshot::building() {
-        VirtualMachine::get()
-            .as_mut()
-            .rare_data()
-            .startup_snapshot_main
-            .set(global, callback);
         return Ok(JSValue::UNDEFINED);
     }
     callback.call(global, JSValue::UNDEFINED, &[])

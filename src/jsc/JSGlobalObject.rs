@@ -1369,19 +1369,9 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
+    /// [`crate::task::report_error_or_terminate`] where the caller has no loop to stand down.
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        crate::mark_binding();
-        let taken = self.take_exception(proof);
-        // A terminated worker's pending exception is not an error to report.
-        if taken.is_termination_exception() {
-            return;
-        }
-        let exc = taken
-            .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
-            .expect("exception value must be an Exception cell");
-        // `as_exception` returned a non-null cell pointer rooted on the VM;
-        // `Exception` is an opaque ZST handle — safe deref (panics on null).
-        let _ = report_uncaught_exception(self, crate::Exception::opaque_ref(exc));
+        let _ = crate::task::report_error_or_terminate(self, proof);
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {

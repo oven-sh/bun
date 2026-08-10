@@ -5165,9 +5165,13 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-// The one crossing from the loop-level stop into the exception currency: loop code that learned of a
-// stop from the gate (a wait, a completion) and must hand a JsError to a caller inside a JS operation
-// throws the VM's TerminationException for real, as VMTraps does on trap. Always leaves it pending.
+// The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
+// host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
+// TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
+// pending. The exception object is materialized here (a main-thread VM stopped by SIGINT/forbidExecution
+// never had one), and the request bit set (a gate closed by teardown rather than terminate()).
+// A nested wait cannot run under a DeferTermination scope: JSC re-throws a deferred termination only at
+// that scope's end, so nothing could be pending here for the caller to unwind with.
 [[ZIG_EXPORT(check_slow)]]
 void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
 {
@@ -5175,6 +5179,8 @@ void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (vm.hasPendingTerminationException())
         return;
+    ASSERT_WITH_MESSAGE(!vm.traps().isDeferringTermination(), "a nested wait learned of a stop inside a DeferTermination scope; nothing can be thrown here");
+    vm.ensureTerminationException();
     if (!vm.hasTerminationRequest())
         vm.setHasTerminationRequest();
     scope.release();

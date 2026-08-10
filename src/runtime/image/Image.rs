@@ -1309,7 +1309,7 @@ impl<'a> BlobReadChain<'a> {
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
@@ -1342,48 +1342,35 @@ impl<'a> BlobReadChain<'a> {
                     drop(bytes);
                 }
                 let Some(this_value) = image.this_ref.get().try_get() else {
-                    let _ = outer.reject(
+                    drop(deliver);
+                    return outer.reject(
                         global,
                         Ok(global.create_error_instance(format_args!(
                             "Image: collected before read completed"
                         ))),
                     );
-                    drop(deliver);
-                    return;
                 };
-                // Source is now `.owned`; this re-entry takes the regular path.
-                let inner = match image.schedule(global, this_value, kind, deliver) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // `deliver` was moved into `schedule()`; on
-                        // error it has already been dropped there.
-                        let _ = outer.reject(
-                            global,
-                            Ok(global.create_error_instance(format_args!(
-                                "Image: pipeline schedule failed"
-                            ))),
-                        );
-                        return;
-                    }
-                };
-                let _ = outer.resolve(global, inner);
+                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
+                // `deliver` was already dropped there and the pending exception is the rejection.
+                let inner = image.schedule(global, this_value, kind, deliver);
+                outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, Ok(e.to_error_instance(global)));
+                outer.reject(global, Ok(e.to_error_instance(global)))
             }
         }
     }
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    fn on_read_bytes(&mut self, result: ReadBytesResult) {
+    fn on_read_bytes(&mut self, result: ReadBytesResult) -> JsResult<()> {
         // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
         // and free the allocation.
         let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
-        boxed.on_read_bytes_impl(result);
+        boxed.on_read_bytes_impl(result)
     }
 }
 

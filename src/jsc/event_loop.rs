@@ -187,18 +187,13 @@ pub struct Stopped;
 impl Stopped {
     /// Cross into a `JsResult` function: throw the VM's TerminationException for real (what `VMTraps`
     /// does on trap), so `Err(Thrown)` keeps meaning "an exception is pending" for every caller above.
+    /// For a nested wait/drain *inside a host function* only; loop-level code propagates `Stopped`.
     #[cold]
     pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
         match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
             Err(err) => err,
             Ok(()) => unreachable!("throwTerminationException returned without an exception pending"),
         }
-    }
-}
-
-impl From<Stopped> for crate::CrateError {
-    fn from(_: Stopped) -> Self {
-        crate::CrateError::Stopped
     }
 }
 
@@ -985,8 +980,8 @@ impl EventLoop {
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
-    /// terminated mid-wait). Nothing is thrown for it: a caller inside a `JsResult`
-    /// function unwinds (`?`) and its boundary finds the gate closed.
+    /// terminated mid-wait). Nothing is thrown for it; a caller inside a `JsResult`
+    /// function crosses explicitly with [`jsc::Stopped::throw`].
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {

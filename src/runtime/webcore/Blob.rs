@@ -99,7 +99,8 @@ pub enum ReadBytesResult {
 /// Handler trait for `read_bytes_to_handler` — the body only requires
 /// `on_read_bytes`.
 pub trait ReadBytesHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult);
+    /// Runs on the JS thread and may settle promises: an exception it leaves pending is the `Err`.
+    fn on_read_bytes(&mut self, result: ReadBytesResult) -> JsResult<()>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -521,7 +522,7 @@ impl BlobExt for Blob {
         if self.needs_to_read_file() {
             struct Adapter<H>(core::marker::PhantomData<H>);
             impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
-                fn call(c: *mut H, r: read_file::ReadFileResultType) {
+                fn call(c: *mut H, r: read_file::ReadFileResultType) -> JsResult<()> {
                     let result = match r {
                         read_file::ReadFileResultType::Result(b) => {
                             // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
@@ -533,7 +534,7 @@ impl BlobExt for Blob {
                     };
                     // SAFETY: `c` is the `*mut H` passed by the caller and kept alive
                     // across the async read by contract; exclusive borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *c }, result);
+                    H::on_read_bytes(unsafe { &mut *c }, result)
                 }
                 fn cancel(c: *mut H) {
                     // The caller owns `H` and waits for exactly one `on_read_bytes`.
@@ -546,8 +547,13 @@ impl BlobExt for Blob {
                         syscall: BunString::static_("read").into(),
                         ..Default::default()
                     };
+                    // The read's thread stopped and this runs at teardown with no loop to return to: an
+                    // exception the handler leaves pending is reported (a termination stands down).
                     // SAFETY: as for `call`.
-                    H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)));
+                    if let Err(err) = H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err))) {
+                        let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+                        let _ = bun_jsc::task::report_error_or_terminate(global, err);
+                    }
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -560,14 +566,14 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive,
             }
             impl<H: ReadBytesHandler> Task<H> {
-                fn done(mut self: Box<Self>, r: ReadBytesResult) {
+                fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
                     self.poll.unref(bun_io::js_vm_ctx());
                     self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
                     // SAFETY: caller-owned ctx, kept alive by contract; exclusive
                     // borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *ctx }, r);
+                    H::on_read_bytes(unsafe { &mut *ctx }, r)
                 }
                 fn cb(
                     result: crate::webcore::__s3_client::S3DownloadResult,
@@ -578,7 +584,7 @@ impl BlobExt for Blob {
                     match result {
                         // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
                         crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                            t.done(ReadBytesResult::Ok(response.body.list));
+                            t.done(ReadBytesResult::Ok(response.body.list))
                         }
                         // S3Error has its own JS-error builder; flatten to a
                         // SystemError so the callback has one shape to handle.
@@ -597,10 +603,9 @@ impl BlobExt for Blob {
                                 syscall: BunString::static_("fetch").into(),
                                 ..Default::default()
                             };
-                            t.done(ReadBytesResult::Err(Box::new(err)));
+                            t.done(ReadBytesResult::Err(Box::new(err)))
                         }
                     }
-                    Ok(())
                 }
             }
             let mut t = Box::new(Task::<H> {
@@ -662,8 +667,7 @@ impl BlobExt for Blob {
         let view = self.shared_view();
         let owned = view.to_vec();
         // SAFETY: caller-owned ctx.
-        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
-        Ok(())
+        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned))
     }
 
     /// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
@@ -3811,7 +3815,7 @@ pub(crate) enum FormDataEntry<'a> {
 /// a trait impl so `run` can be taken as a
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
 pub trait InternalReadFileFn<C> {
-    fn call(ctx: *mut C, bytes: read_file::ReadFileResultType);
+    fn call(ctx: *mut C, bytes: read_file::ReadFileResultType) -> JsResult<()>;
     /// The read will never complete (its VM stopped first): do with `ctx` what its owner needs.
     fn cancel(ctx: *mut C);
 }
@@ -3827,8 +3831,8 @@ where
         fn run<C, F: InternalReadFileFn<C>>(
             ctx: *mut c_void,
             bytes: read_file::ReadFileResultType,
-        ) {
-            F::call(ctx.cast::<C>(), bytes);
+        ) -> JsResult<()> {
+            F::call(ctx.cast::<C>(), bytes)
         }
         fn cancel<C, F: InternalReadFileFn<C>>(ctx: *mut c_void) {
             F::cancel(ctx.cast::<C>());

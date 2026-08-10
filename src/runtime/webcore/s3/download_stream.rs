@@ -1,3 +1,4 @@
+use bun_jsc::JsResult;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,7 +25,8 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
-    pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
+    pub callback:
+        fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void) -> JsResult<()>,
     pub(crate) has_schedule_callback: AtomicBool,
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) signals: Signals,
@@ -50,7 +52,7 @@ impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
     /// As `S3HttpSimpleTask`: the completion frees the context; run it.
     unsafe fn release_unrun(this: *mut Self) {
-        S3HttpDownloadStreamingTask::on_response(this);
+        let _ = S3HttpDownloadStreamingTask::on_response(this);
     }
 }
 
@@ -67,7 +69,7 @@ impl S3HttpDownloadStreamingTask {
         self.state.store(state.0, Ordering::Relaxed);
     }
 
-    fn report_progress(&mut self, state: State) {
+    fn report_progress(&mut self, state: State) -> JsResult<()> {
         let has_more = state.has_more();
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
@@ -83,7 +85,7 @@ impl S3HttpDownloadStreamingTask {
 
         if failed {
             if has_more {
-                return;
+                return Ok(());
             }
             let empty = MutableString::default();
             let mut code: &[u8] = b"UnknownError";
@@ -102,13 +104,12 @@ impl S3HttpDownloadStreamingTask {
                     message = error.message.as_deref().unwrap_or(message);
                 }
             }
-            (self.callback)(
+            return (self.callback)(
                 &empty,
                 false,
                 Some(S3Error { code, message }),
                 self.callback_context.as_ptr().cast(),
             );
-            return;
         }
 
         // dont report empty chunks if we have more data to read
@@ -116,14 +117,16 @@ impl S3HttpDownloadStreamingTask {
             // `core::mem::take` transfers ownership of the buffer, leaving an
             // empty MutableString behind.
             let chunk = core::mem::take(&mut self.reported_response_buffer);
-            (self.callback)(
+            let result = (self.callback)(
                 &chunk,
                 has_more,
                 None,
                 self.callback_context.as_ptr().cast(),
             );
             self.reported_response_buffer.reset();
+            return result;
         }
+        Ok(())
     }
 
     /// this is the task callback from the last task result and is always in the main thread
@@ -132,7 +135,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
     /// exclusive main-thread access for the duration of this call. When the loaded state's
     /// `has_more` is false this call reclaims and drops the allocation exactly once.
-    pub(crate) fn on_response(this: *mut Self) {
+    pub(crate) fn on_response(this: *mut Self) -> JsResult<()> {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         // Each access below is scoped so no borrow spans `report_progress` (which invokes
@@ -167,7 +170,7 @@ impl S3HttpDownloadStreamingTask {
             };
         }
         // SAFETY: as above; exclusive borrow scoped to the call.
-        unsafe { (*this).report_progress(state) };
+        unsafe { (*this).report_progress(state) }
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we

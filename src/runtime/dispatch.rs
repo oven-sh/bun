@@ -367,7 +367,8 @@ pub(crate) fn run_task(
                 .report_error_or_terminate(global)?;
         }
         task_tag::S3HttpDownloadStreamingTask => {
-            S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
+            S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask))
+                .report_error_or_terminate(global)?;
         }
 
         // ── napi ─────────────────────────────────────────────────────────

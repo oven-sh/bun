@@ -596,7 +596,6 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
     }
   }
   switch (type.kind) {
-    case "nativeEnum":
     case "stringEnum": {
       return {
         params: `[](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
@@ -717,7 +716,7 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
 }
 
 function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
-  if (type.kind === "nativeEnum" || type.kind === "stringEnum") {
+  if (type.kind === "stringEnum") {
     emitCppEnumHeader(w, type);
     return;
   }
@@ -738,7 +737,7 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
 }
 
 function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
-  assert(type.kind === "nativeEnum" || type.kind === "stringEnum");
+  assert(type.kind === "stringEnum");
 
   assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
@@ -755,7 +754,7 @@ function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
 
 // This function assumes in the WebCore namespace
 function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
-  assert(type.kind === "nativeEnum" || type.kind === "stringEnum");
+  assert(type.kind === "stringEnum");
   assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
 
@@ -1110,7 +1109,6 @@ for (const type of typeHashToReachableType.values()) {
       emitConvertDictionaryFunction(type);
       break;
     case "stringEnum":
-    case "nativeEnum":
       needsWebCore = true;
       break;
   }
@@ -1210,7 +1208,6 @@ if (needsWebCore) {
   cpp.line();
   for (const [type, reachableType] of typeHashToReachableType) {
     switch (reachableType.kind) {
-      case "nativeEnum":
       case "stringEnum":
         emitConvertEnumFunction(cpp, reachableType);
         break;
@@ -1253,7 +1250,6 @@ for (const [filename, { functions, typedefs }] of files) {
     emitCppStructHeader(header, td.type);
 
     switch (td.type.kind) {
-      case "nativeEnum":
       case "stringEnum":
       case "dictionary":
         needsWebCoreNamespace = true;
@@ -1275,7 +1271,6 @@ for (const [filename, { functions, typedefs }] of files) {
     header.line();
     for (const td of typedefs) {
       switch (td.type.kind) {
-        case "nativeEnum":
         case "stringEnum":
           headerIncludes.add("JSDOMConvertEnumeration.h");
           const basename = td.type.name();

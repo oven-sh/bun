@@ -565,8 +565,8 @@ Warning: options change between releases of Bun and WebKit without notice. This 
 /// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// Unwind to the native/JS boundary: a JavaScript exception is pending in the VM's exception scope
-    /// (a termination is just such an exception), or script is no longer allowed on this VM at all.
+    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
+    /// exception): unwind to the native/JS boundary.
     Thrown,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory,
@@ -637,9 +637,7 @@ pub trait JsResultExt {
 impl<T> JsResultExt for JsResult<T> {
     #[inline]
     fn report_unhandled(self, global: &JSGlobalObject) {
-        if let Err(e) = self {
-            global.report_uncaught_exception_from_error(e);
-        }
+        let _ = self.report_error_or_terminate(global);
     }
     fn report_error_or_terminate(self, global: &JSGlobalObject) -> Result<(), Stopped> {
         match self {
@@ -687,9 +685,6 @@ impl From<JsError> for crate::CrateError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
-            // A worker shutdown has no distinct error tag of its
-            // own, so collapse into `JSError` like every other thrown JS
-            // exception.
             JsError::Thrown => crate::CrateError::JSError,
         }
     }

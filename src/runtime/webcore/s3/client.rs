@@ -1150,9 +1150,9 @@ fn download_stream(
         has_more: bool,
         err: Option<Error::S3Error>,
         ctx: *mut c_void,
-    ),
+    ) -> JsResult<()>,
     callback_context: *mut c_void,
-) -> *mut S3HttpDownloadStreamingTask {
+) -> JsResult<*mut S3HttpDownloadStreamingTask> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -1199,8 +1199,8 @@ fn download_stream(
                     message: error_code_and_message.message,
                 }),
                 callback_context,
-            );
-            return core::ptr::null_mut();
+            )?;
+            return Ok(core::ptr::null_mut());
         }
     };
 
@@ -1318,7 +1318,7 @@ fn download_stream(
     crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(task_ptr).expect("task"))
         .register();
     bun_http::HTTPThread::schedule(batch);
-    task_ptr
+    Ok(task_ptr)
 }
 
 pub struct S3DownloadStreamWrapper {
@@ -1417,11 +1417,10 @@ impl S3DownloadStreamWrapper {
         has_more: bool,
         err: Option<Error::S3Error>,
         opaque_self: *mut c_void,
-    ) {
+    ) -> JsResult<()> {
         // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
         let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-        // Only `Stopped` escapes, and the loop observes that on the next tick.
-        let _ = Self::callback(chunk, has_more, err, self_);
+        Self::callback(chunk, has_more, err, self_)
     }
 }
 
@@ -1501,7 +1500,7 @@ pub(crate) fn readable_stream(
         request_payer,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
-    );
+    )?;
     if !task.is_null() {
         // SAFETY: on the success path `download_stream` only schedules work onto the HTTP
         // thread; the wrapper is freed via `opaque_callback` on this (main) thread, which

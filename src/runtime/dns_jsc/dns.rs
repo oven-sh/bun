@@ -1895,7 +1895,7 @@ impl DNSLookup {
 pub(crate) enum Outcome {
     Value(JSValue),
     Error(JSValue),
-    Terminated,
+    Stopped,
 }
 
 impl Outcome {
@@ -1905,11 +1905,14 @@ impl Outcome {
             Err(bun_jsc::JsError::OutOfMemory) => {
                 Outcome::Error(global.create_out_of_memory_error())
             }
-            Err(bun_jsc::JsError::Thrown) => match global.try_take_exception() {
-                Some(e) if e.is_termination_exception() => Outcome::Terminated,
-                Some(e) => Outcome::Error(e.to_error().unwrap_or(e)),
-                None => Outcome::Terminated,
-            },
+            Err(bun_jsc::JsError::Thrown) => {
+                let e = global.take_exception(bun_jsc::JsError::Thrown);
+                if e.is_termination_exception() {
+                    Outcome::Stopped
+                } else {
+                    Outcome::Error(e.to_error().unwrap_or(e))
+                }
+            }
         }
     }
 
@@ -1926,7 +1929,7 @@ impl Outcome {
         let _ = match self {
             Outcome::Value(v) => promise.resolve(global, v),
             Outcome::Error(e) => promise.reject(global, Ok(e)),
-            Outcome::Terminated => return,
+            Outcome::Stopped => return,
         };
     }
 }

@@ -1731,6 +1731,10 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+                // A terminated worker runs no onEnd callbacks: keep its termination pending and unwind.
+                Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
+                    return Err(JsError::Thrown);
+                }
                 Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
             };
 

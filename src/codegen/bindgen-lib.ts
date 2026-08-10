@@ -285,14 +285,6 @@ export namespace t {
   > {
     return new TypeImpl("stringEnum", values.sort());
   }
-
-  /**
-   * Equivalent to `stringEnum`, but using an enum sourced from the given
-   * file. Use this to get an enum type that can have functions added.
-   */
-  export function nativeEnum(file: string, impl: string): Type<string, "nativeEnum"> {
-    return new TypeImpl("nativeEnum", { file, impl });
-  }
 }
 
 interface FuncOptionsWithVariant extends FuncMetadata {

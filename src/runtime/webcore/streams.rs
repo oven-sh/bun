@@ -1899,10 +1899,14 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             (*this).aborted = true;
         }
 
-        // Only Stopped escapes flush_promise; there is no JS caller to
-        // surface it to from a socket-close callback, so teardown continues.
+        // A socket-close callback returns void: an exception left pending by resolving the flush
+        // promise is reported here (a termination just stands down) and teardown continues.
         // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
-        let _ = unsafe { (*this).flush_promise() };
+        unsafe {
+            if let Err(err) = (*this).flush_promise() {
+                let _ = bun_jsc::task::report_error_or_terminate((*this).global_this(), err);
+            }
+        }
         // SAFETY: as above.
         unsafe { (*this).finalize() };
 

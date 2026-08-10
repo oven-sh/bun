@@ -275,7 +275,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // `socket/mod.rs` (bridges to inherent methods).
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
-/// `SocketHandler<SSL>` namespace type; `into_js_result()` lifts the three return shapes (see
+/// `SocketHandler<SSL>` namespace type; `into_js_result()` lifts both return shapes (see
 /// [`IntoJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
 /// (`NsHandler: VHandler`) folds the result at the entry.
 ///

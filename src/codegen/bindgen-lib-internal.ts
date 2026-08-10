@@ -52,10 +52,6 @@ interface TypeDataDefs {
     value: TypeImpl;
     repr: "kv-slices";
   };
-  nativeEnum: {
-    file: string;
-    impl: string;
-  };
   stringEnum: string[];
   oneOf: TypeImpl[];
   dictionary: DictionaryField[];
@@ -129,9 +125,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "record":
         h += this.data.value.hash();
         break;
-      case "nativeEnum":
-        h += `${this.data.file}:${this.data.impl}`;
-        break;
       case "stringEnum":
         h += this.data.join(",");
         break;
@@ -159,7 +152,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "oneOf":
       case "dictionary":
       case "stringEnum":
-      case "nativeEnum":
         return true;
       default:
         return false;
@@ -198,8 +190,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         return "*JSGlobalObject";
       case "stringEnum":
         return cAbiTypeForEnum(this.data.length);
-      case "nativeEnum":
-        throw new Error("TODO");
       case "undefined":
         return "u0";
       case "oneOf": // `union(enum)`
@@ -273,7 +263,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const name = this.name();
     const cAbiType = this.canDirectlyMapToCAbi();
     const namespace = typeHashToNamespace.get(this.hash());
-    if (cAbiType && typeof cAbiType === "string" && this.kind !== "nativeEnum" && this.kind !== "stringEnum") {
+    if (cAbiType && typeof cAbiType === "string" && this.kind !== "stringEnum") {
       return cAbiTypeName(cAbiType);
     }
     return namespace ? `${namespace}::${cap(name)}` : name;

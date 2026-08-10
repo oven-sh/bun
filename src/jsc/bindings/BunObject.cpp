@@ -1225,6 +1225,7 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
         { "stdin"_s, Bun::BunObject_lazyPropCb_wrap_stdin },
         { "stdout"_s, Bun::BunObject_lazyPropCb_wrap_stdout },
         { "stderr"_s, Bun::BunObject_lazyPropCb_wrap_stderr },
+        { "redis"_s, BunObject_lazyPropCb_wrap_valkey }, // the default client is built from REDIS_URL, credentials included
     };
     for (auto& p : props) {
         JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);

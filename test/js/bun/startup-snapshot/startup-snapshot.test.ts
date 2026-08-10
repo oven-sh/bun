@@ -398,7 +398,7 @@ snapshotTest(
     const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(out).toContain("env=launch/launch sameEnv=true"); // a captured reference sees the launch's variables
     expect(out).toContain("s3key=LAUNCHKEY sameS3=false"); // used to sign with BUILDKEY: the reified client was the builder's
-    expect(out).toContain("sameStdout=false");
+    expect(out).toContain("sameStdout=false sameRedis=false"); // both remade for the launch
     expect(code).toBe(0);
   },
 );

@@ -170,6 +170,36 @@ describe.if(isPosix)("cwd deleted before startup", () => {
   });
 });
 
+// The fd-exhaustion remediation hint must suggest bounded limits. It used to
+// print `ulimit -n 2147483646` (and `sudo launchctl limit maxfiles 2147483646`
+// on macOS, where a maxfiles limit that large makes every new terminal's
+// `login` iterate the fd table for minutes, and SIP blocks lowering it back
+// without a reboot). See #37337.
+test.if(isPosix)("fd limit hint suggests bounded values", async () => {
+  await using proc = Bun.spawn({
+    // The hint only prints when the current fd limit is low (< 16384); lower
+    // it in a wrapper shell so the check triggers deterministically.
+    cmd: [
+      "/bin/sh",
+      "-c",
+      `ulimit -n 8192 && exec "$@"`,
+      "--",
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "rootError",
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("possibly due to low max file descriptors");
+  expect(stderr).toContain("ulimit -n 65536");
+  expect(stderr).not.toContain("2147483646");
+  expect(exitCode).not.toBe(0);
+});
+
 // Windows: the VEH handler must walk the stack from the fault CONTEXT record
 // (RtlVirtualUnwind), not from inside the handler. When the fault is in an
 // external DLL the old RtlCaptureStackBackTrace path could stop at

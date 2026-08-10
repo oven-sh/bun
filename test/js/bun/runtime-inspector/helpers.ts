@@ -115,20 +115,21 @@ export async function spawnTarget(script: string, extraArgs: string[] = []) {
   }
 }
 
-/** Runs `process._debugProcess(pid)` in a separate bun and asserts it succeeded. */
-export async function debugProcess(pid: number): Promise<void> {
+/** Runs `code` with `bun -e` to completion. Assert on the whole result so a failure shows everything. */
+export async function runSnippet(code: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+    cmd: [bunExe(), "-e", code],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode, hasError: stderr.includes("error:") }).toEqual({
-    stdout: "",
-    exitCode: 0,
-    hasError: false,
-  });
+  return { stdout, stderr, exitCode };
+}
+
+/** Runs `process._debugProcess(pid)` in a separate bun and asserts it succeeded. */
+export async function debugProcess(pid: number): Promise<void> {
+  expect(await runSnippet(`process._debugProcess(${pid})`)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 }
 
 /**

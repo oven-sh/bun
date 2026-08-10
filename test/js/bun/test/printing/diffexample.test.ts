@@ -2,33 +2,34 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
-  return output
-    .replaceAll(/ \[[0-9\.]+m?s\]/g, "")
-    .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)")
-    .replaceAll(
-      "test\\js\\bun\\test\\printing\\diffexample.fixture.ts:",
-      "test/js/bun/test/printing/diffexample.fixture.ts:",
-    );
+  return output.replaceAll(/ \[[0-9\.]+m?s\]/g, "").replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)");
 }
 function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
 }
 
-test("no color", async () => {
-  const noColorSpawn = Bun.spawn({
+// cwd is pinned so the child does not load the repo bunfig.toml, whose test preload imports harness.ts.
+function runFixture() {
+  return Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
+    cwd: import.meta.dir,
     stdio: ["inherit", "pipe", "pipe"],
     env: {
       ...bunEnv,
       FORCE_COLOR: "0",
     },
   });
+}
+
+test("no color", async () => {
+  await using noColorSpawn = runFixture();
+  await using colorSpawn = runFixture();
   await noColorSpawn.exited;
   const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
   const noColorStdout = await noColorSpawn.stdout.text();
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
-    test/js/bun/test/printing/diffexample.fixture.ts:
+    diffexample.fixture.ts:
     10 |     .replaceAll("\\\\", "/")
     11 |     .replaceAll(process.cwd(), "<cwd>");
     12 | }
@@ -725,14 +726,6 @@ test("no color", async () => {
   `);
   expect(noColorSpawn.exitCode).toBe(1);
 
-  const colorSpawn = Bun.spawn({
-    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "0",
-    },
-  });
   await colorSpawn.exited;
   const colorStderr = cleanOutput(cleanAnsiEscapes(await colorSpawn.stderr.text()));
   const colorStdout = cleanAnsiEscapes(await colorSpawn.stdout.text());

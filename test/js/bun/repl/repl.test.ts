@@ -784,6 +784,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("division after a function expression body inside a group", async () => {
+      const fn = await runRepl(["q = (function () {} / 2); q", ".exit"]);
+      expect(stripAnsi(fn.stdout)).toContain("NaN");
+      expect(stripAnsi(fn.stdout)).not.toContain("SyntaxError");
+      expect(fn.exitCode).toBe(0);
+
+      const cls = await runRepl(["q = [class {} / 2]; q", ".exit"]);
+      expect(stripAnsi(cls.stdout)).toContain("NaN");
+      expect(stripAnsi(cls.stdout)).not.toContain("SyntaxError");
+      expect(cls.exitCode).toBe(0);
+    });
+
     test("division after an assigned object literal opens a continuation", async () => {
       const { stdout, exitCode } = await runRepl(["q = {} / ({", "valueOf: () => 2 }); q", ".exit"]);
       const output = stripAnsi(stdout);

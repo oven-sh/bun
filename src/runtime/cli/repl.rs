@@ -2601,8 +2601,9 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             };
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
-            // `}` ends an expression when it closes an object literal, not a block.
-            let after_block = prev == b'}' && last_brace_block;
+            // A block's `}` resumes statement position unless it's inside `()`/`[]`.
+            let after_block =
+                prev == b'}' && last_brace_block && paren_count <= 0 && bracket_count <= 0;
             let starts_regex = prev == 0
                 || after_keyword
                 || after_block

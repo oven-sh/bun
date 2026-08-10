@@ -585,11 +585,7 @@ it("Bun.inspect(Bun) does not crash when the Symbol global is clobbered", async 
   // the global Symbol is overwritten. The pending exception must not leak into
   // the lookup of the next property during the inspect walk.
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `globalThis.Symbol = NaN; Bun.inspect(Bun); try { Bun.sql } catch {} console.log("ok");`,
-    ],
+    cmd: [bunExe(), "-e", `globalThis.Symbol = NaN; Bun.inspect(Bun); try { Bun.sql } catch {} console.log("ok");`],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

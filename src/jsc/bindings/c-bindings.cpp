@@ -1129,8 +1129,8 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 #endif // OS(DARWIN) / __linux__
 
 // Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
-// Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`, which
-// const-asserts these three numbers): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
+// Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`; the runtime
+// that adds the snapshot fields to it also const-asserts these three numbers, so the two cannot drift apart): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
 // say "marked to take a snapshot" and "carries one" are read here, because this runs before main, from the allocator.
 static constexpr size_t kOffsetsSize = 40;
 static constexpr size_t kOffsetsFlagsOffset = 28;
@@ -1140,8 +1140,13 @@ static constexpr char kPayloadTrailer[16] = { '\n', '-', '-', '-', '-', ' ', 'B'
 
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
-    // Deterministic placement is only wanted by an executable that is marked to take a snapshot or carries one; an ordinary
-    // compiled executable answers no and pays nothing.
+    return BUN_COMPILED.size != 0; // any compiled executable; StartupSnapshot.cpp gates on this (and its Windows stub wraps it)
+}
+
+// Asked by the pinned mimalloc during its own initialization (MI_STARTUP_SNAPSHOT_HOST_FN): deterministic placement is only
+// wanted by an executable that is marked to take a snapshot or carries one, so an ordinary compiled executable pays nothing.
+extern "C" __attribute__((visibility("default"), used)) int bun_startup_snapshot_placement_wanted(void)
+{
     const uint8_t* base;
     uint64_t len;
 #if OS(DARWIN)
@@ -1214,6 +1219,13 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+// Called by StartupSnapshot.cpp's unsupported-platform stubs (Bun__isCompiledExecutable); the PE payload is loaded later by the
+// Rust side, and nothing here needs to know about it before then.
+extern "C" int bun_is_compiled_executable(void)
+{
+    return 0;
 }
 
 #endif

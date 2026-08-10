@@ -1266,7 +1266,8 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
             uintptr_t first = (uintptr_t)cell & ~(pg - 1);
             uintptr_t last = ((uintptr_t)cell + heapCell->cellSize() - 1) & ~(pg - 1);
             mach_vm_size_t cnt = (last - first) / pg + 1;
-            std::vector<int> disp(cnt);
+            static std::vector<int> disp; // reused across cells: this is the fast path
+            disp.resize(cnt);
             bool allClean = mach_vm_page_range_query(mach_task_self(), first, cnt * pg, (mach_vm_address_t)disp.data(), &cnt) == KERN_SUCCESS;
             for (mach_vm_size_t k = 0; allClean && k < cnt; k++)
                 allClean = !(disp[k] & (VM_PAGE_QUERY_PAGE_DIRTY | VM_PAGE_QUERY_PAGE_COPIED));
@@ -1791,8 +1792,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
 #if OS(DARWIN)
     if (const char* adv = getenv("BUN_MEMDEBUG_MADV")) {
         uint64_t* lenPtr = Bun__getStandaloneModuleGraphMachoLength();
-        if (lenPtr) {
-            uint64_t len = *lenPtr;
+        if (uint64_t len = *lenPtr) { // the pointer is to a static; zero length means no payload to advise on
             uintptr_t start = reinterpret_cast<uintptr_t>(lenPtr);
             size_t pg = getpagesize();
             uintptr_t alignedStart = (start + pg - 1) & ~(pg - 1);

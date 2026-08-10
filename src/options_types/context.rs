@@ -183,7 +183,7 @@ impl ContextData {
 // (`bun_runtime::cli::command::create_context_data`), which depends on this
 // crate — a delegating fn here would invert the dependency.
 
-/// `--snapshot` / `compile.snapshot`: whether `bun build --compile` also runs the executable once and embeds a snapshot of it.
+/// `--snapshot` / `snapshot: true | { mode }` in `Bun.build`: whether `bun build --compile` also runs the executable once and embeds a snapshot of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompileStartupSnapshot {
     #[default]
@@ -194,7 +194,7 @@ pub enum CompileStartupSnapshot {
     Manual,
 }
 
-/// `--snapshot-io` / `compile.snapshotIO`: what the app may touch on the build machine while its snapshot is taken.
+/// `--snapshot-io` / `snapshot: { io }` in `Bun.build`: what the app may touch on the build machine while its snapshot is taken.
 /// `strict` refuses all of it, `local` allows the file system and processes, `network` allows sockets and DNS too.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompileStartupSnapshotIo {

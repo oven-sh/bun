@@ -613,7 +613,7 @@ pub(crate) struct Offsets {
     /// `--snapshot`: a raw, page-aligned snapshot embedded after the modules (`{0,0}` when absent). Restore maps regions straight from the executable.
     pub snapshot: StringPointer,
 }
-// `bun_is_compiled_executable` in c-bindings.cpp reads `flags` and `snapshot.length` out of this struct before main (the
+// `bun_startup_snapshot_placement_wanted` in c-bindings.cpp reads `flags` and `snapshot.length` out of this struct before main (the
 // allocator asks it whether to place deterministically); these pin the numbers it uses, so a layout change fails to build here.
 const _: () = {
     assert!(size_of::<Offsets>() == 40);

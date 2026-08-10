@@ -143,6 +143,8 @@ using namespace Bun::StartupSnapshot;
 static void snapshotRestoreAndRun(const char* path);
 extern "C" struct mach_header_64 _mh_execute_header;
 // A snapshot needs the executable at its link address: if dyld slid us, re-exec ourselves unslid (macOS private posix_spawn flag), carrying the allocator/JIT settings in the env.
+extern "C" void bun_refresh_stdio_after_snapshot_restore();
+extern "C" volatile sig_atomic_t bun_stdio_modified[3];
 extern "C" int bun_is_compiled_executable(void);
 extern "C" bool Bun__isCompiledExecutable() { return bun_is_compiled_executable(); }
 extern "C" bool Bun__startupSnapshotMode() { return bun_is_compiled_executable() || getenv("BUN_STARTUP_SNAPSHOT_IN") || getenv("BUN_STARTUP_SNAPSHOT_OUT"); }
@@ -1822,7 +1824,12 @@ static void snapshotRestoreAndRun(const char* path)
         if (devnull > hi) close(devnull);
         if (verbose) fprintf(stderr, "[snapshot] parked /dev/null on %d stale fd numbers (max %d)\n", parked, hi);
     }
-    if (s_snapshotTermiosFd >= 0 && isatty(s_snapshotTermiosFd)) tcsetattr(s_snapshotTermiosFd, TCSANOW, &s_snapshotTermios); // raw mode etc. as the build process left it
+    bun_refresh_stdio_after_snapshot_restore(); // this launch's terminal state becomes what exit restores, captured before the builder's mode goes on below
+    if (s_snapshotTermiosFd >= 0 && isatty(s_snapshotTermiosFd)) {
+        tcsetattr(s_snapshotTermiosFd, TCSANOW, &s_snapshotTermios);
+        if (s_snapshotTermiosFd < 3)
+            bun_stdio_modified[s_snapshotTermiosFd] = 1; // so exit puts the shell's state back even though this process never called setRawMode
+    } // raw mode etc. as the build process left it
     for (int i = 2; i < 7 && hdr.reserved[i]; i++) { // recreate TTY fds at their old numbers from our own stdio
         int fd, fl, src;
         ttyFdRecordUnpack(hdr.reserved[i], fd, fl, src);

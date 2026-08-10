@@ -104,7 +104,7 @@ export const mimalloc: Dependency = {
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
       // Bare token as well: the name of the function (defined in c-bindings.cpp) mimalloc calls to learn whether this
       // executable carries a snapshot; see the MI_STARTUP_SNAPSHOT_* note above.
-      ...(snapshots ? ["-DMI_STARTUP_SNAPSHOT_HOST_FN=bun_is_compiled_executable"] : []),
+      ...(snapshots ? ["-DMI_STARTUP_SNAPSHOT_HOST_FN=bun_startup_snapshot_placement_wanted"] : []),
     ];
 
     // TLS model: initial-exec for the static link into bun's executable

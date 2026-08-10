@@ -766,6 +766,56 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("stderr open: true");
 });
 
+test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
+  using dir = tempDir("cluster-dgram-adopt-fail", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const dgram = require("node:dgram");
+const net = require("node:net");
+
+if (cluster.isPrimary) {
+  // A stream socket passes the primary's fd check but cannot be adopted as a dgram socket in the worker.
+  const tcp = net.createServer().listen(0, "127.0.0.1", () => {
+    const { port } = tcp.address();
+    const worker = cluster.fork();
+    worker.on("message", m => {
+      console.log("worker error code:", m.code);
+      // Refused once both processes closed their copy; a leaked copy in either keeps the socket accepting.
+      const probe = net.connect(port, "127.0.0.1");
+      probe.on("connect", () => { console.log("probe: connected"); probe.destroy(); finish(); });
+      probe.on("error", err => { console.log("probe:", err.code); finish(); });
+    });
+    function finish() {
+      worker.kill();
+      worker.on("exit", () => process.exit(0));
+    }
+    worker.send({ fd: tcp._handle.fd });
+  });
+} else {
+  process.on("message", ({ fd }) => {
+    const socket = dgram.createSocket("udp4");
+    socket.on("listening", () => process.send({ code: "listening" }));
+    socket.on("error", err => process.send({ code: err.code }));
+    socket.bind({ fd });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: "worker error code: EINVAL\nprobe: ECONNREFUSED",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)(
   "round-robin: RST-while-queued handle is dropped, not shipped stale",
   async () => {

@@ -169,16 +169,15 @@ function removeIndexesKey(indexesKey, index) {
 }
 
 function makeSharedHandle(fd) {
-  let closed = false;
+  let fdOpen = true;
   const handle = {
     sharedFd: fd,
     adopted: false,
     close(cb?) {
-      if (!closed) {
-        closed = true;
-        if (!handle.adopted) {
-          closeRawHandle(fd);
-        }
+      // A close() that ran while `adopted` was set leaves the fd to the adopter; a later release (adopted cleared) still closes it.
+      if (fdOpen && !handle.adopted) {
+        fdOpen = false;
+        closeRawHandle(fd);
       }
       if (typeof cb === "function") process.nextTick(cb);
     },
@@ -192,11 +191,15 @@ function shared(message, { handle, indexesKey, index }, cb) {
   // Monkey-patch the close() method so we can keep track of when it's
   // closed. Avoids resource leaks when the handle is short-lived.
   const close = handle.close;
+  let released = false;
 
   handle.close = function () {
-    send({ act: "close", key });
-    handles.delete(key);
-    removeIndexesKey(indexesKey, index);
+    if (!released) {
+      released = true;
+      send({ act: "close", key });
+      handles.delete(key);
+      removeIndexesKey(indexesKey, index);
+    }
     return close.$apply(handle, arguments);
   };
   $assert(handles.has(key) === false);

@@ -2524,6 +2524,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
     // Regex-vs-division context: last significant byte, and the identifier ending at it.
     let mut prev: u8 = 0;
+    let mut prev_idx = 0usize;
     let mut word_start = 0usize;
     let mut word_end = 0usize;
     // `obj.in` is a property access, not the `in` keyword.
@@ -2584,32 +2585,38 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             let after_keyword = is_word_char(prev)
                 && !word_after_dot
                 && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
+            // A doubled `+`/`-` is postfix inc/dec, which ends an expression.
+            let postfix_incdec =
+                matches!(prev, b'+' | b'-') && prev_idx > 0 && code[prev_idx - 1] == prev;
+            // `}` ends a statement block at top level, but an object literal inside `()`/`[]`.
+            let after_block = prev == b'}' && paren_count <= 0 && bracket_count <= 0;
             let starts_regex = prev == 0
                 || after_keyword
+                || after_block
                 || (prev == b')' && last_paren_conditional)
-                || matches!(
-                    prev,
-                    b'(' | b'['
-                        | b'{'
-                        | b'}'
-                        | b','
-                        | b';'
-                        | b':'
-                        | b'='
-                        | b'!'
-                        | b'&'
-                        | b'|'
-                        | b'?'
-                        | b'+'
-                        | b'-'
-                        | b'*'
-                        | b'/'
-                        | b'%'
-                        | b'<'
-                        | b'>'
-                        | b'^'
-                        | b'~'
-                );
+                || (!postfix_incdec
+                    && matches!(
+                        prev,
+                        b'(' | b'['
+                            | b'{'
+                            | b','
+                            | b';'
+                            | b':'
+                            | b'='
+                            | b'!'
+                            | b'&'
+                            | b'|'
+                            | b'?'
+                            | b'+'
+                            | b'-'
+                            | b'*'
+                            | b'/'
+                            | b'%'
+                            | b'<'
+                            | b'>'
+                            | b'^'
+                            | b'~'
+                    ));
             if starts_regex {
                 // Skip the regex body; `/` in a `[...]` class doesn't end it, a newline does.
                 i += 1;
@@ -2665,6 +2672,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             _ => {}
         }
         prev = ch;
+        prev_idx = i;
         i += 1;
     }
 

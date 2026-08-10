@@ -764,9 +764,27 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("division after postfix increment and decrement", async () => {
+      const inc = await runRepl(["i = 84; q = (i++ / 2)", "q", ".exit"]);
+      expect(stripAnsi(inc.stdout)).toContain("42");
+      expect(inc.exitCode).toBe(0);
+
+      const dec = await runRepl(["i = 86; q = (i-- / 2)", "q", ".exit"]);
+      expect(stripAnsi(dec.stdout)).toContain("43");
+      expect(dec.exitCode).toBe(0);
+    });
+
+    test("division after an object literal inside brackets", async () => {
+      const { stdout, exitCode } = await runRepl(["q = [{} / 1]", "q", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("NaN");
+      expect(exitCode).toBe(0);
+    });
+
     test("regex after a conditional's closing paren", async () => {
-      const { stdout, exitCode } = await runRepl(['if (true) x = /"/;', "x", ".exit"]);
-      expect(stripAnsi(stdout)).toContain('/"/');
+      const { stdout, exitCode } = await runRepl(['if (true) x = /"/; x', ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain('/"/');
+      expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });
 

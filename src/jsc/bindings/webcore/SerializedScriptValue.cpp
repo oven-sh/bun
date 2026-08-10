@@ -3923,9 +3923,7 @@ private:
 
     JSGlobalObject* const m_globalObject;
     const bool m_isDOMGlobalObject;
-    // True when the wire bytes were supplied by the caller as a raw buffer
-    // (bun:jsc / node:v8 deserialize(), IPC) rather than produced by an
-    // in-process SerializedScriptValue::create().
+    // Wire bytes came from a caller-supplied buffer (deserialize()/IPC), not an in-process create().
     bool m_isFromUntrustedBytes { false };
     const uint8_t* m_ptr;
     const uint8_t* const m_end;

@@ -188,10 +188,8 @@ private:
     FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
 
-    // True when this value was reconstituted from a caller-supplied byte buffer
-    // (createFromWireBytes) rather than produced by an in-process create().
-    // Deserialization uses this to reject tags that would mint capabilities
-    // (file paths / file descriptors) straight out of the wire bytes.
+    // Set by createFromWireBytes: deserialization rejects tags that would mint
+    // capabilities (file paths / fds) out of caller-supplied bytes.
     bool m_isFromUntrustedBytes { false };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};

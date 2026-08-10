@@ -2006,10 +2006,8 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {
-            // The bad frame is fully handled here by closing the channel; a
-            // deserializer/JSONParse exception left pending on the VM would
-            // surface later as an unrelated uncaught error (and trips the
-            // exception-scope assert in debug builds).
+            // Closing the channel handles the bad frame; a decode exception
+            // left pending would surface as an unrelated uncaught error.
             send_queue
                 .get_global_this()
                 .clear_exception_except_termination();

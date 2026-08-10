@@ -2005,9 +2005,8 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        // Saturate rather than abort: `size` is untrusted (it can come off the
-        // wire or from a remote Content-Length), so a value past i64::MAX must
-        // clamp instead of panicking the int cast.
+        // `size` is untrusted (wire bytes, remote Content-Length): saturate
+        // past i64::MAX instead of panicking the cast.
         let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
@@ -4192,10 +4191,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
 
-            // A path/fd-backed Blob reconstructed from caller-supplied bytes
-            // would grant access to an arbitrary file path, open descriptor,
-            // or `s3://` credential scope; only in-process serialized bytes
-            // may rebuild one.
+            // Caller-supplied bytes must not mint a handle to an arbitrary
+            // path, open fd, or s3:// key; only in-process clones may
+            // rebuild file-backed blobs.
             if is_from_untrusted_bytes {
                 return Err(crate::Error::UntrustedFileBlob);
             }

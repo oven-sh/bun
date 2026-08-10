@@ -439,9 +439,8 @@ impl BlockList {
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-        // BlockList already validates wire bytes against the process-local
-        // `SERIALIZED_REFS` registry plus a per-instance nonce below, which
-        // rejects any payload that was not produced by this process.
+        // Unused: the `SERIALIZED_REFS` nonce check below already rejects
+        // payloads not produced by this process.
         _is_from_untrusted_bytes: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the

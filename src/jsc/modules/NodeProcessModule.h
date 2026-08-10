@@ -33,14 +33,17 @@ DEFINE_NATIVE_MODULE(NodeProcess)
             continue;
         }
 
-        exportNames.append(entry);
         auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue result = process->get(globalObject, entry);
         if (topExceptionScope.exception()) {
+            // A getter that throws exports undefined; a termination (worker
+            // terminate() mid-import) cannot be cleared: stop, leave it pending.
+            if (!topExceptionScope.tryClearException())
+                return;
             result = jsUndefined();
-            (void)topExceptionScope.tryClearException();
         }
 
+        exportNames.append(entry);
         exportValues.append(result);
     }
 }

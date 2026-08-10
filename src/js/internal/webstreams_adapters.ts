@@ -33,9 +33,6 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-const kValidateChunk = Symbol("kValidateChunk");
-const kDestroyOnSyncError = Symbol("kDestroyOnSyncError");
-
 function tryTransferToNativeReadable(stream, options) {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
@@ -47,9 +44,7 @@ function tryTransferToNativeReadable(stream, options) {
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
-  #pendingChunks;
   #stream;
-  #reading;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -59,32 +54,9 @@ class ReadableFromWeb extends Readable {
       encoding,
       signal,
     });
-    this.#pendingChunks = [];
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
-    this.#reading = false;
-  }
-
-  #drainPending() {
-    var pendingChunks = this.#pendingChunks,
-      pendingChunksI = 0,
-      pendingChunksCount = pendingChunks.length;
-
-    for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
-      const chunk = pendingChunks[pendingChunksI];
-      pendingChunks[pendingChunksI] = undefined;
-      if (!this.push(chunk, undefined)) {
-        this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
-        return true;
-      }
-    }
-
-    if (pendingChunksCount > 0) {
-      this.#pendingChunks = [];
-    }
-
-    return false;
   }
 
   #handleDone(reader) {
@@ -92,7 +64,6 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
-    return;
   }
 
   #handleError(reader, error) {
@@ -106,72 +77,30 @@ class ReadableFromWeb extends Readable {
     this.destroy(error);
   }
 
+  // One reader.read() per _read(). readMany() would drain a start()-enqueued
+  // source to "closed" before the consumer can abort, and cancel() on a closed
+  // stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
     $debug("ReadableFromWeb _read()", this.__id);
-    // Readable calls _read() again as soon as push() is called, but #pump()
-    // pushes many chunks per call. Two pumps hold two read requests on the same
-    // reader, and readMany() drains the queue into whichever settles first.
-    if (this.#reading) return;
-    this.#reading = true;
-    return this.#pump();
-  }
-
-  async #pump() {
-    // #reading must be cleared as the body exits, not one microtask later: a
-    // paused-mode read() loop calls _read() again without yielding, and
-    // Readable leaves kReading set when _read() neither pushes nor pumps.
-    var reader;
-    try {
-      var stream = this.#stream;
-      reader = this.#reader;
-      if (stream) {
-        reader = this.#reader = stream.getReader();
-        this.#stream = undefined;
-      } else if (this.#drainPending()) {
-        return;
-      }
-
-      do {
-        var done = false,
-          value;
-        const firstResult = reader.readMany();
-
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-
-          if (this.#closed) {
-            this.#pendingChunks.push(...value);
-            return;
-          }
-        } else {
-          ({ done, value } = firstResult);
-        }
-
-        if (done) {
-          this.#handleDone(reader);
-          return;
-        }
-
-        if (!this.push(value[0])) {
-          this.#pendingChunks = value.slice(1);
-          return;
-        }
-
-        for (let i = 1, count = value.length; i < count; i++) {
-          if (!this.push(value[i])) {
-            this.#pendingChunks = value.slice(i + 1);
-            return;
-          }
-        }
-      } while (!this.#closed);
-    } catch (e) {
-      // An error from the web stream must surface on the Readable as an
-      // 'error' event. Rethrowing would only reject #pump()'s promise, which
-      // nothing awaits, turning it into an unhandled rejection instead.
-      this.#handleError(reader, e);
-    } finally {
-      this.#reading = false;
+    if (this.#closed) return;
+    var reader = this.#reader;
+    var stream = this.#stream;
+    if (stream) {
+      reader = this.#reader = stream.getReader();
+      this.#stream = undefined;
     }
+    PromisePrototypeThen.$call(
+      reader.read(),
+      chunk => {
+        if (this.#closed) return;
+        if (chunk.done) {
+          this.#handleDone(reader);
+        } else {
+          this.push(chunk.value);
+        }
+      },
+      error => this.#handleError(reader, error),
+    );
   }
 
   _destroy(error, callback) {
@@ -259,7 +188,7 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
 
 const noop = () => {};
 
-function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObject) {
+function newWritableStreamFromStreamWritable(streamWritable) {
   // Not using the internal/streams/utils isWritableNodeStream utility
   // here because it will return false if streamWritable is a Duplex
   // whose writable option is false. For a Duplex that is not writable,
@@ -278,7 +207,16 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
   }
 
   const highWaterMark = streamWritable.writableHighWaterMark;
-  const strategy = streamWritable.writableObjectMode ? new CountQueuingStrategy({ highWaterMark }) : { highWaterMark };
+  const strategy = streamWritable.writableObjectMode
+    ? new CountQueuingStrategy({ highWaterMark })
+    : {
+        highWaterMark,
+        // Size chunks in bytes so desiredSize reflects the byte-based
+        // highWaterMark and pipeTo applies backpressure.
+        size(chunk) {
+          return chunk?.byteLength ?? chunk?.length ?? 1;
+        },
+      };
 
   let controller;
   let backpressurePromise;
@@ -327,34 +265,20 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
       },
 
       write(chunk) {
-        try {
-          options[kValidateChunk]?.(chunk);
-          if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
-            chunk = new Uint8Array(chunk);
+        if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
+          chunk = new Uint8Array(chunk);
+        }
+        const needDrainBefore = streamWritable.writableNeedDrain;
+        if (needDrainBefore || !streamWritable.write(chunk)) {
+          backpressurePromise = PromiseWithResolvers();
+          // write() may set writableNeedDrain; the post-write value is
+          // what decides whether we resolve immediately.
+          if (!streamWritable.writableNeedDrain) {
+            backpressurePromise.resolve();
           }
-          const needDrainBefore = streamWritable.writableNeedDrain;
-          if (needDrainBefore || !streamWritable.write(chunk)) {
-            backpressurePromise = PromiseWithResolvers();
-            // write() may set writableNeedDrain; the post-write value is
-            // what decides whether we resolve immediately.
-            if (!streamWritable.writableNeedDrain) {
-              backpressurePromise.resolve();
-            }
-            return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
-              backpressurePromise = undefined;
-            });
-          }
-        } catch (error) {
-          // When the kDestroyOnSyncError flag is set (e.g. for
-          // CompressionStream), a sync throw must also destroy the
-          // stream so the readable side is errored too. Without this
-          // the readable side hangs forever. This replicates the
-          // TransformStream semantics: error both sides on any throw
-          // in the transform path.
-          if (options[kDestroyOnSyncError]) {
-            destroyer(streamWritable, error);
-          }
-          throw error;
+          return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
+            backpressurePromise = undefined;
+          });
         }
       },
 
@@ -693,15 +617,7 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     return { readable, writable };
   }
 
-  const writableOptions = {
-    __proto__: null,
-    [kValidateChunk]: options[kValidateChunk],
-    [kDestroyOnSyncError]: options[kDestroyOnSyncError],
-  };
-
-  const writable = isWritable(duplex)
-    ? newWritableStreamFromStreamWritable(duplex, writableOptions)
-    : new WritableStream();
+  const writable = isWritable(duplex) ? newWritableStreamFromStreamWritable(duplex) : new WritableStream();
 
   if (!isWritable(duplex)) writable.close();
 
@@ -899,22 +815,6 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
   return duplex;
 }
 
-// Shared by CompressionStream and DecompressionStream: per the Compression
-// Streams spec, chunks must be BufferSource (ArrayBuffer or ArrayBufferView
-// not backed by SharedArrayBuffer), and an invalid chunk must error both
-// sides of the pair synchronously.
-function newBufferSourceTransformPairFromDuplex(duplex) {
-  const { isArrayBufferView, isSharedArrayBuffer } = require("node:util/types");
-  return newReadableWritablePairFromDuplex(duplex, {
-    [kValidateChunk]: function validateBufferSourceChunk(chunk) {
-      if (isSharedArrayBuffer(isArrayBufferView(chunk) ? chunk.buffer : chunk)) {
-        throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
-      }
-    },
-    [kDestroyOnSyncError]: true,
-  });
-}
-
 export default {
   newWritableStreamFromStreamWritable,
   newReadableStreamFromStreamReadable,
@@ -922,8 +822,5 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
-  newBufferSourceTransformPairFromDuplex,
-  kValidateChunk,
-  kDestroyOnSyncError,
   _ReadableFromWeb: ReadableFromWeb,
 };

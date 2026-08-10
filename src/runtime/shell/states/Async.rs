@@ -1,8 +1,6 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log,
-};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
@@ -12,11 +10,11 @@ use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
 pub struct Async {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
-    pub io: IO,
-    pub state: AsyncState,
-    pub event_loop: EventLoopHandle,
+    pub(crate) io: IO,
+    pub(crate) state: AsyncState,
+    pub(crate) event_loop: EventLoopHandle,
     /// Heap payload for the main-thread bounce. The node lives in the
     /// reallocatable `Interpreter::nodes` arena, so the intrusive
     /// concurrent-task node must live in a stable heap allocation instead.
@@ -35,7 +33,7 @@ pub enum AsyncState {
 }
 
 impl Async {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Expr,
@@ -47,7 +45,7 @@ impl Async {
             .set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
         let id = interp.alloc_node(Node::Async(Async {
-            base: Base::new(StateKind::Async, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,
@@ -64,7 +62,7 @@ impl Async {
         id
     }
 
-    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
         log!("Async {} start", this);
         Self::enqueue_self(interp, this);
         let parent = interp.as_async(this).base.parent;
@@ -73,7 +71,7 @@ impl Async {
         interp.child_done(parent, this, 0)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         log!(
             "Async {} next {}",
             this,
@@ -136,7 +134,7 @@ impl Async {
         }
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -152,10 +150,12 @@ impl Async {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        use bun_event_loop::ConcurrentTask::AutoDeinit;
         let me = interp.as_async_mut(this);
         let task = me.task;
         debug_assert!(!task.is_null());
+        // Same-thread "next tick" bounce through the owning loop's concurrent queue.
+        let poster = bun_jsc::ConcurrentPoster::from_event_loop_handle(&me.event_loop);
         match me.event_loop {
             EventLoopHandle::Js { .. } => {
                 // SAFETY: `task` is the live heap payload allocated in `init`
@@ -165,21 +165,19 @@ impl Async {
                 // before the state machine can enqueue again.
                 unsafe {
                     let ct = (*task).concurrent_task.from(task, AutoDeinit::ManualDeinit);
-                    me.event_loop.enqueue_task_concurrent(EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    });
+                    // This runs on the VM's own thread while it executes, so the
+                    // post is always accepted.
+                    let _ = poster.post_js(core::ptr::NonNull::from(ct));
                 }
             }
             EventLoopHandle::Mini(_) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the
-                // mini arm heap-allocates an auto-deinit wrapper per bounce
-                // (same shape as `GlobalMini::enqueue_task_concurrent_wait_pid`).
+                // mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
                     run_from_main_thread_mini,
                 );
-                me.event_loop
-                    .enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+                poster.post_mini(core::ptr::NonNull::new(any).expect("heap task"));
             }
         }
     }
@@ -187,7 +185,7 @@ impl Async {
     /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
     /// immediately (see `start`), so the parent must not free it. Real cleanup
     /// happens in `actually_deinit` once the background body finishes.
-    pub fn actually_deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn actually_deinit(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
         if !me.task.is_null() {
             // SAFETY: allocated in `init`; the final bounce that reached
@@ -199,7 +197,7 @@ impl Async {
         me.base.end_scope();
     }
 
-    pub fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
         Self::next(interp, this).run(interp);
     }
 }
@@ -215,6 +213,12 @@ enum NextAction {
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+    /// The `Async` node's bounce box, freed only at the end of a chain that
+    /// will not continue: free it here.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 /// Mini-loop trampoline.

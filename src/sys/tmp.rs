@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
+use crate::{E, ErrorCase, Fd, FdExt, Mode, O, Tag};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
@@ -8,16 +8,23 @@ const ALLOW_TMPFILE: bool = false;
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    pub destination_dir: Fd,
+    pub(crate) destination_dir: Fd,
     // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    pub tmpfilename: &'a ZStr,
+    pub(crate) tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
 
 impl<'a> Tmpfile<'a> {
     pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
-        let perm = 0o644;
+        Self::create_with_mode(destination_dir, tmpfilename, 0o644)
+    }
+
+    pub fn create_with_mode(
+        destination_dir: Fd,
+        tmpfilename: &'a ZStr,
+        perm: Mode,
+    ) -> crate::Result<Tmpfile<'a>> {
         let mut tmpfile = Tmpfile {
             destination_dir,
             tmpfilename,
@@ -63,7 +70,7 @@ impl<'a> Tmpfile<'a> {
         Ok(tmpfile)
     }
 
-    pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
+    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
         if ALLOW_TMPFILE && self.using_tmpfile {
             let mut retry = true;
@@ -80,7 +87,7 @@ impl<'a> Tmpfile<'a> {
                         let _ = crate::unlinkat(self.destination_dir, basename);
                         retry = false;
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(err),
                 }
             }
         }

@@ -34,16 +34,16 @@ describe("TLS No Cipher Match Error code matches Node.js", () => {
       reason: "no cipher match",
     });
 
+    // BoringSSL does not allow overriding the TLS 1.3 cipher suites, so a
+    // TLS_* name in `ciphers` is ignored rather than rejected — Node built
+    // against BoringSSL accepts this configuration (see the
+    // openssl_is_boringssl branch of
+    // test/js/node/test/parallel/test-tls-set-ciphers-error.js).
     options.ciphers = "TLS_not_a_cipher";
     expect(() =>
       tls.createServer(options, () => {
         throw new Error("should not be called");
       }),
-    ).toThrow({
-      code: "ERR_SSL_NO_CIPHER_MATCH",
-      message: "No cipher match",
-      library: "SSL routines",
-      reason: "no cipher match",
-    });
+    ).not.toThrow();
   });
 });

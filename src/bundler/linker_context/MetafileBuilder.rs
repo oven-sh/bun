@@ -55,11 +55,11 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 /// Generates the JSON fragment for a single output chunk.
 /// Called during parallel chunk generation in postProcessJSChunk/postProcessCSSChunk.
 /// The result is stored in chunk.metafile_chunk_json and assembled later.
-pub fn generate_chunk_json(
+pub(crate) fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
-) -> Result<Box<[u8]>, bun_core::Error> {
+) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
@@ -202,7 +202,7 @@ pub fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>, bun_core::Error> {
+pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -293,14 +293,29 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
                 first_import = false;
 
                 j.push_static(b"\n        {\n          \"path\": ");
-                // Write path with JSON escaping - chunk references (unique_keys) will be resolved
-                // by breakOutputIntoPieces and code() below
+                // Bundled imports use the target source's pretty path (same string as the
+                // "inputs" key). `record.path.text` is unreliable here: dedup can set
+                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                let import_path: &[u8] = 'path: {
+                    if record.source_index.is_valid()
+                        && record.source_index.get() != Index::RUNTIME.get()
+                    {
+                        let idx = record.source_index.get() as usize;
+                        if idx < sources.len() {
+                            let pretty = sources[idx].path.pretty;
+                            if !pretty.is_empty() {
+                                break 'path pretty;
+                            }
+                        }
+                    }
+                    record.path.text
+                };
                 {
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
                         buf,
                         "{}",
-                        bfmt::format_json_string_utf8(record.path.text, Default::default())
+                        bfmt::format_json_string_utf8(import_path, Default::default())
                     )?;
                     j.push_owned(buf.into_boxed_slice());
                 }
@@ -309,7 +324,7 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
                 j.push_static(b"\"");
 
                 // Add "original" field if different from path
-                if !record.original_path.is_empty() && record.original_path != record.path.text {
+                if !record.original_path.is_empty() && record.original_path != import_path {
                     j.push_static(b",\n          \"original\": ");
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
@@ -739,15 +754,15 @@ struct PathOnly<'a> {
 /// This is a post-processing step that parses the JSON and produces LLM-friendly output.
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     let root = match JsonParser::parse(metafile_json) {
         Ok(v) => v,
-        Err(_) => return Err(bun_core::err!(InvalidJSON)),
+        Err(_) => return Err(crate::Error::InvalidJSON),
     };
     // defer parsed.deinit() — handled by Drop
 
     let JsonValue::Object(root_obj) = &root else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let mut md: Vec<u8> = Vec::new();
@@ -755,14 +770,14 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
     // Get inputs and outputs
     let Some(inputs) = root_obj.get(b"inputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
     let Some(outputs) = root_obj.get(b"outputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let (JsonValue::Object(inputs_obj), JsonValue::Object(outputs_obj)) = (inputs, outputs) else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     // Header

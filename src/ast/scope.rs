@@ -123,28 +123,6 @@ impl Scope {
         unsafe { self.members.get_or_put_borrowed(name) }
     }
 
-    pub fn reset(&mut self) {
-        self.children.clear_retaining_capacity();
-        self.generated.clear_retaining_capacity();
-        self.members.clear();
-        self.parent = None;
-        self.id = 0;
-        self.label_ref = Ref::NONE;
-        self.label_stmt_is_loop = false;
-        self.contains_direct_eval = false;
-        self.strict_mode = StrictModeKind::SloppyMode;
-        self.kind = Kind::Block;
-    }
-
-    #[inline]
-    pub fn can_merge_symbols<const IS_TYPESCRIPT_ENABLED: bool>(
-        &self,
-        existing: symbol::Kind,
-        new: symbol::Kind,
-    ) -> SymbolMergeResult {
-        Self::can_merge_symbol_kinds::<IS_TYPESCRIPT_ENABLED>(self.kind, existing, new)
-    }
-
     /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]
     /// by value instead of `&self`. Lets the parser hold a single-probe
     /// `members.entry()` borrow across the merge decision without re-borrowing
@@ -260,13 +238,6 @@ impl Scope {
 pub struct Member {
     pub ref_: Ref,
     pub loc: crate::Loc,
-}
-
-impl Member {
-    #[inline]
-    pub fn eql(a: Member, b: Member) -> bool {
-        a.ref_.eql(b.ref_) && a.loc.start == b.loc.start
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

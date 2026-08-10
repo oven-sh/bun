@@ -2,17 +2,17 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
 pub struct CondExpr {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
-    pub io: IO,
-    pub state: CondExprState,
+    pub(crate) io: IO,
+    pub(crate) state: CondExprState,
     pub args: Vec<Vec<u8>>,
 }
 
@@ -37,7 +37,7 @@ impl CondExpr {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
-            base: Base::new(StateKind::Condexpr, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: CondExprState::Idle,
@@ -67,18 +67,7 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let io = interp.as_condexpr(this).io.clone();
-                    let child = Expansion::init(
-                        interp,
-                        shell,
-                        atom,
-                        this,
-                        io,
-                        ExpansionOpts {
-                            for_spawn: false,
-                            single: true,
-                        },
-                    );
+                    let child = Expansion::init(interp, shell, atom, this);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
@@ -248,9 +237,7 @@ impl CondExpr {
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
-                let y = Self::write_failing_error(interp, this, format_args!("{}\n", err));
-                err.deinit();
-                return y;
+                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(false, "Expansion child failed without an error");
@@ -353,6 +340,15 @@ impl CondExpr {
 // the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
+    /// A stat the pool finished whose result will not be applied: drop the
+    /// keep-alive and the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `do_stat` scheduled.
+        unsafe {
+            (*this).task.task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx

@@ -1,7 +1,6 @@
 //! HTML `FormData` parsing + JS bridge.
 
-use bun_collections::ArrayHashMap;
-use bun_core::{self, declare_scope, err, scoped_log};
+use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
@@ -15,13 +14,7 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData<'a> {
-    pub fields: Map<'a>,
-    /// Borrows into caller-owned input.
-    pub buffer: &'a [u8],
-}
-
-pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
+pub struct FormData {}
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -85,10 +78,10 @@ impl AsyncFormDataExt for AsyncFormData {
 pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
-    pub is_file: bool,
-    pub zero_count: u8,
+    pub(crate) filename: bun_semver::String,
+    pub(crate) content_type: bun_semver::String,
+    pub(crate) is_file: bool,
+    pub(crate) zero_count: u8,
 }
 
 impl Default for Field<'_> {
@@ -103,40 +96,18 @@ impl Default for Field<'_> {
     }
 }
 
-pub enum FieldEntry<'a> {
-    Field(Field<'a>),
-    List(Vec<Field<'a>>),
-}
-
-#[repr(C)]
-pub struct FieldExternal {
-    pub name: ZigString,
-    pub value: ZigString,
-    pub blob: *mut Blob,
-}
-
-impl Default for FieldExternal {
-    fn default() -> Self {
-        FieldExternal {
-            name: ZigString::default(),
-            value: ZigString::default(),
-            blob: core::ptr::null_mut(),
-        }
-    }
-}
-
-impl FormData<'_> {
+impl FormData {
     pub fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,
-    ) -> Result<JSValue, bun_core::Error> {
+    ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
                 let str = ZigString::from_utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
-                DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
+                DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
             }
             Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary),
         }
@@ -144,10 +115,8 @@ impl FormData<'_> {
 }
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<2>();
-    let input_value = args.ptr[0];
-    let boundary_value = args.ptr[1];
+pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
     let boundary_slice: ZigStringSlice;
 
     let mut encoding = Encoding::URLEncoded;
@@ -192,22 +161,22 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
-        Err(e) if e == err!("JSError") => Err(JsError::Thrown),
-        Err(e) if e == err!("JSTerminated") => Err(JsError::Terminated),
+        Err(crate::Error::JSError) => Err(JsError::Thrown),
+        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }
 
-pub fn to_js_from_multipart_data(
+pub(crate) fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
     boundary: &[u8],
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let form_data_value = DOMFormData::create(global);
     form_data_value.ensure_still_alive();
     let Some(form) = DOMFormData::from_js(form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
-        return Err(err!("failed to parse multipart data"));
+        return Err(crate::Error::FailedToParseMultipartData);
     };
 
     struct Wrapper<'a> {
@@ -288,12 +257,12 @@ pub fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
-pub fn for_each_multipart_entry<C>(
+pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
     mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
 
@@ -303,7 +272,7 @@ pub fn for_each_multipart_entry<C>(
         // not guaranteed UTF-8, so avoid `core::fmt`.
         let need = boundary.len() + 4;
         if need > buf.len() {
-            return Err(err!("boundary is too long"));
+            return Err(crate::Error::BoundaryIsTooLong);
         }
         buf[..2].copy_from_slice(b"--");
         buf[2..2 + boundary.len()].copy_from_slice(boundary);
@@ -311,7 +280,7 @@ pub fn for_each_multipart_entry<C>(
         let final_boundary = &buf[..need];
 
         let Some(final_boundary_index) = strings::last_index_of(input, final_boundary) else {
-            return Err(err!("missing final boundary"));
+            return Err(crate::Error::MissingFinalBoundary);
         };
         slice = &slice[..final_boundary_index];
     }
@@ -330,7 +299,7 @@ pub fn for_each_multipart_entry<C>(
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
         let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or_else(|| err!("is missing header end"))?;
+            strings::index_of(remain, b"\r\n\r\n").ok_or(crate::Error::IsMissingHeaderEnd)?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -341,11 +310,11 @@ pub fn for_each_multipart_entry<C>(
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
-                .ok_or_else(|| err!("is missing header line end"))?;
+                .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon = strings::index_of(line, b":")
-                .ok_or_else(|| err!("is missing header colon separator"))?;
+            let colon =
+                strings::index_of(line, b":").ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {
@@ -354,14 +323,16 @@ pub fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                value = strings::trim(value, b" ");
-                if value.starts_with(b"form-data;") {
+                // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
+                // disposition type is a case-insensitive token (RFC 2183 §2).
+                value = strings::trim(value, b" \t");
+                if strings::starts_with_case_insensitive_ascii(value, b"form-data;") {
                     value = &value[b"form-data;".len()..];
-                    value = strings::trim(value, b" ");
+                    value = strings::trim(value, b" \t");
                 }
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
-                    let eql_key = strings::trim(&value[..eql_start], b" ;");
+                    let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
                     if value.starts_with(b"\"") {
                         value = &value[1..];

@@ -105,7 +105,13 @@ snapshotTest("TLS verification derived from the builder's environment is re-deri
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
-      env: { ...buildEnv, ...files, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "network", NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      env: {
+        ...buildEnv,
+        ...files,
+        BUN_STARTUP_SNAPSHOT_OUT: img,
+        BUN_STARTUP_SNAPSHOT_IO: "network",
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -113,7 +119,11 @@ snapshotTest("TLS verification derived from the builder's environment is re-deri
     expect(out).toContain("[js] build ok 200");
     expect(code).toBe(0);
   }
-  const { NODE_TLS_REJECT_UNAUTHORIZED: _unset, ...launchEnv } = { ...restoreEnv, ...files, BUN_STARTUP_SNAPSHOT_IN: img };
+  const { NODE_TLS_REJECT_UNAUTHORIZED: _unset, ...launchEnv } = {
+    ...restoreEnv,
+    ...files,
+    BUN_STARTUP_SNAPSHOT_IN: img,
+  };
   await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: launchEnv, stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(err).toContain("[snapshot] restored");

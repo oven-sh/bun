@@ -325,7 +325,7 @@ enum StartupSnapshotRearm {
 
 #[cfg(not(windows))]
 impl FilePoll {
-    /// snapshot restore (`Store::rearm_for_snapshot`): re-add this poll to the new kqueue if its fd still means the same
+    /// snapshot restore (`Store::rearm_after_snapshot_restore`): re-add this poll to the new kqueue if its fd still means the same
     /// thing in this process, otherwise mark it hung up so the owner hears about it once the app has been told to restore.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> StartupSnapshotRearm {
@@ -1397,7 +1397,7 @@ impl Store {
 
     /// snapshot restore: the kqueue is new and every knote from the build process is gone. Re-add polls whose fd still exists; hang up the rest.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-    pub fn rearm_for_snapshot(&mut self, loop_: &mut Loop) -> (usize, usize) {
+    pub fn rearm_after_snapshot_restore(&mut self, loop_: &mut Loop) -> (usize, usize) {
         let (mut rearmed, mut hung_up) = (0usize, 0usize);
         let mut polls: Vec<*mut FilePoll> = Vec::new();
         let mut it = self.hive.hive.used.iter_set();
@@ -1419,10 +1419,8 @@ impl Store {
         (rearmed, hung_up)
     }
 
-    /// Deliver the hangups collected by `rearm_for_snapshot`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
+    /// The polls whose fds did not survive the restore, handed out so they can be delivered with no borrow of the store live.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-    /// The polls whose fds did not survive the restore. Taken out so the caller can deliver the hangups with no borrow of the
-    /// store live: delivering one reaches the owner, which may close this or any other poll (and re-enter the store to do it).
     pub fn take_snapshot_hangups(&mut self) -> Vec<*mut FilePoll> {
         core::mem::take(&mut self.snapshot_hangups)
     }

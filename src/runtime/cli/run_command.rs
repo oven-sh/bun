@@ -1680,7 +1680,6 @@ fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
     bun_core::set_standalone_passthrough_offset(offset);
 }
 
-/// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the snapshot from the top of the run loop.
 /// Under BUN_STARTUP_SNAPSHOT_IO=local, everything the app touched on this machine before the freeze — the results are in the snapshot.
 fn print_local_io_audit() {
     let stdio = bun_core::startup_snapshot::take_stdio_notes();
@@ -1718,6 +1717,7 @@ fn print_local_io_audit() {
     bun_core::Output::flush();
 }
 
+/// The app asked for a snapshot and every JS frame has unwound (termination). Quiesce the runtime and write the snapshot from the top of the run loop.
 pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> ! {
     let Some(path) = bun_core::startup_snapshot::take_snapshot_request() else {
         unreachable!()
@@ -2043,7 +2043,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         let loop_ = vm.uws_loop();
         if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
             // SAFETY: loop_ is the process-global uws loop.
-            let (rearmed, hung_up) = store.rearm_for_snapshot(unsafe { &mut *loop_ });
+            let (rearmed, hung_up) = store.rearm_after_snapshot_restore(unsafe { &mut *loop_ });
             bun_core::debug_warn!(
                 "[snapshot] file polls: {} re-armed, {} hung up",
                 rearmed,

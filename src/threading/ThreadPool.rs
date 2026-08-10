@@ -255,7 +255,7 @@ impl ThreadPool {
         )
     }
 
-    /// snapshot snapshot: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
+    /// snapshot freeze: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
     /// `forget_threads_after_snapshot_restore` resets the state so the pool starts again on the other side.
     pub fn stop_all_threads_for_snapshot(&self) {
         self.shutdown();

@@ -1293,14 +1293,16 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         bool bfContents = false;
         if (JSC::Butterfly* bf = object->butterfly(); bf && !bfPtr) { // same butterfly: did its out-of-line slots / elements change?
             JSC::Structure* st = object->structure();
-            size_t pre = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue) + sizeof(JSC::IndexingHeader); // the header slot always sits between the out-of-line slots and the pointer
+            size_t oolBytes = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue);
+            size_t pre = oolBytes + sizeof(JSC::IndexingHeader); // the slots end one header before the pointer whether or not a header is allocated
             size_t post = 0;
             if (JSC::hasIndexedProperties(object->indexingType())) {
                 post = std::min<size_t>(bf->vectorLength(), 256) * sizeof(JSC::EncodedJSValue);
                 if (JSC::hasAnyArrayStorage(object->indexingType())) post += JSC::ArrayStorage::vectorOffset(); // elements start after the ArrayStorage header
             }
             uintptr_t base = (uintptr_t)bf - pre;
-            size_t n = std::min(pre + post, origBf.size());
+            size_t indexedBytes = JSC::hasIndexedProperties(object->indexingType()) ? sizeof(JSC::IndexingHeader) + post : 0; // header only exists with indexed storage
+            size_t n = std::min(oolBytes + indexedBytes, origBf.size());
             if (fileBytesAt(base, origBf.data(), n)) bfContents = memcmp(origBf.data(), (void*)base, n) != 0;
         }
         if (!(header || bfPtr || inl || bfContents)) return IterationStatus::Continue;

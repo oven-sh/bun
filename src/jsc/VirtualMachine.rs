@@ -3506,6 +3506,13 @@ impl VirtualMachine {
 
     /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
     /// The channel belongs to the launch, so this runs at boot and again after a snapshot restore has reloaded the environment.
+    /// Snapshot restore: defaults latched from the builder's environment (or from its own writes to `process.env`) are re-derived
+    /// in this launch; TLS verification in particular must not stay off because the build turned it off.
+    pub fn forget_env_derived_defaults_for_snapshot_restore(&mut self) {
+        self.default_tls_reject_unauthorized = None;
+        self.default_verbose_fetch.set(None);
+    }
+
     pub fn adopt_ipc_channel_from_env(&mut self) {
         let env = self.transpiler.env_mut();
         let map = &mut env.map;

@@ -1421,27 +1421,10 @@ impl Store {
 
     /// Deliver the hangups collected by `rearm_for_snapshot`. Owners closed by the app's own 'restore' handling in the meantime are skipped.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-    pub fn dispatch_snapshot_hangups(&mut self) -> usize {
-        let pending = core::mem::take(&mut self.snapshot_hangups);
-        let mut delivered = 0usize;
-        for poll_ptr in pending {
-            // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free
-            // list, which has not run yet. `on_update` reaches the owner, which may close the poll, so it is a
-            // call-scoped access with nothing borrowed across it.
-            let still_hung_up = unsafe {
-                let poll = &*poll_ptr;
-                poll.fd != INVALID_FD
-                    && !poll.flags.contains(Flags::Closed)
-                    && poll.flags.contains(Flags::Hup)
-            };
-            if !still_hung_up {
-                continue;
-            }
-            // SAFETY: as above.
-            unsafe { (*poll_ptr).on_update(0) };
-            delivered += 1;
-        }
-        delivered
+    /// The polls whose fds did not survive the restore. Taken out so the caller can deliver the hangups with no borrow of the
+    /// store live: delivering one reaches the owner, which may close this or any other poll (and re-enter the store to do it).
+    pub fn take_snapshot_hangups(&mut self) -> Vec<*mut FilePoll> {
+        core::mem::take(&mut self.snapshot_hangups)
     }
 
     pub fn init() -> Store {
@@ -1534,6 +1517,29 @@ impl Store {
         let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
+}
+
+/// Deliver the hangups collected at restore. Not a `Store` method on purpose (see [`Store::take_snapshot_hangups`]).
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+pub fn dispatch_snapshot_hangups(pending: Vec<*mut FilePoll>) -> usize {
+    let mut delivered = 0usize;
+    for poll_ptr in pending {
+        // SAFETY: collected from used hive slots during restore; a slot is only recycled through the deferred-free list, which
+        // does not run until the loop ticks. A poll closed by an earlier hangup's owner is still readable and reads as closed.
+        let still_hung_up = unsafe {
+            let poll = &*poll_ptr;
+            poll.fd != INVALID_FD
+                && !poll.flags.contains(Flags::Closed)
+                && poll.flags.contains(Flags::Hup)
+        };
+        if !still_hung_up {
+            continue;
+        }
+        // SAFETY: as above; the owner may re-enter the store freely, since nothing of it is borrowed here.
+        unsafe { (*poll_ptr).on_update(0) };
+        delivered += 1;
+    }
+    delivered
 }
 
 // ──────────────────────────────────────────────────────────────────────────

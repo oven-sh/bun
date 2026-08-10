@@ -1990,6 +1990,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
     {
         // SAFETY: main-thread VM; single-threaded at this point of restore.
         let vm = unsafe { &mut *vm_ptr };
+        vm.forget_env_derived_defaults_for_snapshot_restore();
         vm.origin_timer = std::time::Instant::now(); // performance.now()/process.uptime()/hrtime count from this launch, not the builder's
         vm.origin_timestamp = bun_jsc::virtual_machine::get_origin_timestamp();
     }
@@ -2064,8 +2065,14 @@ pub extern "C" fn Bun__startupSnapshotContinueEventLoop() -> ! {
         bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm_ptr)
     });
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-    if let Some(store) = vm.rare_data().file_polls.as_deref_mut() {
-        let n = store.dispatch_snapshot_hangups();
+    {
+        let pending = vm
+            .rare_data()
+            .file_polls
+            .as_deref_mut()
+            .map(bun_io::Store::take_snapshot_hangups)
+            .unwrap_or_default(); // the store borrow ends here; delivering may re-enter it
+        let n = bun_io::dispatch_snapshot_hangups(pending);
         if n > 0 {
             bun_core::debug_warn!(
                 "[snapshot] delivered {} hangups for fds that did not survive the restore",

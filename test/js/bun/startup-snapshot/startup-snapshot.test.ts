@@ -792,7 +792,7 @@ snapshotTest("DNS answers cached by the builder are not served after restore; ke
   }
   await using p = Bun.spawn({
     cmd: [bunExe(), fixture],
-    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, BUN_CONFIG_VERBOSE_FETCH: "curl" }, // the builder's fetch latched "not verbose"; this launch asks for it
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -804,6 +804,7 @@ snapshotTest("DNS answers cached by the builder are not served after restore; ke
   expect(r.after.cacheHitsCompleted).toBe(0); // the post-restore lookup was a miss, i.e. asked this machine
   expect(r.status).toBe(200);
   expect(r.body).toBe("ok2");
+  expect(err).toContain("curl "); // verbose fetch honored after restore, i.e. re-derived from this launch's environment
   expect(code).toBe(0);
 });
 

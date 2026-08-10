@@ -446,6 +446,8 @@ impl EventLoopCtx {
 }
 #[cfg(not(windows))]
 pub use posix_event_loop::Store;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+pub use posix_event_loop::dispatch_snapshot_hangups;
 #[cfg(windows)]
 pub use windows_event_loop::Store;
 

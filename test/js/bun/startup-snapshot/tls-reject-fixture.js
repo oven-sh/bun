@@ -12,6 +12,7 @@ async function probe(label) {
     server.stop(true);
   }
 }
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // written from JS as well as inherited: both places it can be latched from
 await probe("build");
 process.on("restore", async () => {
   await probe("restored");

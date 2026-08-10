@@ -1317,7 +1317,10 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
-        debug_assert!(self.is_subscriber());
+        // `is_subscriber()` may already be false here: `unsubscribe()` drops the
+        // handlers when called, so with several UNSUBSCRIBEs in flight the first
+        // ack leaves subscriber mode and the rest are acked afterwards. The same
+        // goes for `punsubscribe()` / a raw UNSUBSCRIBE from a non-subscriber.
         debug_assert!(self.this_value.get().is_strong());
 
         self.client_mut().on_writable();

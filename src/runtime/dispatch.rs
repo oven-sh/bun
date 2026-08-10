@@ -721,7 +721,15 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
 
-        poll_tag::FILE_SINK => poll_arm!(FileSinkPoll),
+        poll_tag::FILE_SINK => poll_arm!(FileSinkPoll, |h| {
+            // SAFETY: tag matched (see `poll_arm!`); `parent_ptr` is the owning
+            // FileSink. A stdio sink re-checks its fd mode before the writable
+            // callback flushes (spawn may have made the description blocking).
+            unsafe {
+                crate::webcore::FileSink::before_writable((*h).parent_ptr());
+                (*h).on_poll(size_or_offset as isize, hup)
+            }
+        }),
         poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>),
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
             poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)

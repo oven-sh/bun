@@ -147,7 +147,10 @@ where
                     // this.force_sync = true;
                     // this.writer.force_sync = true;
                     on_force_sync_or_isa_tty(ctx);
-                } else if !is_nonblocking {
+                } else if !is_nonblocking && *pollable {
+                    // O_NONBLOCK is meaningless on regular files / char devices
+                    // and lives on the shared open file description, so only
+                    // set it where it buys us EAGAIN semantics.
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
                         Err(err) => {

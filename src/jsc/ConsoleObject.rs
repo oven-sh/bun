@@ -3,16 +3,17 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
+use crate::{ComptimeStringMapExt as _, StringJsc as _, ZigStringJsc as _};
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsError, JsResult, ZigString};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
+use bun_io::Write as _;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -88,19 +89,17 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 type Counter = HashMap<u64, u32>;
 
 pub struct ConsoleObject {
-    stderr_buffer: [u8; 4096],
-    stdout_buffer: [u8; 4096],
-
-    error_writer_backing: Output::QuietWriterAdapter,
-    writer_backing: Output::QuietWriterAdapter,
+    /// A console message is formatted in full into this buffer and only then
+    /// handed to the stdio sink (or, when the stream is observed by user code,
+    /// to JS) — the same shape as Node's `formatWithOptions` → `stream.write`.
+    /// Taken (`mem::take`) for the duration of a call so a `console.*` that
+    /// re-enters during formatting (a getter that logs) formats into its own
+    /// buffer and is emitted first, as in Node.
+    scratch: Vec<u8>,
 
     pub(crate) default_indent: u16,
 
     counts: Counter,
-
-    // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
-    // moving the struct would dangle them, so opt out of `Unpin`.
-    _pin: core::marker::PhantomPinned,
 }
 
 impl core::fmt::Display for ConsoleObject {
@@ -110,52 +109,280 @@ impl core::fmt::Display for ConsoleObject {
     }
 }
 
+impl Default for ConsoleObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConsoleObject {
-    /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
-    /// the buffer field, so the struct is self-referential once initialized:
-    /// the address of `*out` MUST be stable for the value's entire lifetime —
-    /// moving it afterwards leaves the writer adapters dangling.
-    pub(crate) fn init_in_place(
-        out: &mut core::mem::MaybeUninit<ConsoleObject>,
-        error_writer: Output::StreamType,
-        writer: Output::StreamType,
-    ) -> &mut ConsoleObject {
-        let out = out.write(ConsoleObject {
-            stderr_buffer: [0; 4096],
-            stdout_buffer: [0; 4096],
-            error_writer_backing: Output::QuietWriterAdapter::uninit(),
-            writer_backing: Output::QuietWriterAdapter::uninit(),
+    pub fn new() -> ConsoleObject {
+        ConsoleObject {
+            scratch: Vec::new(),
             default_indent: 0,
             counts: Counter::default(),
-            _pin: core::marker::PhantomPinned,
-        });
-        let p: *mut ConsoleObject = out;
-        // SAFETY: `out` is now fully initialized at its final address; the
-        // adapters store raw pointers into `out.stderr_buffer` /
-        // `out.stdout_buffer`, which remain valid for `out`'s lifetime
-        // *provided the caller never moves it* (see fn doc).
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
         }
-        out
     }
 
-    /// Returns the buffered stderr writer interface.
     #[inline]
-    pub(crate) fn error_writer(&mut self) -> &mut bun_core::io::Writer {
-        self.error_writer_backing.new_interface()
+    fn take_scratch(this: *mut ConsoleObject) -> Vec<u8> {
+        // SAFETY: `this` is the live per-VM console (see [`vm_console`]);
+        // single field move-out, no reference held past this statement.
+        unsafe { core::mem::take(&mut (*this).scratch) }
     }
 
-    /// Returns the buffered stdout writer interface.
     #[inline]
-    pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
-        self.writer_backing.new_interface()
+    fn put_scratch(this: *mut ConsoleObject, mut buf: Vec<u8>) {
+        buf.clear();
+        // The native path never holds more than `SPILL_AT`; only a message that
+        // had to be handed to JS whole (or one oversized chunk) grows past it,
+        // and that one shouldn't pin its buffer for the life of the VM.
+        if buf.capacity() > SPILL_AT {
+            buf.shrink_to(SPILL_AT);
+        }
+        // SAFETY: as above. If a re-entrant call left its (smaller) buffer
+        // here, keep whichever is larger.
+        unsafe {
+            if (*this).scratch.capacity() < buf.capacity() {
+                (*this).scratch = buf;
+            }
+        }
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Delivery: stdio sink (fast) or the observed JS stream (Node's kWriteToConsole)
+// ───────────────────────────────────────────────────────────────────────────
+
+unsafe extern "Rust" {
+    /// `bun_runtime::webcore::file_sink::__bun_stdio_sink_write` — hand one
+    /// whole console message to this VM's stdio sink for `fd`; returns once it
+    /// has reached the fd (queued `process.stdout` bytes go out first).
+    fn __bun_stdio_sink_write(
+        vm: *mut VirtualMachine,
+        fd: bun_sys::Fd,
+        bytes: &[u8],
+    ) -> Result<(), bun_sys::Error>;
+    /// `bun_runtime::webcore::file_sink::__bun_stdio_sink_drain_fd` — flush
+    /// this fd's stdio sink queue now (no-op if it doesn't exist).
+    fn __bun_stdio_sink_drain_fd(vm: *mut VirtualMachine, fd: bun_sys::Fd);
+}
+
+unsafe extern "C" {
+    /// `BunProcess.cpp` — the stream the console must go through via JS
+    /// `write()` for `fd`, or the empty value when the native sink may be used.
+    /// A structure compare in the steady state; the very first call may run
+    /// (and rethrow from) a user getter installed on `process.stdout`.
+    fn Bun__Process__consoleStream(global: &JSGlobalObject, fd: i32, threw: &mut bool) -> JSValue;
+    /// `BunProcess.cpp` — `consoleObjectWriteToObservedStream(stream, chunk)`.
+    fn Bun__Console__writeToStream(global: &JSGlobalObject, stream: JSValue, chunk: JSValue);
+    /// `BunProcess.cpp` — the console's stream for `fd` is a foreign object
+    /// (not Bun's own stdio stream). Never runs user code.
+    safe fn Bun__Process__consoleStreamIsCustom(global: &JSGlobalObject, fd: i32) -> bool;
+    /// `BunProcess.cpp` — the console's stream *object* for `fd` if any exists
+    /// (custom binding or Bun's materialised stream), else empty. For
+    /// `console.clear()`'s `isTTY` check. Same throw contract as
+    /// `Bun__Process__consoleStream`.
+    fn Bun__Process__consoleStreamObject(
+        global: &JSGlobalObject,
+        fd: i32,
+        threw: &mut bool,
+    ) -> JSValue;
+}
+
+/// Which of the two console streams a message goes to. Node:
+/// `log/info/debug/dir/dirxml/table/count/timeLog/timeEnd/group` → stdout,
+/// `warn/error/trace/assert` → stderr.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleStream {
+    Stdout,
+    Stderr,
+}
+
+impl ConsoleStream {
+    /// 1 or 2 — the number `BunProcess.cpp` keys its per-stream state by.
+    #[inline]
+    pub fn number(self) -> i32 {
+        match self {
+            ConsoleStream::Stdout => 1,
+            ConsoleStream::Stderr => 2,
+        }
+    }
+
+    #[inline]
+    pub fn fd(self) -> bun_sys::Fd {
+        match self {
+            ConsoleStream::Stdout => bun_sys::Fd::stdout(),
+            ConsoleStream::Stderr => bun_sys::Fd::stderr(),
+        }
+    }
+
+    #[inline]
+    pub fn colors(self) -> bool {
+        match self {
+            ConsoleStream::Stdout => Output::enable_ansi_colors_stdout(),
+            ConsoleStream::Stderr => Output::enable_ansi_colors_stderr(),
+        }
+    }
+
+    #[inline]
+    fn for_message(message_type: MessageType, level: MessageLevel) -> Self {
+        if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+            || matches!(message_type, MessageType::Assert | MessageType::Trace)
+        {
+            ConsoleStream::Stderr
+        } else {
+            ConsoleStream::Stdout
+        }
+    }
+}
+
+/// Where one console message is going: the stdio sink, or — when user code
+/// could tell the difference — the bound stream's JS `write()` (Node's
+/// `kWriteToConsole`).
+#[inline]
+fn console_target(global: &JSGlobalObject, stream: ConsoleStream) -> JsResult<JSValue> {
+    let mut threw = false;
+    // SAFETY: plain FFI; `threw` is its throw contract.
+    let target = unsafe { Bun__Process__consoleStream(global, stream.number(), &mut threw) };
+    if threw {
+        Err(JsError::Thrown)
+    } else {
+        Ok(target)
+    }
+}
+
+/// Whether to colour a message bound for `target`: Bun's own fd 1/2 (native
+/// or observed) → the usual per-fd answer; a foreign stream (worker port,
+/// `console._stdout = x`) → `FORCE_COLOR`/`NO_COLOR`, else its own `isTTY`,
+/// as Node's `Console` does for `colorMode: 'auto'`.
+fn console_colors(
+    global: &JSGlobalObject,
+    stream: ConsoleStream,
+    target: JSValue,
+) -> JsResult<bool> {
+    if target.is_empty() || !Bun__Process__consoleStreamIsCustom(global, stream.number()) {
+        return Ok(stream.colors());
+    }
+    if let Some(forced) = Output::env_color_override() {
+        return Ok(forced);
+    }
+    if !target.is_object() {
+        return Ok(false);
+    }
+    Ok(target
+        .get(global, b"isTTY")?
+        .is_some_and(|v| v.to_boolean()))
+}
+
+/// Deliver one whole formatted message to `target` (see [`console_target`]).
+/// Errors reaching the fd (EPIPE, ...) are the sink's to surface on
+/// `process.stdout`/`stderr`; the console itself never throws for them
+/// (`ignoreErrors: true`).
+fn deliver_to(
+    global: &JSGlobalObject,
+    stream: ConsoleStream,
+    target: JSValue,
+    bytes: &[u8],
+) -> JsResult<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let vm: *mut VirtualMachine = global.bun_vm().as_mut();
+    if target.is_empty() {
+        // SAFETY: `vm` is the live per-thread VM that owns `global`.
+        let _ = unsafe { __bun_stdio_sink_write(vm, stream.fd(), bytes) };
+        return Ok(());
+    }
+    // Switching to JS delivery: whatever the native side still has queued for
+    // this fd must land first or it would come out after this message.
+    // SAFETY: as above.
+    unsafe { __bun_stdio_sink_drain_fd(vm, stream.fd()) };
+    let chunk = bun_core::String::borrow_utf8(bytes).to_js(global)?;
+    crate::from_js_host_call_generic(global, || {
+        // SAFETY: plain FFI; both values are live on this stack.
+        unsafe { Bun__Console__writeToStream(global, target, chunk) }
+    })
+}
+
+pub fn deliver(global: &JSGlobalObject, stream: ConsoleStream, bytes: &[u8]) -> JsResult<()> {
+    let target = console_target(global, stream)?;
+    deliver_to(global, stream, target, bytes)
+}
+
+/// The writer console formatting goes through. Normally just the scratch
+/// buffer; on the native path a message that outgrows [`SPILL_AT`] is written
+/// out as it is produced (bounded memory, and a giant `console.log` starts
+/// appearing before it is fully formatted) — the observed-stream path must
+/// hand JS one string, as Node does, so it never spills.
+pub struct ConsoleWriter<'a> {
+    buf: &'a mut Vec<u8>,
+    spill: Option<(*mut VirtualMachine, bun_sys::Fd)>,
+    /// A spill already failed (EPIPE, ...) and was reported: the rest of this
+    /// message is dropped rather than re-failing (and re-reporting) per block.
+    failed: bool,
+}
+
+/// How much of one message to accumulate before writing it out on the native
+/// path (and so the most scratch capacity kept between calls): the default
+/// pipe capacity on Linux and macOS, so each spill is at most one pipe-full and
+/// anything shorter is still a single `write(2)`.
+const SPILL_AT: usize = 64 * 1024;
+
+impl bun_io::Write for ConsoleWriter<'_> {
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> bun_core::CrateResult<()> {
+        if self.failed {
+            return Ok(());
+        }
+        self.buf.extend_from_slice(bytes);
+        if self.buf.len() >= SPILL_AT {
+            if let Some((vm, fd)) = self.spill {
+                // SAFETY: `vm` is the live per-thread VM (set in `emit`).
+                self.failed = unsafe { __bun_stdio_sink_write(vm, fd, self.buf) }.is_err();
+                self.buf.clear();
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Format a message with `f` and deliver it. If `f` fails (a JS exception
+/// thrown while formatting — a throwing getter, `toJSON`, ...) the exception
+/// propagates and nothing further is written, as in Node — except that on the
+/// native path a message already past [`SPILL_AT`] has had its earlier 64 KiB
+/// blocks written, so the reader sees it torn (bounded memory wins there).
+pub fn emit(
+    global: &JSGlobalObject,
+    stream: ConsoleStream,
+    f: impl FnOnce(&mut ConsoleWriter<'_>, bool) -> JsResult<()>,
+) -> JsResult<()> {
+    let target = console_target(global, stream)?;
+    let native = target.is_empty();
+    let colors = console_colors(global, stream, target)?;
+    // No lock here: formatting runs user JS (getters, toJSON, inspect.custom)
+    // that may log to the *other* stream or exit; each write / spill takes the
+    // per-fd lock for itself (`FileSink::write_all_sync`).
+
+    let console = vm_console(global);
+    let mut buf = ConsoleObject::take_scratch(console);
+    let mut writer = ConsoleWriter {
+        buf: &mut buf,
+        spill: native.then(|| {
+            (
+                std::ptr::from_mut::<VirtualMachine>(global.bun_vm().as_mut()),
+                stream.fd(),
+            )
+        }),
+        failed: false,
+    };
+    let result = match f(&mut writer, colors) {
+        Ok(()) if writer.failed => Ok(()),
+        Ok(()) => deliver_to(global, stream, target, &buf),
+        Err(err) => Err(err),
+    };
+    ConsoleObject::put_scratch(console, buf);
+    result
 }
 
 #[repr(u32)]
@@ -238,8 +465,6 @@ impl MessageType {
 // Bun__ConsoleObject__* shims.
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_threading::Mutex;
-
 /// `globalThis.bunVM().console` — `VirtualMachine.console` is typed
 /// `*mut c_void` (erased so `virtual_machine.rs` need not name this module's
 /// type). This is the single re-entry point that casts it back; every body
@@ -268,63 +493,6 @@ unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before
     // that. Single-JS-thread invariant ⇒ the returned `&mut` is exclusive.
     unsafe { &mut *vm_console(global) }
-}
-
-static STDERR_MUTEX: Mutex = Mutex::new();
-static STDOUT_MUTEX: Mutex = Mutex::new();
-
-thread_local! {
-    static STDERR_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
-    static STDOUT_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
-}
-
-/// RAII guard for the per-stream reentrant console lock. Acquires on
-/// construction (incrementing the thread-local count and locking the global
-/// mutex on first entry), releases on `Drop` (decrementing and unlocking on
-/// last exit).
-struct ConsoleStreamLock {
-    use_stderr: bool,
-}
-
-impl ConsoleStreamLock {
-    fn acquire(use_stderr: bool) -> Self {
-        if use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDERR_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
-        } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDOUT_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
-        }
-        Self { use_stderr }
-    }
-}
-
-impl Drop for ConsoleStreamLock {
-    fn drop(&mut self) {
-        if self.use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDERR_MUTEX.unlock();
-                }
-            });
-        } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDOUT_MUTEX.unlock();
-                }
-            });
-        }
-    }
 }
 
 /// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`.
@@ -405,60 +573,32 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
-    // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
-    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let stream = ConsoleStream::for_message(message_type, level);
 
     if message_type == MessageType::Clear {
-        Output::reset_terminal();
-        return Ok(());
-    }
-
-    if message_type == MessageType::Assert && len == 0 {
-        let text: &str = if Output::enable_ansi_colors_stderr() {
-            pfmt!("<r><red>Assertion failed<r>\n", true)
-        } else {
-            "Assertion failed\n"
-        };
-        // SAFETY: no other borrow of the console is live in this
-        // early-return arm (the deferred `_indent_guard` only holds the raw
-        // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
-        let _ = ew.write_all(text.as_bytes());
-        let _ = ew.flush();
-        return Ok(());
-    }
-
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-        Output::enable_ansi_colors_stderr()
-    } else {
-        Output::enable_ansi_colors_stdout()
-    };
-
-    // Snapshot before borrowing the writer; `default_indent` is not mutated
-    // again until the deferred `_indent_guard` runs on scope exit, so the two
-    // later reads (FormatOptions / TablePrinter) can use this cached copy
-    // instead of re-dereferencing the raw `console` pointer.
-    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
-    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
-
-    // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
-    let raw_writer: &mut bun_core::io::Writer = unsafe {
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-            (*console).error_writer()
-        } else {
-            (*console).writer()
+        // Node: only when `this._stdout.isTTY`, `cursorTo(0, 0)` + `clearScreenDown()`.
+        // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L487-L501
+        let mut threw = false;
+        // SAFETY: plain FFI; `threw` is its throw contract.
+        let stream_object = unsafe { Bun__Process__consoleStreamObject(global, 1, &mut threw) };
+        if threw {
+            return Err(JsError::Thrown);
         }
-    };
-    // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
-    let writer: &mut dyn bun_io::Write = raw_writer;
+        let is_tty = if stream_object.is_empty() {
+            Output::is_stdout_tty()
+        } else {
+            stream_object
+                .get(global, b"isTTY")?
+                .is_some_and(|v| v.to_boolean())
+        };
+        if is_tty && bun_core::env_var::TERM::get().is_none_or(|t| t != b"dumb") {
+            return deliver(global, ConsoleStream::Stdout, b"\x1b[1;1H\x1b[0J");
+        }
+        return Ok(());
+    }
 
+    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
+    let default_indent = unsafe { (*console).default_indent };
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
     // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
@@ -467,96 +607,112 @@ fn message_with_type_and_level_(
         (hooks.console_on_before_print)();
     }
 
-    let mut print_length = len;
-    // Get console depth from CLI options or bunfig, fallback to default.
-    let console_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-
-    let mut print_options = FormatOptions {
-        enable_colors,
-        add_newline: true,
-        flush: true,
-        default_indent,
-        max_depth: console_depth,
-        error_display_level: match level {
-            MessageLevel::Error => ErrorDisplayLevel::Full,
-            MessageLevel::Warning => ErrorDisplayLevel::Warn,
-            _ => ErrorDisplayLevel::Normal,
-        },
-        ..FormatOptions::default()
-    };
-
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
     let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
 
-    if message_type == MessageType::Table && len >= 1 {
-        // if value is not an object/array/iterable, don't print a table and just print it
-        let tabular_data = vals_slice[0];
-        if tabular_data.is_object() {
-            let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
-                vals_slice[1]
-            } else {
-                JSValue::UNDEFINED
+    emit(global, stream, |writer, enable_colors| {
+        if message_type == MessageType::Assert {
+            // Node prefixes the first argument and forwards to `warn`, so the
+            // prefix takes part in the same `%s` substitution pass:
+            // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L474-L485
+            let first_is_string = len > 0 && vals_slice[0].is_string();
+            let text: &str = match (len == 0, first_is_string, enable_colors) {
+                (true, _, true) => pfmt!("<r><red>Assertion failed<r>\n", true),
+                (true, _, false) => "Assertion failed\n",
+                // `Assertion failed: ${args[0]}` when it's a string,
+                (false, true, true) => pfmt!("<r><red>Assertion failed<r>: ", true),
+                (false, true, false) => "Assertion failed: ",
+                // else 'Assertion failed' is unshifted as its own argument.
+                (false, false, true) => pfmt!("<r><red>Assertion failed<r> ", true),
+                (false, false, false) => "Assertion failed ",
             };
-            let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
-            table_printer.value_formatter.indent += u32::from(default_indent);
-
-            if enable_colors {
-                let _ = table_printer.print_table::<true>(writer);
-            } else {
-                let _ = table_printer.print_table::<false>(writer);
-            }
-            let _ = writer.flush();
-            return Ok(());
-        }
-    }
-
-    if message_type == MessageType::Dir && len >= 2 {
-        print_length = 1;
-        let opts = vals_slice[1];
-        if opts.is_object() {
-            if let Some(depth_prop) = opts.get(global, b"depth")? {
-                if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    // Clamp negatives to 0, then truncate (not saturate) to u16.
-                    print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
-                } else if depth_prop.is_null() {
-                    print_options.max_depth = u16::MAX;
-                }
-            }
-            if let Some(colors_prop) = opts.get(global, b"colors")? {
-                if colors_prop.is_boolean() {
-                    print_options.enable_colors = colors_prop.to_boolean();
-                }
+            let _ = writer.write_all(text.as_bytes());
+            if len == 0 {
+                return Ok(());
             }
         }
-    }
 
-    if print_length > 0 {
-        format2(
-            level,
-            global,
-            &vals_slice[..print_length],
-            writer,
-            print_options,
-        )?;
-    } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
-    } else if message_type != MessageType::Trace {
-        let _ = writer.write_all(b"undefined\n");
-    }
+        let mut print_length = len;
+        // Get console depth from CLI options or bunfig, fallback to default.
+        let console_depth = bun_options_types::context::try_get()
+            .and_then(|ctx| ctx.runtime_options.console_depth)
+            .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
 
-    if message_type == MessageType::Trace {
-        write_trace(writer, global);
-        let _ = writer.flush();
-    }
+        let mut print_options = FormatOptions {
+            enable_colors,
+            add_newline: true,
+            flush: false,
+            default_indent,
+            max_depth: console_depth,
+            error_display_level: match level {
+                MessageLevel::Error => ErrorDisplayLevel::Full,
+                MessageLevel::Warning => ErrorDisplayLevel::Warn,
+                _ => ErrorDisplayLevel::Normal,
+            },
+            ..FormatOptions::default()
+        };
 
-    Ok(())
+        if message_type == MessageType::Table && len >= 1 {
+            // if value is not an object/array/iterable, don't print a table and just print it
+            let tabular_data = vals_slice[0];
+            if tabular_data.is_object() {
+                let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
+                    vals_slice[1]
+                } else {
+                    JSValue::UNDEFINED
+                };
+                let mut table_printer =
+                    TablePrinter::init(global, level, tabular_data, properties)?;
+                table_printer.value_formatter.indent += u32::from(default_indent);
+
+                if enable_colors {
+                    let _ = table_printer.print_table::<true>(writer);
+                } else {
+                    let _ = table_printer.print_table::<false>(writer);
+                }
+                return Ok(());
+            }
+        }
+
+        if message_type == MessageType::Dir && len >= 2 {
+            print_length = 1;
+            let opts = vals_slice[1];
+            if opts.is_object() {
+                if let Some(depth_prop) = opts.get(global, b"depth")? {
+                    if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
+                        // Clamp negatives to 0, then truncate (not saturate) to u16.
+                        print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
+                    } else if depth_prop.is_null() {
+                        print_options.max_depth = u16::MAX;
+                    }
+                }
+                if let Some(colors_prop) = opts.get(global, b"colors")? {
+                    if colors_prop.is_boolean() {
+                        print_options.enable_colors = colors_prop.to_boolean();
+                    }
+                }
+            }
+        }
+
+        if print_length > 0 {
+            format2(
+                level,
+                global,
+                &vals_slice[..print_length],
+                writer,
+                print_options,
+            )?;
+        } else if message_type == MessageType::Log {
+            let _ = writer.write_all(b"\n");
+        } else if message_type != MessageType::Trace {
+            let _ = writer.write_all(b"undefined\n");
+        }
+
+        if message_type == MessageType::Trace {
+            write_trace(writer, global);
+        }
+        Ok(())
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -5791,37 +5947,41 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
-    // we don't want to store these strings, it will take too much memory
-    let counter = this.counts.get_or_put(hash).expect("unreachable");
-    let current: u32 = if counter.found_existing {
-        *counter.value_ptr
-    } else {
-        0
-    } + 1;
-    *counter.value_ptr = current;
+    let current: u32 = {
+        // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+        // set-once `VirtualMachine.console` box; borrow ends before `emit`.
+        let this = unsafe { vm_console_mut(global_this) };
+        // we don't want to store these strings, it will take too much memory
+        let counter = this.counts.get_or_put(hash).expect("unreachable");
+        let current = if counter.found_existing {
+            *counter.value_ptr
+        } else {
+            0
+        } + 1;
+        *counter.value_ptr = current;
+        current
+    };
 
-    let writer = this.writer();
-    if Output::enable_ansi_colors_stdout() {
-        let _ = writeln!(
-            writer,
-            "{}{}{}: {}{}{}",
-            pfmt!("<r>", true),
-            bstr::BStr::new(slice),
-            pfmt!("<d>", true),
-            pfmt!("<r><yellow>", true),
-            current,
-            pfmt!("<r>", true),
-        );
-    } else {
-        let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
-    }
-    let _ = writer.flush();
+    let _ = emit(global_this, ConsoleStream::Stdout, |writer, colors| {
+        if colors {
+            let _ = writeln!(
+                writer,
+                "{}{}{}: {}{}{}",
+                pfmt!("<r>", true),
+                bstr::BStr::new(slice),
+                pfmt!("<d>", true),
+                pfmt!("<r><yellow>", true),
+                current,
+                pfmt!("<r>", true),
+            );
+        } else {
+            let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
+        }
+        Ok(())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -5850,26 +6010,179 @@ thread_local! {
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// `process.emitWarning(text)` for the console timers, as Node does; a
+/// failure to warn is not the caller's problem.
+fn console_warn(global: &JSGlobalObject, args: core::fmt::Arguments<'_>) {
+    let text = OwnedString::new(BunString::create_format(args));
+    let Ok(js) = text.to_js(global) else {
+        return;
+    };
+    let _ = global.emit_warning(
+        js,
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
+    );
+}
+
+/// Node's `formatTime` for `console.timeLog` / `console.timeEnd`.
+/// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/util/debuglog.js#L155-L187
+fn write_elapsed(writer: &mut dyn bun_io::Write, mut ms: f64) {
+    const SECOND: f64 = 1000.0;
+    const MINUTE: f64 = 60.0 * SECOND;
+    const HOUR: f64 = 60.0 * MINUTE;
+
+    let mut hours = 0u64;
+    let mut minutes = 0u64;
+    let mut seconds = 0.0f64;
+    if ms >= SECOND {
+        if ms >= MINUTE {
+            if ms >= HOUR {
+                hours = (ms / HOUR).floor() as u64;
+                ms %= HOUR;
+            }
+            minutes = (ms / MINUTE).floor() as u64;
+            ms %= MINUTE;
+        }
+        seconds = ms / SECOND;
+    }
+
+    if hours != 0 || minutes != 0 {
+        // `seconds.toFixed(3)` split on '.' → zero-padded whole seconds + millis.
+        let whole = seconds.trunc() as u64;
+        let mut millis = ((seconds - seconds.trunc()) * 1000.0).round() as u64;
+        let mut whole = whole;
+        if millis == 1000 {
+            millis = 0;
+            whole += 1;
+        }
+        if hours != 0 {
+            let _ = write!(
+                writer,
+                "{}:{:02}:{:02}.{:03} (h:mm:ss.mmm)",
+                hours, minutes, whole, millis
+            );
+        } else {
+            let _ = write!(writer, "{}:{:02}.{:03} (m:ss.mmm)", minutes, whole, millis);
+        }
+        return;
+    }
+
+    if seconds != 0.0 {
+        let _ = write!(writer, "{:.3}s", seconds);
+        return;
+    }
+
+    // `Number(ms.toFixed(3))`: round to three decimals, print as a JS number.
+    let _ = write!(
+        writer,
+        "{}ms",
+        bun_core::fmt::double((ms * 1000.0).round() / 1000.0)
+    );
+}
+
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let label = unsafe { bun_core::ffi::slice(chars, len) };
+    let id = bun_wyhash::hash(label);
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
     }
 
-    PENDING_TIME_LOGS.with_borrow_mut(|map| {
+    let existed = PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
             *result.value_ptr = Some(bun_core::time::Timer::start());
+            false
+        } else {
+            true
         }
+    });
+    if existed {
+        console_warn(
+            global,
+            format_args!(
+                "Label '{}' already exists for console.time()",
+                bstr::BStr::new(label)
+            ),
+        );
+    }
+}
+
+/// Shared tail of `timeEnd` / `timeLog`: `label: <elapsed>[ ...args]\n` on
+/// stdout, exactly what Node's `timeLogImpl` → `console.log('%s: %s', ...)`
+/// prints.
+fn time_log_impl(
+    global: &JSGlobalObject,
+    implementation: &str,
+    label: &[u8],
+    take: bool,
+    args: &[JSValue],
+) {
+    if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
+        console_warn(
+            global,
+            format_args!(
+                "No such label '{}' for {}",
+                bstr::BStr::new(label),
+                implementation
+            ),
+        );
+        return;
+    }
+    let id = bun_wyhash::hash(label);
+    let timer = PENDING_TIME_LOGS.with_borrow_mut(|m| match m.get_mut(&id) {
+        Some(slot) if take => slot.take(),
+        Some(slot) => *slot,
+        None => None,
+    });
+    let Some(timer) = timer else {
+        console_warn(
+            global,
+            format_args!(
+                "No such label '{}' for {}",
+                bstr::BStr::new(label),
+                implementation
+            ),
+        );
+        return;
+    };
+    let ms = timer.read() as f64 / bun_core::time::NS_PER_MS as f64;
+
+    let _ = emit(global, ConsoleStream::Stdout, |writer, colors| {
+        let _ = writer.write_all(label);
+        let _ = writer.write_all(b": ");
+        write_elapsed(writer, ms);
+
+        if !args.is_empty() {
+            // `Formatter` has a `Drop` impl, so struct-update from a
+            // temporary is rejected (E0509). Construct via `new()` then mutate.
+            let mut fmt = Formatter::new(global);
+            fmt.max_depth = bun_options_types::context::try_get()
+                .and_then(|ctx| ctx.runtime_options.console_depth)
+                .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+            fmt.stack_check = StackCheck::init();
+            fmt.can_throw_stack_overflow = true;
+            for &arg in args {
+                let tag = formatter::Tag::get(arg, global)?;
+                let _ = writer.write_all(b" ");
+                if colors {
+                    fmt.format::<true>(tag, writer, arg, global)?;
+                } else {
+                    fmt.format::<false>(tag, writer, arg, global)?;
+                }
+            }
+        }
+        let _ = writer.write_all(b"\n");
+        Ok(())
     });
 }
 
@@ -5877,33 +6190,13 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
-    if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
-        return;
-    }
-
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
-    // Replace the slot with `None`, returning the previous value.
-    let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
-    else {
-        return;
-    };
-    let Some(value) = prev else { return };
-    // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match len {
-        0 => Output::print_errorln(format_args!("")),
-        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
-    }
-
-    Output::flush();
+    let label = unsafe { bun_core::ffi::slice(chars, len) };
+    time_log_impl(global, "console.timeEnd()", label, true, &[]);
 }
 
 #[unsafe(no_mangle)]
@@ -5916,55 +6209,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     args: *const JSValue,
     args_len: usize,
 ) {
-    if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
-        return;
-    }
-
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
-    let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
-        return;
-    };
-    // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match len {
-        0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
-    }
-    Output::flush();
-
-    // print the arguments
-    // `Formatter` has a `Drop` impl, so struct-update from a
-    // temporary is rejected (E0509). Construct via `new()` then mutate.
-    let mut fmt = Formatter::new(global);
-    fmt.max_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    fmt.stack_check = StackCheck::init();
-    fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
-    // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
-        let Ok(tag) = formatter::Tag::get(arg, global) else {
-            return;
-        };
-        let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
-            let _ = fmt.format::<true>(tag, &mut writer, arg, global);
-        } else {
-            let _ = fmt.format::<false>(tag, &mut writer, arg, global);
-        }
-    }
-    let _ = bun_io::Write::write_all(&mut writer, b"\n");
-    let _ = bun_io::Write::flush(&mut writer);
+    // SAFETY: caller passes valid (ptr, len) pairs.
+    let label = unsafe { bun_core::ffi::slice(chars, len) };
+    // SAFETY: as above.
+    let args = unsafe { bun_core::ffi::slice(args, args_len) };
+    time_log_impl(global, "console.timeLog()", label, false, args);
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

@@ -24,9 +24,15 @@ test.concurrent.each(["stdout", "stderr"] as const)(
     const lines = reportPipe.trim().split("\n");
     const report = JSON.parse(lines[lines.length - 1]);
 
+    // The synchronous write() right after end() is rejected (still ending).
+    // By report time the stream has gone finish -> destroy -> _undestroy (Node
+    // installs `dummyDestroy` on every stdio stream, pipes included:
+    // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/bootstrap/switches/is_main_thread.js#L114-L128),
+    // so it reads as writable again — the same facts `node` (v22–v25) prints
+    // for this fixture.
     expect(report).toEqual({
-      writableEnded: true,
-      writable: false,
+      writableEnded: false,
+      writable: true,
       ret: false,
       cbErr: "ERR_STREAM_WRITE_AFTER_END",
       ev: ["err:ERR_STREAM_WRITE_AFTER_END"],

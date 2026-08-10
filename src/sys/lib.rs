@@ -3571,7 +3571,8 @@ pub mod sys_uv;
 #[cfg(not(windows))]
 pub mod sys_uv {
     pub use super::{
-        close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write,
+        close, fstat, lstat, mkdir, open, pread, pwrite, read, read_retrying, rename, stat, unlink,
+        write, write_retrying,
     };
 }
 
@@ -7430,6 +7431,75 @@ pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
     update_nonblocking(fd, true)
 }
+/// Bit `fd` (0–2) is set once something in this process has deliberately put
+/// that stdio description back into blocking mode behind the stdio sinks' back
+/// (spawn handing it to a child). Sinks that had gone non-blocking check it and
+/// stop assuming `EAGAIN` semantics — see `FileSink::refresh_stdio_mode`.
+pub static STDIO_MADE_BLOCKING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[cfg(unix)]
+#[inline]
+fn stdio_bit(fd: Fd) -> u8 {
+    match fd.native() {
+        n @ 0..=2 => 1u8 << n,
+        _ => 0,
+    }
+}
+
+/// Clear `O_NONBLOCK` on one of our stdio fds and record it in
+/// [`STDIO_MADE_BLOCKING`]. Best effort, like libuv's equivalent: a child is
+/// still better off spawned with a non-blocking stdio than not spawned.
+#[cfg(unix)]
+pub fn make_stdio_blocking(fd: Fd) {
+    debug_assert!(stdio_bit(fd) != 0);
+    if update_nonblocking(fd, false).is_ok() {
+        // AcqRel: the outline-atomics helper for it is already on the aarch64
+        // baseline allowlist (scripts/verify-baseline-static).
+        STDIO_MADE_BLOCKING.fetch_or(stdio_bit(fd), core::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// Whether `fd` is an anonymous pipe (lives on pipefs) rather than a named
+/// FIFO opened from a real filesystem. Only the former get `FMODE_NOWAIT`
+/// (torvalds/linux@afed6271f5b0), so only they honour `RWF_NOWAIT`; a FIFO
+/// answers `EOPNOTSUPP`, which would also switch `RWFFlagSupport` off for the
+/// whole process.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn is_on_pipefs(fd: Fd) -> bool {
+    const PIPEFS_MAGIC: u32 = 0x5049_5045;
+    // SAFETY: all-zero is a valid `statfs`; fstatfs writes it fully on success.
+    let mut st: libc::statfs = unsafe { core::mem::zeroed() };
+    loop {
+        // SAFETY: `fd` is a plain int; `st` is a live out-param.
+        let rc = unsafe { libc::fstatfs(fd.native(), &raw mut st) };
+        if rc == 0 {
+            return st.f_type as u32 == PIPEFS_MAGIC;
+        }
+        if last_errno() != libc::EINTR {
+            return false;
+        }
+    }
+}
+
+/// `c-bindings.cpp` `bun_restore_stdio_nonblock`: it just put `fd` back to
+/// blocking (exit / signal / pre-execve restore); record it like
+/// [`make_stdio_blocking`] so a process that survives (failed execve) has its
+/// sinks downgrade.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__stdioMadeBlocking(fd: core::ffi::c_int) {
+    if let n @ 0..=2 = fd {
+        STDIO_MADE_BLOCKING.fetch_or(1u8 << n, core::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// See [`STDIO_MADE_BLOCKING`].
+#[cfg(unix)]
+#[inline]
+pub fn stdio_made_blocking(fd: Fd) -> bool {
+    STDIO_MADE_BLOCKING.load(core::sync::atomic::Ordering::Acquire) & stdio_bit(fd) != 0
+}
+
 /// GETFL → toggle O_NONBLOCK → SETFL (only if changed).
 pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
     #[cfg(unix)]
@@ -9497,17 +9567,124 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
+/// Runs before this thread's `Output` bytes go to fd 1 / fd 2. The runtime
+/// points it at "flush what this JS thread's `process.stdout`/`stderr` still
+/// has queued for that fd" (`bun_runtime::webcore::file_sink`), which is what
+/// keeps everything Bun itself prints — errors, the test reporter, prompts —
+/// behind output the program already handed to its stdio streams.
+static STDIO_WRITE_HOOK: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+pub fn set_stdio_write_hook(hook: fn(Fd)) {
+    STDIO_WRITE_HOOK.store(hook as *mut (), core::sync::atomic::Ordering::Release);
+}
+
+#[inline]
+fn run_stdio_write_hook(fd: Fd) {
+    if fd != Fd::stdout() && fd != Fd::stderr() {
+        return;
+    }
+    // Debug logging can fire from inside the sink's own I/O callbacks; never
+    // re-enter the sink from there.
+    if bun_core::output::is_inside_scoped_log() {
+        return;
+    }
+    let p = STDIO_WRITE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if !p.is_null() {
+        // SAFETY: only ever stored from a `fn(Fd)` in `set_stdio_write_hook`.
+        let hook: fn(Fd) = unsafe { core::mem::transmute::<*mut (), fn(Fd)>(p) };
+        hook(fd);
+    }
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+///
+/// `EAGAIN` is not an error here: `O_NONBLOCK` lives on the open file
+/// description, so anything sharing fd 1/2 with us (a parent shell, a child,
+/// libuv in a sibling process, another thread's stdio sink) can flip it at any
+/// time. Wait for `POLLOUT` and keep going, which is exactly what a blocking
+/// `write(2)` would have done.
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+    run_stdio_write_hook(fd);
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until_writable(fd) {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }
     true
+}
+
+/// `write(2)` all of `bytes`, waiting out `EAGAIN`/`EINTR`; `false` on a real
+/// error. Does not take ownership of (or close) `fd`.
+#[inline]
+pub fn write_all_retrying(fd: Fd, bytes: &[u8]) -> bool {
+    fd_write_all_quiet(fd, bytes)
+}
+
+/// One `write(2)` that behaves as if `fd` were blocking regardless of the
+/// description's `O_NONBLOCK` bit: `EAGAIN` waits for `POLLOUT`, `EINTR`
+/// retries. For copy loops that run off the JS thread and may be handed a
+/// stdio pipe someone else made non-blocking.
+pub fn write_retrying(fd: Fd, bytes: &[u8]) -> Maybe<usize> {
+    loop {
+        match write(fd, bytes) {
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until_writable(fd) {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+/// `read(2)` counterpart of [`write_retrying`].
+pub fn read_retrying(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    loop {
+        match read(fd, buf) {
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.is_retry() => {
+                if !wait_until(fd, posix::POLL_IN) {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Block until `fd` reports `POLLOUT` (or `POLLERR`/`POLLHUP`, which the next
+/// `write` will turn into a real errno). `false` only if `poll` itself failed.
+#[cfg(unix)]
+#[inline]
+pub fn wait_until_writable(fd: Fd) -> bool {
+    wait_until(fd, posix::POLL_OUT)
+}
+
+#[cfg(unix)]
+fn wait_until(fd: Fd, events: i16) -> bool {
+    let mut pfd = [posix::PollFd {
+        fd: fd.native(),
+        events,
+        revents: 0,
+    }];
+    posix::poll(&mut pfd, -1).is_ok()
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

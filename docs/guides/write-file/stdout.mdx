@@ -18,6 +18,21 @@ Bun also exposes `stdout` as a `BunFile` with the `Bun.stdout` property. Pass it
 await Bun.write(Bun.stdout, "Lorem ipsum");
 ```
 
+For many small writes, `Bun.stdout.writer()` returns a buffered `FileSink` over the same destination.
+
+```ts
+const writer = Bun.stdout.writer();
+writer.write("Lorem ");
+writer.write("ipsum\n");
+writer.flush();
+```
+
+---
+
+`console.log`, `process.stdout.write()`, `Bun.write(Bun.stdout, ...)`, `Bun.stdout.writer()` and `console.write()` all end at one output queue per thread, so bytes each of them has handed over come out in call order, however slowly the other end of a pipe reads. As in Node.js, `console.log` is a `write()` on `process.stdout` from the point of view of anything that replaces or wraps `process.stdout.write` — so it also respects `process.stdout.cork()` and waits behind chunks `process.stdout` is still buffering. `Bun.write(Bun.stdout, ...)` and `Bun.stdout.writer()` write to the queue directly and are not held back by `process.stdout`'s stream-level state.
+
+When the program exits — including through `process.exit()` or an uncaught exception — everything already written to `process.stdout` and `process.stderr` is flushed to the operating system first. (Node.js can truncate pending output to a slow pipe on `process.exit()`; Bun waits for it.)
+
 ---
 
 See [`Bun.write()`](/runtime/file-io#writing-files-bun-write).

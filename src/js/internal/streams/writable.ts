@@ -334,6 +334,19 @@ function resetBuffer(state) {
   state[kState] &= ~kBuffered;
 }
 
+// Detach and return whatever is queued behind the in-flight write (their
+// callbacks will never run). For handing the chunks to another sink when this
+// stream is being abandoned, e.g. stdio at process exit.
+function takeBuffered(state) {
+  if ((state[kState] & kBuffered) === 0) return [];
+  const buffered = ArrayPrototypeSlice.$call(state.buffered, state.bufferedIndex);
+  for (let i = 0; i < buffered.length; i++) {
+    state.length -= (state[kState] & kObjectMode) !== 0 ? 1 : buffered[i].chunk.length;
+  }
+  resetBuffer(state);
+  return buffered;
+}
+
 WritableState.prototype.getBuffer = function getBuffer() {
   return (this[kState] & kBuffered) === 0 ? [] : ArrayPrototypeSlice.$call(this.buffered, this.bufferedIndex);
 };
@@ -397,6 +410,9 @@ function Writable(options): void {
 $toClass(Writable, "Writable", Stream);
 
 Writable.WritableState = WritableState;
+// Internal-only (process stdio at exit); a private name keeps it off the public
+// `stream.Writable` surface.
+$putByIdDirectPrivate(Writable, "takeBuffered", takeBuffered);
 
 ObjectDefineProperty(Writable, SymbolHasInstance, {
   __proto__: null,
@@ -443,6 +459,15 @@ function _write(stream, chunk, encoding, cb?) {
       encoding = "buffer";
     } else if (Stream._isArrayBufferView(chunk)) {
       chunk = Stream._uint8ArrayToBuffer(chunk);
+      encoding = "buffer";
+    } else if (
+      Stream._isAnyArrayBuffer(chunk) &&
+      (stream._isStdio === true || stream[require("internal/fs/streams").kWriteStreamFastPath])
+    ) {
+      // Bun's FileSink-backed streams (process.stdout/stderr, child.stdin,
+      // tty.WriteStream(fd)) have always taken a bare (Shared)ArrayBuffer; keep
+      // accepting it there (Node rejects it, so nothing relies on the throw).
+      chunk = new Uint8Array(chunk);
       encoding = "buffer";
     } else {
       throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);

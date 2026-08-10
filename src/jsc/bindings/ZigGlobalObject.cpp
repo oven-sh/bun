@@ -2928,34 +2928,27 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     return JSValue::encode(result);
 }
 
-// `console._stdout` is equal to `process.stdout`
-JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+// `console._stdout` / `console._stderr`: what the global console writes
+// through. Accessors (not cached data properties) so that assignment rebinds
+// the native console, exactly like Node's kBindStreamsLazy get/set pair:
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/console/constructor.js#L205-L234
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto console = JSValue::decode(thisValue).getObject();
-    auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdoutValue) return {};
-
-    console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdoutValue);
+    return JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->consoleStreamForGetter(globalObject, 1));
 }
-
-// `console._stderr` is equal to `process.stderr`
-JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+JSC_DEFINE_CUSTOM_SETTER(setConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto console = JSValue::decode(thisValue).getObject();
-    auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stderrValue) return {};
-
-    console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stderrValue);
+    uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->setConsoleStream(JSC::getVM(globalObject), 1, JSValue::decode(value));
+    return true;
+}
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    return JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->consoleStreamForGetter(globalObject, 2));
+}
+JSC_DEFINE_CUSTOM_SETTER(setConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName))
+{
+    uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->setConsoleStream(JSC::getVM(globalObject), 2, JSValue::decode(value));
+    return true;
 }
 
 // The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
@@ -3239,8 +3232,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, setConsoleStdout), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, setConsoleStderr), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor | 0);
+    // Node parity: the global console ignores stream errors.
+    consoleObject->putDirect(vm, Identifier::fromString(vm, "_ignoreErrors"_s), jsBoolean(true), PropertyAttribute::DontEnum | 0);
 }
 
 // ===================== start conditional builtin globals =====================

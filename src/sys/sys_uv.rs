@@ -823,6 +823,18 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
     Result::Ok(total_written)
 }
 
+/// libuv fs writes are synchronous/blocking here; same as `write`.
+#[inline]
+pub fn write_retrying(fd: Fd, buf: &[u8]) -> Result<usize> {
+    write(fd, buf)
+}
+
+/// Same as `read` on this backend.
+#[inline]
+pub fn read_retrying(fd: Fd, buf: &mut [u8]) -> Result<usize> {
+    read(fd, buf)
+}
+
 pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {

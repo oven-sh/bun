@@ -65,7 +65,7 @@ function installBun(platform: Platform, dst: string): void {
   const cwd = tmp();
   try {
     write(join(cwd, "package.json"), "{}");
-    const { exitCode } = spawn(
+    const { exitCode, stdout, stderr } = spawn(
       "npm",
       ["install", "--loglevel=error", "--prefer-offline", "--no-audit", "--progress=false", `${module}@${version}`],
       {
@@ -77,9 +77,10 @@ function installBun(platform: Platform, dst: string): void {
         },
       },
     );
-    if (exitCode === 0) {
-      rename(join(cwd, "node_modules", module), dst);
+    if (exitCode !== 0) {
+      throw new Error(stderr || stdout || `npm exited with code ${exitCode}`);
     }
+    rename(join(cwd, "node_modules", module), dst);
   } finally {
     try {
       rm(cwd);

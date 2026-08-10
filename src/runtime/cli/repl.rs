@@ -2522,15 +2522,13 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     let mut in_block_comment = false;
     let mut escaped = false;
 
-    // Last significant byte outside strings/comments (0 = none yet), and the
-    // identifier ending at it; both feed the regex-vs-division heuristic.
+    // Regex-vs-division context: last significant byte, and the identifier ending at it.
     let mut prev: u8 = 0;
     let mut word_start = 0usize;
     let mut word_end = 0usize;
     // `obj.in` is a property access, not the `in` keyword.
     let mut word_after_dot = false;
-    // Whether each open paren is an `if`/`for`/`while`/`with` head, so that a
-    // `/` right after its `)` reads as a regex, not division.
+    // Parens opened by `if`/`for`/`while`/`with`; a `/` after such a `)` is a regex.
     let mut paren_stack: Vec<bool> = Vec::new();
     let mut last_paren_conditional = false;
 
@@ -2582,8 +2580,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 }
                 _ => {}
             }
-            // A `/` starts a regex literal when the previous significant token
-            // cannot end an expression; otherwise it's division.
+            // A `/` after a token that cannot end an expression starts a regex.
             let after_keyword = is_word_char(prev)
                 && !word_after_dot
                 && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
@@ -2614,8 +2611,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                         | b'~'
                 );
             if starts_regex {
-                // Skip the regex body; a `/` inside a `[...]` class does not
-                // terminate it, and a newline does (regexes cannot span lines).
+                // Skip the regex body; `/` in a `[...]` class doesn't end it, a newline does.
                 i += 1;
                 let mut in_class = false;
                 while i < code.len() && code[i] != b'\n' {
@@ -2629,8 +2625,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     }
                     i += 1;
                 }
-                // A regex literal ends an expression, so a following `/` is
-                // division; `)` (non-conditional) encodes that.
+                // A regex ends an expression; `)` (non-conditional) encodes that.
                 prev = b')';
                 last_paren_conditional = false;
                 i += 1;

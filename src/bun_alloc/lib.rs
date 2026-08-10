@@ -1432,7 +1432,7 @@ macro_rules! bss_singleton {
             fn slow() -> *mut $ty {
                 let p = $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr();
                 // Race: two threads may both reach here. The mmap'd region is
-                // process-lifetime and never freed, so the loser is leaked
+                // process-lifetime and never freed, so the loser is leaked (its arena bytes too: first touch is single-threaded, so unlike the arena mapping this need not be claim-first)
                 // (≤ one per declare site, which in practice is single-threaded
                 // — `FileSystem::init` runs once on the main thread). The CAS
                 // is the publication barrier.

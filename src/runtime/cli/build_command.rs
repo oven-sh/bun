@@ -337,6 +337,12 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+                if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --snapshot: a standalone HTML file is not a process to snapshot"
+                    );
+                    Global::exit(1);
+                }
 
                 // This is not a bun executable compile - clear compile flags
                 this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;

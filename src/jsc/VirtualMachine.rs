@@ -3504,15 +3504,13 @@ impl VirtualMachine {
         self.rare_data().mime_type_from_string(str_)
     }
 
-    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
-    /// The channel belongs to the launch, so this runs at boot and again after a snapshot restore has reloaded the environment.
-    /// Snapshot restore: defaults latched from the builder's environment (or from its own writes to `process.env`) are re-derived
-    /// in this launch; TLS verification in particular must not stay off because the build turned it off.
+    /// Snapshot restore: defaults latched from the builder's environment must not survive; TLS verification in particular must not stay off.
     pub fn forget_env_derived_defaults_for_snapshot_restore(&mut self) {
         self.default_tls_reject_unauthorized = None;
         self.default_verbose_fetch.set(None);
     }
 
+    /// The channel belongs to the launch: run at boot, and again once a snapshot restore has reloaded the environment.
     pub fn adopt_ipc_channel_from_env(&mut self) {
         let env = self.transpiler.env_mut();
         let map = &mut env.map;
@@ -3551,6 +3549,7 @@ impl VirtualMachine {
         }
     }
 
+    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
     pub fn load_extra_env_and_source_code_printer(&mut self) {
         // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
@@ -3572,8 +3571,6 @@ impl VirtualMachine {
         {
             self.transpiler_store.enabled = false;
         }
-
-        self.adopt_ipc_channel_from_env();
 
         // Node.js checks if this is set to "1" and no other value
         if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {
@@ -3614,6 +3611,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        self.adopt_ipc_channel_from_env(); // last: it takes its own borrow of the env map, so nothing above may still hold one
     }
 
     /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.

@@ -222,6 +222,23 @@ function runExe(exe: string, extraEnv: Record<string, string> = {}) {
   return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), code: r.exitCode };
 }
 
+snapshotTest(
+  "--snapshot is rejected, not silently dropped, when --compile --target=browser produces a standalone HTML file",
+  () => {
+    using dir = tempDir("bun-snapshot-html", { "page.html": "<!doctype html><title>x</title>" });
+    const r = build([
+      "--compile",
+      "--target=browser",
+      "--snapshot",
+      join(String(dir), "page.html"),
+      "--outfile",
+      join(String(dir), "out.html"),
+    ]);
+    expect(r.out).toContain("cannot use --compile --target browser with --snapshot");
+    expect(r.code).toBe(1); // used to exit 0 with the flag ignored
+  },
+);
+
 snapshotTest("--snapshot (auto): an app with no snapshot call gets its snapshot once startup drains", () => {
   using dir = tempDir("bun-snapshot-auto", {});
   const exe = join(String(dir), "app");

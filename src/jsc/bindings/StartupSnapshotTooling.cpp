@@ -1294,7 +1294,11 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         if (JSC::Butterfly* bf = object->butterfly(); bf && !bfPtr) { // same butterfly: did its out-of-line slots / elements change?
             JSC::Structure* st = object->structure();
             size_t pre = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue) + sizeof(JSC::IndexingHeader); // the header slot always sits between the out-of-line slots and the pointer
-            size_t post = JSC::hasIndexedProperties(object->indexingType()) ? std::min<size_t>(bf->vectorLength(), 256) * sizeof(JSC::EncodedJSValue) : 0;
+            size_t post = 0;
+            if (JSC::hasIndexedProperties(object->indexingType())) {
+                post = std::min<size_t>(bf->vectorLength(), 256) * sizeof(JSC::EncodedJSValue);
+                if (JSC::hasAnyArrayStorage(object->indexingType())) post += JSC::ArrayStorage::vectorOffset(); // elements start after the ArrayStorage header
+            }
             uintptr_t base = (uintptr_t)bf - pre;
             size_t n = std::min(pre + post, origBf.size());
             if (fileBytesAt(base, origBf.data(), n)) bfContents = memcmp(origBf.data(), (void*)base, n) != 0;

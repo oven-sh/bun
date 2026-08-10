@@ -573,6 +573,10 @@ fn update_package_json_and_install_with_manager_with_updates(
     // here, so taking it back yields exactly the slice assigned above.
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
 
+    // Catalogs are root-scoped: a filtered update that excludes the cwd/root
+    // can still move catalog entries, and that must reach disk (see below).
+    let mut cwd_catalogs_changed = false;
+
     if subcommand == Subcommand::Update
         || subcommand == Subcommand::Add
         || subcommand == Subcommand::Link
@@ -621,7 +625,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             if editing_catalogs && manager.workspace_name_hash.is_none() {
                 // running from root: catalogs live in this file.
-                let _ = PackageJSONEditor::edit_catalogs_after_update(
+                cwd_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
                     manager,
                     &new_package_json,
                     EditOptions {
@@ -753,11 +757,11 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let _ = written;
 
-    // When `--filter` selects workspaces that don't include the cwd/root, the
-    // cwd package.json is not a target and must not be rewritten here. For the
-    // default and `--recursive` cases `cwd_in_target` is always true.
+    // When `--filter` excludes the cwd/root, the cwd package.json is not a
+    // target and is not rewritten, except when root-scoped catalog entries
+    // moved: those live in this file and must stay in sync with the lockfile.
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
-        && (plan.cwd_in_target || subcommand != Subcommand::Update)
+        && (plan.cwd_in_target || subcommand != Subcommand::Update || cwd_catalogs_changed)
     {
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {

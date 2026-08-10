@@ -32,10 +32,7 @@ using namespace WebCore;
 class BunInspectorConnection;
 static void installRunWhilePausedCallback(JSC::JSGlobalObject*);
 
-// True once the inspector has been activated at runtime via SIGUSR1 /
-// process._debugProcess, as opposed to --inspect at startup. When true,
-// CDP message delivery additionally fires notifyNeedDebuggerBreak so
-// messages reach a VM that never returns to the event loop.
+// Set by SIGUSR1 / process._debugProcess activation (never by --inspect): CDP delivery then also traps the JS thread.
 static std::atomic<bool> runtimeInspectorActivated { false };
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
@@ -158,11 +155,7 @@ public:
         bunControllerHasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
-        // On the runtime-activation path the frontend's Debugger.enable may not
-        // have arrived yet, but we need a debugger attached so breakProgram()
-        // (from the trap callback) has a Debugger to enter the pause loop on.
-        // Debugger::attach() is idempotent, so the later Debugger.enable call
-        // only replays sourceParsed for observers.
+        // onDebuggerTrap's breakProgram() needs a Debugger attached before Debugger.enable arrives; attach() is idempotent.
         if (runtimeInspectorActivated.load()) {
             auto* ctrlDebugger = globalObject->inspectorController().debugger();
             if (ctrlDebugger && !globalObject->debugger())
@@ -200,9 +193,7 @@ public:
             }
         });
 
-        // If the target VM may be in a busy loop, ensureOnContextThread above
-        // posted a task that never runs. Fire a debugger-break trap so the
-        // trap callback on the JS thread picks up the pending connection.
+        // A target stuck outside its event loop never runs the task above; onDebuggerTrap connects it instead.
         if (runtimeInspectorActivated.load() && !this->inPauseLoop.load())
             this->globalObject->vm().notifyNeedDebuggerBreak();
     }
@@ -224,14 +215,12 @@ public:
             connection->doDisconnect(context);
         });
 
-        // Same reasoning as connect(): on a busy-loop target the posted task
-        // never runs, so let the trap callback finish the teardown.
+        // As in connect(): a stuck target is torn down from onDebuggerTrap instead.
         if (runtimeInspectorActivated.load() && !this->inPauseLoop.load())
             this->globalObject->vm().notifyNeedDebuggerBreak();
     }
 
-    // Runs on the connection's owning JS thread, either from the task posted
-    // by disconnect() or from the debugger-trap callback.
+    // JS thread, from the task posted by disconnect() or from onDebuggerTrap.
     void doDisconnect(ScriptExecutionContext& context)
     {
         if (this->status == ConnectionStatus::Disconnected)
@@ -281,8 +270,7 @@ public:
             connections.appendVector(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         }
 
-        // Mark connections as in the pause loop so interruptForMessageDelivery
-        // skips firing traps (messages are already pumped by the loop below).
+        // The loop below pumps messages itself, so interruptForMessageDelivery must not trap meanwhile.
         for (auto& connection : connections)
             connection->inPauseLoop.store(true);
         auto clearInPauseLoop = WTF::makeScopeExit([&] {
@@ -538,16 +526,12 @@ public:
         }
     }
 
-    // Fire a NeedDebuggerBreak trap on the JS VM so the trap callback drains
-    // queued CDP messages even when the JS thread never returns to the event
-    // loop. Only used on the runtime-activation path; with --inspect the
-    // event loop task posted above is sufficient.
+    // Runtime-activation path only: onDebuggerTrap drains the queue even if the JS thread never returns to the event loop.
     void interruptForMessageDelivery()
     {
         if (!runtimeInspectorActivated.load())
             return;
-        // Already pumping messages in runWhilePaused; notifyPausedThread above
-        // woke it. A trap would be redundant and could re-enter breakProgram.
+        // runWhilePaused is pumping already (notifyPausedThread woke it); a trap could re-enter breakProgram.
         if (this->inPauseLoop.load())
             return;
         this->globalObject->vm().notifyNeedDebuggerBreak();
@@ -567,8 +551,7 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
-    // True while this connection is inside runWhilePaused. Read from the
-    // debugger thread to skip redundant debugger-break traps.
+    // Set while inside runWhilePaused; read from the debugger thread.
     std::atomic<bool> inPauseLoop { false };
 
     bool unrefOnDisconnect = false;
@@ -1161,9 +1144,7 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
 
 extern "C" bool Bun__tryActivateInspector();
 
-// Called from VMTraps::handleTraps(NeedDebuggerBreak) on the JS thread at a
-// safe point, after invalidateCodeBlocksOnStack. Installed on the main VM
-// when the runtime-inspector signal handler is armed.
+// JS thread, from VMTraps::handleTraps(NeedDebuggerBreak) at a safe point (code blocks on the stack already jettisoned).
 static void onDebuggerTrap(JSC::VM& vm)
 {
     if (Bun__tryActivateInspector())
@@ -1172,8 +1153,7 @@ static void onDebuggerTrap(JSC::VM& vm)
     if (!runtimeInspectorActivated.load())
         return;
 
-    // Hold refs: doDisconnect() below removes the connection from the map,
-    // which may otherwise drop its last reference mid-iteration.
+    // Copies of the refs: doDisconnect() below removes entries from the map.
     Vector<RefPtr<BunInspectorConnection>, 8> connections;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -1211,9 +1191,7 @@ static void onDebuggerTrap(JSC::VM& vm)
         conn->receiveMessagesOnInspectorThread(*ctx, static_cast<Zig::GlobalObject*>(conn->globalObject), false);
     }
 
-    // runWhilePaused is already pumping messages for this VM; breakProgram()
-    // would be a no-op (m_isPaused), and re-entering the pause loop from
-    // inside a CDP dispatch (Runtime.evaluate etc.) would deadlock.
+    // Already inside runWhilePaused: re-entering the pause loop from a CDP dispatch (Runtime.evaluate etc.) would deadlock.
     if (anyPaused)
         return;
 
@@ -1226,12 +1204,7 @@ static void onDebuggerTrap(JSC::VM& vm)
         auto* debugger = globalObject->debugger();
         if (!debugger)
             continue;
-        // Force the pause only for an explicit Debugger.pause dispatched during
-        // the drain above. A step-over/into/out in flight also enables stepping
-        // mode but must be left to reach its own target frame; pausing it here
-        // would stop inside the stepped-over callee. On initial SIGUSR1
-        // activation with no frontend yet, nothing is requested and we just
-        // keep running.
+        // Only an explicit Debugger.pause from the drain above; an in-flight step-over also enables stepping but must reach its own frame.
         if (debugger->isPauseAtNextOpportunitySet()) {
             debugger->breakProgram();
             return;

@@ -189,7 +189,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
-        "--inspect-port <STR>              Port for the debugger started by SIGUSR1 / process._debugProcess() (default 6499, 0 for a free port)"
+        "--inspect-port <STR>              [host:]port for the debugger started by SIGUSR1 / process._debugProcess() (default 6499, 0 for a free port)"
     ),
     parse_param!(
         "--disable-sigusr1                 Do not start the debugger on SIGUSR1; leave the signal at its default action"

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import os from "node:os";
 import {
   BUSY_LOOP,
@@ -90,10 +90,7 @@ describe.concurrent("process._debugProcess", () => {
     }
   });
 
-  // Times out on the release+ASAN lane waiting for Debugger.paused; the
-  // while(true) activation test above covers trap delivery there, and the
-  // non-sanitizer lanes cover the full pause path.
-  test.skipIf(isASAN)("Debugger.pause interrupts while(true)", async () => {
+  test("Debugger.pause interrupts while(true)", async () => {
     const { proc, pid } = await spawnTarget(BUSY_LOOP);
     await using _ = proc;
 
@@ -124,6 +121,27 @@ describe.concurrent("process._debugProcess", () => {
       stdout: "pipe",
     });
     expect(await proc.stdout.text()).toBe("ERR_MISSING_ARGS\n");
+  });
+
+  test("rejects pids that are not positive int32s", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for (const pid of [0, -1, 1.5, 2 ** 32 + 1]) {
+           try { process._debugProcess(pid); console.log(pid, "no error"); } catch (e) { console.log(pid, e.code); }
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    expect(await proc.stdout.text()).toMatchInlineSnapshot(`
+      "0 ERR_INVALID_ARG_VALUE
+      -1 ERR_INVALID_ARG_VALUE
+      1.5 ERR_INVALID_ARG_TYPE
+      4294967297 ERR_INVALID_ARG_TYPE
+      "
+    `);
   });
 
   test.skipIf(isWindows)("reports kill() failures as system errors", async () => {

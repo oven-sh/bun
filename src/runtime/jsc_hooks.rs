@@ -553,48 +553,36 @@ unsafe fn init_runtime_state(
     if opts.worker_ptr.is_null() {
         // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
         unsafe { configure_debugger(vm, &opts.debugger) };
-        // SAFETY: `vm` unique; `jsc_vm`/`debugger` written above.
+        // SAFETY: `vm` is unique here; `debugger` was just written above.
         unsafe { configure_sigusr1_handler(vm, opts) };
     }
 
     Ok(state.cast())
 }
 
-/// Install (or suppress) the SIGUSR1 runtime-inspector handler on the main
-/// thread. Must run after [`configure_debugger`] so the `vm.debugger.is_some()`
-/// check reflects `--inspect*` flags.
-///
-/// The per-VM trap callback is NOT installed here: `init_runtime_state` fires
-/// before `vm.jsc_vm` is set (same ordering as the `ParentDeathWatchdog` note
-/// above). `VirtualMachine::init` calls `runtime_inspector::on_main_vm_ready`
-/// once `jsc_vm` exists, which installs it if this function armed the handler.
+/// Runs after [`configure_debugger`] so that `--inspect*` is visible in `vm.debugger`. `vm.jsc_vm` does not
+/// exist yet (see the `ParentDeathWatchdog` note above); `VirtualMachine::init` finishes the job with
+/// `runtime_inspector::on_main_vm_ready`.
 ///
 /// # Safety
 /// `vm` is the freshly-boxed unique VM on this thread.
 unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions) {
+    use bun_jsc::runtime_inspector::{self, Sigusr1};
     // SAFETY: per fn contract.
-    if !unsafe { (*vm).is_main_thread } {
+    let (is_main_thread, has_debugger) =
+        unsafe { ((*vm).is_main_thread, (*vm).debugger.is_some()) };
+    if !is_main_thread {
         return;
     }
-    use bun_jsc::runtime_inspector;
     // SAFETY: per fn contract.
     unsafe { (*vm).inspect_port = opts.inspect_port };
-    // On platforms where JSC's GC uses SIGUSR1 for thread suspend/resume
-    // (e.g. FreeBSD), replacing that handler would hang the first
-    // conservative stack scan. Leave the GC handler in place; runtime
-    // activation via `process._debugProcess` (Windows-style file mapping is
-    // not available here either) is simply unsupported on those platforms.
-    if runtime_inspector::gc_owns_sigusr1() {
-        return;
-    }
-    if opts.disable_sigusr1 {
-        runtime_inspector::set_default_sigusr1_action();
-        // SAFETY: per fn contract; `debugger` written by `configure_debugger`.
-    } else if unsafe { (*vm).debugger.is_some() } {
-        runtime_inspector::ignore_sigusr1();
+    runtime_inspector::configure(if opts.disable_sigusr1 {
+        Sigusr1::Default
+    } else if has_debugger {
+        Sigusr1::Ignore
     } else {
-        runtime_inspector::install_if_not_already();
-    }
+        Sigusr1::StartInspector
+    });
 }
 
 /// Translate the CLI flag /

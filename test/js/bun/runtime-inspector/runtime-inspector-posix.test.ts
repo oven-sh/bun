@@ -1,3 +1,4 @@
+import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import {
@@ -80,8 +81,10 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
     let stdout = "";
     for (let i = 1; i <= 3; i++) {
       process.kill(pid, "SIGUSR1");
-      stdout = await readStreamUntil(reader, s => s.includes(`user ${i}`));
+      stdout += await readStreamUntil(reader, s => s.includes(`user ${i}`));
     }
+    // The third signal makes the target exit, so stdout reaches EOF.
+    stdout = await readStreamToEnd(reader, stdout);
     reader.releaseLock();
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
@@ -122,28 +125,55 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const reader = proc.stderr.getReader();
-    let stderr = await readStreamUntil(reader, hasBanner);
+    await expectSigusr1Ignored(proc);
+  });
 
-    process.kill(proc.pid, "SIGUSR1");
-    // Any CDP connection works as the "loop has turned" ack; under -wait/-brk
-    // this is also what lets the target proceed to exit cleanly below.
-    const ws = await connectInspector(wsUrlFromBanner(stderr));
-    try {
-      const result = await cdpClient(ws)("Runtime.evaluate", { expression: "6 * 7" });
-      expect(result.result.result.value).toBe(42);
-    } finally {
-      ws.close();
-    }
-
-    proc.kill();
-    stderr = await readStreamToEnd(reader, stderr);
-    reader.releaseLock();
-    await proc.exited;
-
-    expect({ banners: countBanners(stderr), signalCode: proc.signalCode }).toEqual({
-      banners: 1,
-      signalCode: "SIGTERM",
+  test("SIGUSR1 is still ignored under --inspect after a user listener is added and removed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--inspect=0",
+        "-e",
+        `const onSignal = () => {};
+         process.on("SIGUSR1", onSignal);
+         process.off("SIGUSR1", onSignal);
+         ${IDLE}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    // IDLE prints the pid, so a stdout line means the listener has come and gone.
+    const stdoutReader = proc.stdout.getReader();
+    await readStreamUntil(stdoutReader, s => s.includes("\n"));
+    stdoutReader.releaseLock();
+
+    await expectSigusr1Ignored(proc);
   });
 });
+
+async function expectSigusr1Ignored(proc: Subprocess<any, "pipe", "pipe">) {
+  const reader = proc.stderr.getReader();
+  let stderr = await readStreamUntil(reader, hasBanner);
+
+  process.kill(proc.pid, "SIGUSR1");
+  // Any CDP connection works as the "loop has turned" ack; under -wait/-brk
+  // this is also what lets the target proceed to exit cleanly below.
+  const ws = await connectInspector(wsUrlFromBanner(stderr));
+  try {
+    const result = await cdpClient(ws)("Runtime.evaluate", { expression: "6 * 7" });
+    expect(result.result.result.value).toBe(42);
+  } finally {
+    ws.close();
+  }
+
+  proc.kill();
+  stderr = await readStreamToEnd(reader, stderr);
+  reader.releaseLock();
+  await proc.exited;
+
+  expect({ banners: countBanners(stderr), signalCode: proc.signalCode }).toEqual({
+    banners: 1,
+    signalCode: "SIGTERM",
+  });
+}

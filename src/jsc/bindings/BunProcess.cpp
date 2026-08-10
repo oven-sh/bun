@@ -1533,9 +1533,7 @@ extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObj
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
-#ifdef SIGUSR1
 extern "C" void Bun__Sigusr1Handler__reinstall();
-#endif
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
@@ -1650,8 +1648,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         };
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
-                        // For SIGUSR1 this also displaces the runtime-inspector
-                        // activation handler; the removal path below hands it back.
+                        // For SIGUSR1 this displaces the runtime-inspector handler; removal below hands it back.
                         installForwardSignalHandler(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
@@ -1675,14 +1672,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
                                 // Don't uninstall the old handler if it's not the one we installed.
                                 signal(signalNumber, oldHandler);
-                            }
-#ifdef SIGUSR1
-                            // Last user listener gone: hand SIGUSR1 back to the
-                            // runtime-inspector handler (no-op if it was never
-                            // armed, e.g. --disable-sigusr1 or --inspect).
-                            else if (signalNumber == SIGUSR1)
+                            } else if (signalNumber == SIGUSR1) {
                                 Bun__Sigusr1Handler__reinstall();
-#endif
+                            }
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);
@@ -4677,11 +4669,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
         return Bun::ERR::MISSING_ARGS(scope, globalObject, "The \"pid\" argument must be specified"_s);
     }
 
-    int pid = callFrame->argument(0).toInt32(globalObject);
+    // Same `pid != (pid | 0)` check as Process_functionKill; rejects fractions and values that toInt32 would wrap.
+    auto pidValue = callFrame->argument(0);
+    int pid = pidValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-
+    bool isInt32 = JSC::JSValue::equal(globalObject, pidValue, jsNumber(pid));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isInt32) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "pid"_s, "number"_s, pidValue);
+    }
     if (pid <= 0) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "pid"_s, callFrame->argument(0), "must be a positive integer"_s);
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "pid"_s, pidValue, "must be a positive integer"_s);
     }
 
 #if !OS(WINDOWS)
@@ -4691,10 +4689,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
         return {};
     }
 #else
-    // Node.js on Windows throws a plain Error whose message is the
-    // FormatMessageW string (see winapi_strerror in node.cc), with no .code
-    // or .syscall. Match that so test/js/node/test/parallel/test-debug-process.js
-    // passes.
+    // Node throws a plain Error carrying the FormatMessageW text, with no .code or .syscall (winapi_strerror in node.cc).
     auto throwWinapiError = [&](DWORD err) {
         LPWSTR buf = nullptr;
         DWORD n = FormatMessageW(
@@ -4734,10 +4729,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     UnmapViewOfFile(pFunc);
     CloseHandle(hMapping);
 
-    // The target writes the handler pointer after creating the named mapping;
-    // a reader that races the install window sees zeroed memory. Treat that
-    // the same as no mapping so the caller retries instead of CreateRemoteThread
-    // failing (or worse, succeeding with a bogus entry point).
+    // Zero means we raced the target between creating the mapping and writing the pointer; report it like a missing mapping.
     if (!threadProc) {
         throwWinapiError(ERROR_FILE_NOT_FOUND);
         return {};
@@ -4757,8 +4749,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
         return {};
     }
 
-    // Wait briefly so the remote thread finishes signalling the target
-    // before we close the handle.
+    // Like Node, return once the injected thread has delivered the request (Node waits unbounded).
     WaitForSingleObject(hThread, 1000);
     CloseHandle(hThread);
     CloseHandle(hProcess);

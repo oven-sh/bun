@@ -112,10 +112,9 @@ pub struct InitOptions {
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
-    /// `--disable-sigusr1`: leave SIGUSR1 at its default action instead of
-    /// arming the runtime-inspector handler.
+    /// `--disable-sigusr1`: leave SIGUSR1 at its default action instead of starting the inspector on it.
     pub disable_sigusr1: bool,
-    /// `--inspect-port`: port for the runtime-activated inspector.
+    /// `--inspect-port`: where an inspector started by SIGUSR1 / `process._debugProcess` listens.
     pub inspect_port: Option<&'static [u8]>,
 }
 
@@ -349,8 +348,7 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub(crate) has_started_debugger: bool,
-    /// Port for runtime inspector activation (`--inspect-port`); `None` falls
-    /// back to the runtime-inspector default.
+    /// See [`InitOptions::inspect_port`]; `None` means `runtime_inspector`'s default port.
     pub inspect_port: Option<&'static [u8]>,
     pub(crate) has_terminated: bool,
 
@@ -2569,9 +2567,6 @@ impl VirtualMachine {
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
-            // Publishes `jsc_vm` for the SignalInspector thread; must run after
-            // the `(*vm).jsc_vm` write above. No-op unless the handler was
-            // armed by `init_runtime_state`.
             // SAFETY: `jsc_vm` is this (main-thread) VM's live `JSC::VM`.
             unsafe { crate::runtime_inspector::on_main_vm_ready(jsc_vm) };
         }

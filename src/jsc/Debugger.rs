@@ -595,24 +595,15 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     })
 }
 
-/// False when an inspector is already configured (CLI `--inspect`,
-/// `BUN_INSPECT`, `inspector.open()`, or an earlier runtime activation) or
-/// when called off the main thread.
+/// False off the main thread or once any inspector exists (CLI flags, env, `inspector.open()`, runtime activation).
 pub(crate) fn can_start_at_runtime() -> bool {
     let this: &VirtualMachine = VirtualMachine::get();
     this.is_main_thread && this.debugger.is_none() && !HAS_CREATED_DEBUGGER.load(Ordering::Relaxed)
 }
 
-/// Shared tail of every "start the inspector after startup" path
-/// (`inspector.open()`, SIGUSR1 / `process._debugProcess`): install
-/// `config` on the main VM, switch the transpiler to debuggable output, spawn
-/// the debugger thread, and install Bun's inspector controller. Returns false
-/// (leaving `vm.debugger` unset) if the thread could not be started. Caller
-/// has checked [`can_start_at_runtime`].
+/// Shared by `inspector.open()` and SIGUSR1 / `process._debugProcess`; the caller has checked [`can_start_at_runtime`].
 pub(crate) fn start_at_runtime(config: Debugger) -> bool {
-    // Short-lived borrows only — `Debugger::create` re-enters JS and forms its
-    // own `&mut VirtualMachine` (see the aliasing note on
-    // `wait_for_debugger_if_necessary`).
+    // `&` only: `Debugger::create` re-enters JS and forms its own `&mut VirtualMachine` (see `wait_for_debugger_if_necessary`).
     let this: &VirtualMachine = VirtualMachine::get();
     debug_assert!(can_start_at_runtime());
     this.as_mut().debugger = Some(Box::new(config));

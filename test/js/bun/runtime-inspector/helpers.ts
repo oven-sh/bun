@@ -20,7 +20,10 @@ export async function readStreamUntil(
   let timer!: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`Timed out after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
+      () =>
+        reject(
+          new Error(`Timed out after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`),
+        ),
       timeoutMs,
     );
     timer.unref();
@@ -126,25 +129,27 @@ export function wsUrlFromBanner(stderr: string): string {
   return match![0];
 }
 
-/** Minimal request/response CDP client over `ws`; `onEvent` sees notifications. */
+/** Minimal request/response CDP client over `ws`; `onEvent` sees notifications, protocol errors reject. */
 export function cdpClient(ws: WebSocket, onEvent?: (msg: any) => void) {
   let nextId = 1;
-  const pending = new Map<number, (msg: any) => void>();
+  const pending = new Map<number, PromiseWithResolvers<any>>();
   ws.onmessage = event => {
     const msg = JSON.parse(event.data as string);
-    if (msg.id !== undefined) {
-      pending.get(msg.id)?.(msg);
-      pending.delete(msg.id);
-    } else {
+    if (msg.id === undefined) {
       onEvent?.(msg);
+      return;
     }
+    const request = pending.get(msg.id);
+    pending.delete(msg.id);
+    if (msg.error) request?.reject(new Error(`CDP error: ${JSON.stringify(msg.error)}`));
+    else request?.resolve(msg);
   };
   return function send(method: string, params: Record<string, unknown> = {}): Promise<any> {
     const id = nextId++;
-    const { promise, resolve } = Promise.withResolvers<any>();
-    pending.set(id, resolve);
+    const request = Promise.withResolvers<any>();
+    pending.set(id, request);
     ws.send(JSON.stringify({ id, method, params }));
-    return withTimeout(`response to ${method}`, promise);
+    return withTimeout(`response to ${method}`, request.promise);
   };
 }
 

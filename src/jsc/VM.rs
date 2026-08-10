@@ -119,9 +119,7 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// Fires NeedDebuggerBreak Trap. Thread safe. The VM services it at its
-    /// next safe point by calling the callback installed via
-    /// `Bun__installDebuggerTrapCallback` (see `runtime_inspector`).
+    /// Fires NeedDebuggerBreak Trap. Thread safe. Serviced by the callback installed via `Bun__installDebuggerTrapCallback`.
     pub(crate) fn notify_need_debugger_break(&self) {
         JSC__VM__notifyNeedDebuggerBreak(self)
     }

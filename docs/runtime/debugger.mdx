@@ -65,10 +65,11 @@ kill -USR1 <pid>
 bun -e 'process._debugProcess(12345)'
 ```
 
-By default the inspector listens on port `6499`. To choose the port ahead of time, start the process with `--inspect-port`; `--inspect-port=0` picks a free port.
+By default the inspector listens on port `6499`. To choose where it listens ahead of time, start the process with `--inspect-port`, which accepts the same `port`, `host:port`, and URL prefix forms as `--inspect`; `--inspect-port=0` picks a free port.
 
 ```sh icon="terminal" title="terminal"
-bun --inspect-port=4000 server.ts   # later: kill -USR1 <pid>
+bun --inspect-port=4000 server.ts             # later: kill -USR1 <pid>
+bun --inspect-port=localhost:4000 server.ts
 ```
 
 If your program installs its own `process.on("SIGUSR1", ...)` listener, that listener receives the signal instead; the inspector shortcut comes back once the last listener is removed. To keep `SIGUSR1` at its default action (terminating the process) and never start an inspector, pass `--disable-sigusr1`. Processes started with `--inspect`, `--inspect-brk`, or `--inspect-wait` already have an inspector and ignore `SIGUSR1`.

@@ -226,6 +226,10 @@ extern "C" X509_STORE *us_get_default_ca_store(int use_system_ca) {
   // OpenSSL's default file/dir lookups (SSL_CERT_FILE / SSL_CERT_DIR) are the
   // OS trust store on Linux, so they only belong here when the system CAs do;
   // unconditional, they hand a --no-use-system-ca store system trust anyway.
+  // Node's default store never installs them either: NewRootCertStore only
+  // calls set_default_paths under --use-openssl-ca and otherwise adds the
+  // system roots only when use_system_ca is set.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099-L1109
   if (use_system_ca && !X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;

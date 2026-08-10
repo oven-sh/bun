@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -53,15 +54,12 @@ describe.concurrent("fetch-tls", () => {
       },
     });
 
-    // An explicit Host header overrides both the wire Host header and the
-    // hostname used for TLS SNI / certificate verification. checkServerIdentity
-    // receives the verification hostname as its first argument.
-    //
-    // fetch() invokes the JS checkServerIdentity callback once per connection
-    // in the redirect chain, before that connection's request is written: the
-    // request (and any cookies/credentials it carries) must not reach a hop
-    // whose certificate the callback has not approved. So a redirect chain
-    // yields one observation per hop, in order.
+    // An explicit Host header overrides the wire Host header and the TLS SNI,
+    // but not the identity the peer certificate is verified against:
+    // checkServerIdentity receives the URL authority (or `tls.serverName` when
+    // set) regardless of the Host header. fetch() invokes the callback once
+    // per connection in the redirect chain, before that connection's request
+    // is written, so a redirect chain yields one observation per hop.
     const verifiedHostnames: string[] = [];
     const res = await fetch(`https://127.0.0.1:${origin.port}/`, {
       keepalive: false,
@@ -76,16 +74,107 @@ describe.concurrent("fetch-tls", () => {
     });
     expect(await res.text()).toBe("from-target");
 
-    // The first hop is verified against the explicit Host override
-    // ("localhost"). The Host override names the previous origin, so on a
-    // cross-origin redirect it must be dropped and the verification hostname
-    // re-derived from the redirect target's URL ("127.0.0.1"). The vulnerable
-    // behavior carries the stale override and verifies the second connection
-    // against "localhost" instead.
-    expect(verifiedHostnames).toEqual(["localhost", "127.0.0.1"]);
+    // Each hop is verified against the URL it dialled. The Host override is
+    // request-layer routing metadata and must never become the verify target;
+    // a proxy that forwards an inbound Host header must not let that header
+    // steer which certificate its upstream connection accepts.
+    expect(verifiedHostnames).toEqual(["127.0.0.1", "127.0.0.1"]);
     // The redirect target must see a Host header derived from its own URL,
     // not the override that was supplied for the previous origin.
     expect(receivedHostHeaders).toEqual([`127.0.0.1:${target.port}`]);
+  });
+
+  // The peer certificate is matched against the URL authority (RFC 6125 /
+  // RFC 9525), never against a caller-supplied Host request header. A leaf
+  // whose only SAN is DNS:localhost must be rejected for a request dialled to
+  // 127.0.0.1, whether or not the caller sends `Host: localhost`. An explicit
+  // `tls.serverName` is the documented opt-in for "dial an IP, verify a name"
+  // and remains the only header-independent way to accept such a leaf.
+  it("verifies the certificate against the URL authority, not the Host request header", async () => {
+    const localhostOnlyTls = {
+      cert: readFileSync(join(import.meta.dir, "../../../regression/issue/27890-localhost-only.crt"), "utf8"),
+      key: readFileSync(join(import.meta.dir, "../../../regression/issue/27890-localhost-only.key"), "utf8"),
+    };
+    using server = Bun.serve({
+      port: 0,
+      tls: localhostOnlyTls,
+      fetch: () => new Response("ok"),
+    });
+
+    const opts = { keepalive: false, tls: { ca: localhostOnlyTls.cert } } as const;
+
+    // Baseline: no Host header, IP URL → cert has no matching IP SAN.
+    await expect(fetch(`https://127.0.0.1:${server.port}/`, opts)).rejects.toMatchObject({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
+
+    // Adding `Host: localhost` must not change the verify target.
+    await expect(
+      fetch(`https://127.0.0.1:${server.port}/`, { ...opts, headers: { Host: "localhost" } }),
+    ).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+
+    // The same hostname handed to a JS checkServerIdentity is the URL host,
+    // not the Host header value.
+    let seenHostname = "";
+    await expect(
+      fetch(`https://127.0.0.1:${server.port}/`, {
+        keepalive: false,
+        headers: { Host: "localhost" },
+        tls: {
+          ca: localhostOnlyTls.cert,
+          checkServerIdentity(hostname, cert) {
+            seenHostname = hostname;
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    expect(seenHostname).toBe("127.0.0.1");
+
+    // `tls.serverName` is the sanctioned override: verify against it and succeed.
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, {
+      keepalive: false,
+      tls: { ca: localhostOnlyTls.cert, serverName: "localhost" },
+    });
+    expect(await res.text()).toBe("ok");
+    expect(res.status).toBe(200);
+
+    // Inverse of the rejection case above (issue #26579): a garbage Host
+    // header must not cause a request to a server whose certificate matches
+    // the URL authority to fail verification.
+    const ok = await fetch(`https://localhost:${server.port}/`, {
+      keepalive: false,
+      headers: { Host: "whatever.invalid" },
+      tls: { ca: localhostOnlyTls.cert },
+    });
+    expect(await ok.text()).toBe("ok");
+    expect(ok.status).toBe(200);
+  });
+
+  // The Host request header is still forwarded as the TLS ClientHello SNI so a
+  // fetch to an IP with `Host: <name>` reaches the right SNI-routed virtual
+  // host. Only certificate verification is now header-independent.
+  it("still sends the Host request header as the ClientHello SNI", async () => {
+    const receivedSni: (string | false)[] = [];
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      receivedSni.push(socket.servername);
+      socket.once("data", () => {
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const res = await fetch(`https://127.0.0.1:${port}/`, {
+        keepalive: false,
+        headers: { Host: "localhost" },
+        tls: { ca: validTls.cert },
+      });
+      expect(await res.text()).toBe("ok");
+      expect(receivedSni).toEqual(["localhost"]);
+    } finally {
+      server.close();
+    }
   });
 
   it("can handle multiple requests with non native checkServerIdentity", async () => {

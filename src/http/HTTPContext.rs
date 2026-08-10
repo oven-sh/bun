@@ -741,8 +741,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            // The hash covers the Host-header SNI override that the handshake
-            // was verified against (see get_tls_hostname / connect()).
+            // The hash covers the Host-header SNI override the handshake sent
+            // (see get_tls_sni_hostname / connect()).
             if socket.proxy_auth_hash != proxy_auth_hash {
                 continue;
             }
@@ -940,10 +940,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-            // For a direct TLS connection the handshake verifies the peer
-            // against get_tls_hostname() — which prefers the Host-header
-            // override (client.hostname) over url.hostname — so the override
-            // must discriminate the pool key there too, not just for CONNECT
+            // For a direct TLS connection the handshake SNI is derived from
+            // get_tls_sni_hostname() — which prefers the Host-header override
+            // (client.hostname) over url.hostname — so the override must
+            // discriminate the pool key there too, not just for CONNECT
             // tunnels. proxy_auth_hash() reduces to exactly the override hash
             // (or 0) for a non-proxied request.
             let proxy_auth_hash: u64 = if want_tunnel || (SSL && client.http_proxy.is_none()) {

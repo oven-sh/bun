@@ -641,10 +641,9 @@ fn any_reply_to_js(
 
 // ── Error ──────────────────────────────────────────────────────────────────
 
-/// Node's `dnsException` only assigns a numeric `errno` when libuv reported a
-/// numeric error (the getaddrinfo/getnameinfo family). c-ares resolver
-/// failures carry a string code, so Node leaves their `errno` undefined;
-/// overwrite the c-ares enum value `SystemError` put there.
+/// Node only sets a numeric `errno` on DNS errors when libuv reported a
+/// numeric code (getaddrinfo/getnameinfo); c-ares resolver failures carry a
+/// string code and leave `errno` undefined.
 fn clear_errno_for_resolver_syscall(
     instance: JSValue,
     global_this: &JSGlobalObject,

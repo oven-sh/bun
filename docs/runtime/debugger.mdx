@@ -51,6 +51,28 @@ bun --inspect=localhost:4000 server.ts
 bun --inspect=localhost:4000/prefix server.ts
 ```
 
+### Attaching to a running process
+
+A process that was started without `--inspect` can still be debugged. Sending it `SIGUSR1` starts the inspector on the spot and prints the same banner as `--inspect`, even if the process is busy in a long-running loop and never returns to the event loop. This matches Node.js.
+
+```sh icon="terminal" title="terminal"
+kill -USR1 <pid>
+```
+
+`process._debugProcess(pid)` does the same from JavaScript and also works on Windows, where there is no `SIGUSR1`:
+
+```sh icon="terminal" title="terminal"
+bun -e 'process._debugProcess(12345)'
+```
+
+By default the inspector listens on port `6499`. To choose the port ahead of time, start the process with `--inspect-port`; `--inspect-port=0` picks a free port.
+
+```sh icon="terminal" title="terminal"
+bun --inspect-port=4000 server.ts   # later: kill -USR1 <pid>
+```
+
+If your program installs its own `process.on("SIGUSR1", ...)` listener, that listener receives the signal instead; the inspector shortcut comes back once the last listener is removed. To keep `SIGUSR1` at its default action (terminating the process) and never start an inspector, pass `--disable-sigusr1`. Processes started with `--inspect`, `--inspect-brk`, or `--inspect-wait` already have an inspector and ignore `SIGUSR1`.
+
 ---
 
 ## Debuggers

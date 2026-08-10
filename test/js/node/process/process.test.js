@@ -1251,7 +1251,6 @@ describe.concurrent(() => {
   // test-process-raw-debug.js.
   const undefinedStubs = [
     "_debugEnd",
-    "_debugProcess",
     "_linkedBinding",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",

@@ -33,6 +33,7 @@ unsafe extern "C" {
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
+    safe fn JSC__VM__notifyNeedDebuggerBreak(vm: &VM);
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
@@ -116,6 +117,13 @@ impl VM {
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
+    }
+
+    /// Fires NeedDebuggerBreak Trap. Thread safe. The VM services it at its
+    /// next safe point by calling the callback installed via
+    /// `Bun__installDebuggerTrapCallback` (see `runtime_inspector`).
+    pub(crate) fn notify_need_debugger_break(&self) {
+        JSC__VM__notifyNeedDebuggerBreak(self)
     }
 
     /// Has termination been requested on this VM (worker.terminate(), or

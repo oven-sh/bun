@@ -944,6 +944,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
+            disable_sigusr1: ctx.runtime_options.disable_sigusr1,
+            inspect_port: ctx
+                .runtime_options
+                .inspect_port
+                .as_deref()
+                .map(crate::cli::cli_dupe),
             ..Default::default()
         })?;
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
@@ -1165,6 +1171,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
+            disable_sigusr1: ctx.runtime_options.disable_sigusr1,
+            inspect_port: ctx
+                .runtime_options
+                .inspect_port
+                .as_deref()
+                .map(crate::cli::cli_dupe),
             ..Default::default()
         })?;
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM

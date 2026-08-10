@@ -112,6 +112,11 @@ pub struct InitOptions {
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
+    /// `--disable-sigusr1`: leave SIGUSR1 at its default action instead of
+    /// arming the runtime-inspector handler.
+    pub disable_sigusr1: bool,
+    /// `--inspect-port`: port for the runtime-activated inspector.
+    pub inspect_port: Option<&'static [u8]>,
 }
 
 impl Default for InitOptions {
@@ -129,6 +134,8 @@ impl Default for InitOptions {
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
             mini_mode: false,
+            disable_sigusr1: false,
+            inspect_port: None,
         }
     }
 }
@@ -342,6 +349,9 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub(crate) has_started_debugger: bool,
+    /// Port for runtime inspector activation (`--inspect-port`); `None` falls
+    /// back to the runtime-inspector default.
+    pub inspect_port: Option<&'static [u8]>,
     pub(crate) has_terminated: bool,
 
     /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
@@ -2559,6 +2569,11 @@ impl VirtualMachine {
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
+            // Publishes `jsc_vm` for the SignalInspector thread; must run after
+            // the `(*vm).jsc_vm` write above. No-op unless the handler was
+            // armed by `init_runtime_state`.
+            // SAFETY: `jsc_vm` is this (main-thread) VM's live `JSC::VM`.
+            unsafe { crate::runtime_inspector::on_main_vm_ready(jsc_vm) };
         }
 
         if opts.smol {
@@ -3137,6 +3152,10 @@ pub struct Options {
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     pub is_main_thread: bool,
+    /// See [`InitOptions::disable_sigusr1`].
+    pub disable_sigusr1: bool,
+    /// See [`InitOptions::inspect_port`].
+    pub inspect_port: Option<&'static [u8]>,
 }
 
 /// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
@@ -3911,6 +3930,8 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            disable_sigusr1: opts.disable_sigusr1,
+            inspect_port: opts.inspect_port,
             ..Default::default()
         };
         let vm = Self::init(init_opts)?;

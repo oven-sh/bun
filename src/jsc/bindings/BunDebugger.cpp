@@ -11,6 +11,7 @@
 #include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/Scope.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
@@ -29,6 +30,13 @@ using namespace JSC;
 using namespace WebCore;
 
 class BunInspectorConnection;
+static void installRunWhilePausedCallback(JSC::JSGlobalObject*);
+
+// True once the inspector has been activated at runtime via SIGUSR1 /
+// process._debugProcess, as opposed to --inspect at startup. When true,
+// CDP message delivery additionally fires notifyNeedDebuggerBreak so
+// messages reach a VM that never returns to the event loop.
+static std::atomic<bool> runtimeInspectorActivated { false };
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
@@ -150,12 +158,18 @@ public:
         bunControllerHasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
-        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-        if (debugger) {
-            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-            };
+        // On the runtime-activation path the frontend's Debugger.enable may not
+        // have arrived yet, but we need a debugger attached so breakProgram()
+        // (from the trap callback) has a Debugger to enter the pause loop on.
+        // Debugger::attach() is idempotent, so the later Debugger.enable call
+        // only replays sourceParsed for observers.
+        if (runtimeInspectorActivated.load()) {
+            auto* ctrlDebugger = globalObject->inspectorController().debugger();
+            if (ctrlDebugger && !globalObject->debugger())
+                ctrlDebugger->attach(globalObject);
         }
+
+        installRunWhilePausedCallback(globalObject);
 
         this->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(globalObject), false);
     }
@@ -185,6 +199,12 @@ public:
             }
             }
         });
+
+        // If the target VM may be in a busy loop, ensureOnContextThread above
+        // posted a task that never runs. Fire a debugger-break trap so the
+        // trap callback on the JS thread picks up the pending connection.
+        if (runtimeInspectorActivated.load() && !this->inPauseLoop.load())
+            this->globalObject->vm().notifyNeedDebuggerBreak();
     }
 
     void disconnect()
@@ -201,30 +221,42 @@ public:
         }
 
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
-            if (connection->status == ConnectionStatus::Disconnected)
-                return;
-
-            connection->status = ConnectionStatus::Disconnected;
-
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
-                connection->inspector().disconnect(connection.get());
-            }
-
-            if (connection->unrefOnDisconnect) {
-                connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, -1);
-            }
-
-            {
-                Locker<Lock> locker(inspectorConnectionsLock);
-                if (inspectorConnections) {
-                    auto it = inspectorConnections->find(connection->scriptExecutionContextIdentifier);
-                    if (it != inspectorConnections->end())
-                        it->value.removeFirstMatching([&](auto& c) { return c.get() == connection.ptr(); });
-                }
-            }
+            connection->doDisconnect(context);
         });
+
+        // Same reasoning as connect(): on a busy-loop target the posted task
+        // never runs, so let the trap callback finish the teardown.
+        if (runtimeInspectorActivated.load() && !this->inPauseLoop.load())
+            this->globalObject->vm().notifyNeedDebuggerBreak();
+    }
+
+    // Runs on the connection's owning JS thread, either from the task posted
+    // by disconnect() or from the debugger-trap callback.
+    void doDisconnect(ScriptExecutionContext& context)
+    {
+        if (this->status == ConnectionStatus::Disconnected)
+            return;
+
+        this->status = ConnectionStatus::Disconnected;
+
+        // Do not call .disconnect() if we never actually connected.
+        if (this->hasEverConnected) {
+            this->inspector().disconnect(*this);
+        }
+
+        if (this->unrefOnDisconnect) {
+            this->unrefOnDisconnect = false;
+            Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, -1);
+        }
+
+        {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            if (inspectorConnections) {
+                auto it = inspectorConnections->find(this->scriptExecutionContextIdentifier);
+                if (it != inspectorConnections->end())
+                    it->value.removeFirstMatching([&](auto& c) { return c.get() == this; });
+            }
+        }
     }
 
     JSC::JSGlobalObjectDebuggable& inspector()
@@ -248,6 +280,15 @@ public:
             Locker<Lock> locker(inspectorConnectionsLock);
             connections.appendVector(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         }
+
+        // Mark connections as in the pause loop so interruptForMessageDelivery
+        // skips firing traps (messages are already pumped by the loop below).
+        for (auto& connection : connections)
+            connection->inPauseLoop.store(true);
+        auto clearInPauseLoop = WTF::makeScopeExit([&] {
+            for (auto& connection : connections)
+                connection->inPauseLoop.store(false);
+        });
 
         for (auto& connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
@@ -408,11 +449,8 @@ public:
 
                 if (!debugger) {
                     debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-                    if (debugger) {
-                        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                            runWhilePaused(globalObject, isDoneProcessingEvents);
-                        };
-                    }
+                    if (debugger)
+                        installRunWhilePausedCallback(globalObject);
                 }
             }
         } else {
@@ -479,6 +517,7 @@ public:
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
+            this->interruptForMessageDelivery();
         }
     }
 
@@ -495,7 +534,23 @@ public:
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
+            this->interruptForMessageDelivery();
         }
+    }
+
+    // Fire a NeedDebuggerBreak trap on the JS VM so the trap callback drains
+    // queued CDP messages even when the JS thread never returns to the event
+    // loop. Only used on the runtime-activation path; with --inspect the
+    // event loop task posted above is sufficient.
+    void interruptForMessageDelivery()
+    {
+        if (!runtimeInspectorActivated.load())
+            return;
+        // Already pumping messages in runWhilePaused; notifyPausedThread above
+        // woke it. A trap would be redundant and could re-enter breakProgram.
+        if (this->inPauseLoop.load())
+            return;
+        this->globalObject->vm().notifyNeedDebuggerBreak();
     }
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;
@@ -512,10 +567,24 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
+    // True while this connection is inside runWhilePaused. Read from the
+    // debugger thread to skip redundant debugger-break traps.
+    std::atomic<bool> inPauseLoop { false };
+
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;
 };
+
+static void installRunWhilePausedCallback(JSC::JSGlobalObject* globalObject)
+{
+    auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+    if (debugger) {
+        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& go, bool& done) {
+            BunInspectorConnection::runWhilePaused(go, done);
+        };
+    }
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
@@ -656,12 +725,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     auto& inspector = globalObject->inspectorDebuggable();
     inspector.setInspectable(true);
 
-    Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-    if (debugger) {
-        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-            BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-        };
-    }
+    installRunWhilePausedCallback(globalObject);
     if (pauseOnStart) {
         waitingForConnection = true;
     }
@@ -1093,5 +1157,105 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     // Leak the connected controller and hand the global a fresh, never-connected one.
     [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+}
+
+extern "C" bool Bun__tryActivateInspector();
+
+// Called from VMTraps::handleTraps(NeedDebuggerBreak) on the JS thread at a
+// safe point, after invalidateCodeBlocksOnStack. Installed on the main VM
+// when the runtime-inspector signal handler is armed.
+static void onDebuggerTrap(JSC::VM& vm)
+{
+    if (Bun__tryActivateInspector())
+        runtimeInspectorActivated.store(true);
+
+    if (!runtimeInspectorActivated.load())
+        return;
+
+    // Hold refs: doDisconnect() below removes the connection from the map,
+    // which may otherwise drop its last reference mid-iteration.
+    Vector<RefPtr<BunInspectorConnection>, 8> connections;
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        if (inspectorConnections) {
+            for (auto& entry : *inspectorConnections) {
+                for (auto& conn : entry.value) {
+                    if (conn->globalObject && &conn->globalObject->vm() == &vm)
+                        connections.append(conn);
+                }
+            }
+        }
+    }
+
+    bool anyPaused = false;
+    for (auto& conn : connections) {
+        if (conn->inPauseLoop.load()) {
+            anyPaused = true;
+            continue;
+        }
+        auto* ctx = ScriptExecutionContext::getScriptExecutionContext(conn->scriptExecutionContextIdentifier);
+        if (!ctx)
+            continue;
+        switch (conn->status.load()) {
+        case ConnectionStatus::Pending:
+            conn->doConnect(*ctx);
+            break;
+        case ConnectionStatus::Disconnecting:
+            conn->doDisconnect(*ctx);
+            continue;
+        case ConnectionStatus::Connected:
+            break;
+        case ConnectionStatus::Disconnected:
+            continue;
+        }
+        conn->receiveMessagesOnInspectorThread(*ctx, static_cast<Zig::GlobalObject*>(conn->globalObject), false);
+    }
+
+    // runWhilePaused is already pumping messages for this VM; breakProgram()
+    // would be a no-op (m_isPaused), and re-entering the pause loop from
+    // inside a CDP dispatch (Runtime.evaluate etc.) would deadlock.
+    if (anyPaused)
+        return;
+
+    for (auto& conn : connections) {
+        if (conn->status.load() != ConnectionStatus::Connected)
+            continue;
+        auto* globalObject = conn->globalObject;
+        if (!globalObject)
+            continue;
+        auto* debugger = globalObject->debugger();
+        if (!debugger)
+            continue;
+        // Force the pause only for an explicit Debugger.pause dispatched during
+        // the drain above. A step-over/into/out in flight also enables stepping
+        // mode but must be left to reach its own target frame; pausing it here
+        // would stop inside the stepped-over callee. On initial SIGUSR1
+        // activation with no frontend yet, nothing is requested and we just
+        // keep running.
+        if (debugger->isPauseAtNextOpportunitySet()) {
+            debugger->breakProgram();
+            return;
+        }
+    }
+}
+
+extern "C" void Bun__installDebuggerTrapCallback(JSC::VM* vm)
+{
+    ASSERT(vm);
+    vm->setDebuggerTrapCallback(onDebuggerTrap);
+}
+
+extern "C" void Bun__activateRuntimeInspectorMode()
+{
+    runtimeInspectorActivated.store(true);
+}
+
+extern "C" int Bun__gcSuspendResumeSignal()
+{
+#if OS(WINDOWS) || OS(DARWIN)
+    return 0;
+#else
+    return g_wtfConfig.sigThreadSuspendResume;
+#endif
 }
 }

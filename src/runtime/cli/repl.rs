@@ -2593,18 +2593,44 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 matches!(prev, b'+' | b'-') && prev_idx > 0 && code[prev_idx - 1] == prev;
             // `x!` or `x!!` (TS non-null assertion) ends an expression; `!x` does not.
             let postfix_bang = prev == b'!' && {
+                // Same-line whitespace is allowed before a postfix `!`; a newline is not.
                 let mut j = prev_idx;
-                while j > 0 && code[j - 1] == b'!' {
+                while j > 0 && matches!(code[j - 1], b'!' | b' ' | b'\t') {
                     j -= 1;
                 }
-                j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b')' | b']' | b'}'))
+                if j > 0 && matches!(code[j - 1], b')' | b']' | b'}') {
+                    true
+                } else if j > 0 && is_word_char(code[j - 1]) {
+                    // `x !` is postfix; `return !` is a prefix after a keyword.
+                    let end = j;
+                    while j > 0 && is_word_char(code[j - 1]) {
+                        j -= 1;
+                    }
+                    !REGEX_KEYWORDS.contains(&&code[j..end])
+                } else {
+                    false
+                }
             };
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
-            // `>` ending a JSX tag (`</a>`, `<a/>`, `</>`) ends an expression; `a > /re/` does not.
-            let jsx_end = prev == b'>'
-                && prev_idx > 0
-                && (code[prev_idx - 1] == b'/' || is_word_char(code[prev_idx - 1]));
+            // `>` ending a JSX tag or generic (`</a>`, `<a/>`, `<T>`) ends an expression.
+            let jsx_end = prev == b'>' && {
+                let mut j = prev_idx;
+                while j > 0 && matches!(code[j - 1], b' ' | b'\t') {
+                    j -= 1;
+                }
+                if j > 0 && code[j - 1] == b'/' {
+                    true
+                } else if j > 0 && is_word_char(code[j - 1]) {
+                    // A tag/type name is one preceded by `<` or `/`; `a > /re/` is not.
+                    while j > 0 && is_word_char(code[j - 1]) {
+                        j -= 1;
+                    }
+                    j > 0 && matches!(code[j - 1], b'<' | b'/')
+                } else {
+                    false
+                }
+            };
             // A block's `}` resumes statement position unless it's inside `()`/`[]`.
             let after_block =
                 prev == b'}' && last_brace_block && paren_count <= 0 && bracket_count <= 0;

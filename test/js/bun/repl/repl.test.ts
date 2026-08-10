@@ -835,6 +835,17 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(object.stdout)).toContain("NaN");
       expect(stripAnsi(object.stdout)).not.toContain("SyntaxError");
       expect(object.exitCode).toBe(0);
+
+      const spaced = await runRepl(["q = (88 ! / 2); q", ".exit"]);
+      expect(stripAnsi(spaced.stdout)).toContain("44");
+      expect(stripAnsi(spaced.stdout)).not.toContain("SyntaxError");
+      expect(spaced.exitCode).toBe(0);
+
+      // `return !` is a prefix, so the `/` still starts a regex.
+      const prefix = await runRepl(['function r(s) { return ! /"/.test(s) }; r("a")', ".exit"]);
+      expect(stripAnsi(prefix.stdout)).toContain("true");
+      expect(stripAnsi(prefix.stdout)).not.toContain("SyntaxError");
+      expect(prefix.exitCode).toBe(0);
     });
 
     test("division after a spread object literal", async () => {
@@ -870,6 +881,10 @@ describe.concurrent("Bun REPL", () => {
       const selfClosed = await runRepl(["q = [<a/> / 2]", "50 + 2", ".exit"]);
       expect(stripAnsi(selfClosed.stdout)).toContain("52");
       expect(selfClosed.exitCode).toBe(0);
+
+      const spacedClose = await runRepl(["q = (<a></a > / 2)", "60 + 2", ".exit"]);
+      expect(stripAnsi(spacedClose.stdout)).toContain("62");
+      expect(spacedClose.exitCode).toBe(0);
     });
 
     test("a method named like a conditional keyword does not make its paren a regex context", async () => {

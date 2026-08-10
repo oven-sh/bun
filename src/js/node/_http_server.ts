@@ -666,6 +666,8 @@ Server.prototype.listen = function () {
     // });
 
     server.once("listening", () => {
+      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
+      if (!process.connected) return;
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -678,8 +680,7 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (process.connected) process.send(message, undefined, kClusterSendOptions);
+      process.send(message, undefined, kClusterSendOptions);
     });
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);

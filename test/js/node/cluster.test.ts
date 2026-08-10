@@ -845,9 +845,11 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
 }, 30_000);
 
-test.skipIf(isWindows)("SCHED_NONE listen({fd:2}) fails ENOTSOCK and does not close the primary's stderr", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+test.skipIf(isWindows)(
+  "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -877,11 +879,12 @@ if (cluster.isPrimary) {
   server.listen({ fd: 2 });
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toMatch(/worker error code: (ENOTSOCK|EINVAL|EBADF)/);
-  expect(stdout).toContain("stderr open: true");
-});
+    });
+    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect(stdout).toContain("worker error code: EINVAL");
+    expect(stdout).toContain("stderr open: true");
+  },
+);
 
 test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
   using dir = tempDir("cluster-dgram-adopt-fail", {
@@ -1141,38 +1144,38 @@ if (cluster.isPrimary) {
 }, 30_000);
 
 test.skipIf(isWindows)(
-  "worker death mid-handoff closes the in-flight connection instead of handing it to another worker",
+  "worker death mid-handoff redistributes the connection to another worker",
   async () => {
     using dir = tempDir("cluster-mid-handoff", {
-      "main.ts": `
-const cluster = require("node:cluster");
+      "main.ts": `const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
-  const events = [];
-  const die = cluster.fork({ ROLE: "die" });
-  let live;
-  // Forking live only once die is listening puts die first in the round-robin order, so c1 goes to die.
-  die.once("listening", () => { live = cluster.fork({ ROLE: "live" }); });
-  cluster.on("listening", (worker, addr) => {
-    if (worker !== live) return;
-    live.on("message", m => {
-      events.push(m);
-      console.log(JSON.stringify(events));
-      process.exit(0);
-    });
-    const c1 = net.connect(addr.port, "127.0.0.1", () => c1.write("first"));
-    c1.on("error", () => {});
-    c1.once("close", () => {
-      events.push("c1 closed");
-      const c2 = net.connect(addr.port, "127.0.0.1", () => c2.write("second"));
-      c2.on("error", () => {});
+  // One shared round-robin handle on a pre-picked port. "die" registers first, so the first connection
+  // is handed to it; it exits on that newconn and the primary must hand the unacked connection to "live".
+  const pick = net.createServer();
+  pick.listen(0, "127.0.0.1", () => {
+    const port = pick.address().port;
+    pick.close(() => {
+      const die = cluster.fork({ ROLE: "die", PORT: port });
+      die.once("listening", () => {
+        const live = cluster.fork({ ROLE: "live", PORT: port });
+        let served = false;
+        live.on("message", m => { served = true; console.log(m); live.send("close"); });
+        live.once("listening", () => {
+          const client = net.connect(port, "127.0.0.1", () => client.write("hi"));
+          client.on("error", () => {});
+          client.on("close", () => { if (!served) { console.log("connection dropped"); live.send("close"); } });
+        });
+      });
     });
   });
 } else if (process.env.ROLE === "die") {
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
-  net.createServer(() => {}).listen(0, "127.0.0.1");
+  net.createServer(() => {}).listen(+process.env.PORT, "127.0.0.1");
 } else {
-  net.createServer(sock => sock.on("data", d => process.send("live got: " + d))).listen(0, "127.0.0.1");
+  const server = net.createServer(sock => sock.on("data", d => { process.send("live got: " + d); sock.destroy(); }));
+  process.on("message", () => server.close(() => process.disconnect()));
+  server.listen(+process.env.PORT, "127.0.0.1");
 }
 `,
     });
@@ -1184,10 +1187,7 @@ if (cluster.isPrimary) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ events: JSON.parse(stdout.trim()), stderr }).toEqual({
-      events: ["c1 closed", "live got: second"],
-      stderr: expect.any(String),
-    });
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
     expect(exitCode).toBe(0);
   },
   30_000,

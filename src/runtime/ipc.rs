@@ -723,7 +723,8 @@ impl Handle {
 impl Drop for Handle {
     fn drop(&mut self) {
         if self.owns_fd {
-            FdExt::close(self.fd);
+            // Owned dup/received descriptors may legitimately be 0-2 (stdio closed); close them regardless.
+            let _ = self.fd.close_allowing_standard_io(None);
         }
     }
 }
@@ -936,6 +937,9 @@ pub struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
+    /// disconnect() arrived while a handle was awaiting its ack: node postpones the disconnect until
+    /// the messages queued behind that handle have been flushed.
+    pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
@@ -1055,6 +1059,7 @@ impl SendQueue {
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
+            close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
@@ -1262,8 +1267,12 @@ impl SendQueue {
             self.socket.set(SocketUnion::Closed);
             return;
         }
-        if self.pending_close.get() {
+        if self.pending_close.get() || self.close_after_flush.get() {
             return; // close already requested
+        }
+        if next_tick && self.waiting_for_ack.get().is_some() {
+            self.close_after_flush.set(true);
+            return;
         }
         if !next_tick {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1501,6 +1510,10 @@ impl SendQueue {
         });
         match next {
             Next::Nothing => {
+                if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
+                    self.close_after_flush.set(false);
+                    self.close_socket_next_tick(true);
+                }
                 self.update_ref(global);
             }
             Next::EmptyItem(itm) => {
@@ -1960,7 +1973,7 @@ impl Drop for SendQueue {
         // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
         // the `NODE_HANDLE` decoder when the socket closes.
         if let Some(fd) = self.incoming_fd.take() {
-            FdExt::close(fd);
+            let _ = fd.close_allowing_standard_io(None);
         }
     }
 }
@@ -2148,7 +2161,7 @@ fn handle_ipc_message(
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
                 let Some(owner) = send_queue.owner_ref() else {
-                    FdExt::close(fd);
+                    let _ = fd.close_allowing_standard_io(None);
                     return;
                 };
                 let target: JSValue = match owner.kind() {
@@ -2163,7 +2176,7 @@ fn handle_ipc_message(
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
-                    FdExt::close(fd);
+                    let _ = fd.close_allowing_standard_io(None);
                     global_this.report_active_exception_as_unhandled(e);
                     return;
                 }
@@ -2236,7 +2249,7 @@ fn handle_ipc_message(
             // Owner already torn down: nobody will adopt the descriptor we just acked.
             None => {
                 if let Some(fd) = received_fd {
-                    FdExt::close(fd);
+                    let _ = fd.close_allowing_standard_io(None);
                 }
             }
         }
@@ -2434,7 +2447,7 @@ pub mod IPCHandlers {
                 log!("onFd: {}", fd);
                 if let Some(existing_fd) = send_queue.incoming_fd.take() {
                     log!("onFd: incoming_fd already set; overwriting");
-                    FdExt::close(existing_fd);
+                    let _ = existing_fd.close_allowing_standard_io(None);
                 }
                 send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
             }
@@ -2554,9 +2567,10 @@ pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
+    options: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    bun_jsc::cpp::IPCSerialize(global_object, message, handle)
+    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options)
 }
 
 #[track_caller]

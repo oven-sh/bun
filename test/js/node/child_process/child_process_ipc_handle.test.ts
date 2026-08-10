@@ -546,4 +546,55 @@ process.on('message', (m, sock) => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
+  // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
+  // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
+  test.concurrent(
+    "handoff detaches the sender's socket and disconnect() flushes messages queued behind the handle",
+    async () => {
+      using dir = tempDir("ipc-handle-detach-flush", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const senderEvents = [];
+let client;
+const server = net.createServer(sock => {
+  sock.on('end', () => senderEvents.push('end'));
+  sock.on('close', () => senderEvents.push('close'));
+  child.send('sock', sock);
+  child.send({ type: 'after-handle' });
+  child.disconnect();
+});
+child.on('exit', code => {
+  client.destroy();
+  server.close(() => console.log(JSON.stringify({ childSawQueuedMessage: code === 0, senderEvents })));
+});
+server.listen(0, '127.0.0.1', () => {
+  client = net.connect(server.address().port, '127.0.0.1');
+  client.on('error', () => {});
+});
+`,
+        "child.js": `
+let sawQueued = false;
+process.on('message', (m, sock) => { if (sock) sock.destroy(); else sawQueued = m.type === 'after-handle'; });
+process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { childSawQueuedMessage: true, senderEvents: [] },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

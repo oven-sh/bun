@@ -12,7 +12,7 @@
  * @param {Handle} handle
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, _options) {
+export function serialize(message, handle, options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
@@ -24,6 +24,15 @@ export function serialize(message, handle, _options) {
     if (typeof handle[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_HANDLE_TYPE();
     const native = handle._handle;
     if (!native) return null;
+    if (!options?.keepOpen) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['net.Socket'].send:
+      // the connection belongs to the receiver from here on; this socket object (and its server's
+      // connection count) stop tracking it.
+      if (handle.server) handle.server._connections--;
+      handle.setTimeout(0);
+      native.data = undefined;
+      handle._handle = null;
+    }
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
   }
   if (handle instanceof require("node:dgram").Socket) {

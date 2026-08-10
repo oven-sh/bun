@@ -152,7 +152,8 @@ pub(crate) fn do_send(
 
     let original_message = message;
     if !handle.is_undefined_or_null() {
-        let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
+        let serialized_array: JSValue =
+            IPC::ipc_serialize(global_object, message, handle, options_)?;
         if serialized_array.is_undefined_or_null() {
             handle = JSValue::UNDEFINED;
         } else {

@@ -105,7 +105,7 @@ function removeHandlesForWorker(worker) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
-    if (handle.remove(worker)) handles.delete(key);
+    if (handle.remove(worker, true)) handles.delete(key);
   });
 }
 

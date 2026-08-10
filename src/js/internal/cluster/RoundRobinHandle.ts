@@ -110,21 +110,32 @@ export default class RoundRobinHandle {
     return this.all.has(worker.id);
   }
 
-  remove(worker) {
+  // A live act:close leaves an unacked newconn to its ack (the worker redistributes it by declining).
+  // `channelGone`: no ack is coming. After a crash the connection was never adopted by anyone alive,
+  // so it goes to another worker; after a graceful disconnect the worker already adopted or declined
+  // it, and only the primary's copy is dropped.
+  remove(worker, channelGone = false) {
+    if (channelGone) {
+      const pending = this.inFlight.get(worker.id);
+      if (pending !== undefined) {
+        this.inFlight.delete(worker.id);
+        const others = this.all.size - (this.all.has(worker.id) ? 1 : 0);
+        if (!worker.exitedAfterDisconnect && others > 0) this.distribute(0, pending);
+        else pending.close();
+      }
+    }
+
     const existed = this.all.delete(worker.id);
 
     if (!existed) return false;
 
     this.free.delete(worker.id);
 
-    const pending = this.inFlight.get(worker.id);
-    if (pending !== undefined) {
-      this.inFlight.delete(worker.id);
-      // Possibly already adopted (ack lost with the channel), so never re-served: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/round_robin_handle.js#L77-L97
-      pending.close();
-    }
-
     if (this.all.size !== 0) return false;
+
+    // Winding down: whatever is still in flight is the workers' now; drop the primary's copies.
+    for (const pending of this.inFlight.values()) pending.close();
+    this.inFlight.clear();
 
     while (!isEmpty(this.handles)) {
       const handle = peek(this.handles);

@@ -421,8 +421,8 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    apple_no_sigpipe(fd);
-    bsd_set_nonblocking(fd);
+    /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
+     * the fd (it may be its stdio), and a non-socket must come back untouched. */
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         int listen_err = LIBUS_ERR;
         if (!bsd_socket_listen_error_is_benign(fd)) {
@@ -430,6 +430,8 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
             return 0;
         }
     }
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);

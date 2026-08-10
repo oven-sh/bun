@@ -1533,26 +1533,32 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
     // Resolve the arena base. Fast path is one Acquire load; the cold path
-    // maps the 4 MiB region once and publishes via CAS. A losing racer's
-    // mapping is leaked (≤ one per process; `MAP_NORESERVE` so it costs no
-    // committed memory) — same race policy as `bss_singleton!`.
+    // maps the 4 MiB region exactly once: a racer claims the right to map before mapping, and the others wait for the
+    // result. (Map-then-race would let a loser consume a placement hint too, and the arena's address has to be the same in
+    // every process that may build or restore a snapshot.)
     let mut base = BASE.load(Ordering::Acquire);
     if base.is_null() {
+        static CLAIMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
         #[cold]
         #[inline(never)]
-        fn map_arena() -> *mut u8 {
-            bss_mmap_noreserve(BSS_ARENA_SIZE)
+        fn map_arena_once() -> *mut u8 {
+            if CLAIMED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let fresh = bss_mmap_noreserve(BSS_ARENA_SIZE);
+                BASE.store(fresh, Ordering::Release);
+                return fresh;
+            }
+            loop {
+                let b = BASE.load(Ordering::Acquire);
+                if !b.is_null() {
+                    return b;
+                }
+                core::hint::spin_loop();
+            }
         }
-        let fresh = map_arena();
-        base = match BASE.compare_exchange(
-            core::ptr::null_mut(),
-            fresh,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => fresh,
-            Err(winner) => winner, // leak `fresh` (untouched MAP_NORESERVE)
-        };
+        base = map_arena_once();
     }
 
     // Bump the cursor: round up to `align`, reserve `size`. CAS loop because

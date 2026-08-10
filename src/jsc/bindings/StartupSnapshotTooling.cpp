@@ -1250,7 +1250,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
     };
     std::map<std::string, Agg> byShape;
     size_t scanned = 0, changed = 0;
-    std::vector<uint8_t> orig(4096), origBf(4096);
+    std::vector<uint8_t> orig(16384), origBf(16384); // a MarkedBlock cell can be up to ~8 KB (global objects are); compare all of it
     JSC::HeapIterationScope scope(vm.heap);
     vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
         if (!isJSCellKind(kind)) return IterationStatus::Continue;
@@ -1281,7 +1281,9 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
 #else
         (void)pg;
 #endif
+#if OS(DARWIN)
     scanCell:
+#endif
         if (!fileBytesAt((uintptr_t)cell, orig.data(), sz)) return IterationStatus::Continue;
         scanned++;
         bool header = memcmp(orig.data(), cell, 8) != 0; // structureID/indexing/type/flags/cellState

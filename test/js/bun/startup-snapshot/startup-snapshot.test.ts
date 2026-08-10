@@ -299,7 +299,8 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
   const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(out).toContain("[js] serve refused");
   expect(out).toContain("[js] udp refused");
-  for (const op of ["readdir", "cp", "watch", "readdir-async", "cp-async"]) expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
+  for (const op of ["readdir", "cp", "watch", "readdir-async", "cp-async", "bun-write", "bun-file-text", "bun-file-exists"]) expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
+  for (const op of ["stdout-write", "stdin-access"]) expect(out).toContain(`[js] ${op} created`); // stdio is exempt from the gate
 });
 
 snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived for a launch on a terminal", async () => {

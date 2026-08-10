@@ -433,6 +433,18 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// Reading or writing this blob during a strict snapshot build would freeze file contents into the image. Stdio-backed
+    /// blobs are exempt: those descriptors belong to each launch and are set up again at restore.
+    pub fn is_snapshot_gated_file(&self) -> bool {
+        match self.store.get().as_deref().map(|s| &s.data) {
+            Some(store::Data::File(file)) => match &file.pathlike {
+                PathOrFileDescriptor::Path(_) => true,
+                PathOrFileDescriptor::Fd(fd) => !fd.is_stdio(),
+            },
+            _ => false,
+        }
+    }
+
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {

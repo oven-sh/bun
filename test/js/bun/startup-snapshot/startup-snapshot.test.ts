@@ -55,6 +55,30 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
 // Restored, that is the build process's stack address, and a launch whose stack ASLR happened to place over the same
 // range died in JSC's stack sanitizer. Forced deterministically: no ASLR for both processes, and a build environment
 // large enough that the builder's environ sits well below where the restored process's frames end up.
+snapshotTest("stdin's tty reader set up on a high descriptor number still delivers input after restore", async () => {
+  using dir = tempDir("bun-snapshot-highfd", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "highfd-tty-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "local" }, terminal: { cols: 80, rows: 24, data() {} } });
+    expect(await p.exited).toBe(0);
+  }
+  let out = "";
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    terminal: { cols: 80, rows: 24, data(_t, d) { out += new TextDecoder().decode(d); } },
+  });
+  const deadline = Date.now() + 20_000;
+  while (!out.includes("waiting for a keystroke") && Date.now() < deadline) await Bun.sleep(20);
+  expect(out).toContain("waiting for a keystroke");
+  expect(out).toMatch(/\[snapshot\] dup2\(\d, [4-9]\d\)/); // the record really carried a high descriptor number (engagement, not just outcome)
+  p.terminal!.write("z");
+  const exit = await Promise.race([p.exited, Bun.sleep(10_000).then(() => "no exit within 10s" as const)]);
+  expect(exit, out).toBe(0);
+  expect(out).toContain('stdin data after restore: "z"');
+}, 40_000);
+
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});
   const img = join(String(dir), "s.snapshot");

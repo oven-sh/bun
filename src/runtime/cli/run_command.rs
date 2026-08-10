@@ -2014,10 +2014,9 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
                 .get()
                 .unwrap_or(false)
             {
-                bun_core::Output::err_generic(
-                    "[snapshot] rebased {} timers onto this process's clock",
-                    (moved,),
-                );
+                bun_core::Output::print_errorln(format_args!(
+                    "[snapshot] rebased {moved} timers onto this process's clock"
+                )); // informational, like the C++ side's verbose lines
             }
         }
     }

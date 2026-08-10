@@ -682,10 +682,9 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 // absence, i.e. the system zone of this machine) applies instead. The caches are reset either way, since the cached zone is stale either way.
 extern "C" void Bun__refreshTimeZoneAfterSnapshotRestore(JSGlobalObject* globalObject, const char* tz, size_t tzLen)
 {
+    WTF::setTimeZoneOverride(String()); // first: a zone ICU rejects must leave the system zone in effect, as at boot, not the builder's override
     if (tzLen > 0 && tzLen < 32)
         WTF::setTimeZoneOverride(String::fromUTF8(std::span { tz, tzLen }));
-    else
-        WTF::setTimeZoneOverride(String());
     resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
 

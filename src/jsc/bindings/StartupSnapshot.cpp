@@ -100,7 +100,8 @@
 #include <dlfcn.h>
 #include <hwy/targets.h>
 #include "wtf/SIMDUTF.h"
-#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses (popped at the end of the file)
 #include <signal.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -1953,9 +1954,13 @@ static void snapshotRestoreAndRun(const char* path)
         NakedPtr<JSC::Exception> exception;
         globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
         // chdir('.') refreshes libc's cached cwd; after the app's post-restore burst settles, one full GC plus a reclean hands back what it only touched transiently.
-        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore'); setTimeout(() => { Bun.gc(true); Bun.startupSnapshot.reclean(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore');"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
+        if (exception) { // reported before main() runs: main() may end the process, and a listener's failure is the likelier cause of main()'s
+            fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
+            exception = nullptr;
+        }
+        JSC::evaluate(globalObject, JSC::makeSource("setTimeout(() => { Bun.gc(true); Bun.startupSnapshot.reclean(); }, 2000).unref();"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
         Bun__startupSnapshotRunMain(globalObject); // the program registered with Bun.startupSnapshot.main(), if any
-        if (exception) fprintf(stderr, "[snapshot] a 'restore' listener threw: %s\n", exception->value().toWTFString(globalObject).utf8().data());
     }
     snapshotTimingMark("runtime refreshed, 'restore' emitted and main() run; entering the event loop");
     Bun__startupSnapshotContinueEventLoop(); // never returns
@@ -1992,5 +1997,7 @@ extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
     fprintf(stderr, "error: snapshots are not supported on this platform\n");
     exit(1);
 }
+
+#pragma clang diagnostic pop
 
 #endif // BUN_STARTUP_SNAPSHOT_SUPPORTED

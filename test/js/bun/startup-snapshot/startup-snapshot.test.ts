@@ -340,10 +340,11 @@ snapshotTest(
     const img = join(String(dir), "s.snapshot");
     const fixture = join(import.meta.dir, "tz-fixture.js");
     {
-      // buildEnv pins TZ to UTC, as CI does; that is the zone frozen into the snapshot.
+      // Built under a zone no launch below uses, so each launch shape is distinguishable from "kept the builder's"; an
+      // unparseable TZ resolves to UTC, which is why the build is not simply left at CI's UTC.
       await using p = Bun.spawn({
         cmd: [bunExe(), fixture],
-        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+        env: { ...buildEnv, TZ: "Asia/Tokyo", BUN_STARTUP_SNAPSHOT_OUT: img },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -352,7 +353,8 @@ snapshotTest(
       expect(existsSync(img)).toBe(true);
     }
     const { TZ: _utc, ...withoutTZ } = restoreEnv;
-    for (const launchEnv of [{ ...restoreEnv, TZ: "Asia/Tokyo" }, withoutTZ]) {
+    for (const launchEnv of [{ ...restoreEnv, TZ: "Europe/Berlin" }, withoutTZ, { ...restoreEnv, TZ: "Not/AZone" }]) {
+      // the last one ICU rejects: system zone, as at boot
       const plain = Bun.spawnSync({
         cmd: [bunExe(), fixture],
         env: { ...launchEnv, PLAIN: "1" },
@@ -366,7 +368,7 @@ snapshotTest(
         stderr: "pipe",
       });
       const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-      expect(out).toBe(plain.stdout.toString()); // used to report the builder's UTC in both launches
+      expect(out).toBe(plain.stdout.toString()); // used to report the builder's zone; the rejected one still did after the first fix
     }
   },
 );

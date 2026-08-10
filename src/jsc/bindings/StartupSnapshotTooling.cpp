@@ -96,7 +96,8 @@
 #include <dlfcn.h>
 #include <hwy/targets.h>
 #include "wtf/SIMDUTF.h"
-#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses (popped at the end of the file)
 #include <signal.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -1816,6 +1817,7 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
     }
 #endif
 }
+#pragma clang diagnostic pop
 #endif // BUN_STARTUP_SNAPSHOT_TOOLING
 #if BUN_STARTUP_SNAPSHOT_TOOLING && !BUN_STARTUP_SNAPSHOT_SUPPORTED
 extern "C" void Bun__startupSnapshotToolingTick(JSC::VM*) {}

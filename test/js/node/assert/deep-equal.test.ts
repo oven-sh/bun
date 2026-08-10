@@ -842,6 +842,27 @@ describe("detached ArrayBuffer", () => {
   });
 });
 
+describe("assert.partialDeepStrictEqual toString tags", () => {
+  // Exercises the Object.prototype.toString tag comparisons in the native
+  // partialDeepStrictEqual (the generic object branch and the ArrayBuffer
+  // branch). Expectations verified against node v26.3.0.
+  test("objects with different toString tags are never partially equal", () => {
+    expect(() =>
+      assert.partialDeepStrictEqual({ [Symbol.toStringTag]: "A", x: 1 }, { [Symbol.toStringTag]: "B", x: 1 }),
+    ).toThrow(assert.AssertionError);
+    expect(() =>
+      assert.partialDeepStrictEqual({ [Symbol.toStringTag]: "A", x: 1, y: 2 }, { [Symbol.toStringTag]: "A", x: 1 }),
+    ).not.toThrow();
+  });
+
+  test("ArrayBuffer-family values compare tags through the same path", () => {
+    expect(() => assert.partialDeepStrictEqual(new ArrayBuffer(2), new SharedArrayBuffer(2))).toThrow(
+      assert.AssertionError,
+    );
+    expect(() => assert.partialDeepStrictEqual(new ArrayBuffer(2), new ArrayBuffer(2))).not.toThrow();
+  });
+});
+
 describe("AssertionError", () => {
   test("deepStrictEqual reports actual, expected and operator", () => {
     const error = caught(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })) as any;

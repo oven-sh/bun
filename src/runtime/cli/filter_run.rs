@@ -242,7 +242,11 @@ impl<'a> ProcessHandle<'a> {
         unsafe {
             for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
                 // `is_done()` = EOF already counted out of `remaining_fds`.
-                #[cfg(unix)]
+                // OHOS: skip the buffered read — it re-registers the poll
+                // (EAGAIN → register_poll) and races the FIONREAD drain for
+                // bytes; its internal buffer can swallow output the drain
+                // would have read from the fd (see drain_ohos_pipes).
+                #[cfg(all(unix, not(target_env = "ohos")))]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);
                 }

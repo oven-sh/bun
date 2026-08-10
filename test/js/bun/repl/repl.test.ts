@@ -703,6 +703,59 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/37326
+  describe("regex literals and comments in continuation detection", () => {
+    test("regex containing a double quote evaluates on one line", async () => {
+      const { stdout, exitCode } = await runRepl(['x = /hello "world/;', "x.source", ".exit"]);
+      expect(stripAnsi(stdout)).toContain('hello "world');
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex containing a backtick evaluates on one line", async () => {
+      const { stdout, exitCode } = await runRepl(["x = /hello `world/;", "x.source", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("hello `world");
+      expect(exitCode).toBe(0);
+    });
+
+    test("slash inside a regex character class does not end the regex", async () => {
+      const { stdout, exitCode } = await runRepl(['/[/"]/.test("/")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("true");
+      expect(exitCode).toBe(0);
+    });
+
+    test("invalid regex reports a syntax error instead of waiting for more input", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["x = /hello (world/;", "1 + 1", ".exit"]);
+      expect(stripAnsi(stdout + stderr)).toContain("SyntaxError");
+      // REPL recovered and evaluated the next line
+      expect(stripAnsi(stdout)).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after the return keyword", async () => {
+      const { stdout, exitCode } = await runRepl(['function f() { return /ab"c/; }', "f()", ".exit"]);
+      expect(stripAnsi(stdout)).toContain('/ab"c/');
+      expect(exitCode).toBe(0);
+    });
+
+    test("division is not mistaken for a regex", async () => {
+      const { stdout, exitCode } = await runRepl(["x = 10 / 2 / 1; x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("5");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unbalanced bracket in a line comment is ignored", async () => {
+      const { stdout, exitCode } = await runRepl(["1 + 1 // unbalanced (", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unterminated block comment continues to the next line", async () => {
+      const { stdout, exitCode } = await runRepl(["40 + 2 /* comment", "*/", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("async evaluation", () => {
     test("await expressions", async () => {
       const { stdout, exitCode } = await runRepl(["await Promise.resolve(42)", ".exit"]);

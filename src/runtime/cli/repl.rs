@@ -2492,49 +2492,152 @@ extern "C" fn sigint_handler(_: c_int) {
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {
+    const fn is_word_char(ch: u8) -> bool {
+        ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
+    }
+
+    /// Keywords after which a `/` starts a regex literal rather than division.
+    const REGEX_KEYWORDS: &[&[u8]] = &[
+        b"return",
+        b"typeof",
+        b"instanceof",
+        b"in",
+        b"of",
+        b"new",
+        b"delete",
+        b"void",
+        b"throw",
+        b"case",
+        b"do",
+        b"else",
+        b"yield",
+        b"await",
+    ];
+
     let mut brace_count: i32 = 0;
     let mut bracket_count: i32 = 0;
     let mut paren_count: i32 = 0;
     let mut in_string: u8 = 0;
     let mut in_template = false;
+    let mut in_block_comment = false;
     let mut escaped = false;
 
-    for &ch in code {
-        if escaped {
-            escaped = false;
-            continue;
-        }
+    // Last significant byte outside strings/comments (0 = none yet), and the
+    // identifier ending at it; both feed the regex-vs-division heuristic.
+    let mut prev: u8 = 0;
+    let mut word_start = 0usize;
+    let mut word_end = 0usize;
 
-        if ch == b'\\' {
-            escaped = true;
-            continue;
-        }
+    let mut i = 0usize;
+    while i < code.len() {
+        let ch = code[i];
 
-        // Handle strings
-        if in_string == 0 && !in_template {
-            if ch == b'"' || ch == b'\'' {
-                in_string = ch;
-                continue;
+        if in_block_comment {
+            if ch == b'*' && code.get(i + 1) == Some(&b'/') {
+                in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
             }
-            if ch == b'`' {
-                in_template = true;
-                continue;
-            }
-        } else if in_string != 0 && ch == in_string {
-            in_string = 0;
-            continue;
-        } else if in_template && ch == b'`' {
-            in_template = false;
             continue;
         }
 
-        // Skip content inside strings
         if in_string != 0 || in_template {
+            if escaped {
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if in_string != 0 && ch == in_string {
+                in_string = 0;
+            } else if in_template && ch == b'`' {
+                in_template = false;
+            }
+            i += 1;
             continue;
         }
 
-        // Count brackets
+        if ch.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if ch == b'/' {
+            match code.get(i + 1) {
+                Some(b'/') => {
+                    while i < code.len() && code[i] != b'\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                Some(b'*') => {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+            // A `/` starts a regex literal when the previous significant token
+            // cannot end an expression; otherwise it's division.
+            let after_keyword =
+                is_word_char(prev) && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
+            let starts_regex = prev == 0
+                || after_keyword
+                || matches!(
+                    prev,
+                    b'(' | b'['
+                        | b'{'
+                        | b'}'
+                        | b','
+                        | b';'
+                        | b':'
+                        | b'='
+                        | b'!'
+                        | b'&'
+                        | b'|'
+                        | b'?'
+                        | b'+'
+                        | b'-'
+                        | b'*'
+                        | b'%'
+                        | b'<'
+                        | b'>'
+                        | b'^'
+                        | b'~'
+                );
+            if starts_regex {
+                // Skip the regex body: quotes and brackets inside it are not
+                // code. A `/` inside a `[...]` class does not terminate it. A
+                // newline means the literal is unterminated (regexes cannot
+                // span lines); stop there and let evaluation report the error.
+                i += 1;
+                let mut in_class = false;
+                while i < code.len() && code[i] != b'\n' {
+                    match code[i] {
+                        b'\\' => i += 1,
+                        b'[' => in_class = true,
+                        b']' => in_class = false,
+                        b'/' if !in_class => break,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                prev = b'/';
+                i += 1;
+                continue;
+            }
+        }
+
+        if is_word_char(ch) {
+            if word_end != i {
+                word_start = i;
+            }
+            word_end = i + 1;
+        }
+        prev = ch;
+
         match ch {
+            b'"' | b'\'' => in_string = ch,
+            b'`' => in_template = true,
             b'{' => brace_count += 1,
             b'}' => brace_count -= 1,
             b'[' => bracket_count += 1,
@@ -2543,10 +2646,16 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             b')' => paren_count -= 1,
             _ => {}
         }
+        i += 1;
     }
 
-    // Incomplete if any unclosed delimiters or unclosed strings
-    in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
+    // Incomplete if any unclosed delimiters, strings, or block comments
+    in_string != 0
+        || in_template
+        || in_block_comment
+        || brace_count > 0
+        || bracket_count > 0
+        || paren_count > 0
 }
 
 use crate::api::js_transpiler::is_likely_object_literal;

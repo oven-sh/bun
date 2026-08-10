@@ -8,8 +8,8 @@ bench("util.format long message, 2 specifiers", () =>
 );
 bench("util.format 16-bit format string", () => util.format("café %s — número %d", "olé", 42));
 bench("util.format trailing args", () => util.format("plain", "join", "of", "strings", 123));
-bench('util.format("%j")', () => util.format("json: %j", { a: 1, b: "two" }));
-bench('util.format("%f %i %%")', () => util.format("%f%% done, batch %i", 85.5, 12));
+bench('util.format("json: %j")', () => util.format("json: %j", { a: 1, b: "two" }));
+bench('util.format("%f%% done, batch %i")', () => util.format("%f%% done, batch %i", 85.5, 12));
 
 const longFormat = `${"lorem ipsum dolor sit amet ".repeat(8)}%s ${"consectetur adipiscing elit ".repeat(8)}%d`;
 bench("util.format long format string", () => util.format(longFormat, "value", 42));

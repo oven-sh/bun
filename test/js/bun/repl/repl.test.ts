@@ -840,6 +840,17 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("division after a JSX element", async () => {
+      // Line 1 may fail at runtime, but it must evaluate as one line so line 2 runs.
+      const closed = await runRepl(["q = (<a></a> / 2)", "40 + 2", ".exit"]);
+      expect(stripAnsi(closed.stdout)).toContain("42");
+      expect(closed.exitCode).toBe(0);
+
+      const selfClosed = await runRepl(["q = [<a/> / 2]", "50 + 2", ".exit"]);
+      expect(stripAnsi(selfClosed.stdout)).toContain("52");
+      expect(selfClosed.exitCode).toBe(0);
+    });
+
     test("a method named like a conditional keyword does not make its paren a regex context", async () => {
       const { stdout, exitCode } = await runRepl(["o = { if: (n) => n }; q = (o.if(84) / 2); q", ".exit"]);
       const output = stripAnsi(stdout);

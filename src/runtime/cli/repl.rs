@@ -2601,6 +2601,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             };
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
+            // `>` ending a JSX tag (`</a>`, `<a/>`, `</>`) ends an expression; `a > /re/` does not.
+            let jsx_end = prev == b'>'
+                && prev_idx > 0
+                && (code[prev_idx - 1] == b'/' || is_word_char(code[prev_idx - 1]));
             // A block's `}` resumes statement position unless it's inside `()`/`[]`.
             let after_block =
                 prev == b'}' && last_brace_block && paren_count <= 0 && bracket_count <= 0;
@@ -2611,6 +2615,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 || (!postfix_incdec
                     && !postfix_bang
                     && !jsx_close
+                    && !jsx_end
                     && matches!(
                         prev,
                         b'(' | b'['

@@ -573,8 +573,6 @@ fn update_package_json_and_install_with_manager_with_updates(
     // here, so taking it back yields exactly the slice assigned above.
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
 
-    // Catalogs are root-scoped: a filtered update that excludes the cwd/root
-    // can still move catalog entries, and that must reach disk (see below).
     let mut cwd_catalogs_changed = false;
 
     if subcommand == Subcommand::Update
@@ -757,9 +755,8 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let _ = written;
 
-    // When `--filter` excludes the cwd/root, the cwd package.json is not a
-    // target and is not rewritten, except when root-scoped catalog entries
-    // moved: those live in this file and must stay in sync with the lockfile.
+    // A filter excluding the cwd/root skips this write, unless root-scoped
+    // catalog entries moved: those must stay in sync with the lockfile.
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
         && (plan.cwd_in_target || subcommand != Subcommand::Update || cwd_catalogs_changed)
     {

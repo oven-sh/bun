@@ -316,15 +316,30 @@ impl<'a> ProcessHandle<'a> {
                 &raw mut (*this).stdout_reader,
                 &raw mut (*this).stderr_reader,
             ] {
-                #[cfg(unix)]
-                if !(*pipe).ended && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
-                    // EOF here dispatches `on_reader_done`, setting `ended`.
-                    BufferedReader::read(&raw mut (*pipe).reader);
+                // OHOS: the tick-based `drain_ohos_pipes` is the only reader
+                // (pipes are never poll-registered, see ProcessHandle::start).
+                // A `BufferedReader::read` here would re-register the poll
+                // (EAGAIN → register_poll) and race the drain for bytes, and
+                // `deinit` would close the fd before the next tick could
+                // drain it — both drop output. Skip the whole force-end and
+                // let the drain read to EOF; it runs every ~2ms tick, so a
+                // leftover child holding the pipe open is reaped by the
+                // abort path instead.
+                #[cfg(not(target_env = "ohos"))]
+                {
+                    if !(*pipe).ended && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
+                        // EOF here dispatches `on_reader_done`, setting `ended`.
+                        BufferedReader::read(&raw mut (*pipe).reader);
+                    }
+                    if !(*pipe).ended {
+                        (*pipe).ended = true;
+                        // `deinit` fires no callback; `ended` is the accounting.
+                        (*pipe).reader.deinit();
+                    }
                 }
-                if !(*pipe).ended {
-                    (*pipe).ended = true;
-                    // `deinit` fires no callback; `ended` is the accounting.
-                    (*pipe).reader.deinit();
+                #[cfg(target_env = "ohos")]
+                {
+                    let _ = pipe;
                 }
             }
         }

@@ -161,6 +161,39 @@ describe("fork() IPC", () => {
       child.kill();
     }
   });
+
+  // libuv maps an inherited stdio slot the parent has closed to /dev/null. Registering a plain
+  // inherit instead captured whichever fd was created next: the ipc socketpair's parent end, which the
+  // child then held open as its stdin, so the parent's disconnect() never reached it.
+  it.skipIf(isWindows)("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
+    const dir = tmpdirSync();
+    await write(
+      path.join(dir, "parent.js"),
+      `require("fs").closeSync(0);
+       const child = require("child_process").fork(require("path").join(__dirname, "child.js"));
+       child.on("message", m => { console.log(JSON.stringify(m)); child.disconnect(); });
+       child.on("exit", code => console.log("child exit " + code));`,
+    );
+    await write(
+      path.join(dir, "child.js"),
+      `const s = require("fs").fstatSync(0);
+       process.on("disconnect", () => process.exit(0));
+       process.send({ stdin: s.isCharacterDevice() ? "chardev" : s.isSocket() ? "socket" : "other" });`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n").filter(Boolean), stderr }).toEqual({
+      stdout: ['{"stdin":"chardev"}', "child exit 0"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("spawn()", () => {

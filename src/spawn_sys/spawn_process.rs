@@ -778,7 +778,14 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // The inherit action applies to whatever fd `i` is at spawn time; if the parent has
+                // closed it, an fd created below (the ipc socketpair's parent end) takes that number
+                // and would be handed to the child. libuv gives such a slot /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;

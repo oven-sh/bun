@@ -107,9 +107,6 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-#if OS(DARWIN)
-extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength();
-#endif
 
 extern "C" int mi_prof_dump_to_file(const char*) noexcept;
 extern "C" void mi_prof_enable(size_t) noexcept;

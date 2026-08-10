@@ -1784,6 +1784,26 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
         bun_core::Global::exit(70);
     }
     bun_http::http_thread::reset_shutdown_state_for_snapshot();
+    // The subprocess waiter thread exists once something was spawned on a build using it (no pidfd, or forced); Linux can stop it.
+    {
+        use bun_spawn::process::WaiterThread;
+        let was_running = WaiterThread::is_running();
+        if !matches!(WaiterThread::stop_for_snapshot(), Ok(true)) {
+            bun_core::Output::err_generic(
+                "snapshot: the subprocess waiter thread did not stop; no snapshot taken",
+                (),
+            );
+            bun_core::Output::flush();
+            bun_core::Global::exit(70);
+        }
+        if was_running
+            && bun_core::env_var::BUN_STARTUP_SNAPSHOT_VERBOSE
+                .get()
+                .is_some()
+        {
+            bun_core::Output::print_errorln("[snapshot] stopped the subprocess waiter thread");
+        }
+    }
     {
         let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
         bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[0]
@@ -1806,6 +1826,9 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
 /// What still ties this process to work in flight; the snapshot is only written when this is empty.
 fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<String> {
     let mut out = Vec::new();
+    if let Some(msg) = bun_spawn::process::WaiterThread::snapshot_blocker() {
+        out.push(msg.to_string());
+    }
     match bun_jsc::web_worker::live_worker_count() {
         0 => {}
         n => out.push(format!("{n} worker thread(s) still running — a snapshot cannot contain a thread; terminate them (await worker.terminate()) before snapshotting")),
@@ -2008,8 +2031,9 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
     unsafe {
         (*vm_ptr)
             .rare_data()
-            .forget_entropy_cache_for_snapshot_restore()
+            .forget_builder_secrets_for_snapshot_restore()
     };
+    bun_spawn::process::WaiterThread::reset_after_snapshot_restore(); // the builder's thread is not in this process; spawn starts a new one
     crate::dns_jsc::internal::flush_dns_cache_for_snapshot_restore(); // answers in the snapshot came from the builder's network
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     {

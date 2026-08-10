@@ -66,6 +66,68 @@ snapshotTest("stdin's tty reader set up on a high descriptor number still delive
   expect(out).toContain('stdin data after restore: "z"');
 });
 
+snapshotTest("the default CSRF secret generated while building is not the secret of a restored process", async () => {
+  using dir = tempDir("bun-snapshot-csrf", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "csrf-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).toContain("built-token-verifies=false fresh-token-verifies=true"); // used to be true: the builder's secret, everywhere
+  expect(code).toBe(0);
+});
+
+snapshotTest("a worker that was terminated no longer blocks a snapshot, and the restored process runs", async () => {
+  using dir = tempDir("bun-snapshot-worker-done", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "worker-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, TERMINATE_FIRST: "1" }, stdout: "pipe", stderr: "pipe" });
+    const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(err).not.toContain("worker thread(s) still running");
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, TERMINATE_FIRST: "1" }, stdout: "pipe", stderr: "pipe" });
+  const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).toContain("restored after a terminated worker");
+  expect(code).toBe(0);
+});
+
+const waiterEnv = { ...buildEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0", BUN_STARTUP_SNAPSHOT_IO: "local" }; // the flag is read alongside the GC level; spawning is local I/O
+withSnapshots(isLinux)("the subprocess waiter thread is stopped for the freeze and a restored process starts its own", async () => {
+  using dir = tempDir("bun-snapshot-waiter", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "waiter-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...waiterEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_VERBOSE: "1" }, stdout: "pipe", stderr: "pipe" });
+    const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(err).toContain("[snapshot] stopped the subprocess waiter thread"); // it was really running, and really stopped
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0", BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).toContain("spawn after restore exited 0");
+  expect(code).toBe(0);
+});
+
+withSnapshots(!isLinux)("where the subprocess waiter thread cannot be stopped, a snapshot is refused while it runs, by name", async () => {
+  using dir = tempDir("bun-snapshot-waiter-refused", {});
+  await using p = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "waiter-fixture.js")],
+    env: { ...waiterEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"), BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("subprocess waiter thread is running");
+  expect(existsSync(join(String(dir), "s.snapshot"))).toBe(false);
+  expect(code).toBe(70);
+});
+
 snapshotTest("a restored process spawned with an ipc channel can use it, and hides the channel variable from its env", async () => {
   using dir = tempDir("bun-snapshot-ipc", {});
   const img = join(String(dir), "s.snapshot");

@@ -734,9 +734,12 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    /// snapshot restore: pre-drawn random bytes in the snapshot would be replayed by every restored process.
-    pub fn forget_entropy_cache_for_snapshot_restore(&mut self) {
+    /// snapshot restore: what the builder drew or derived for itself must not be shared by every restored process — pre-drawn
+    /// random bytes, the default CSRF secret, and the default S3 client built from the builder's credentials.
+    pub fn forget_builder_secrets_for_snapshot_restore(&mut self) {
         self.entropy_cache = None;
+        self.default_csrf_secret = Box::default();
+        self.s3_default_client.deinit();
     }
 
     /// snapshot restore: the isolated spawnSync loop (if the builder ever spawnSync'd) wraps the builder's kqueue/epoll fd; forget it so the next spawnSync makes one here.

@@ -937,6 +937,9 @@ pub mod waiter_thread_posix {
 
     pub struct WaiterThreadPosix {
         pub(crate) started: AtomicU32,
+        /// Snapshot: asks the loop to return (Linux, where it can be woken) / set by the loop once it has.
+        pub(crate) stop_requested: core::sync::atomic::AtomicBool,
+        pub(crate) exited: core::sync::atomic::AtomicBool,
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) eventfd: Fd,
         pub(crate) js_process: ProcessQueue,
@@ -1248,6 +1251,8 @@ pub mod waiter_thread_posix {
     unsafe impl Sync for Instance {}
     static INSTANCE: Instance = Instance(core::cell::UnsafeCell::new(WaiterThreadPosix {
         started: AtomicU32::new(0),
+        stop_requested: core::sync::atomic::AtomicBool::new(false),
+        exited: core::sync::atomic::AtomicBool::new(false),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         eventfd: Fd::INVALID,
         js_process: ProcessQueue::new(),
@@ -1283,6 +1288,54 @@ pub mod waiter_thread_posix {
         #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
+        }
+
+        pub fn is_running() -> bool {
+            let this = instance_ref();
+            this.started.load(Ordering::Acquire) != 0 && !this.exited.load(Ordering::Acquire)
+        }
+
+        /// Where the thread cannot be stopped, a running one is something the app has to avoid before taking a snapshot.
+        pub fn snapshot_blocker() -> Option<&'static str> {
+            if cfg!(any(target_os = "linux", target_os = "android")) || !Self::is_running() {
+                return None;
+            }
+            Some(
+                "the subprocess waiter thread is running (BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) — a snapshot cannot contain a thread; build without that flag",
+            )
+        }
+
+        /// Snapshot freeze: `Ok(true)` if none is running or it stopped; `Ok(false)` if it did not stop in time; `Err(())` where a
+        /// running one cannot be stopped (non-Linux, where it only exists when forced by a feature flag).
+        pub fn stop_for_snapshot() -> Result<bool, ()> {
+            let this = instance_ref();
+            if this.started.load(Ordering::Acquire) == 0 || this.exited.load(Ordering::Acquire) {
+                return Ok(true);
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                this.stop_requested.store(true, Ordering::Release);
+                let one: [u8; 8] = (1usize).to_ne_bytes();
+                let _ = bun_sys::write(this.eventfd, &one);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                while !this.exited.load(Ordering::Acquire) {
+                    if std::time::Instant::now() >= deadline {
+                        return Ok(false);
+                    }
+                    std::thread::yield_now();
+                }
+                Ok(true)
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            Err(())
+        }
+
+        /// Snapshot restore: the builder's thread and eventfd do not exist here; the next spawn starts a fresh one.
+        pub fn reset_after_snapshot_restore() {
+            let this = instance_ref();
+            this.stop_requested.store(false, Ordering::Relaxed);
+            this.exited.store(false, Ordering::Relaxed);
+            this.started.store(0, Ordering::Release);
         }
 
         pub(crate) fn append(process: *mut Process) {
@@ -1379,11 +1432,21 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
+        struct MarkExited;
+        impl Drop for MarkExited {
+            fn drop(&mut self) {
+                instance_ref().exited.store(true, Ordering::Release);
+            }
+        }
+        let _exited = MarkExited;
         #[allow(unused_labels)]
         'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
+            if this.stop_requested.load(Ordering::Acquire) {
+                return;
+            }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -1428,6 +1491,16 @@ pub enum WaiterThread {}
 #[cfg(not(unix))]
 impl WaiterThread {
     pub fn set_should_use_waiter_thread() {}
+    pub fn is_running() -> bool {
+        false
+    }
+    pub fn snapshot_blocker() -> Option<&'static str> {
+        None
+    }
+    pub fn stop_for_snapshot() -> Result<bool, ()> {
+        Ok(true)
+    }
+    pub fn reset_after_snapshot_restore() {}
 }
 
 // (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —

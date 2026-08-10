@@ -12781,3 +12781,50 @@ test("data row that omits columns declared in the row description yields nulls f
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Bun.sql / Bun.postgres / Bun.SQL are lazy properties whose getter loads the
+// bun:sql module on first access. If that load throws (here the stack is
+// already exhausted, so evaluating the module overflows it), the throw has to
+// reach the caller like any other exception and the property must stay lazy so
+// a later access works. Debug builds used to additionally report the pending
+// exception as uncaught from inside the getter, which aborted the process.
+// Runs in a subprocess because the property must not have been reified yet.
+test.concurrent.each(["sql", "postgres", "SQL"])("Bun.%s throwing under stack exhaustion is catchable", async name => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let first;
+        function recurse() {
+          try {
+            recurse();
+          } catch {}
+          if (first === undefined) {
+            try {
+              Bun.${name};
+            } catch (e) {
+              first = e;
+            }
+          }
+        }
+        recurse();
+        console.log(String(first));
+        console.log(typeof Bun.${name});
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  expect(stdout).toBe("RangeError: Maximum call stack size exceeded.\nfunction\n");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+});

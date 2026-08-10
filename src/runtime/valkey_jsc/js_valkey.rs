@@ -1241,12 +1241,19 @@ impl JSValkeyClient {
                         return Err(err);
                     }
                     if let Some(promise) = Js::connection_promise_get_cached(this_value) {
-                        Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
+                        Js::connection_promise_set_cached(
+                            this_value,
+                            &global_object,
+                            JSValue::ZERO,
+                        );
                         JSPromise::opaque_mut(promise.as_promise().unwrap())
                             .reject(&global_object, Ok(error))?;
                         self.client_mut().flags.connection_promise_returns_client = false;
                     } else {
-                        let _ = self.vm().as_mut().uncaught_exception(&global_object, error, false);
+                        let _ = self
+                            .vm()
+                            .as_mut()
+                            .uncaught_exception(&global_object, error, false);
                     }
                     return Ok(());
                 }

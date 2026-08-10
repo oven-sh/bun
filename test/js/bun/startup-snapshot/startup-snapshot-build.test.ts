@@ -1,31 +1,19 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, readdirSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
+import { buildEnv, restoreEnv, snapshotTest, withSnapshots } from "./startup-snapshot-harness";
 
-// Snapshot round-trip: the fixture snapshots itself at idle, a fresh process restores it and continues.
-const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_STARTUP_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
-const buildEnv = env;
-const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_STARTUP_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
-// Support is a property of the build under test (platform, ASAN, and on macOS whether mimalloc is the process allocator); a
-// build that lacks it says so as soon as it is asked to take one.
-const hasSnapshots = (() => {
-  if (!isLinux && !isMacOS) return false;
-  using dir = tempDir("bun-snapshot-probe", {});
-  const probe = Bun.spawnSync({
-    cmd: [bunExe(), "-e", ""],
-    env: { ...bunEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "probe.snapshot") },
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  return !probe.stderr.toString().includes("not available in this build");
-})();
-const snapshotTest = test.skipIf(!hasSnapshots);
 const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
 const setarch = isLinux ? Bun.which("setarch") : null;
 const canDisableAslr =
   !!setarch && Bun.spawnSync({ cmd: [setarch, arch, "-R", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-const overlapTest = test.skipIf(!hasSnapshots || !canDisableAslr);
+const overlapTest = withSnapshots(canDisableAslr);
+// Statics that cache a process-specific address get baked into the snapshot; WTF's stack-bounds code on Linux caches the
+// original `environ` (a stack address) and clamps the main thread's stack origin to it whenever the bounds contain it.
+// Restored, that is the build process's stack address, and a launch whose stack ASLR happened to place over the same
+// range died in JSC's stack sanitizer. Forced deterministically: no ASLR for both processes, and a build environment
+// large enough that the builder's environ sits well below where the restored process's frames end up.
 overlapTest(
   "restore: the main thread's stack bounds are this process's even when its stack overlaps where the builder's was",
   async () => {
@@ -223,7 +211,6 @@ snapshotTest(
     const other = run({ SOME_OTHER_VAR: "1" });
     expect(other.stdout.toString()).toContain("[js] restored"); // ungated variables don't matter
   },
-  60000,
 );
 
 const runEnv = () => ({ HOME: bunEnv.HOME!, PATH: bunEnv.PATH! });

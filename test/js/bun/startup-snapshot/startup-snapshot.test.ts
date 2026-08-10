@@ -1,26 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { copyFileSync, existsSync, linkSync, realpathSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { join } from "path";
+import { buildEnv, restoreEnv, snapshotTest, withSnapshots } from "./startup-snapshot-harness";
 
-// Snapshot round-trip: the fixture snapshots itself at idle, a fresh process restores it and continues.
-const env = { ...bunEnv, MIMALLOC_DETERMINISTIC_HINT: "1", BUN_STARTUP_SNAPSHOT_JIT_ADDR: "0x3c0000000" };
-const buildEnv = env;
-const restoreEnv = { ...env, MIMALLOC_HINT_FLOOR: "0x21000000000", BUN_STARTUP_SNAPSHOT_VERBOSE: "1" }; // a restoring process keeps its own early heap above where snapshot regions get mapped
-// Support is a property of the build under test (platform, ASAN, and on macOS whether mimalloc is the process allocator); a
-// build that lacks it says so as soon as it is asked to take one.
-const hasSnapshots = (() => {
-  if (!isLinux && !isMacOS) return false;
-  using dir = tempDir("bun-snapshot-probe", {});
-  const probe = Bun.spawnSync({
-    cmd: [bunExe(), "-e", ""],
-    env: { ...bunEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "probe.snapshot") },
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  return !probe.stderr.toString().includes("not available in this build");
-})();
-const snapshotTest = test.skipIf(!hasSnapshots);
 
 for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   snapshotTest(`snapshot round-trip: ${fixture}`, async () => {
@@ -50,11 +33,6 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
   });
 }
 
-// Statics that cache a process-specific address get baked into the snapshot; WTF's stack-bounds code on Linux caches the
-// original `environ` (a stack address) and clamps the main thread's stack origin to it whenever the bounds contain it.
-// Restored, that is the build process's stack address, and a launch whose stack ASLR happened to place over the same
-// range died in JSC's stack sanitizer. Forced deterministically: no ASLR for both processes, and a build environment
-// large enough that the builder's environ sits well below where the restored process's frames end up.
 snapshotTest(
   "stdin's tty reader set up on a high descriptor number still delivers input after restore",
   async () => {
@@ -90,7 +68,6 @@ snapshotTest(
     expect(exit, out).toBe(0);
     expect(out).toContain('stdin data after restore: "z"');
   },
-  40_000,
 );
 
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
@@ -190,7 +167,7 @@ snapshotTest("the frozen heap holds up under JSC's GC verifier", async () => {
   expect(code).toBe(0);
 });
 
-const memoryTest = test.skipIf(!hasSnapshots || !isLinux); // RssAnon is the private-memory figure; macOS is covered by the __DATA bound above
+const memoryTest = withSnapshots(isLinux); // RssAnon is the private-memory figure; macOS is covered by the __DATA bound above
 memoryTest("a restored process holds much less private memory than one that builds the same state itself", async () => {
   using dir = tempDir("bun-snapshot-private-memory", {});
   const img = join(String(dir), "s.snapshot");
@@ -473,7 +450,6 @@ snapshotTest(
     expect(got.cwd.endsWith("/b")).toBe(true);
     expect(code).toBe(0);
   },
-  60000,
 );
 
 snapshotTest(
@@ -505,7 +481,6 @@ snapshotTest(
     expect(Number(m![2])).toBeLessThan(2000);
     expect(code).toBe(0);
   },
-  60000,
 );
 
 snapshotTest(
@@ -553,7 +528,6 @@ snapshotTest(
     expect(exit, out).toBe(0);
     expect(out).toContain('stdin data: "q"');
   },
-  60000,
 );
 
 snapshotTest(
@@ -585,7 +559,6 @@ snapshotTest(
     }
     expect(code).toBe(0);
   },
-  60000,
 );
 
 snapshotTest(
@@ -626,7 +599,6 @@ snapshotTest(
     expect(a.now).toBeLessThan(5000);
     expect(b.timeOrigin).toBeGreaterThanOrEqual(a.timeOrigin);
   },
-  60000,
 );
 
 snapshotTest(
@@ -661,7 +633,6 @@ snapshotTest(
     expect(r.body).toBe("ok2");
     expect(code).toBe(0);
   },
-  60000,
 );
 
 snapshotTest(
@@ -698,7 +669,6 @@ snapshotTest(
     expect(events).toContain("stdin:hello"); // the builder's fd-0 poll was re-armed on this process's stdin
     expect(code).toBe(0);
   },
-  60000,
 );
 
 snapshotTest(
@@ -733,5 +703,4 @@ snapshotTest(
     expect(JSON.parse(m![1]).some((e: string) => e.endsWith(":touched.txt"))).toBe(true);
     expect(code).toBe(0);
   },
-  60000,
 );

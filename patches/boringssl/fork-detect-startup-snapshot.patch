@@ -8,7 +8,7 @@
 +// page address that is not mapped here. Restore is single-threaded; installing this process's own page is enough,
 +// since the once flag above already reads as done.
 +extern "C" void CRYPTO_fork_detect_reinit_for_startup_snapshot(void) {
-+  if (g_fork_detect_addr == nullptr) return;  // never initialized in the build process: this process's own once will do it
++  if (g_fork_detect_addr == nullptr) return;  // never initialized (this process's once will), or WIPEONFORK was unavailable there (stays in the always-reseed fallback)
 +  g_fork_detect_addr = nullptr;
 +  g_fork_generation = 0;
 +  init_fork_detect();

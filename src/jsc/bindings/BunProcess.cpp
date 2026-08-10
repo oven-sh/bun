@@ -3292,7 +3292,6 @@ extern "C" void Bun__Process__reloadEnvAfterSnapshotRestore(JSC::JSGlobalObject*
     }
     uncheckedDowncast<Bun::Process>(process)->invalidateLaunchContext();
     refreshReifiedLaunchProperties(vm, process);
-    // Launch-context lazy properties were reified on first access; deleting them sends the next access back through the PropertyCallback.
     (void)scope.tryClearException();
 }
 

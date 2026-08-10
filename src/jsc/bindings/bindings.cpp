@@ -3045,12 +3045,6 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" void JSC__VM__collectAsyncFull(JSC::VM* vm)
-{
-    JSC::JSLockHolder lock(*vm);
-    vm->heap.collectAsync(JSC::CollectionScope::Full);
-}
-
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
@@ -5193,7 +5187,6 @@ void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
         vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
-// These may be called concurrently from another thread.
 // Throw the (uncatchable) termination exception on the current JS stack right now, rather than arming a trap for the next check.
 JSC::EncodedJSValue JSC__VM__throwTerminationExceptionNow(JSC::JSGlobalObject* globalObject)
 {
@@ -5203,6 +5196,7 @@ JSC::EncodedJSValue JSC__VM__throwTerminationExceptionNow(JSC::JSGlobalObject* g
     throwException(globalObject, scope, vm.ensureTerminationException());
     return {};
 }
+// These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;

@@ -4339,15 +4339,17 @@ pub mod formatter {
             value: JSValue,
             len: u64,
             js_type: jsc::JSType,
-            tag_opts: TagOptions,
         ) -> JsResult<ArrayLayout> {
             use crate::StringJsc as _;
+            const PACKED: ArrayLayout = ArrayLayout {
+                one_per_line: false,
+                force_multiline: false,
+            };
             // The printer shows at most 100 present entries; measure that
             // same set, skipping holes without spending the budget on them.
             let mut max_len: usize = 0;
             let mut total_len: usize = 0;
             let mut count: usize = 0;
-            let mut measurable = true;
             let mut i: u32 = 0;
             while count < 100 && u64::from(i) < len {
                 let element = value.get_direct_index(self.global_this, i);
@@ -4362,94 +4364,86 @@ pub mod formatter {
                     }
                     continue;
                 }
-                let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
-                if matches!(
-                    tag.cell,
-                    jsc::JSType::NumberObject
+                // Classified from the value alone: `Tag::get_advanced` can run
+                // user getters (inspect.custom, $$typeof), which the print
+                // loop will run again.
+                let estimated: usize = if element.is_int32() {
+                    bun_core::fmt::digit_count(i64::from(element.as_int32()))
+                } else if element.is_boolean() {
+                    4 + usize::from(!element.to_boolean())
+                } else if element.is_null() {
+                    4
+                } else if element.is_undefined() {
+                    9
+                } else if element.is_number() {
+                    // Same formatting as `print_double`; Rust's `{}` never
+                    // uses scientific notation, so it would misjudge 1e100.
+                    let num = element.as_number();
+                    if num.is_nan() {
+                        3
+                    } else if num.is_infinite() {
+                        8 + usize::from(num < 0.0)
+                    } else {
+                        let mut buf = [0u8; 124];
+                        bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num).len()
+                    }
+                } else {
+                    match element.js_type() {
+                        jsc::JSType::String => {
+                            // Rendered width (quotes and escapes included),
+                            // measured with the same escapers `print_string`
+                            // uses.
+                            let str =
+                                OwnedString::new(BunString::from_js(element, self.global_this)?);
+                            if str.is_utf16() {
+                                let mut out = OwnedString::new(BunString::empty());
+                                element.json_stringify(self.global_this, self.indent, &mut out)?;
+                                out.length()
+                            } else {
+                                let mut counter = bun_io::DiscardingWriter::new();
+                                JSPrinter::write_json_string(
+                                    str.latin1(),
+                                    &mut counter,
+                                    JSPrinter::Encoding::Latin1,
+                                )
+                                .expect("unreachable");
+                                counter.count
+                            }
+                        }
+                        jsc::JSType::Symbol => {
+                            // `Symbol(description)`
+                            "Symbol()".len() + element.get_description(self.global_this).len
+                        }
+                        jsc::JSType::HeapBigInt => {
+                            // `123n`
+                            element.get_zig_string(self.global_this)?.slice().len() + 1
+                        }
+                        jsc::JSType::NumberObject
                         | jsc::JSType::BooleanObject
                         | jsc::JSType::StringObject
                         | jsc::JSType::DerivedStringObject
-                ) {
-                    // Boxed primitives render as `[Number: 1]` etc., not as
-                    // the value their payload tag suggests.
-                    measurable = false;
-                    break;
-                }
-                let estimated: usize = match tag.tag {
-                    TagPayload::String | TagPayload::StringPossiblyFormatted => {
-                        // Rendered width (quotes and escapes included),
-                        // measured with the same escapers `print_string` uses.
-                        let str = OwnedString::new(BunString::from_js(element, self.global_this)?);
-                        if str.is_utf16() {
-                            let mut out = OwnedString::new(BunString::empty());
-                            element.json_stringify(self.global_this, self.indent, &mut out)?;
-                            out.length()
-                        } else {
-                            let mut counter = bun_io::DiscardingWriter::new();
-                            JSPrinter::write_json_string(
-                                str.latin1(),
-                                &mut counter,
-                                JSPrinter::Encoding::Latin1,
-                            )
-                            .expect("unreachable");
-                            counter.count
+                        | jsc::JSType::RegExpObject => {
+                            // Boxed primitives render as `[Number: 1]` etc.,
+                            // and regexes without quotes; keep the packed
+                            // fallback rather than measuring the raw value.
+                            return Ok(PACKED);
                         }
-                    }
-                    TagPayload::Integer => {
-                        bun_core::fmt::digit_count(i64::from(element.as_int32()))
-                    }
-                    TagPayload::Double => {
-                        // Same formatting as `print_double`; Rust's `{}` never
-                        // uses scientific notation, so it would misjudge 1e100.
-                        let num = element.as_number();
-                        if num.is_nan() {
-                            3
-                        } else if num.is_infinite() {
-                            8 + usize::from(num < 0.0)
-                        } else {
-                            let mut buf = [0u8; 124];
-                            bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num)
-                                .len()
-                        }
-                    }
-                    TagPayload::Boolean => 4 + usize::from(!element.to_boolean()),
-                    TagPayload::Null => 4,
-                    TagPayload::Undefined => 9,
-                    TagPayload::Symbol => {
-                        // `Symbol(description)`
-                        "Symbol()".len() + element.get_description(self.global_this).len
-                    }
-                    TagPayload::BigInt => {
-                        // `123n`
-                        element.get_zig_string(self.global_this)?.slice().len() + 1
-                    }
-                    _ => {
-                        if !tag.tag.is_primitive() {
+                        _ => {
                             return Ok(ArrayLayout {
                                 one_per_line: true,
                                 force_multiline: false,
                             });
                         }
-                        measurable = false;
-                        0
                     }
                 };
-                // An unmeasurable entry decides the layout (packed fallback);
-                // stop scanning.
-                if !measurable {
-                    break;
-                }
                 count += 1;
                 total_len += estimated + 2;
                 max_len = max_len.max(estimated);
                 i += 1;
             }
 
-            if !measurable || count == 0 {
-                return Ok(ArrayLayout {
-                    one_per_line: false,
-                    force_multiline: false,
-                });
+            if count == 0 {
+                return Ok(PACKED);
             }
             // ", " between packed elements.
             let actual_max = max_len + 2;
@@ -4492,7 +4486,7 @@ pub mod formatter {
                     force_multiline: false,
                 }
             } else {
-                self.array_layout(value, len, js_type, tag_opts)?
+                self.array_layout(value, len, js_type)?
             };
 
             let mut writer = WrappedWriter {

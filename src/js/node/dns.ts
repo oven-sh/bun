@@ -152,7 +152,7 @@ function setServersOn(servers, object) {
 }
 
 function validateFlagsOption(options) {
-  if (options.flags === undefined) {
+  if (options.flags == null) {
     return;
   }
 
@@ -188,14 +188,14 @@ function validateFamilyOption(options) {
 
 function validateAllOption(options) {
   const all = options.all;
-  if (all !== undefined) {
+  if (all != null) {
     validateBoolean(all);
   }
 }
 
 function validateVerbatimOption(options) {
   const verbatim = options.verbatim;
-  if (verbatim !== undefined) {
+  if (verbatim != null) {
     validateBoolean(verbatim);
   }
 }

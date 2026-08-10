@@ -701,6 +701,27 @@ describe("hostnames containing NUL bytes", () => {
   });
 });
 
+// Node treats a null option field the same as an absent one (its guards are
+// `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
+describe("dns.lookup null option fields are treated as unset", () => {
+  const fields = ["hints", "all", "verbatim", "order", "family"];
+
+  it.each(fields)("dns.lookup with {%s: null} resolves", async field => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup("localhost", { [field]: null }, (err, address, family) => {
+      if (err) reject(err);
+      else resolve({ address, family });
+    });
+    const { address } = await promise;
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+
+  it.each(fields)("dns.promises.lookup with {%s: null} resolves", async field => {
+    const { address } = await dns_promises.lookup("localhost", { [field]: null });
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
 describe("dns.Resolver options validation", () => {
   describe.each([
     ["dns.Resolver", dns.Resolver],

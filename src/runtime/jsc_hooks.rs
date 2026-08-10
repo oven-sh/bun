@@ -272,6 +272,8 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// # Safety
 /// `vm` must be the live per-thread VM; called only from the JS thread.
 pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+    // SAFETY: per fn contract.
+    let use_system_ca = unsafe { (*vm).tls_use_system_ca_option() };
     // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
     let rare = unsafe { (*vm).rare_data() };
     if rare.default_client_ssl_ctx.is_none() {
@@ -291,8 +293,14 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held for the VM's lifetime, so
-        // the entry never tombstones.
-        match cache.get_or_create_opts(&Default::default(), &mut err) {
+        // the entry never tombstones. `use_system_ca` is this thread's
+        // --use-system-ca decision (per-Environment in node), the same value
+        // `tls_true_defaults` stamps, so the two resolve to one CTX.
+        let opts = bun_uws::us_bun_socket_context_options_t {
+            use_system_ca,
+            ..Default::default()
+        };
+        match cache.get_or_create_opts(&opts, &mut err) {
             Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",

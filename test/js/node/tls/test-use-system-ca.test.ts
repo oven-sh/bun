@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { join } from "path";
 
 // node's test CA and a leaf it signed (CN=agent1).
@@ -136,6 +136,75 @@ describe("--use-system-ca", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // Clients that fall back to the thread's default client context (WebSocket has no per-connection
+  // CA option) must follow the worker's --use-system-ca exactly like tls.connect and fetch do.
+  // The harness cert is self-signed with a 127.0.0.1 SAN, so it can stand in as the "system" root
+  // via SSL_CERT_FILE on every platform.
+  test("a Worker's --use-system-ca governs its WebSocket connections too", async () => {
+    using dir = tempDir("use-system-ca-ws", { "cert.pem": tls.cert, "key.pem": tls.key });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: { cert: Bun.file(process.env.CERT), key: Bun.file(process.env.KEY) },
+          fetch(req, s) { return s.upgrade(req) ? undefined : new Response("http"); },
+          websocket: { open(ws) { ws.send("hello"); ws.close(); }, message() {} },
+        });
+        const workerSrc = \`
+          const tls = require("tls");
+          const { parentPort, workerData: { port } } = require("worker_threads");
+          const ws = new WebSocket("wss://127.0.0.1:" + port);
+          const outcome = new Promise(resolve => {
+            ws.onmessage = m => resolve("message:" + m.data);
+            ws.onerror = () => {};
+            ws.onclose = e => resolve("closed:" + e.code);
+          });
+          const socket = new Promise(resolve => {
+            const s = tls.connect({ port, host: "127.0.0.1" }, () => { resolve("authorized"); s.destroy(); });
+            s.on("error", e => resolve(e.code));
+          });
+          Promise.all([outcome, socket]).then(([webSocket, tlsConnect]) => parentPort.postMessage({ webSocket, tlsConnect }));
+        \`;
+        const run = execArgv => new Promise((resolve, reject) => {
+          const w = new Worker(workerSrc, { eval: true, execArgv, workerData: { port: server.port } });
+          w.once("message", resolve);
+          w.once("error", reject);
+        });
+        (async () => {
+          const withSystem = await run(["--use-system-ca"]);
+          const withoutSystem = await run(["--no-use-system-ca"]);
+          console.log(JSON.stringify({ withSystem, withoutSystem }));
+          server.stop(true);
+        })();
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        SSL_CERT_FILE: join(String(dir), "cert.pem"),
+        CERT: join(String(dir), "cert.pem"),
+        KEY: join(String(dir), "key.pem"),
+        NODE_USE_SYSTEM_CA: "0",
+        NODE_EXTRA_CA_CERTS: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim()), stderr }).toEqual({
+      result: {
+        withSystem: { webSocket: "message:hello", tlsConnect: "authorized" },
+        withoutSystem: { webSocket: "closed:1015", tlsConnect: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // A worker whose --use-system-ca differs from the process default must not make TLS-less
   // options parse as a TLS config: Bun.serve({ port: 0, fetch }) inside such a worker has to

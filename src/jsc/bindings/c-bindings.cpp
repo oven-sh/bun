@@ -1131,7 +1131,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 // Whether this executable carries a payload at all; StartupSnapshot.cpp gates on it. (The allocator asks the narrower question below.)
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
-    return BUN_COMPILED.size != 0; // any compiled executable; StartupSnapshot.cpp gates on this (and its Windows stub wraps it)
+    return BUN_COMPILED.size != 0;
 }
 
 #if OS(DARWIN) || defined(__linux__) // the only builds whose allocator is given this hook (deps/mimalloc.ts)

@@ -3307,6 +3307,10 @@ static void refreshReifiedLaunchProperties(VM& vm, JSObject* processObject)
         { "pid"_s, constructPid },
         { "argv0"_s, constructArgv0 },
         { "execPath"_s, constructExecPath },
+        // undefined in the builder, which has no channel; `if (process.send)` at module scope reifies that during the build
+        { "send"_s, constructProcessSend },
+        { "disconnect"_s, constructProcessDisconnect },
+        { "channel"_s, constructProcessChannel },
     };
     for (auto& p : props) {
         JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);

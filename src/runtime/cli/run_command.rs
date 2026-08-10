@@ -2139,7 +2139,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
+pub(crate) fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {

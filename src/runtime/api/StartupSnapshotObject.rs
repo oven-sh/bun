@@ -140,6 +140,7 @@ pub extern "C" fn Bun__startupSnapshotRunMain(global: &JSGlobalObject) {
     if let Err(err) = callback.call(global, JSValue::UNDEFINED, &[]) {
         let exception = global.take_exception(err);
         vm.run_error_handler(exception, None);
+        crate::cli::run_command::exit_with_unhandled_note(vm); // as a throw at module scope ends a normal boot: exit hooks, then 1
     }
 }
 

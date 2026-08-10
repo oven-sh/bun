@@ -207,8 +207,40 @@ snapshotTest(
     });
     const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(out).not.toContain("no process.send"); // what a restored process used to say
-    expect(await received).toEqual({ channelVarScrubbed: true });
+    expect(await received).toEqual({ channelVarScrubbed: true, seenWhileBuilding: "undefined" }); // reified as undefined while building, a function now
     expect(code).toBe(0);
+  },
+);
+
+snapshotTest(
+  "main() throwing in a restored process exits 1 with the error printed, exactly like a normal boot",
+  async () => {
+    using dir = tempDir("bun-snapshot-main-throws", {});
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "main-throws-fixture.js");
+    const plain = Bun.spawnSync({ cmd: [bunExe(), fixture], env: buildEnv, stderr: "pipe", stdout: "pipe" });
+    expect(plain.stderr.toString()).toContain("main threw on purpose");
+    expect(plain.exitCode).toBe(1);
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true); // main() was kept aside and the take() after it ran
+    }
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(err).toContain("main threw on purpose");
+    expect(code).toBe(plain.exitCode); // 1; a restored process used to carry on and exit 0
   },
 );
 

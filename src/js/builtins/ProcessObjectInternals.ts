@@ -636,6 +636,7 @@ export function rawDebug() {
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
 export function createOnWarning(process, redirectPath, disabledArr) {
+  function noop() {}
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -680,8 +681,6 @@ export function createOnWarning(process, redirectPath, disabledArr) {
       stream.removeListener("error", noop);
     }
   }
-
-  function noop() {}
 
   return function onWarning(warning) {
     if (!(warning instanceof Error)) return;

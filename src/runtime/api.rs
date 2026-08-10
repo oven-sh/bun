@@ -203,8 +203,6 @@ pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 pub use bun_sql_jsc::mysql as MySQL;
 pub use bun_sql_jsc::postgres as Postgres;
 
-pub use crate::webview::chrome_process as ChromeProcess;
-
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
 // All four host fns repeat: Arena + ASTMemoryAllocator scope + Log +

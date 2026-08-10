@@ -1596,7 +1596,6 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_csrf",
- "bun_css",
  "bun_css_jsc",
  "bun_dns",
  "bun_dotenv",
@@ -1648,7 +1647,6 @@ dependencies = [
  "bun_sys_jsc",
  "bun_tcc_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_uws_sys",
@@ -1846,7 +1844,6 @@ dependencies = [
 name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_analytics",
  "bun_core",

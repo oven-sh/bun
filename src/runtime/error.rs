@@ -208,8 +208,6 @@ pub enum Error {
     TooSmall,
     #[error("InvalidValue")]
     InvalidValue,
-    #[error("UntrustedFileBlob")]
-    UntrustedFileBlob,
     #[error("ConnectionFailed")]
     ConnectionFailed,
     #[error("InvalidOptions")]
@@ -685,7 +683,6 @@ impl Error {
             Self::EndOfStream => "EndOfStream",
             Self::TooSmall => "TooSmall",
             Self::InvalidValue => "InvalidValue",
-            Self::UntrustedFileBlob => "UntrustedFileBlob",
             Self::ConnectionFailed => "ConnectionFailed",
             Self::InvalidOptions => "InvalidOptions",
             Self::FailedToInitPipe => "FailedToInitPipe",

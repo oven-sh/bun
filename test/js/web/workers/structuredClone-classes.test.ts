@@ -29,14 +29,10 @@ const testTypes = [
     name: "BunFile (cloneable, non-transferable)",
     createValue: () => Bun.file(import.meta.filename),
     isTransferable: false,
-    // A path-backed BunFile cannot be reconstructed from a raw byte buffer:
-    // the deserializer rejects file-backed stores whose bytes were supplied by
-    // the caller (they would mint a handle to an arbitrary path/fd). The child
-    // process's deserialize() throws, so the wire round trip yields nothing.
-    expectedAfterWireBytesRoundtrip: (original: any, cloned: any) => {
-      expect(original).toBeInstanceOf(Blob);
-      expect(cloned).not.toBeInstanceOf(Blob);
-    },
+    // A path-backed BunFile cannot be rebuilt from a raw byte buffer: the
+    // child's deserialize() dies with an uncaught error and the wire round
+    // trip yields nothing (asserted at the spawn site).
+    rejectsWireBytes: true,
     expectedAfterClone: (original: any, cloned: any, isTransfer: TransferMode, isStorage: boolean) => {
       expect(original).toBeInstanceOf(Blob);
       expect(original.name).toEqual(import.meta.filename);
@@ -95,12 +91,12 @@ describe("serialize & deserialize", () => {
         env: bunEnv,
         stdin: serialized,
         stdout: "pipe",
-        // Test types that declare expectedAfterWireBytesRoundtrip expect the
-        // child's deserialize() to die with an uncaught error; capture stderr
-        // for assertion instead of echoing the expected failure.
-        stderr: "expectedAfterWireBytesRoundtrip" in testType ? "pipe" : "inherit",
+        // rejectsWireBytes types expect the child's deserialize() to die with
+        // an uncaught error; capture stderr for assertion instead of echoing
+        // the expected failure.
+        stderr: "rejectsWireBytes" in testType ? "pipe" : "inherit",
       });
-      if ("expectedAfterWireBytesRoundtrip" in testType) {
+      if ("rejectsWireBytes" in testType) {
         // The child must reject the payload with a clean uncaught throw:
         // no signal (a crash here is the abort class this guards against),
         // nothing on stdout, and the rejection message on stderr.
@@ -110,7 +106,6 @@ describe("serialize & deserialize", () => {
           stdoutLength: result.stdout.length,
           stderrHasRejection: result.stderr.toString().includes("Unable to deserialize data."),
         }).toEqual({ signalCode: null, exitCode: 1, stdoutLength: 0, stderrHasRejection: true });
-        testType.expectedAfterWireBytesRoundtrip!(original, undefined);
       } else {
         const cloned = deserialize(result.stdout);
         testType.expectedAfterClone(original, cloned, TransferMode.no, true);

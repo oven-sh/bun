@@ -832,11 +832,6 @@ impl BlobExt for Blob {
             is_from_untrusted_bytes,
         ) {
             Ok(v) => v,
-            Err(crate::Error::UntrustedFileBlob) => {
-                return Err(global_this.throw(format_args!(
-                    "Cannot deserialize a file-backed Blob from serialized bytes; file references can only be cloned in-process via structuredClone or postMessage"
-                )));
-            }
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
             }
@@ -4192,7 +4187,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
             // Raw buffers must not mint a handle to an arbitrary path, open fd, or s3:// key; only in-process clones may.
             if is_from_untrusted_bytes {
-                return Err(crate::Error::UntrustedFileBlob);
+                return Err(crate::Error::InvalidValue);
             }
 
             if version >= 4 {
@@ -4205,9 +4200,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
-                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
-                    // so a crafted record cannot materialize an fd no JS could construct (fd == -1
-                    // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
+                    // Trusted-path defense in depth: mirror `FdJsc::from_js_validated` so an fd record can never reach `Fd::as_borrowed_fd`'s `raw != -1` assert.
                     #[cfg(not(windows))]
                     if fd.0 < 0 {
                         return Err(crate::Error::InvalidValue);

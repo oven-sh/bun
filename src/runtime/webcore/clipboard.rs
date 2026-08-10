@@ -137,17 +137,23 @@ unsafe extern "C" {
     fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
 }
 
-/// A `Job`'s intrusive task crossing to the clipboard thread.
+/// A `Job` crossing to the clipboard thread: its intrusive task and the
+/// off-thread part the executor works on before invoking the task.
 #[derive(Clone, Copy)]
-struct QueuedTask(*mut WorkPoolTask);
-// SAFETY: same hand-off `WorkPool::schedule` performs; the callback is the
-// only consumer.
+struct QueuedTask {
+    task: *mut WorkPoolTask,
+    off: *mut ClipboardOp,
+}
+// SAFETY: the hand-off `Job::schedule_with` documents; `ClipboardOp` is
+// `Send` and the clipboard thread is its only user until the callback.
 unsafe impl Send for QueuedTask {}
 
 /// One FIFO thread runs every job (`Job::schedule_with`), so ops commit in
 /// schedule order, which the multi-worker pool would not guarantee, and a
-/// blocking backend never occupies it. `None` while the thread cannot be
-/// spawned (retried on the next call).
+/// blocking backend never occupies it. The platform op runs before the
+/// job's callback, so no VM borrow is held while a helper blocks and a
+/// worker's teardown never waits on the clipboard. `None` while the thread
+/// cannot be spawned (retried on the next call).
 fn serial_queue() -> Option<&'static bun_threading::Channel<QueuedTask>> {
     use core::sync::atomic::{AtomicBool, Ordering};
     static QUEUE: std::sync::OnceLock<bun_threading::Channel<QueuedTask>> =
@@ -161,9 +167,14 @@ fn serial_queue() -> Option<&'static bun_threading::Channel<QueuedTask>> {
             std::thread::Builder::new()
                 .name("Bun Clipboard".into())
                 .spawn(move || {
-                    while let Ok(QueuedTask(task)) = queue.read_item() {
-                        // SAFETY: consumes the task exactly once, like a pool worker.
-                        unsafe { ((*task).callback)(task) };
+                    while let Ok(QueuedTask { task, off }) = queue.read_item() {
+                        // SAFETY: `off` is exclusively ours until the callback,
+                        // which consumes the task exactly once like a pool worker;
+                        // neither pointer is used afterwards.
+                        unsafe {
+                            (*off).execute();
+                            ((*task).callback)(task);
+                        }
                     }
                 })
                 .ok()?;
@@ -228,19 +239,18 @@ struct ClipboardOp {
     probe: CancelProbe,
 }
 
-struct ClipboardJob;
-
-impl JobContext for ClipboardJob {
-    type OffThread = ClipboardOp;
-    type Js = RequestHandle;
-
-    /// Clipboard thread (see `serial_queue`).
-    fn run(
-        this: &mut ClipboardOp,
-        _vm: &Borrow,
-        done: Completion<Self>,
-    ) -> Option<Completion<Self>> {
-        this.outcome = Some(match &this.op {
+impl ClipboardOp {
+    /// Clipboard thread, before the job's callback, so nothing VM-related is
+    /// held while a backend blocks.
+    fn execute(&mut self) {
+        // Set by a superseding write (its AbortError must not be a lie) or by
+        // the VM tearing down (nothing should act on its behalf). A settled
+        // or released promise ignores the empty outcome.
+        if self.probe.is_cancelled() {
+            self.outcome = Some(Outcome::Representations(Vec::new()));
+            return;
+        }
+        self.outcome = Some(match &self.op {
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
                 Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
                 Ok(None) => Outcome::Representations(Vec::new()),
@@ -251,27 +261,32 @@ impl JobContext for ClipboardJob {
                 Err(unavailable) => Outcome::Failed(unavailable),
             },
             Op::Write(items) => {
-                // A superseded write is cancelled on the JS thread; honoring it
-                // here keeps its AbortError honest (the write never reaches
-                // the OS). `then()` still runs; the settled promise ignores it.
-                if this.probe.is_cancelled() {
-                    Outcome::Representations(Vec::new())
-                } else {
-                    let borrowed: Vec<(Mime, &[u8])> =
-                        items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                    match platform::write_types(&borrowed) {
-                        Ok(()) => Outcome::Representations(Vec::new()),
-                        Err(unavailable) => Outcome::Failed(unavailable),
-                    }
+                let borrowed: Vec<(Mime, &[u8])> =
+                    items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
+                match platform::write_types(&borrowed) {
+                    Ok(()) => Outcome::Representations(Vec::new()),
+                    Err(unavailable) => Outcome::Failed(unavailable),
                 }
             }
         });
+    }
+}
+
+struct ClipboardJob;
+
+impl JobContext for ClipboardJob {
+    type OffThread = ClipboardOp;
+    type Js = RequestHandle;
+
+    /// The executor already ran `execute`; only the result is handed back, so
+    /// the carrier's borrow lasts an instant.
+    fn run(_: &mut ClipboardOp, _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
         Some(done)
     }
 
     fn then(this: ClipboardOp, request: RequestHandle, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        match this.outcome.expect("run() filled the outcome") {
+        match this.outcome.expect("execute() filled the outcome") {
             Outcome::Representations(items) => request.complete(global, &items),
             Outcome::Failed(unavailable) => request.fail(global, unavailable),
         }
@@ -290,9 +305,9 @@ fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
         outcome: None,
         probe: CancelProbe::new(request.0),
     };
-    Job::<ClipboardJob>::schedule_with(&global.js_thread(), off, request, |task| {
+    Job::<ClipboardJob>::schedule_with(&global.js_thread(), off, request, |task, off| {
         // Fails only on OOM; the queue is never closed.
-        bun_core::handle_oom(queue.write_item(QueuedTask(task)));
+        bun_core::handle_oom(queue.write_item(QueuedTask { task, off }));
     });
 }
 

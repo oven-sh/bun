@@ -50,11 +50,16 @@ public:
     }
 
     // JS thread, VM going away: release the promise and clipboard the
-    // completion captured while their heap is alive.
-    void releaseCompletion() { m_completion = {}; }
+    // completion captured while their heap is alive, and cancel, so an op the
+    // clipboard thread has not reached yet does nothing on the dead VM's behalf.
+    void abandon()
+    {
+        m_completion = {};
+        cancel();
+    }
 
-    // A superseded writer's AbortError must not be a lie: the clipboard-thread
-    // job checks this before the platform transaction, so a cancelled write
+    // The clipboard thread checks this before touching the platform, so a
+    // superseded write (whose AbortError must not be a lie) or an abandoned op
     // never reaches the OS clipboard.
     void cancel() { m_cancelled.store(true, std::memory_order_relaxed); }
     bool isCancelled() const { return m_cancelled.load(std::memory_order_relaxed); }

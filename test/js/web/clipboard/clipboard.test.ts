@@ -785,29 +785,47 @@ describe("readText / writeText", () => {
     });
   });
 
-  // A VM torn down while its op is still on the clipboard thread: teardown
-  // releases the job's JS side first, the op's completion is then refused, and
-  // the off-thread side is dropped on the clipboard thread. The helper shim
-  // sleeps so the worker's write is reliably in flight at terminate(), and the
-  // main thread's own write, queued behind it on the FIFO thread, resolves
-  // only after the orphaned op has been fully released; a fault anywhere on
+  // A VM torn down while its op is still blocked on the clipboard thread.
+  // Teardown must not wait for the helper: it releases the job's JS side, the
+  // op's completion is later refused, and the off-thread side is dropped on
+  // the clipboard thread. The shim blocks until the test releases it and
+  // records a kill by the 10s watchdog. The worker's "close" event fires only
+  // once its thread has finished tearing down, so "close" arriving while the
+  // helper is still alive and unkilled is the observable; a teardown that
+  // waited on the in-flight op would reach it only after the watchdog fired.
+  // The main thread's own write, queued behind the orphan on the FIFO thread,
+  // resolves only once the orphan has been fully released, and any fault on
   // that path aborts the child (ASAN / debug assert) instead of exiting 0.
-  test.skipIf(!isLinux)("terminating a worker with a write in flight releases the job cleanly", async () => {
+  test.skipIf(!isLinux)("terminating a worker with a write in flight neither waits for nor leaks the op", async () => {
     using dir = tempDir("clipboard-worker-teardown", {
-      "xclip": `#!/bin/sh\nsleep 0.2\ncat > "$CLIP_STATE_FILE"\n`,
+      "xclip": [
+        "#!/bin/sh",
+        `trap ': > "$CLIP_DIR/killed"; exit 1' TERM`,
+        `: > "$CLIP_DIR/helper-started"`,
+        `until [ -e "$CLIP_DIR/release" ]; do sleep 0.02; done`,
+        `cat > /dev/null`,
+        "",
+      ].join("\n"),
       "xsel": `#!/bin/sh\nexit 7\n`,
       "wl-paste": `#!/bin/sh\nexit 7\n`,
       "wl-copy": `#!/bin/sh\nexit 7\n`,
       "worker.js": `
         navigator.clipboard.writeText("from the worker").catch(() => {});
-        postMessage("started");
       `,
       "main.js": `
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        const dir = process.env.CLIP_DIR;
         const worker = new Worker(new URL("./worker.js", import.meta.url));
-        await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
-        await worker.terminate();
+        // The worker's helper is provably blocked before teardown starts.
+        while (!existsSync(join(dir, "helper-started"))) await Bun.sleep(5);
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+        worker.terminate();
+        await closed;
+        const killedBeforeRelease = existsSync(join(dir, "killed"));
+        writeFileSync(join(dir, "release"), "");
         await navigator.clipboard.writeText("after");
-        console.log("released");
+        console.log(JSON.stringify({ killedBeforeRelease }));
       `,
     });
     for (const helper of ["xclip", "xsel", "wl-paste", "wl-copy"]) chmodSync(join(String(dir), helper), 0o755);
@@ -819,13 +837,13 @@ describe("readText / writeText", () => {
         PATH: `${dir}:${bunEnv.PATH ?? process.env.PATH}`,
         DISPLAY: ":0",
         WAYLAND_DISPLAY: undefined,
-        CLIP_STATE_FILE: join(String(dir), "clipboard-state.txt"),
+        CLIP_DIR: String(dir),
       },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: "released",
+      stdout: JSON.stringify({ killedBeforeRelease: false }),
       stderr: expect.any(String),
       exitCode: 0,
     });

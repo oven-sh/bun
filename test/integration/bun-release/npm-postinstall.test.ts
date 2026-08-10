@@ -56,15 +56,18 @@ function tarball(files: Record<string, Buffer | string>): Buffer {
     blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
   blocks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(blocks));
+  // Stored rather than deflated: on Windows the payload is bun.exe, and compressing it would
+  // take longer than everything else in this file.
+  return gzipSync(Buffer.concat(blocks), { level: 0 });
 }
 
 const tgz = tarball({ "package.json": JSON.stringify({ name: pkg, version }), [platform.exe]: binary });
 
 // installBun() runs `npm install <pkg>@<version>` in an empty temporary directory and moves
-// node_modules/<pkg> out of it. These stand in for npm there. They are node scripts because
-// PATH holds nothing but them. On Windows node cannot spawn `npm` (an npm.cmd) without a shell
-// in the first place, so there every `npm install` fails before running anything.
+// node_modules/<pkg> out of it. These stand in for npm there, as node scripts since PATH holds
+// nothing but them. Windows never runs them: without a shell node only spawns .exe/.com files,
+// which rules out the real npm (an npm.cmd) too, so there every `npm install` fails before
+// running anything.
 const failingNpm: DirectoryTree = {
   "fake-bin/npm": `#!${node}\nconsole.error("npm ERR! code E404");\nprocess.exit(1);\n`,
 };
@@ -80,6 +83,11 @@ fs.chmodSync(${JSON.stringify(exe)}, 0o755);
 `;
   },
 };
+
+// The script's PATH is replaced with fake-bin. On Windows process.env spells the variable
+// `Path`, and Bun.spawn gives the child the first of two keys differing only in case, so the
+// inherited key has to go rather than be shadowed by `PATH`.
+const envWithoutPath = Object.fromEntries(Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "PATH"));
 
 async function postinstall(name: string, options: { npm?: DirectoryTree; tarball?: Buffer }) {
   const bunPackage: DirectoryTree = {
@@ -100,7 +108,7 @@ async function postinstall(name: string, options: { npm?: DirectoryTree; tarball
   await using proc = Bun.spawn({
     cmd: [node!, "-r", "./fetch.cjs", "install.js"],
     cwd: path.join(root, "node_modules", "bun"),
-    env: { ...bunEnv, PATH: path.join(root, "fake-bin") },
+    env: { ...envWithoutPath, PATH: path.join(root, "fake-bin") },
     stdout: "pipe",
     stderr: "pipe",
   });

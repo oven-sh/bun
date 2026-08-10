@@ -411,15 +411,19 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         // dies with an uncaught error, which surfaces here as the
         // child-exited error from the framing loop. The round trip never
         // yields a file-backed Blob.
+        // The child must die from the clean uncaught throw (exit 1, no
+        // signal) with the rejection on its stderr, which the framing loop
+        // embeds in the error it throws; a crash would surface a signal here.
+        const rejection = /child exited \(code 1, signal null\)[\s\S]*Unable to deserialize data\./;
         test("file from path is rejected", async () => {
           const blob = Bun.file(join(import.meta.dir, "example.txt"));
-          await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(/child exited/);
+          await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(rejection);
         });
         test("file from fd is rejected", async () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
           try {
             const blob = Bun.file(fd);
-            await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(/child exited/);
+            await expect(jscSerializeRoundtripCrossProcess(blob)).rejects.toThrow(rejection);
           } finally {
             closeSync(fd);
           }

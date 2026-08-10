@@ -93,10 +93,7 @@ describe("assert.partialDeepStrictEqual", () => {
   });
 
   test("objects with different Object.prototype.toString tags are never partially equal", () => {
-    assert.partialDeepStrictEqual(
-      { [Symbol.toStringTag]: "A", x: 1, y: 2 },
-      { [Symbol.toStringTag]: "A", x: 1 },
-    );
+    assert.partialDeepStrictEqual({ [Symbol.toStringTag]: "A", x: 1, y: 2 }, { [Symbol.toStringTag]: "A", x: 1 });
     expect(() =>
       assert.partialDeepStrictEqual({ [Symbol.toStringTag]: "A", x: 1 }, { [Symbol.toStringTag]: "B", x: 1 }),
     ).toThrow(assert.AssertionError);

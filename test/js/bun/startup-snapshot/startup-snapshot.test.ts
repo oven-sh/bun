@@ -164,11 +164,11 @@ snapshotTest(
     using dir = tempDir("bun-snapshot-execpath", {});
     const other = join(String(dir), "bun-elsewhere");
     try {
-    linkSync(bunExe(), other);
-  } catch (e: any) {
-    if (e?.code !== "EXDEV") throw e;
-    copyFileSync(bunExe(), other); // tmp on another filesystem: a copy is just as byte-identical
-  }
+      linkSync(bunExe(), other);
+    } catch (e: any) {
+      if (e?.code !== "EXDEV") throw e;
+      copyFileSync(bunExe(), other); // tmp on another filesystem: a copy is just as byte-identical
+    }
     const img = join(String(dir), "s.snapshot");
     const code = `void process.execPath; process.on("restore", () => { console.log("[js] execPath=" + process.execPath); process.exit(0); }); setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 10);`;
     await Bun.write(join(String(dir), "app.js"), code);

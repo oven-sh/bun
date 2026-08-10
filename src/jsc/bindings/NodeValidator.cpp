@@ -14,11 +14,22 @@
 
 #include "JSAbortSignal.h"
 #include "JSBufferEncodingType.h"
-#include "BunProcess.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 
 namespace Bun {
+
+// Node spells the range with "&&" in validateInteger/Int32/Uint32/Number; other call sites
+// (checkRangesOrGetDefault, buffer's boundsError) keep " and ". Matches lib/internal/validators.js.
+static WTF::String conjunctiveRange(double lower, double upper)
+{
+    WTF::StringBuilder range;
+    range.append(">= "_s);
+    range.append(lower);
+    range.append(" && <= "_s);
+    range.append(upper);
+    return range.toString();
+}
 
 using namespace JSC;
 
@@ -48,7 +59,7 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     *out = value_num;
     return JSValue::encode(jsUndefined());
@@ -67,7 +78,7 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     *out = value_num;
     return JSValue::encode(jsUndefined());
@@ -98,7 +109,7 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto max_isnonnull = !max.isUndefinedOrNull();
 
     if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
-        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
         if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
         if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
@@ -120,23 +131,13 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto max_isnonnull = !max.isUndefinedOrNull();
 
     if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
-        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
         if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
         if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
     }
 
     return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-    return V::validateString(scope, globalObject, value, name);
 }
 
 JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
@@ -219,34 +220,6 @@ JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObj
         return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
 
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isCallable()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isBoolean()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "boolean"_s, value);
-    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -448,7 +421,7 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     return JSValue::encode(jsUndefined());
 }
@@ -474,7 +447,7 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     if (out) {
         *out = static_cast<int32_t>(std::round(value_num));
@@ -504,7 +477,7 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto positive_b = positive.toBoolean(globalObject);
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min, max), value);
 
     if (out) {
         *out = static_cast<uint32_t>(std::round(value_num));
@@ -523,35 +496,13 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto positive_b = positive.toBoolean(globalObject);
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min, max), value);
 
     if (out) {
         *out = static_cast<uint32_t>(std::round(value_num));
     }
 
     return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateSignalName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto signal = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (name.isUndefined()) name = jsString(vm, String("signal"_s));
-
-    V::validateString(scope, globalObject, signal, name);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto signal_str = signal.getString(globalObject);
-    if (isSignalName(signal_str)) return JSValue::encode(jsUndefined());
-
-    auto signal_upper = signal_str.convertToUppercaseWithoutLocale();
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isSignalName(signal_str)) return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signal, true);
-    return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signal);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -584,33 +535,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length));
         }
     }
-
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-
-    if (!value.isCallable()) {
-        auto name = callFrame->argument(1);
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
-
-    if (!value.isUndefined()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "undefined"_s, value);
 
     return JSValue::encode(jsUndefined());
 }

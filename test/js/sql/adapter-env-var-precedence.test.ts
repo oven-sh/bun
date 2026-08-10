@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
 
 declare module "bun" {
@@ -26,6 +26,7 @@ describe("SQL adapter environment variable precedence", () => {
     'TLS_MARIADB_DATABASE_URL',
     'SQLITE_URL', 'SQLITEURL',
     'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'PGSSLMODE', 'PG_SSLMODE',
     'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
   ];
 
@@ -292,6 +293,109 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.sslMode).toBe(2); // SSLMode.require
   });
 
+  describe("PGSSLMODE", () => {
+    test.each([
+      ["disable", 0],
+      ["allow", 1],
+      ["prefer", 1],
+      ["require", 2],
+      ["verify-ca", 3],
+      ["verify-full", 4],
+    ])("PGSSLMODE=%s is honoured alongside PGHOST/PGPORT/...", (mode, expected) => {
+      process.env.PGHOST = "pg-host";
+      process.env.PGPORT = "5432";
+      process.env.PGUSER = "pg-user";
+      process.env.PGPASSWORD = "pg-pass";
+      process.env.PGDATABASE = "pg-db";
+      process.env.PGSSLMODE = mode;
+
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options).toMatchObject({
+        adapter: "postgres",
+        hostname: "pg-host",
+        port: 5432,
+        username: "pg-user",
+        database: "pg-db",
+        sslMode: expected,
+      });
+    });
+
+    test("PGSSLMODE applies when the adapter is defaulted (no explicit adapter, no URL)", () => {
+      process.env.PGHOST = "pg-host";
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL({ max: 1 });
+      expect(options.options.adapter).toBe("postgres");
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE applies alongside DATABASE_URL (postgres URL without ?sslmode=)", () => {
+      process.env.DATABASE_URL = "postgres://user@host:5432/db";
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL();
+      expect(options.options.adapter).toBe("postgres");
+      expect(options.options.hostname).toBe("host");
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE applies to an explicit URL string without ?sslmode=", () => {
+      process.env.PGSSLMODE = "verify-full";
+
+      const options = new SQL("postgres://user@host:5432/db");
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
+
+    test("PG_SSLMODE spelling is accepted like PG_HOST et al.", () => {
+      process.env.PG_SSLMODE = "verify-full";
+
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
+
+    test("URL ?sslmode= overrides PGSSLMODE", () => {
+      process.env.PGSSLMODE = "require";
+      process.env.POSTGRES_URL = "postgres://user@host:5432/db?sslmode=disable";
+
+      const options = new SQL();
+      expect(options.options.sslMode).toBe(0); // SSLMode.disable (URL wins)
+    });
+
+    test("PGSSLMODE does not leak into the MySQL adapter", () => {
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL({ adapter: "mysql", hostname: "localhost" });
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.sslMode).toBe(0); // SSLMode.disable
+    });
+
+    test("invalid PGSSLMODE value throws", () => {
+      process.env.PGSSLMODE = "bogus";
+      expect(() => new SQL({ adapter: "postgres" })).toThrow("sslmode");
+    });
+
+    test("PGSSLMODE=prefer does not downgrade an explicit tls: true below require", () => {
+      process.env.PGSSLMODE = "prefer";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: true });
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE=allow does not downgrade an explicit ssl: {} below require", () => {
+      process.env.PGSSLMODE = "allow";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", ssl: {} });
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE=verify-full still upgrades past an explicit tls: true", () => {
+      process.env.PGSSLMODE = "verify-full";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: true });
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
+  });
+
   describe("Adapter-Protocol Validation", () => {
     test("should work with explicit adapter and URL without protocol", () => {
       const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });
@@ -320,6 +424,26 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
 
       unlinkSync(sock.unix);
+    });
+
+    test.skipIf(isWindows)("postgres URL with a host uses the pathname as the database name, not a socket path", () => {
+      using dir = tempDir("sql-url-pathname-pg", { placeholder: "" });
+      const options = new SQL(`postgres://user:pass@dbhost:5432${dir}`);
+      expect(options.options.adapter).toBe("postgres");
+      expect(options.options.hostname).toBe("dbhost");
+      expect(options.options.port).toBe(5432);
+      expect(options.options.database).toBe(String(dir).slice(1));
+      expect(options.options.path).toBeUndefined();
+    });
+
+    test.skipIf(isWindows)("mysql URL with a host uses the pathname as the database name, not a socket path", () => {
+      using dir = tempDir("sql-url-pathname-mysql", { placeholder: "" });
+      const options = new SQL(`mysql://user:pass@dbhost:3306${dir}`);
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.hostname).toBe("dbhost");
+      expect(options.options.port).toBe(3306);
+      expect(options.options.database).toBe(String(dir).slice(1));
+      expect(options.options.path).toBeUndefined();
     });
 
     test("should work with sqlite:// protocol and sqlite adapter", () => {

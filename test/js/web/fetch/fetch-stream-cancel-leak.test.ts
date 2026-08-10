@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Test that ReadableStream objects from cancelled fetch responses are properly GC'd.
 //
@@ -137,4 +138,66 @@ test("ReadableStream from fetch should be GC'd after body.cancel()", async () =>
   const leaked = after - baseline;
 
   expect(leaked).toBeLessThanOrEqual(5);
+});
+
+test("response.body.cancel() on a never-read body aborts the underlying fetch", async () => {
+  // Cancelling an unread response body must abort the native transfer, not resolve
+  // while the client keeps draining. Runs in a subprocess so the unbounded stream
+  // and RSS growth in the failing case are contained and cleaned up on exit.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let pulls = 0;
+        let aborted = false;
+        const server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            req.signal.addEventListener("abort", () => (aborted = true));
+            return new Response(
+              new ReadableStream(
+                { pull(c) { pulls++; c.enqueue(new Uint8Array(65536)); } },
+                new CountQueuingStrategy({ highWaterMark: 1 }),
+              ),
+            );
+          },
+        });
+        const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const deadline = performance.now() + 3000;
+        // Let the server start pushing so the client has buffered bytes it never asked for.
+        while (pulls === 0 && performance.now() < deadline) await Bun.sleep(1);
+        const before = pulls;
+        await res.body.cancel(new Error("nope"));
+        // Poll for quiescence: once cancel has reached the transport, pulls stop growing.
+        // Bail early if pulls run away so the failing case reports instead of timing out.
+        let last = pulls;
+        let stable = 0;
+        while (stable < 5 && pulls - before < 2000 && performance.now() < deadline) {
+          await Bun.sleep(10);
+          if (pulls === last) stable++;
+          else { stable = 0; last = pulls; }
+        }
+        const after = pulls - before;
+        const timedOut = performance.now() >= deadline;
+        console.log(JSON.stringify({ after, aborted, timedOut }));
+        server.stop(true);
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { after, aborted, timedOut } = JSON.parse(stdout.trim());
+  // When the cancel reaches the fetch tasklet the server sees the abort and pulls stop
+  // within a bounded window. Without the fix the client keeps draining and `after`
+  // grows into the thousands (the poll loop above never stabilizes).
+  expect({ aborted, afterBounded: after < 200, timedOut, exitCode }).toEqual({
+    aborted: true,
+    afterBounded: true,
+    timedOut: false,
+    exitCode: 0,
+  });
 });

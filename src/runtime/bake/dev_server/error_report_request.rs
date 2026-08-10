@@ -18,7 +18,6 @@
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_ast::Log;
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
@@ -40,7 +39,7 @@ use bun_core::fmt::parse_hex_to_int;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     // BodyReaderMixin is a generic helper that stores the buffered body and
     // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -79,7 +78,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
+    fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -100,7 +99,7 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub(crate) unsafe fn run_with_body(
+    unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
@@ -403,7 +402,7 @@ impl ErrorReportRequest {
     }
 }
 
-pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }
@@ -459,40 +458,6 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 
     let mut rest = &contents[index_of_first_line..];
 
-    // For decoding JSON escapes, the JS Lexer decoding function has
-    // `decodeEscapeSequences`, which only supports decoding to UTF-16.
-    // Alternatively, it appears the TOML lexer has copied this exact
-    // function but for UTF-8. So the decoder can just use that.
-    //
-    // This function expects but does not assume the escape sequences
-    // given are valid, and does not bubble errors up.
-    //
-    // Note: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
-    // both from the caller's arena so their lifetime matches the decoded
-    // `ArenaVec<'a, u8>` slices we hand back in `result`.
-    let log: &'a mut Log = arena.alloc(Log::init());
-    let source: &'a bun_ast::Source = arena.alloc(bun_ast::Source::init_empty_file(b""));
-    let mut l = bun_parsers::toml::Lexer {
-        log,
-        source,
-        start: 0,
-        end: 0,
-        current: 0,
-        bump: arena,
-        code_point: -1,
-        identifier: b"",
-        number: 0.0,
-        prev_error_loc: bun_ast::Loc::EMPTY,
-        string_literal_slice: b"",
-        string_literal_is_ascii: true,
-        line_number: 0,
-        token: bun_parsers::toml::lexer::T::t_end_of_file,
-        allow_double_bracket: true,
-        has_newline_before: false,
-        should_redact_logs: false,
-    };
-    // log dropped at scope exit
-
     let mut result: [&'a [u8]; N] = [b""; N];
     for decoded_line in result.iter_mut() {
         let mut has_extra_escapes = false;
@@ -515,11 +480,11 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
         };
         let encoded_line = &rest[..end_of_line];
 
-        // Decode it
+        // Decode JSON escapes straight to UTF-8.
         if has_extra_escapes {
             let mut bytes: bun_alloc::ArenaVec<'a, u8> =
                 bun_alloc::ArenaVec::with_capacity_in(encoded_line.len(), arena);
-            l.decode_escape_sequences::<false>(0, encoded_line, &mut bytes)?;
+            super::js_escape::decode_js_escape_sequences(encoded_line, &mut bytes)?;
             *decoded_line = bytes.into_bump_slice();
         } else {
             *decoded_line = encoded_line;

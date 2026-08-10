@@ -5,6 +5,8 @@ use core::ffi::c_char;
 #[cfg(debug_assertions)]
 use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 #[cfg(debug_assertions)]
+use bun_core::strings;
+#[cfg(debug_assertions)]
 use bun_crash_handler::Error;
 
 // `SelfInfo`, `StackIterator`, plus the symbol-lookup helpers. The
@@ -125,7 +127,7 @@ unsafe extern "C" {
 
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn dumpBtjsTrace() -> *const c_char {
+extern "C" fn dumpBtjsTrace() -> *const c_char {
     // Must use #[cfg], not cfg!(), so the entire debug impl is DCE'd from
     // release builds.
     #[cfg(debug_assertions)]
@@ -398,7 +400,7 @@ fn print_line_from_file_any_os(
         let mut next_line: usize = 1;
         while next_line != source_location.line as usize {
             let slice = &buf[current_line_start..amt_read];
-            if let Some(pos) = slice.iter().position(|&b| b == b'\n') {
+            if let Some(pos) = strings::index_of_char_usize(slice, b'\n') {
                 next_line += 1;
                 if pos == slice.len() - 1 {
                     amt_read = f.read(&mut buf[..]).map_err(Into::<Error>::into)?;
@@ -416,7 +418,7 @@ fn print_line_from_file_any_os(
         break 'seek current_line_start;
     };
     let slice = &mut buf[line_start..amt_read];
-    if let Some(pos) = slice.iter().position(|&b| b == b'\n') {
+    if let Some(pos) = strings::index_of_char_usize(slice, b'\n') {
         let line = &mut slice[0..pos + 1];
         replace_scalar(line, b'\t', b' ');
         out_stream.extend_from_slice(line);
@@ -427,7 +429,7 @@ fn print_line_from_file_any_os(
         out_stream.extend_from_slice(slice);
         while amt_read == buf.len() {
             amt_read = f.read(&mut buf[..]).map_err(Into::<Error>::into)?;
-            if let Some(pos) = buf[0..amt_read].iter().position(|&b| b == b'\n') {
+            if let Some(pos) = strings::index_of_char_usize(&buf[0..amt_read], b'\n') {
                 let line = &mut buf[0..pos + 1];
                 replace_scalar(line, b'\t', b' ');
                 out_stream.extend_from_slice(line);

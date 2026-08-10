@@ -1,8 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-pub mod error;
-pub use error::{Error, Result};
-
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -11,7 +8,6 @@ use bun_collections::VecExt as _;
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 
-pub const MIN_WBITS: c_int = 8;
 pub const MAX_WBITS: c_int = 15;
 
 unsafe extern "C" {
@@ -39,8 +35,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-#[allow(non_camel_case_types, unused_imports)]
-pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
+pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
@@ -157,8 +152,8 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
 }
 
 pub use bun_core::compress::State;
-pub type ZlibReaderArrayListState = State;
-pub type ZlibCompressorArrayListState = State;
+type ZlibReaderArrayListState = State;
+type ZlibCompressorArrayListState = State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
@@ -204,15 +199,14 @@ mod ZlibAllocator {
 }
 
 pub struct ZlibReaderArrayList<'a> {
-    pub input: &'a [u8],
     // We operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    pub list_ptr: &'a mut Vec<u8>,
-    pub zlib: zStream_struct,
+    pub(crate) list_ptr: &'a mut Vec<u8>,
+    pub(crate) zlib: zStream_struct,
     // allocator field dropped (global mimalloc)
-    pub state: ZlibReaderArrayListState,
+    pub(crate) state: ZlibReaderArrayListState,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -222,7 +216,7 @@ impl<'a> Drop for ZlibReaderArrayList<'a> {
 }
 
 impl<'a> ZlibReaderArrayList<'a> {
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         // always free with `inflateEnd`
         if self.state != ZlibReaderArrayListState::End {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
@@ -249,7 +243,7 @@ impl<'a> ZlibReaderArrayList<'a> {
     }
 
     // list_allocator/allocator params dropped (global mimalloc).
-    pub fn init_with_options_and_list_allocator(
+    pub(crate) fn init_with_options_and_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
         options: Options,
@@ -261,7 +255,6 @@ impl<'a> ZlibReaderArrayList<'a> {
         };
 
         let mut zlib_reader = Box::new(Self {
-            input,
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
@@ -285,7 +278,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -709,16 +702,15 @@ impl NodeMode {
 
 /// Not for streaming!
 pub struct ZlibCompressorArrayList<'a> {
-    pub input: &'a [u8],
     // We operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    pub list_ptr: &'a mut Vec<u8>,
-    pub zlib: zStream_struct,
+    pub(crate) list_ptr: &'a mut Vec<u8>,
+    pub(crate) zlib: zStream_struct,
     // allocator field dropped (global mimalloc)
-    pub state: ZlibCompressorArrayListState,
+    pub(crate) state: ZlibCompressorArrayListState,
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         if self.state != ZlibCompressorArrayListState::End {
             // SAFETY: zlib was initialized via deflateInit2_; safe to end.
             unsafe { deflateEnd(&raw mut self.zlib) };
@@ -735,7 +727,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
     }
 
     // allocator/list_allocator params dropped (global mimalloc).
-    pub fn init_with_list_allocator(
+    pub(crate) fn init_with_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
         options: Options,
@@ -749,7 +741,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
         };
 
         let mut zlib_reader = Box::new(Self {
-            input,
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibCompressorArrayListState::Uninitialized,
@@ -772,7 +763,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -949,11 +940,6 @@ impl DeflateEncoder {
     }
 
     #[inline]
-    pub fn avail_in(&self) -> u32 {
-        self.strm.avail_in as u32
-    }
-
-    #[inline]
     pub fn avail_out(&self) -> u32 {
         self.strm.avail_out as u32
     }
@@ -994,9 +980,9 @@ impl Drop for DeflateEncoder {
 /// RAII inflate (decompression) stream. `inflateEnd` on drop.
 pub struct InflateDecoder {
     strm: Box<zStream_struct>,
-    pub state: State,
+    pub(crate) state: State,
     /// Decompression-bomb guard for [`decompress`](Self::decompress).
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
     /// RFC 1952 §2.2: a gzip file is a sequence of members. When true (set
     /// for gzip-only `window_bits`), [`decompress`](Self::decompress) resets
     /// on `Z_STREAM_END` and continues if input remains, so concatenated
@@ -1027,11 +1013,6 @@ impl InflateDecoder {
             ReturnCode::MemError => Err(ZlibError::OutOfMemory),
             _ => Err(ZlibError::InvalidArgument),
         }
-    }
-
-    #[inline]
-    pub fn avail_in(&self) -> u32 {
-        self.strm.avail_in as u32
     }
 
     #[inline]
@@ -1174,7 +1155,7 @@ fn new_zstream() -> zStream_struct {
         free_func: Some(ZlibAllocator::free),
         internal_state: core::ptr::null_mut(),
         user_data: core::ptr::null_mut(),
-        data_type: DataType::Unknown,
+        data_type: DataType::Unknown as c_int,
         adler: 0,
         reserved: 0,
     }

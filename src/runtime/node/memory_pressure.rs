@@ -34,9 +34,9 @@ use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
 /// bits on macOS so the kqueue dispatch can pass `fflags` through unchanged.
-pub mod level {
-    pub const WARNING: i32 = 0x00000002;
-    pub const CRITICAL: i32 = 0x00000004;
+pub(crate) mod level {
+    pub(crate) const WARNING: i32 = 0x00000002;
+    pub(crate) const CRITICAL: i32 = 0x00000004;
 }
 
 unsafe extern "C" {
@@ -45,7 +45,7 @@ unsafe extern "C" {
 
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
 /// task payload (macOS kevent `fflags`, or `level::CRITICAL` elsewhere).
-pub fn emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     // macOS can deliver WARN|CRITICAL together under EV_CLEAR; pick the more severe.
     let lvl = if lvl & level::CRITICAL != 0 || lvl & level::WARNING == 0 {
         level::CRITICAL
@@ -56,8 +56,17 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
-pub(crate) fn pressure_task(lvl: i32) -> Task {
-    Task::new(task_tag::MemoryPressureTask, lvl as usize as *mut ())
+/// The queued form of a pressure notification: `Task::ptr` packs the level,
+/// there is no allocation.
+pub(crate) struct MemoryPressureTask;
+impl bun_event_loop::Taskable for MemoryPressureTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
+    /// Nothing is owned (`this` is the packed level).
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
+fn pressure_task(lvl: i32) -> Task {
+    Task::init(lvl as usize as *mut MemoryPressureTask)
 }
 
 #[cfg(not(windows))]
@@ -115,7 +124,7 @@ mod posix {
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
         let _ = bun_sys::close(fd);
-        for line in read[..n].split(|&b| b == b'\n') {
+        for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
             };
@@ -220,7 +229,7 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub fn on_poll(poll: &mut FilePoll, fflags: i64) {
+    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
@@ -303,7 +312,7 @@ mod windows {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
-    fn thread_main(vm_addr: usize, notify: usize, shutdown: usize) {
+    fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
         bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
         let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
         loop {
@@ -313,10 +322,14 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            // SAFETY: main-thread VM captured at install; process-lifetime.
-            unsafe { &*(vm_addr as *const VirtualMachine) }
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            if let bun_jsc::vm_handle::Posted::Refused(task) =
+                vm.post(bun_jsc::LoopKind::Regular, task)
+            {
+                // VM torn down (uninstall joins us right after): drop the notification.
+                // SAFETY: refused ⇒ we own the task box.
+                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+                break;
+            }
             // SAFETY: `shutdown` is valid for the thread's lifetime.
             if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
                 break;
@@ -343,15 +356,15 @@ mod windows {
         }
         let shutdown = OwnedHandle(shutdown);
 
-        let (vm_addr, n, s) = (
-            core::ptr::from_ref(global.bun_vm()) as usize,
+        let (vm, n, s) = (
+            global.bun_vm().handle(),
             notify.0 as usize,
             shutdown.0 as usize,
         );
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm_addr, n, s))
+            .spawn(move || thread_main(vm, n, s))
         else {
             return;
         };
@@ -384,7 +397,7 @@ mod windows {
 // ────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::install(global);
     #[cfg(windows)]
@@ -392,7 +405,7 @@ pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::uninstall(global);
     #[cfg(windows)]
@@ -400,12 +413,12 @@ pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
     emit(global, lvl);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
+pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
     global
         .bun_vm()
         .as_mut()
@@ -415,4 +428,4 @@ pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> b
 }
 
 #[cfg(not(windows))]
-pub use posix::on_poll;
+pub(crate) use posix::on_poll;

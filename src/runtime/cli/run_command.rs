@@ -64,20 +64,20 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub(crate) struct NpmArgs;
+struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
 /// Runtime knobs `Command::start` passes through to select the per-tag exec
 /// behavior.
 #[derive(Clone, Copy)]
 pub struct ExecCfg {
-    pub bin_dirs_only: bool,
-    pub log_errors: bool,
-    pub allow_fast_run_for_extensions: bool,
+    pub(crate) bin_dirs_only: bool,
+    pub(crate) log_errors: bool,
+    pub(crate) allow_fast_run_for_extensions: bool,
 }
 
 impl Default for ExecCfg {
@@ -90,11 +90,11 @@ impl Default for ExecCfg {
     }
 }
 
-pub struct RunCommand;
+pub(crate) struct RunCommand;
 
 impl RunCommand {
     /// `bun run --help` body.
-    pub fn print_help(package_json: Option<&PackageJSON>) {
+    pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
         // templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
         // time. Routing them through a `const &str` + `{}` prints the raw
@@ -195,7 +195,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Find the "best" shell to use. Cached to only run once.
-    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
+    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
         // Process-lifetime; written exactly once on the CLI thread.
         // PORTING.md §Global mutable state: scratch buffer behind
         // a `Once` gate → RacyCell.
@@ -220,7 +220,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     // → bun_runtime cycle. This is a thin re-export for `bun run` /
     // filter_run / multi_run callers.
     #[inline]
-    pub fn replace_package_manager_run(
+    pub(crate) fn replace_package_manager_run(
         copy_script: &mut Vec<u8>,
         script: &[u8],
     ) -> crate::Result<()> {
@@ -232,12 +232,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// non-zero.
     ///
     /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
-    pub fn run_package_script_foreground(
+    pub(crate) fn run_package_script_foreground(
         ctx: &mut ContextData,
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -257,12 +257,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
     /// interpreter from `shell_path` instead of the loader's `PATH`.
-    pub fn run_package_script_foreground_with_shell_path(
+    pub(crate) fn run_package_script_foreground_with_shell_path(
         ctx: &mut ContextData,
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -292,7 +292,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if needs_escape_utf8_ascii_latin1(part) {
-                escape_8bit::<true>(part, &mut copy_script).unwrap_or_oom();
+                escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;
             }
             copy_script.extend_from_slice(part);
@@ -308,13 +308,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            // Erase the loader's borrowed lifetime to `'static` for the
-            // singleton handoff.
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe {
-                    &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                        .cast::<DotEnv::Loader<'static>>()
-                }),
+                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
@@ -396,12 +391,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: same lifetime erasure as the `!use_system_shell`
-                        // branch above — `env` outlives the mini event loop.
-                        Some(unsafe {
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: `env` outlives the mini event loop.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -535,10 +526,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
     /// `configure_linker()` + `load_tsconfig_json` work, which is the single
     /// largest block of bundler/linker code otherwise faulted in by `bun run`.
-    pub fn configure_env_for_run(
+    pub(crate) fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -549,10 +540,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// bundler linker or enable `load_tsconfig_json` — for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
-    pub fn configure_env_for_run_without_linker(
+    pub(crate) fn configure_env_for_run_without_linker(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -584,7 +575,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn configure_env_for_run_impl(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
@@ -796,12 +787,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // resolver's forward-decl `BundleOptions` lacks
-        // `prefer_latest_install`; only the bundler-side mirror carries it.
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
-        b.options.prefer_offline_install = offline == OfflineMode::Offline;
-        b.options.prefer_latest_install = offline == OfflineMode::Latest;
+        b.options.install_preference = offline;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -891,7 +879,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
@@ -899,9 +886,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
-            // singleton (set by `Transpiler::init`); erasing the borrowed
-            // lifetime mirrors the `run_package_script_foreground` handoff.
-            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            // singleton (set by `Transpiler::init`).
+            Some(unsafe { &mut *bundle.env }),
             None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
@@ -996,6 +982,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.interactive_eval_script =
+                ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -1025,7 +1013,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
@@ -1076,8 +1064,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
-
-        vm.env_loader().load_tracy();
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -1490,6 +1476,9 @@ impl Run {
                         Some(entry),
                     )
                 }
+                bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                    ctx.debug.watch_kill_signal,
+                );
             }
             _ => {}
         }
@@ -1511,8 +1500,12 @@ impl Run {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
+                    // A CJS entry runs synchronously in Node, so its top-level
+                    // throw is an uncaughtException; only an ESM entry
+                    // rejection reports origin "unhandledRejection".
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1751,9 +1744,9 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 }
 
 impl RunCommand {
-    /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
-    /// boot the VM, and on failure print the formatted error + `exit(1)`.
-    fn _boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
+    /// failure print the formatted error + `exit(1)`.
+    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1816,11 +1809,11 @@ impl RunCommand {
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
+    pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
-    pub fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
+    pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
             const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
@@ -1882,7 +1875,7 @@ impl RunCommand {
     /// package manager can call it without depending on `bun_runtime`; this is
     /// a thin delegate so existing `Self::` callers keep compiling.
     #[inline]
-    pub fn create_fake_temporary_node_executable(
+    pub(crate) fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
     ) -> crate::Result<()> {
@@ -1893,7 +1886,7 @@ impl RunCommand {
     /// Prepends workspace
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
-    pub fn configure_path_for_run(
+    pub(crate) fn configure_path_for_run(
         ctx: &mut ContextData,
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
@@ -1931,7 +1924,7 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    pub fn configure_path_for_run_with_package_json_dir(
+    pub(crate) fn configure_path_for_run_with_package_json_dir(
         _ctx: &mut ContextData,
         package_json_dir: &[u8],
         this_transpiler: &mut Transpiler<'static>,
@@ -2077,12 +2070,12 @@ impl RunCommand {
     ///
     /// This function only returns if an error starting the process is
     /// encountered; most other errors are handled by printing and exiting.
-    pub fn run_binary(
+    pub(crate) fn run_binary(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2132,12 +2125,12 @@ impl RunCommand {
     }
 
     /// `executable_z` is the NUL-terminated form of `executable`.
-    pub fn run_binary_without_bunx_path(
+    pub(crate) fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2168,12 +2161,8 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe {
-                            // SAFETY: env loader is process-lifetime; erase
-                            // borrowed lifetime for the singleton handoff.
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: env loader is process-lifetime.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -2346,17 +2335,7 @@ impl RunCommand {
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
-    /// script, then either boot the VM or spawn the script.
-    ///
-    /// All three `ExecCfg` knobs are forwarded so
-    /// `--if-present` (suppresses missing-script errors) and the Auto-command
-    /// fast-path-by-extension behave as expected.
-    #[inline]
-    pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
-        Self::exec_with_cfg(ctx, cfg)
-    }
-
-    pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+    pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 
@@ -2444,7 +2423,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader: &mut DotEnv::Loader<'static> = this_transpiler.env_mut();
+        let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
             .map
             .put(b"npm_command", b"run-script")
@@ -2621,10 +2600,10 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `_boot_and_handle_error` takes
+                    // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2641,7 +2620,7 @@ impl RunCommand {
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')
                 {
-                    return Ok(Self::_boot_and_handle_error(
+                    return Ok(Self::boot_and_handle_error(
                         ctx,
                         target_name,
                         Some(Loader::Html),
@@ -2898,7 +2877,7 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::_boot_and_handle_error(ctx, &absolute_script_path, None)
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -2924,7 +2903,7 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -2938,7 +2917,7 @@ impl RunCommand {
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // NOT routed through `_boot_and_handle_error` — the
+        // NOT routed through `boot_and_handle_error` — the
         // stdin path skips the
         // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
@@ -2950,12 +2929,30 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub(crate) fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+        // Every caller has already established there's no user script target;
+        // any remaining positionals are dispatch artifacts (e.g. RunCommand's
+        // leading "run"), not user data — keep them out of `process.argv`.
+        ctx.positionals.clear();
+        let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
+        // Stash the user's `-e` (so `process._eval` is correct) and boot the
+        // bootstrap via `[eval]`; it runs `process._eval` like Node's
+        // internal/main/repl.js — no source splicing.
+        ctx.runtime_options.eval.interactive_script =
+            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
+        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
-    pub fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
@@ -2968,7 +2965,7 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -2980,16 +2977,30 @@ impl RunCommand {
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
-    pub fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
+
+        // Node.js does not auto-load `.env` files; match that here so tools with
+        // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
+        // values. Explicit `--env-file` is still honored. #6338
+        ctx.args.disable_default_env_files = true;
+
+        // `node --interactive [-e code]`: same gate as AutoCommand — a script
+        // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
+        if ctx.runtime_options.interactive
+            && !ctx.runtime_options.eval.eval_and_print
+            && ctx.positionals.is_empty()
+        {
+            return Self::exec_node_repl(ctx);
+        }
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
@@ -3001,10 +3012,17 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
+            // Node: bare `node` on a TTY starts the REPL. Only in emulation
+            // mode; bun's own `bun` with no args stays the help text. Use
+            // Output's cached stdio flag (set at startup via libuv's handle
+            // probe), which is the same check `bun update --interactive` uses.
+            if Output::is_stdin_tty() {
+                return Self::exec_node_repl(ctx);
+            }
             Self::exec_as_if_node_missing_script();
         }
 
-        // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
 
@@ -3016,7 +3034,7 @@ impl RunCommand {
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
             let mut out_buf = PathBuffer::uninit();
@@ -3029,7 +3047,7 @@ impl RunCommand {
         };
 
         // This arm calls `Run::boot`
-        // directly — NOT `_boot_and_handle_error` — so it (a) does not call
+        // directly — NOT `boot_and_handle_error` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
@@ -3047,7 +3065,7 @@ impl RunCommand {
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
-            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
             (),
         );
         Global::exit(1);
@@ -3085,10 +3103,7 @@ const EVAL_TRIGGER: &[u8] = b"/[eval]";
 /// embedding in a double-quoted JS string literal. Used by the cron-execution
 /// wrapper script to inline the entry path and cron period.
 fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
-    if !input
-        .iter()
-        .any(|&c| matches!(c, b'\\' | b'"' | b'\n' | b'\r' | b'\t'))
-    {
+    if !strings::contains_any(input, b"\\\"\n\r\t") {
         return input.to_vec();
     }
     let mut result: Vec<u8> = Vec::with_capacity(input.len() + 16);
@@ -3139,7 +3154,7 @@ impl RemoteImageDownload {
     fn on_done(
         this: *mut RemoteImageDownload,
         async_http: *mut bun_http::AsyncHTTP<'static>,
-        _result: bun_http::HTTPClientResult<'_>,
+        mut result: bun_http::HTTPClientResult<'_>,
     ) {
         // The worker's
         // ThreadlocalAsyncHTTP is about to be freed, so copy its
@@ -3157,8 +3172,8 @@ impl RemoteImageDownload {
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
-                (*real.as_ptr()).response_buffer = async_http.response_buffer;
             }
+            result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
             let _ = (*this.done).write_item(0);
@@ -3167,28 +3182,14 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    pub fn ls(ctx: &mut ContextData) -> crate::Result<()> {
-        let args = ctx.args.clone();
-
-        let arena: &'static bun_alloc::Arena = runner_arena();
-        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = Box::default();
-
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.configure_linker();
-        Ok(())
-    }
-
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
     fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
         // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd(unsafe {
+        let cwd = bun_core::getcwd_or_exe_dir(unsafe {
             &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
-        })?;
+        });
         let cwd_len = cwd.as_bytes().len();
         entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
 
@@ -3301,17 +3302,12 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
-            // SAFETY: `slot` is the freshly-allocated `MaybeUninit` heap slot
-            // and `response_buffer` was `ptr::write`n above; address is valid.
-            let response_buffer_ptr: *mut bun_core::MutableString =
-                unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 bun_url::URL::parse(url_static),
                 Default::default(),
                 b"",
-                response_buffer_ptr,
                 b"",
                 bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
                     d_ptr,
@@ -3409,14 +3405,17 @@ impl RunCommand {
                 continue;
             }
 
-            let fd = match sys::open_a(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600)
-            {
+            let fd = match sys::open_a(
+                &path,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+                0o600,
+            ) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
             let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
-                // openA + TRUNC leaves an orphan even on zero-byte
+                // openA + CREAT leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
                 // can't fail for OOM reasons.
                 Self::unlink_staged_path(&path);
@@ -3581,7 +3580,7 @@ impl RunCommand {
 
     /// Shell-completion entries for `bun run`. Called from
     /// `cli_body::bun_getcompletes`.
-    pub fn completions<const FILTER: Filter>(
+    pub(crate) fn completions<const FILTER: Filter>(
         ctx: &mut ContextData,
         default_completions: Option<&'static [&'static [u8]]>,
         reject_list: &[&[u8]],
@@ -3664,6 +3663,12 @@ impl RunCommand {
                     .flatten()
                 {
                     if let Some(entries) = bin_dir.get_entries_const() {
+                        // `.data` iteration must hold `entries_mutex`
+                        // (uncontended on this single-threaded CLI path).
+                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                            .fs
+                            .entries_mutex
+                            .lock_guard();
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3672,8 +3677,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
@@ -3719,6 +3725,12 @@ impl RunCommand {
                 .flatten()
             {
                 if let Some(entries) = dir_info.get_entries_const() {
+                    // `.data` iteration must hold `entries_mutex`
+                    // (uncontended on this single-threaded CLI path).
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
@@ -3735,8 +3747,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
-                            // non-null process-static singleton.
+                            // SAFETY: `Transpiler::fs` is the non-null process-static
+                            // singleton; the lazy-stat rewrite inside `kind()` is
+                            // serialized on the per-entry mutex.
                             && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {
@@ -3917,7 +3930,8 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-pub enum BunXFastPath {}
+#[cfg(windows)]
+pub(crate) enum BunXFastPath {}
 
 #[cfg(windows)]
 mod bunx_fast_path_buffers {
@@ -3928,12 +3942,12 @@ mod bunx_fast_path_buffers {
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
+#[cfg(windows)]
 impl BunXFastPath {
     /// Convert a
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
     /// per the canonical "Everyone quotes command line arguments the wrong way"
     /// rules. Writes into `buffer` and returns the number of u16s written.
-    #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
         let mut wbuf = [0u16; bun_paths::MAX_WPATH];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
@@ -3947,9 +3961,7 @@ impl BunXFastPath {
 
         // Trigger quoting only on
         // space/tab/quote — compare the FULL u16, not the truncated low byte.
-        let needs_quote = warg
-            .iter()
-            .any(|&c| c == b' ' as u16 || c == b'\t' as u16 || c == b'"' as u16);
+        let needs_quote = strings::index_of_any16(warg, bun_core::w!(" \t\"")).is_some();
 
         if !needs_quote {
             buffer[..warg.len()].copy_from_slice(warg);
@@ -3957,7 +3969,7 @@ impl BunXFastPath {
         }
 
         // Fast path: no embedded `"`/`\` → simple wrap.
-        let has_quote_or_backslash = warg.iter().any(|&c| c == b'"' as u16 || c == b'\\' as u16);
+        let has_quote_or_backslash = strings::index_of_any16(warg, bun_core::w!("\"\\")).is_some();
         if !has_quote_or_backslash {
             buffer[0] = b'"' as u16;
             buffer[1..1 + warg.len()].copy_from_slice(warg);
@@ -4003,11 +4015,10 @@ impl BunXFastPath {
     }
 
     /// If this returns, it implies the fast path cannot be taken.
-    #[cfg(windows)]
-    pub fn try_launch(
+    pub(crate) fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
@@ -4087,7 +4098,6 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
-    #[cfg(windows)]
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`

@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::ptr::NonNull;
 
 use bun_core::Fd;
 
@@ -19,7 +18,7 @@ impl ListenSocket {
         self.get_socket().local_address(buf)
     }
 
-    pub fn get_local_port(&mut self) -> i32 {
+    pub fn get_local_port(&mut self) -> Option<u16> {
         self.get_socket().local_port()
     }
 
@@ -41,12 +40,6 @@ impl ListenSocket {
     pub fn group(&mut self) -> &mut SocketGroup {
         // SAFETY: self is a valid listen socket; C returns a non-null group.
         unsafe { &mut *us_listen_socket_group(self) }
-    }
-
-    pub fn ext<T>(&mut self) -> &mut T {
-        // SAFETY: caller guarantees the ext storage was sized/aligned for T at
-        // group creation time.
-        unsafe { &mut *us_listen_socket_ext(self).cast::<T>() }
     }
 
     pub fn fd(&mut self) -> Fd {
@@ -93,20 +86,6 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    /// Returns the raw userdata pointer registered via `add_server_name` for
-    /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
-    /// because the pointee is caller-owned external storage — materializing a
-    /// `&mut T` here could alias the caller's own live reference to it.
-    pub fn find_server_name_userdata<T>(
-        &mut self,
-        hostname: &core::ffi::CStr,
-    ) -> Option<NonNull<T>> {
-        // SAFETY: self and hostname valid; caller guarantees the stored userdata
-        // is a *T.
-        let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
-        NonNull::new(p.cast::<T>())
-    }
-
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -122,7 +101,6 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
-    safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
     safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
@@ -131,10 +109,6 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
-    fn us_listen_socket_find_server_name_userdata(
-        ls: *mut ListenSocket,
-        hostname: *const c_char,
-    ) -> *mut c_void;
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

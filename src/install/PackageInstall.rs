@@ -12,6 +12,7 @@ use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
+#[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
@@ -26,41 +27,41 @@ pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
     /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
     // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
-    pub destination_dir_subpath: &'a ZStr,
-    pub destination_dir_subpath_buf: &'a mut [u8],
+    pub(crate) destination_dir_subpath: &'a ZStr,
+    pub(crate) destination_dir_subpath_buf: &'a mut [u8],
 
-    pub progress: Option<&'a mut Progress>,
+    pub(crate) progress: Option<&'a mut Progress>,
 
-    pub package_name: SemverString,
-    pub package_version: &'a [u8],
-    pub patch: Option<Patch>,
+    pub(crate) package_name: SemverString,
+    pub(crate) package_version: &'a [u8],
+    pub(crate) patch: Option<Patch>,
 
     // TODO: this is never read
-    pub file_count: u32,
-    pub node_modules: &'a NodeModulesFolder,
+    pub(crate) file_count: u32,
+    pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
 }
 
 #[derive(Clone, Copy)]
 pub struct Patch {
-    pub contents_hash: u64,
+    pub(crate) contents_hash: u64,
 }
 
 #[derive(Default)]
 pub struct Summary {
-    pub fail: u32,
-    pub success: u32,
-    pub skipped: u32,
-    pub successfully_installed: Option<DynamicBitSet>,
+    pub(crate) fail: u32,
+    pub(crate) success: u32,
+    pub(crate) skipped: u32,
+    pub(crate) successfully_installed: Option<DynamicBitSet>,
 
     /// Package name hash -> number of scripts skipped.
     /// Multiple versions of the same package might add to the count, and each version
     /// might have a different number of scripts
-    pub packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
+    pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
 }
 
 #[repr(u8)]
@@ -119,7 +120,7 @@ bun_core::comptime_string_map! {
 
 impl Method {
     #[cfg(target_os = "macos")]
-    pub(crate) fn macos() -> BackendSupport {
+    fn macos() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => true,
             Method::ClonefileEachDir => true,
@@ -130,7 +131,7 @@ impl Method {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub(crate) fn linux() -> BackendSupport {
+    fn linux() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -141,7 +142,7 @@ impl Method {
     }
 
     #[cfg(windows)]
-    pub(crate) fn windows() -> BackendSupport {
+    fn windows() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -173,10 +174,10 @@ impl Method {
 
 #[derive(Copy, Clone)]
 pub struct Failure {
-    pub err: crate::Error,
-    pub step: Step,
+    pub(crate) err: crate::Error,
+    pub(crate) step: Step,
     #[cfg(bun_debug)]
-    pub debug_trace: bun_core::StoredTrace,
+    pub(crate) debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
@@ -193,7 +194,7 @@ impl Failure {
     }
 }
 
-pub enum InstallResult {
+pub(crate) enum InstallResult {
     Success,
     Failure(Box<Failure>),
 }
@@ -217,7 +218,7 @@ impl InstallResult {
         }))
     }
 
-    pub(crate) fn is_fail(&self) -> bool {
+    fn is_fail(&self) -> bool {
         matches!(self, InstallResult::Failure(_))
     }
 }
@@ -236,7 +237,7 @@ pub enum Step {
 
 impl Step {
     /// "error: failed {s} for package"
-    pub fn name(self) -> &'static [u8] {
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             Step::Copyfile | Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
@@ -265,14 +266,15 @@ impl PackageInstall<'_> {
     /// Read accessor for the [`SUPPORTED_METHOD`] global. Associated fn so
     /// cross-module callers keep the `PackageInstall::supported_method()` call shape.
     #[inline]
-    pub fn supported_method() -> Method {
+    pub(crate) fn supported_method() -> Method {
         Method::from_u8(SUPPORTED_METHOD.load(Ordering::Relaxed))
     }
 
     /// Write accessor for [`SUPPORTED_METHOD`] (fallback path when
     /// clonefile/hardlink fails). Relaxed — single-writer, advisory hint.
     #[inline]
-    pub fn set_supported_method(m: Method) {
+    #[cfg(not(windows))]
+    pub(crate) fn set_supported_method(m: Method) {
         SUPPORTED_METHOD.store(m as u8, Ordering::Relaxed);
     }
 }
@@ -450,25 +452,27 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
 
 // ───────────────────────────── NewTaskQueue ─────────────────────────────
 
-pub struct NewTaskQueue<TaskType> {
-    pub thread_pool: &'static ThreadPool,
+#[cfg(windows)]
+pub(crate) struct NewTaskQueue<TaskType> {
+    pub(crate) thread_pool: &'static ThreadPool,
     /// One-shot, first-write-wins handoff of the failed task from a worker
     /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
     /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
     /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
-    pub wait_group: WaitGroup,
+    pub(crate) errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
+    pub(crate) wait_group: WaitGroup,
 }
 
+#[cfg(windows)]
 impl<TaskType> NewTaskQueue<TaskType> {
-    pub fn complete_one(&self) {
+    pub(crate) fn complete_one(&self) {
         self.wait_group.finish();
     }
 
     /// # Safety
     /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
     /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub unsafe fn push(&self, task: *mut TaskType)
+    pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: HasWorkPoolTask,
     {
@@ -480,19 +484,20 @@ impl<TaskType> NewTaskQueue<TaskType> {
         }));
     }
 
-    pub fn wait(&self) {
+    pub(crate) fn wait(&self) {
         self.wait_group.wait();
     }
 }
 
-pub trait HasWorkPoolTask {
+#[cfg(windows)]
+pub(crate) trait HasWorkPoolTask {
     fn task(&mut self) -> &mut WorkPoolTask;
 }
 
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
 
 #[cfg(windows)]
-pub(crate) struct HardLinkWindowsInstallTask {
+struct HardLinkWindowsInstallTask {
     /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
     /// on demand from `src_len` instead of storing self-referential pointers
     /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
@@ -512,7 +517,7 @@ impl HasWorkPoolTask for HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-pub(crate) type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
+type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
 // PORTING.md §Global mutable state: written once on the main thread by
 // `init_queue()` before any worker `run_from_thread_pool` reads it; workers
@@ -523,7 +528,7 @@ static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>>
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    pub(crate) fn init_queue() -> &'static HardLinkQueue {
+    fn init_queue() -> &'static HardLinkQueue {
         // SAFETY: called once per install batch on the install main thread before any
         // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
         // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
@@ -535,16 +540,10 @@ impl HardLinkWindowsInstallTask {
         // whose internal Release/Acquire on the task queue is what publishes the
         // first-call `MaybeUninit::write` below.
         //
-        // We must NOT re-assign the whole struct each call: even though `copy()` always reaches `queue.wait()`
-        // before returning (see the loop_err handling there), `WaitGroup::wait()` can
-        // return while the last worker is still inside `WaitGroup::finish()` *after*
-        // its `fetch_sub` — touching `mutex`/`cond` for the lock-unlock-signal dance.
-        // Overwriting `wait_group` (or forming `&mut HardLinkQueue` at all) would race
-        // with that trailing access. Instead, on re-init we only drain `errored_task`
-        // through its own mutex; `wait_group`'s counter is already 0 and its
-        // Mutex/Condvar are `Sync`, so a stale `finish()` tail concurrently
-        // locking/signalling them is well-defined. `thread_pool` points at the
-        // process-wide `PackageManager` singleton and never changes.
+        // On re-init we only drain `errored_task` through its own mutex instead of
+        // re-assigning the whole struct: `wait_group`'s counter is already 0 and
+        // `thread_pool` points at the process-wide `PackageManager` singleton that
+        // never changes, so a fresh write would be a no-op anyway.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         unsafe {
@@ -567,11 +566,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    pub(crate) fn init(
-        src: &[OSPathChar],
-        dest: &[OSPathChar],
-        basename: &[OSPathChar],
-    ) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -835,7 +830,7 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
+    pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
@@ -1636,34 +1631,36 @@ impl<'a> PackageInstall<'a> {
                             );
                         }
                         EntryKind::File => {
+                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                            fn map_linkat_err(err: sys::Error) -> crate::Error {
+                                match err.get_errno() {
+                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
+                                        crate::Error::NotSameFileSystem
+                                    }
+                                    sys::E::ENXIO => {
+                                        crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                                    }
+                                    _ => err.into(),
+                                }
+                            }
+
                             if let Err(err) = sys::linkat(
                                 entry.dir,
                                 entry.basename,
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-                                // Map raw errno to the error names the caller's
-                                // `NotSameFileSystem` / `ENXIO` checks (and the
-                                // copyfile fallback in `install()`) expect.
-                                match err.get_errno() {
-                                    sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(destination_dir, entry.path);
-                                        sys::linkat(
-                                            entry.dir,
-                                            entry.basename,
-                                            destination_dir.fd(),
-                                            entry.path,
-                                        )?;
-                                    }
-                                    sys::E::EXDEV => {
-                                        return Err(crate::Error::NotSameFileSystem);
-                                    }
-                                    sys::E::ENXIO => {
-                                        return Err(crate::Error::Sys(
-                                            bun_errno::SystemErrno::ENXIO,
-                                        ));
-                                    }
-                                    _ => return Err(err.into()),
+                                if err.get_errno() == sys::E::EEXIST {
+                                    let _ = sys::unlinkat(destination_dir, entry.path);
+                                    sys::linkat(
+                                        entry.dir,
+                                        entry.basename,
+                                        destination_dir.fd(),
+                                        entry.path,
+                                    )
+                                    .map_err(map_linkat_err)?;
+                                } else {
+                                    return Err(map_linkat_err(err));
                                 }
                             }
 
@@ -1981,11 +1978,7 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    pub fn uninstall(&self, destination_dir: &Dir) {
-        let _ = destination_dir.delete_tree(self.destination_dir_subpath.as_bytes());
-    }
-
-    pub fn uninstall_before_install(&self, destination_dir: &Dir) {
+    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
         let temp_path = {
@@ -2062,7 +2055,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn is_dangling_symlink(path: &ZStr) -> bool {
+    pub(crate) fn is_dangling_symlink(path: &ZStr) -> bool {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             match sys::open(path, sys::O::PATH, 0) {
@@ -2095,39 +2088,11 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    #[cfg(windows)]
-    pub fn is_dangling_windows_bin_link(
-        node_mod_fd: Fd,
-        path: &[u16],
-        temp_buffer: &mut [u8],
-    ) -> bool {
-        let bin_path = 'bin_path: {
-            let Ok(file) =
-                sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd)
-            else {
-                return true;
-            };
-            let Ok(size) = file.read_all(temp_buffer) else {
-                return true;
-            };
-            let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {
-                return true;
-            };
-            debug_assert!(decoded.flags.is_valid()); // looseDecode ensures valid flags
-            break 'bin_path decoded.bin_path;
-        };
-
-        {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, bin_path, sys::O::RDONLY, 0) else {
-                return true;
-            };
-            fd.close();
-        }
-
-        false
-    }
-
-    pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
+    pub(crate) fn install_from_link(
+        &mut self,
+        skip_delete: bool,
+        destination_dir: &Dir,
+    ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
@@ -2166,12 +2131,9 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`),
-            // then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
+            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
+            // resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
@@ -2330,7 +2292,7 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    pub fn get_install_method(&self) -> Method {
+    pub(crate) fn get_install_method(&self) -> Method {
         if self.cache_dir_subpath.as_bytes() == b"."
             || self.cache_dir_subpath.as_bytes().starts_with(b"..")
         {
@@ -2340,7 +2302,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn package_missing_from_cache(
+    pub(crate) fn package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2366,12 +2328,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())
@@ -2421,7 +2381,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub fn patched_package_missing_from_cache(
+    pub(crate) fn patched_package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
@@ -2434,7 +2394,7 @@ impl<'a> PackageInstall<'a> {
         !exists
     }
 
-    pub fn install(
+    pub(crate) fn install(
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,

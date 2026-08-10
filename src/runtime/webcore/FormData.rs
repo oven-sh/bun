@@ -25,23 +25,13 @@ pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
 pub trait AsyncFormDataExt {
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> JsResult<()>;
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
     // Only a VM-termination error can escape
     // (JS exceptions are routed into the promise rejection above).
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> JsResult<()> {
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(

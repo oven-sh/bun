@@ -217,8 +217,7 @@ pub trait BlobExt {
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_json_share(&self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
-    fn get_array_buffer_clone(&self, global_this: &JSGlobalObject)
-    -> JsResult<JSValue>;
+    fn get_array_buffer_clone(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
@@ -349,11 +348,7 @@ pub trait BlobExt {
         global: &JSGlobalObject,
         lifetime: Lifetime,
     ) -> JsResult<JSValue>;
-    fn to_form_data(
-        &self,
-        global: &JSGlobalObject,
-        _lifetime: Lifetime,
-    ) -> JsResult<JSValue>;
+    fn to_form_data(&self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue>;
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
@@ -1238,10 +1233,7 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
     }
 
-    fn get_array_buffer_clone(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
+    fn get_array_buffer_clone(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
@@ -3167,11 +3159,7 @@ impl BlobExt for Blob {
         }
     }
 
-    fn to_form_data(
-        &self,
-        global: &JSGlobalObject,
-        _lifetime: Lifetime,
-    ) -> JsResult<JSValue> {
+    fn to_form_data(&self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToFormDataWithBytesFn>(global));
         }
@@ -4595,10 +4583,7 @@ fn write_file_with_empty_source_to_destination(
                 global: bun_ptr::BackRef<JSGlobalObject>,
             }
             impl Wrapper {
-                fn resolve(
-                    result: S3UploadResult,
-                    opaque_this: *mut c_void,
-                ) -> JsResult<()> {
+                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
                     // SAFETY: opaque_this was heap-allocated in the caller below.
                     let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
                     let global = this.global.get();

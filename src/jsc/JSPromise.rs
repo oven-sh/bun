@@ -77,11 +77,7 @@ impl Strong {
         }
     }
 
-    pub fn reject(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> JsResult<()> {
+    pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         self.swap().reject(global, val)
     }
 
@@ -89,11 +85,7 @@ impl Strong {
     /// resolves, `Err` rejects with the exception the failed conversion left
     /// pending (see [`JSPromise::resolve`]). Prefer this over
     /// `resolve(v.unwrap_or(..))`.
-    pub fn settle(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> JsResult<()> {
+    pub fn settle(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         self.swap().settle(global, val)
     }
 
@@ -119,11 +111,7 @@ impl Strong {
 
     /// [`settle`](Self::settle) from a native completion at the top of the
     /// event loop (drains microtasks when the scope exits).
-    pub fn settle_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> JsResult<()> {
+    pub fn settle_task(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.settle(global, val)
     }
@@ -356,22 +344,14 @@ impl JSPromise {
     }
 
     /// See [`Strong::settle`].
-    pub fn settle(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JsResult<JSValue>,
-    ) -> JsResult<()> {
+    pub fn settle(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         match value {
             Ok(v) => self.resolve(global, v),
             Err(e) => self.reject(global, Err(e)),
         }
     }
 
-    pub fn reject(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JsResult<JSValue>,
-    ) -> JsResult<()> {
+    pub fn reject(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         let err = match value {
             Ok(v) if v.is_empty() => {
                 debug_assert!(
@@ -401,11 +381,7 @@ impl JSPromise {
         crate::cpp::JSC__JSPromise__reject(self, global, err)
     }
 
-    pub fn reject_as_handled(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
+    pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));

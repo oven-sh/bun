@@ -2714,7 +2714,9 @@ impl ThreadSafeFunction {
             };
             // SAFETY: `env` is the live napi env this function was created against (checked above).
             let global_object = unsafe { &*env }.to_js();
-            loop_.drain_microtasks().map_err(|stopped| stopped.throw(global_object))?;
+            loop_
+                .drain_microtasks()
+                .map_err(|stopped| stopped.throw(global_object))?;
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();

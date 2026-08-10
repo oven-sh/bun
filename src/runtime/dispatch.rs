@@ -39,8 +39,8 @@ use bun_event_loop::EventLoopTimer::{
 };
 
 use bun_jsc::JSGlobalObject;
-use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::JsResultExt as _;
+use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -350,7 +350,9 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => {
-            cast!(FetchTasklet).on_progress_update().report_error_or_terminate(global)?;
+            cast!(FetchTasklet)
+                .on_progress_update()
+                .report_error_or_terminate(global)?;
         }
         task_tag::FetchTaskletDeinit => {
             // SAFETY: posted by `deref_from_thread` with the last ref.

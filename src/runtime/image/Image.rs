@@ -1771,11 +1771,7 @@ impl PipelineTask {
 
     /// Back on the JS thread: publish dims, deliver the result. The pin and
     /// the hold on the Image are released when `js` drops at the end.
-    pub(crate) fn then(
-        mut self,
-        mut js: PipelineJs,
-        cx: &jsc::JsThread<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);

@@ -373,10 +373,10 @@ impl SplitBundlerOptions {
                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
                 // live for the lifetime of the global object.
                 global
-        .bun_vm()
-        .as_mut()
-        .wait_for_promise(promise)
-        .map_err(|stopped| stopped.throw(global))?;
+                    .bun_vm()
+                    .as_mut()
+                    .wait_for_promise(promise)
+                    .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
                     bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}

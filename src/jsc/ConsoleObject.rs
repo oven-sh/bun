@@ -4365,9 +4365,23 @@ pub mod formatter {
                 let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
                 let estimated: usize = match tag.tag {
                     TagPayload::String | TagPayload::StringPossiblyFormatted => {
-                        // Length only; the bytes are not materialized.
+                        // Rendered width (quotes and escapes included),
+                        // measured with the same escapers `print_string` uses.
                         let str = OwnedString::new(BunString::from_js(element, self.global_this)?);
-                        str.length() + 2
+                        if str.is_utf16() {
+                            let mut out = OwnedString::new(BunString::empty());
+                            element.json_stringify(self.global_this, self.indent, &mut out)?;
+                            out.length()
+                        } else {
+                            let mut counter = bun_io::DiscardingWriter::new();
+                            JSPrinter::write_json_string(
+                                str.latin1(),
+                                &mut counter,
+                                JSPrinter::Encoding::Latin1,
+                            )
+                            .expect("unreachable");
+                            counter.count
+                        }
                     }
                     TagPayload::Integer => {
                         bun_core::fmt::digit_count(i64::from(element.as_int32()))

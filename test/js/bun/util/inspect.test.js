@@ -984,6 +984,16 @@ describe("multiline array layout", () => {
     );
   });
 
+  it("measures the escaped width of strings when choosing the layout", () => {
+    // Raw length is 20, but each entry renders as 42 characters of "\n"
+    // escapes plus quotes, so these must not pack several per line.
+    const escaped = Array.from({ length: 8 }, () => "\n".repeat(20));
+    const line = `  "${"\\n".repeat(20)}"`;
+    expect(Bun.inspect(escaped)).toBe(
+      "[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]",
+    );
+  });
+
   it("separates multiline objects after a primitive with },\\n{", () => {
     expect(Bun.inspect([1, { a: 1 }, { b: 2 }])).toBe(
       ["[ 1, {", "    a: 1,", "  },", "  {", "    b: 2,", "  }", "]"].join("\n"),

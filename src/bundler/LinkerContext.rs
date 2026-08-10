@@ -63,8 +63,7 @@ pub use crate::linker_context::metafile_builder as MetafileBuilder;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
-pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
+pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
@@ -695,7 +694,7 @@ impl<'a> LinkerContext<'a> {
     /// # Safety
     /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`.
     #[inline(never)]
-    pub(crate) unsafe fn link(
+    pub unsafe fn link(
         &mut self,
         bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
@@ -4213,7 +4212,7 @@ impl PartialEq for MatchImport {
 pub struct StmtList {
     // Temporary scratch buffers: plain `Vec`s on the global allocator
     // (cleared/reused per chunk, freed by Drop).
-    pub(crate) inside_wrapper_prefix: InsideWrapperPrefix,
+    pub inside_wrapper_prefix: InsideWrapperPrefix,
     pub(crate) outside_wrapper_prefix: Vec<Stmt>,
     pub(crate) inside_wrapper_suffix: Vec<Stmt>,
     pub(crate) all_stmts: Vec<Stmt>,

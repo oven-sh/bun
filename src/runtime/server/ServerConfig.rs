@@ -140,7 +140,7 @@ pub enum DevelopmentOption {
 }
 
 impl DevelopmentOption {
-    fn is_hmr_enabled(self) -> bool {
+    pub(crate) fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 

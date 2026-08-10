@@ -120,7 +120,7 @@ pub struct BundleV2<'a> {
     pub(crate) free_list: Vec<Box<[u8]>>,
 
     /// See the comment in `Chunk.OutputPiece`.
-    pub(crate) unique_key: u64,
+    pub unique_key: u64,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
@@ -1642,7 +1642,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
+        pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
             let _trace = crate::perf::trace("Bundler.findReachableFiles");
 
@@ -1800,7 +1800,7 @@ pub mod bv2_impl {
             false
         }
 
-        pub(crate) fn wait_for_parse(&mut self) {
+        pub fn wait_for_parse(&mut self) {
             // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
             // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
             // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
@@ -1847,7 +1847,7 @@ pub mod bv2_impl {
             self.graph.pool().worker_pool().dump_stats(label);
         }
 
-        pub(crate) fn scan_for_secondary_paths(&mut self) {
+        pub fn scan_for_secondary_paths(&mut self) {
             if !self.graph.has_any_secondary_paths {
                 // Assert the boolean is accurate.
                 #[cfg(debug_assertions)]
@@ -3800,10 +3800,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn process_files_to_copy(
-            &mut self,
-            reachable_files: &[Index],
-        ) -> Result<(), Error> {
+        pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
                 // sidestep so we can hold several read-only column slices, one mutable

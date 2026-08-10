@@ -216,13 +216,14 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
   using dir = tempDir("bun-snapshot-strict-servers", {});
   await using p = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "strict-servers-fixture.js")],
-    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot") },
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"), CP_TARGET: join(String(dir), "copy") },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(out).toContain("[js] serve refused");
   expect(out).toContain("[js] udp refused");
+  for (const op of ["readdir", "cp", "watch", "readdir-async", "cp-async"]) expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
 });
 
 snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived for a launch on a terminal", async () => {

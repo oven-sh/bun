@@ -1263,6 +1263,8 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         // quick page-level filter: skip cells on clean pages
 #if OS(DARWIN)
         {
+            if (object->butterfly()) // its contents are compared below too, and they live on other pages: no page shortcut for these
+                goto scanCell;
             uintptr_t first = (uintptr_t)cell & ~(pg - 1);
             uintptr_t last = ((uintptr_t)cell + heapCell->cellSize() - 1) & ~(pg - 1);
             mach_vm_size_t cnt = (last - first) / pg + 1;
@@ -1279,6 +1281,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
 #else
         (void)pg;
 #endif
+    scanCell:
         if (!fileBytesAt((uintptr_t)cell, orig.data(), sz)) return IterationStatus::Continue;
         scanned++;
         bool header = memcmp(orig.data(), cell, 8) != 0; // structureID/indexing/type/flags/cellState

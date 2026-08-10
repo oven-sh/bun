@@ -76,8 +76,6 @@ static DEFAULT_MANAGER: core::sync::atomic::AtomicPtr<PathWatcherManager> =
 static DEFAULT_MANAGER_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
-/// The manager belonging to this process, if one has been made since the last restore.
-
 /// Set when the reader thread returns, however it returns; the freeze-time shutdown waits on it.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct MarkExited(&'static PathWatcherManager);
@@ -90,6 +88,7 @@ impl Drop for MarkExited {
     }
 }
 
+/// The manager belonging to this process, if one has been made since the last restore.
 fn current_manager() -> Option<&'static PathWatcherManager> {
     use core::sync::atomic::Ordering;
     let m = DEFAULT_MANAGER.load(Ordering::Acquire);

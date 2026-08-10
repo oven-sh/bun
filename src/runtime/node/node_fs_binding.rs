@@ -187,6 +187,7 @@ impl Binding {
     /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()`, so the arena is dropped with `slice`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // the macro-generated ops are gated in run_sync/run_async; these are outside it
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -219,6 +220,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // gated here because it is outside the macro-generated ops
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -244,6 +246,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // gated here because it is outside the macro-generated ops
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -283,6 +286,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // gated here because it is outside the macro-generated ops
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -310,6 +314,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // gated here because it is outside the macro-generated ops
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -335,6 +340,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("node:fs")?; // gated here because it is outside the macro-generated ops
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let _slice = ArgumentsSlice::init(vm, frame.arguments());

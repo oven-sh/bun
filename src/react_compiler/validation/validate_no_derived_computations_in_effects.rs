@@ -1161,7 +1161,7 @@ fn validate_effect(
 
 /// Non-experimental version of the derived-computations-in-effects validation.
 /// Records errors directly on the Environment (matching TS `env.recordError()` behavior).
-pub fn validate_no_derived_computations_in_effects(
+pub(crate) fn validate_no_derived_computations_in_effects(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {

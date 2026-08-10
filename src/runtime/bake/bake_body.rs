@@ -10,11 +10,8 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-// peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
-// Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
@@ -130,7 +127,7 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
 }
 
 /// export default { app: ... };
-pub(crate) const API_NAME: &str = "app";
+const API_NAME: &str = "app";
 
 // TODO(lifetime): many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
@@ -140,12 +137,12 @@ pub(crate) const API_NAME: &str = "app";
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
-    pub arena: Arena,
+    pub(crate) arena: Arena,
     pub allocations: StringRefList,
 
-    pub root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
-    pub framework: Framework,
-    pub bundler_options: SplitBundlerOptions,
+    pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
+    pub(crate) framework: Framework,
+    pub(crate) bundler_options: SplitBundlerOptions,
 }
 
 impl Drop for UserOptions {
@@ -266,11 +263,11 @@ impl UserOptions {
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
 pub struct StringRefList {
-    pub strings: Vec<ZigStringSlice>,
+    pub(crate) strings: Vec<ZigStringSlice>,
 }
 
 impl StringRefList {
-    pub const EMPTY: StringRefList = StringRefList {
+    pub(crate) const EMPTY: StringRefList = StringRefList {
         strings: Vec::new(),
     };
 
@@ -281,7 +278,7 @@ impl StringRefList {
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
+    pub(crate) fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
         // SAFETY: (`Interned::assume` — Population B, holder-backed) the
@@ -310,7 +307,7 @@ impl SplitBundlerOptions {
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    pub(crate) fn parse_plugin_array(
+    fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
@@ -375,9 +372,9 @@ impl SplitBundlerOptions {
                 // be resolved before the first bundle task can begin.
                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
                 // live for the lifetime of the global object.
-                global.bun_vm().as_mut().wait_for_promise(promise);
+                global.bun_vm().as_mut().wait_for_promise(promise)?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!(),
+                    bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
                     bun_jsc::PromiseResult::Rejected(err) => {
                         return Err(global.throw_value(err));
@@ -1396,12 +1393,12 @@ pub(crate) use super::HmrRuntime;
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
         code,
-        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
+        line_count: u32::try_from(strings::count_char(code.as_bytes(), b'\n')).unwrap(),
     }
 }
 
 #[inline(always)]
-pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
+pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // `runtime_embed_file!` returns `&'static str` (no NUL). Use a per-side
     // `OnceLock` holding the NUL-terminated copy — read once per process,
     // never freed. PORTING.md §Forbidden bans leaking for `&'static`; this is the
@@ -1493,26 +1490,26 @@ pub(crate) fn add_import_meta_defines(
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
 pub struct PatternBuffer {
-    pub bytes: PathBuffer,
+    pub(crate) bytes: PathBuffer,
     // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
     // (> u16::MAX), so u32 is required; u16 would truncate the initial index
     // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
-    pub i: u32,
+    pub(crate) i: u32,
 }
 
 impl PatternBuffer {
-    pub const EMPTY: PatternBuffer = PatternBuffer {
+    pub(crate) const EMPTY: PatternBuffer = PatternBuffer {
         bytes: PathBuffer::ZEROED,
         i: core::mem::size_of::<PathBuffer>() as u32,
     };
 
-    pub fn prepend(&mut self, chunk: &[u8]) {
+    pub(crate) fn prepend(&mut self, chunk: &[u8]) {
         debug_assert!(self.i as usize >= chunk.len());
         self.i -= u32::try_from(chunk.len()).expect("int cast");
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 
-    pub fn prepend_part(&mut self, part: framework_router::Part) {
+    pub(crate) fn prepend_part(&mut self, part: framework_router::Part) {
         match part {
             framework_router::Part::Text(text) => {
                 debug_assert!(text.is_empty() || text[0] != b'/');
@@ -1529,7 +1526,7 @@ impl PatternBuffer {
         }
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.bytes[self.i as usize..]
     }
 

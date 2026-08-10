@@ -16,7 +16,7 @@ pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
 
 impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
     #[inline]
-    pub fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
         Self { p }
     }
 }
@@ -135,7 +135,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the
     /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
     /// into an unrelated nested arrow.
-    pub fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
+    pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
         use js_ast::expr::Data;
         match &expr.data {
             Data::EArrow(_) | Data::EFunction(_) => Some(false),

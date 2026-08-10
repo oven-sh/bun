@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -53,12 +53,12 @@ describe("spawnSync", () => {
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });
 
-  it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
-    expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();
+  it.skipIf(process.platform !== "linux")("should use memfd when possible", async () => {
+    expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
-    expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
+  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
+    expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 
   describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {

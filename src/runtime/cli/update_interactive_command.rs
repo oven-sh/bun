@@ -44,7 +44,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,7 +110,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
@@ -272,7 +272,7 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -2170,9 +2170,8 @@ impl UpdateInteractiveCommand {
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);
@@ -2243,7 +2242,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // No `manager` parameter: a local `Bump` is used instead
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {

@@ -33,7 +33,7 @@ pub struct PosixLoop {
     pub num_ready_polls: i32,
 
     /// Current index in list of ready polls
-    pub current_ready_poll: i32,
+    pub(crate) current_ready_poll: i32,
 
     /// Loop's own file descriptor
     pub fd: i32,
@@ -50,7 +50,7 @@ pub struct PosixLoop {
     _ready_polls_align: ReadyPollsAlign,
 
     /// The list of ready polls
-    pub ready_polls: [EventType; 1024],
+    pub(crate) ready_polls: [EventType; 1024],
 }
 
 /// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
@@ -595,9 +595,9 @@ pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
-pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
-pub(crate) type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
+type LoopCb = unsafe extern "C" fn(*mut Loop);
+type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
+type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {
@@ -653,12 +653,14 @@ mod c {
 pub use c::{us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {
-    // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
-    safe fn bun_clear_loop_at_thread_exit();
+    // safe: no args; frees this thread's lazily-created uws loop if it exists.
+    safe fn bun_free_loop_at_thread_exit();
 }
 
-/// Clears the C side's thread-local loop pointer. Call when a thread that ran
-/// a uws loop (e.g. a Worker thread) exits.
-pub fn on_thread_exit() {
-    bun_clear_loop_at_thread_exit()
+/// Frees this thread's uws loop (its socket groups, timers and — where uSockets
+/// created it — the native loop). Call when a thread that ran a uws loop (a
+/// Worker) exits, after everything registered on the loop is gone. On Windows
+/// the loop borrows the thread's libuv loop; close that afterwards.
+pub fn free_thread_loop() {
+    bun_free_loop_at_thread_exit()
 }

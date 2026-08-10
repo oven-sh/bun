@@ -42,11 +42,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
     describe("Basic Operations", () => {
       test("should keep process alive when connecting", async () => {
-        const result = bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
+        const result = await bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
           "BUN_VALKEY_URL": connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           "BUN_VALKEY_TLS": connectionType === ConnectionType.TLS ? JSON.stringify(TLS_REDIS_OPTIONS.tlsPaths) : "",
         });
         expect(result.stdout).toContain(`connected`);
+        expect(result.exitCode).toBe(0);
       });
 
       test("should set and get strings", async () => {
@@ -6397,6 +6398,80 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.unsubscribe(channels);
       });
 
+      test("commands issued alongside a multi-channel subscribe resolve with their own values", async () => {
+        const keyA = testKey();
+        const keyB = testKey();
+        const valueA = testValue();
+        const valueB = testValue();
+        expect(await ctx.redis.set(keyA, valueA)).toBe("OK");
+        expect(await ctx.redis.set(keyB, valueB)).toBe("OK");
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channels = [testChannel(), testChannel()];
+
+        const subscribed = subscriber.subscribe(channels, () => {});
+        const gotA = subscriber.get(keyA);
+        const gotB = subscriber.get(keyB);
+
+        const [count, resultA, resultB] = await Promise.all([subscribed, gotA, gotB]);
+
+        expect(count).toBe(2);
+        expect(resultA).toBe(valueA);
+        expect(resultB).toBe(valueB);
+
+        await subscriber.unsubscribe(channels);
+      });
+
+      test("commands issued alongside a multi-pattern psubscribe resolve with their own values", async () => {
+        const keyA = testKey();
+        const keyB = testKey();
+        const valueA = testValue();
+        const valueB = testValue();
+        expect(await ctx.redis.set(keyA, valueA)).toBe("OK");
+        expect(await ctx.redis.set(keyB, valueB)).toBe("OK");
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const patterns = [`${testChannel()}*`, `${testChannel()}*`];
+
+        const subscribed = subscriber.psubscribe(...patterns);
+        const gotA = subscriber.get(keyA);
+        const gotB = subscriber.get(keyB);
+
+        const [, resultA, resultB] = await Promise.all([subscribed, gotA, gotB]);
+
+        expect(resultA).toBe(valueA);
+        expect(resultB).toBe(valueB);
+
+        const channel = patterns[0].slice(0, -1) + "x";
+        expect(await ctx.redis.publish(channel, "hello")).toBeGreaterThanOrEqual(1);
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        expect(subscriber.connected).toBe(true);
+
+        await subscriber.punsubscribe(...patterns);
+      });
+
+      test("a raw SUBSCRIBE issued through send() resolves and keeps the client usable", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        const acked = await subscriber.send("SUBSCRIBE", [channel]);
+        expect(acked).toBeDefined();
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        await subscriber.send("UNSUBSCRIBE", [channel]);
+        expect(subscriber.connected).toBe(true);
+
+        // A raw subscription command the server rejects (wrong arity) must
+        // reject only that promise, not fail the whole connection.
+        const plain = createClient(connectionType);
+        await plain.connect();
+        try {
+          await expect(plain.send("SUBSCRIBE", [])).rejects.toThrow();
+          expect(await plain.send("PING", [])).toBe("PONG");
+          expect(plain.connected).toBe(true);
+        } finally {
+          plain.close();
+        }
+      });
+
       test("unsubscribing from specific channels while remaining subscribed to others", async () => {
         const channel1 = "channel-1";
         const channel2 = "channel-2";
@@ -6928,6 +7003,58 @@ describe("RedisClient URL parsing", () => {
     const client = new RedisClient("redis+unix:///tmp/not-a-real-redis.sock");
     try {
       expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("RedisClient argument validation", () => {
+  function syncThrow(fn: () => unknown): unknown {
+    try {
+      const p = fn();
+      // Swallow the eventual rejection so a failing assertion below isn't
+      // followed by an unhandled-rejection crash.
+      (p as Promise<unknown>)?.catch?.(() => {});
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // Argument validation runs before any network I/O, so no server is needed.
+  test("expire() rejects NaN/undefined seconds instead of sending `EXPIRE key 0`", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      expect(syncThrow(() => client.expire("k", NaN))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+      // @ts-expect-error: testing runtime behavior with a missing argument
+      expect(syncThrow(() => client.expire("k"))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+      // @ts-expect-error: testing runtime behavior with an explicit undefined
+      expect(syncThrow(() => client.expire("k", undefined))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("expire() still rejects other bad seconds values", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      expect(syncThrow(() => client.expire("k", -5))).toMatchObject({ code: "ERR_OUT_OF_RANGE" });
+      expect(syncThrow(() => client.expire("k", 1.9))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      // @ts-expect-error: testing runtime behavior with invalid types
+      expect(syncThrow(() => client.expire("k", "10"))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      // @ts-expect-error: testing runtime behavior with invalid types
+      expect(syncThrow(() => client.expire("k", null))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      expect(syncThrow(() => client.expire("k", Infinity))).toMatchObject({ code: "ERR_OUT_OF_RANGE" });
     } finally {
       client.close();
     }

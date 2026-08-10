@@ -15,8 +15,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-pub use super::valkey_context as ValkeyContext;
-
 /// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
 /// `generate-classes.ts` resolves the native backing struct to
 /// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
@@ -33,16 +31,16 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 pub struct ConnectionFlags {
     // These flags could be refactored into an enumerated state machine, which
     // would read more naturally than a bag of booleans.
-    pub is_authenticated: bool,
-    pub is_manually_closed: bool,
-    pub is_selecting_db_internal: bool,
-    pub enable_offline_queue: bool,
-    pub needs_to_open_socket: bool,
-    pub enable_auto_reconnect: bool,
-    pub is_reconnecting: bool,
-    pub failed: bool,
-    pub enable_auto_pipelining: bool,
-    pub finalized: bool,
+    pub(crate) is_authenticated: bool,
+    pub(crate) is_manually_closed: bool,
+    pub(crate) is_selecting_db_internal: bool,
+    pub(crate) enable_offline_queue: bool,
+    pub(crate) needs_to_open_socket: bool,
+    pub(crate) enable_auto_reconnect: bool,
+    pub(crate) is_reconnecting: bool,
+    pub(crate) failed: bool,
+    pub(crate) enable_auto_pipelining: bool,
+    pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -52,7 +50,7 @@ pub struct ConnectionFlags {
     //      `onConnect()` which resolves with the client instance itself.
     // This flag is set to true in the latter case to indicate to the promise
     // resolution delegation to resolve the promise with the client.
-    pub connection_promise_returns_client: bool,
+    pub(crate) connection_promise_returns_client: bool,
 }
 
 impl Default for ConnectionFlags {
@@ -81,8 +79,6 @@ pub enum Status {
     Connected,
 }
 
-pub use super::valkey_command_body as Command_;
-
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {
@@ -110,9 +106,9 @@ bun_core::comptime_string_map! {
 impl Protocol {
     // `static` items are not allowed in `impl` blocks, so the map lives at
     // module level; this keeps the `Protocol::MAP` path for call sites.
-    pub const MAP: &'static __ComptimeStringMap_PROTOCOL_MAP = &PROTOCOL_MAP;
+    pub(crate) const MAP: &'static __ComptimeStringMap_PROTOCOL_MAP = &PROTOCOL_MAP;
 
-    pub fn is_tls(self) -> bool {
+    pub(crate) fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
 }
@@ -145,15 +141,14 @@ impl PartialEq for TLS {
 
 /// Connection options for Valkey client
 pub struct Options {
-    pub idle_timeout_ms: u32,
-    pub connection_timeout_ms: u32,
-    pub enable_auto_reconnect: bool,
-    pub max_retries: u32,
-    pub enable_offline_queue: bool,
-    pub enable_auto_pipelining: bool,
-    pub enable_debug_logging: bool,
+    pub(crate) idle_timeout_ms: u32,
+    pub(crate) connection_timeout_ms: u32,
+    pub(crate) enable_auto_reconnect: bool,
+    pub(crate) max_retries: u32,
+    pub(crate) enable_offline_queue: bool,
+    pub(crate) enable_auto_pipelining: bool,
 
-    pub tls: TLS,
+    pub(crate) tls: TLS,
 }
 
 impl Default for Options {
@@ -165,7 +160,6 @@ impl Default for Options {
             max_retries: 20,
             enable_offline_queue: true,
             enable_auto_pipelining: true,
-            enable_debug_logging: false,
             tls: TLS::None,
         }
     }
@@ -238,47 +232,47 @@ impl Address {
 
 /// Core Valkey client implementation
 pub struct ValkeyClient {
-    pub socket: AnySocket,
-    pub status: Status,
+    pub(crate) socket: AnySocket,
+    pub(crate) status: Status,
 
     // Buffer management
-    pub write_buffer: OffsetByteList,
-    pub read_buffer: OffsetByteList,
+    pub(crate) write_buffer: OffsetByteList,
+    pub(crate) read_buffer: OffsetByteList,
     /// Resumable end-of-reply scanner over `read_buffer.remaining()`.
-    pub reply_scanner: protocol::ReplyScanner,
+    pub(crate) reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
-    pub in_flight: command::promise_pair::Queue,
+    pub(crate) in_flight: command::promise_pair::Queue,
 
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
-    pub queue: command::entry::Queue,
+    pub(crate) queue: command::entry::Queue,
 
     // Connection parameters
     // `connection_strings` is retained because `js_valkey.rs` still slices it
     // when constructing/duplicating clients.
-    pub password: Box<[u8]>,
-    pub username: Box<[u8]>,
-    pub database: u32,
-    pub address: Address,
-    pub protocol: Protocol,
+    pub(crate) password: Box<[u8]>,
+    pub(crate) username: Box<[u8]>,
+    pub(crate) database: u32,
+    pub(crate) address: Address,
+    pub(crate) protocol: Protocol,
 
-    pub connection_strings: Box<[u8]>,
+    pub(crate) connection_strings: Box<[u8]>,
 
     // TLS support
-    pub tls: TLS,
+    pub(crate) tls: TLS,
 
     // Timeout and reconnection management
-    pub idle_timeout_interval_ms: u32,
-    pub connection_timeout_ms: u32,
-    pub retry_attempts: u32,
-    pub max_retries: u32, // Maximum retry attempts
+    pub(crate) idle_timeout_interval_ms: u32,
+    pub(crate) connection_timeout_ms: u32,
+    pub(crate) retry_attempts: u32,
+    pub(crate) max_retries: u32, // Maximum retry attempts
 
-    pub flags: ConnectionFlags,
+    pub(crate) flags: ConnectionFlags,
 
     // Auto-pipelining
-    pub auto_flusher: AutoFlusher,
+    pub(crate) auto_flusher: AutoFlusher,
 
-    pub vm: &'static VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -287,7 +281,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-pub(crate) struct DeferredFailure {
+struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -296,7 +290,7 @@ pub(crate) struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub(crate) fn run(self) -> JsTerminated<()> {
+    fn run(self) -> JsTerminated<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -308,7 +302,7 @@ impl DeferredFailure {
         )
     }
 
-    pub(crate) fn enqueue(self: Box<Self>) {
+    fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
@@ -339,7 +333,7 @@ bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent;
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
-    pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
+    pub(crate) fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
         let mut pending =
             core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
         let mut commands = core::mem::replace(&mut self.queue, command::entry::Queue::init());
@@ -399,7 +393,7 @@ impl ValkeyClient {
     }
 
     // Drain auto-pipelined commands
-    pub fn on_auto_flush(&mut self) -> bool {
+    pub(crate) fn on_auto_flush(&mut self) -> bool {
         // Don't process if not connected or already processing
         if self.status != Status::Connected {
             self.auto_flusher.registered.set(false);
@@ -459,7 +453,7 @@ impl ValkeyClient {
     // ** End of auto-pipelining **
 
     /// Get the appropriate timeout interval based on connection state
-    pub fn get_timeout_interval(&self) -> u32 {
+    pub(crate) fn get_timeout_interval(&self) -> u32 {
         if self.flags.failed {
             return 0;
         }
@@ -469,7 +463,7 @@ impl ValkeyClient {
         }
     }
 
-    pub fn has_any_pending_commands(&self) -> bool {
+    pub(crate) fn has_any_pending_commands(&self) -> bool {
         self.in_flight.readable_length() > 0
             || self.queue.readable_length() > 0
             || self.write_buffer.len() > 0
@@ -477,7 +471,7 @@ impl ValkeyClient {
     }
 
     /// Calculate reconnect delay with exponential backoff
-    pub fn get_reconnect_delay(&self) -> u32 {
+    pub(crate) fn get_reconnect_delay(&self) -> u32 {
         let base_delay: u32 = 50; // Base delay in ms
         let max_delay: u32 = 2000; // Max delay in ms
 
@@ -553,7 +547,7 @@ impl ValkeyClient {
     }
 
     /// Flush pending data to the socket
-    pub fn flush_data(&mut self) -> bool {
+    pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
         if chunk.is_empty() {
             return false;
@@ -567,7 +561,7 @@ impl ValkeyClient {
     }
 
     /// Mark the connection as failed with error message
-    pub fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    pub(crate) fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
         if self.flags.failed {
             return Ok(());
@@ -600,7 +594,7 @@ impl ValkeyClient {
         self.fail_with_js_value(&global_this, valkey_error_to_js(&global_this, message, err))
     }
 
-    pub fn fail_with_js_value(
+    pub(crate) fn fail_with_js_value(
         &mut self,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
@@ -701,7 +695,7 @@ impl ValkeyClient {
         Ok(())
     }
 
-    pub fn send_next_command(&mut self) {
+    pub(crate) fn send_next_command(&mut self) {
         if self.write_buffer.remaining().is_empty() && self.connection_ready() {
             if self.queue.readable_length() > 0 {
                 // Check the command at the head of the queue
@@ -740,7 +734,7 @@ impl ValkeyClient {
     /// Process data received from socket
     ///
     /// Caller refs / derefs.
-    pub fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
+    pub(crate) fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
         debug!(
             "Low-level onData called with {} bytes: {}",
             data.len(),
@@ -917,10 +911,15 @@ impl ValkeyClient {
                     .get()
                     .channels_subscribed_to_count(&global_this)?;
 
+                let is_pattern_or_sharded =
+                    protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
                             self.on_valkey_message(&mut push.data);
+                            Ok(SubscribeHandled::Handled)
+                        }
+                        protocol::SubscriptionPushMessage::PatternMessage => {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
@@ -930,10 +929,15 @@ impl ValkeyClient {
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
-                                req_pair.promise.promise.resolve(
-                                    &global_this,
-                                    JSValue::js_number(f64::from(sub_count)),
-                                )?;
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::js_number(f64::from(sub_count))
+                                };
+                                req_pair
+                                    .promise
+                                    .promise
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -944,10 +948,15 @@ impl ValkeyClient {
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::UNDEFINED
+                                };
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(&global_this, JSValue::UNDEFINED)?;
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1091,7 +1100,10 @@ impl ValkeyClient {
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                Some(protocol::SubscriptionPushMessage::Message) => {
+                Some(
+                    protocol::SubscriptionPushMessage::Message
+                    | protocol::SubscriptionPushMessage::PatternMessage,
+                ) => {
                     // Message pushes never need promise pairs
                     should_consume_promise_pair = false;
                 }
@@ -1100,7 +1112,13 @@ impl ValkeyClient {
                     | protocol::SubscriptionPushMessage::Unsubscribe,
                 ) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0 {
+                    if self.in_flight.readable_length() == 0
+                        || !self
+                            .in_flight
+                            .peek_item_mut(0)
+                            .meta
+                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
+                    {
                         should_consume_promise_pair = false;
                     }
                 }
@@ -1131,8 +1149,13 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
-                    return Ok(());
+                    if self.parent().is_subscriber() {
+                        self.fail(err, RedisError::InvalidResponse)?;
+                        return Ok(());
+                    }
+                    // A raw subscription request from a client that is not (yet) a
+                    // subscriber failed on the server; fall through so only this
+                    // promise is rejected.
                 }
                 RESPValue::Push(push) => {
                     if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
@@ -1256,7 +1279,7 @@ impl ValkeyClient {
     }
 
     /// Handle socket open event
-    pub fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
+    pub(crate) fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
@@ -1279,7 +1302,7 @@ impl ValkeyClient {
     }
 
     /// Start the connection process
-    pub fn start(&mut self) -> JsTerminated<()> {
+    pub(crate) fn start(&mut self) -> JsTerminated<()> {
         self.authenticate()?;
         let _ = self.flush_data();
         Ok(())
@@ -1292,7 +1315,7 @@ impl ValkeyClient {
     }
 
     /// Process queued commands in the offline queue
-    pub fn drain(&mut self) -> bool {
+    pub(crate) fn drain(&mut self) -> bool {
         // If there's something in the in-flight queue and the next command
         // doesn't support pipelining, we should wait for in-flight commands to complete
         if self.in_flight.readable_length() > 0 {
@@ -1341,7 +1364,7 @@ impl ValkeyClient {
         true
     }
 
-    pub fn on_writable(&mut self) {
+    pub(crate) fn on_writable(&mut self) {
         self.ref_();
         self.send_next_command();
         self.deref();
@@ -1411,7 +1434,7 @@ impl ValkeyClient {
         Ok(())
     }
 
-    pub fn send(
+    pub(crate) fn send(
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
@@ -1475,7 +1498,7 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
-    pub fn disconnect(&mut self) {
+    pub(crate) fn disconnect(&mut self) {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
@@ -1485,7 +1508,7 @@ impl ValkeyClient {
 
     /// Get a writer for the connected socket
     // ValkeyClient itself serves as the writer (see `write` below).
-    pub fn writer(&mut self) -> &mut Self {
+    pub(crate) fn writer(&mut self) -> &mut Self {
         self
     }
 
@@ -1515,27 +1538,27 @@ impl ValkeyClient {
         self.parent().global_object
     }
 
-    pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    pub(crate) fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
         self.parent().on_valkey_connect(value)
     }
 
-    pub fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
+    pub(crate) fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
         self.parent().on_valkey_subscribe(value);
     }
 
-    pub fn on_valkey_unsubscribe(&mut self) -> JsResult<()> {
+    pub(crate) fn on_valkey_unsubscribe(&mut self) -> JsResult<()> {
         self.parent().on_valkey_unsubscribe()
     }
 
-    pub fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
+    pub(crate) fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
         self.parent().on_valkey_message(value);
     }
 
-    pub fn on_valkey_reconnect(&mut self) {
+    pub(crate) fn on_valkey_reconnect(&mut self) {
         self.parent().on_valkey_reconnect();
     }
 
-    pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
+    pub(crate) fn on_valkey_close(&mut self) -> JsTerminated<()> {
         self.parent().on_valkey_close()
     }
 }

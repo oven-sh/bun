@@ -2,6 +2,7 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
+const { guardCallback } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
@@ -212,6 +213,8 @@ function validateOrderOption(options) {
   }
 }
 
+// Validates and returns the callback wrapped by guardCallback.
+// Callers must use the return value, not the argument.
 function validateResolve(hostname, callback) {
   if (typeof hostname !== "string") {
     throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
@@ -220,6 +223,8 @@ function validateResolve(hostname, callback) {
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
+
+  return guardCallback(callback);
 }
 
 function validateLocalAddresses(first, second) {
@@ -314,6 +319,7 @@ function lookup(hostname, options, callback) {
     return;
   }
 
+  callback = guardCallback(callback);
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -357,6 +363,7 @@ function lookupService(address, port, callback) {
   validateString(address);
   validatePort(port, "port");
 
+  callback = guardCallback(callback);
   dns.lookupService(address, +port).then(
     results => {
       callback(null, ...results);
@@ -397,13 +404,11 @@ var InternalResolver = class Resolver {
     if (typeof rrtype === "function") {
       callback = rrtype;
       rrtype = "A";
-    } else if (typeof rrtype === "undefined") {
-      rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, rrtype)
@@ -431,7 +436,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "A")
@@ -451,7 +456,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "AAAA")
@@ -466,7 +471,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveAny(hostname)
@@ -481,7 +486,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCname(hostname)
@@ -496,7 +501,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveMx(hostname)
@@ -511,7 +516,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNaptr(hostname)
@@ -526,7 +531,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNs(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNs(hostname)
@@ -541,7 +546,7 @@ var InternalResolver = class Resolver {
   }
 
   resolvePtr(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolvePtr(hostname)
@@ -556,7 +561,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSrv(hostname)
@@ -574,6 +579,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -591,6 +597,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -607,6 +614,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -624,6 +632,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .reverse(ip)

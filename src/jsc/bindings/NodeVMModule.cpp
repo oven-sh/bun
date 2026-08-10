@@ -1,4 +1,5 @@
 #include "NodeVMModule.h"
+#include "BunClientData.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
@@ -18,11 +19,6 @@ NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF
     : m_specifier(WTF::move(specifier))
     , m_importAttributes(WTF::move(importAttributes))
 {
-}
-
-void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
-{
-    m_importAttributes.set(WTF::move(key), WTF::move(value));
 }
 
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
@@ -104,6 +100,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // exception-check validator is satisfied before the TOP scope
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
+            if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
+                // The VM itself is being stopped; not ours to consume. Propagate the termination.
+                if (!vm.hasPendingTerminationException())
+                    vm.throwTerminationException();
+                return {};
+            }
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
@@ -244,6 +246,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
+    if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
+        // The VM itself is being stopped; not ours to consume. Propagate the termination.
+        if (!vm.hasPendingTerminationException())
+            vm.throwTerminationException();
+        return {};
+    }
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();

@@ -1067,6 +1067,22 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test(".editor is ignored while a multiline input is pending", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("function __pending() {\n");
+      await waitFor("...");
+      send(".editor\n");
+      await waitFor("...");
+      // `.editor` must not switch modes here: the next line still feeds the
+      // pending function body, which then completes and is callable.
+      send("return 42 }\n");
+      await waitFor(/\u276f|> /);
+      send("__pending()\n");
+      await waitFor("42");
+      expect(allOutput()).not.toMatch(/editor mode/i);
+    });
+  });
+
   test("multiline input with open brace", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("function test() {\n");

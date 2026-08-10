@@ -98,6 +98,24 @@ describe("$.braces", () => {
     ]);
   });
 
+  test("literal outer group around hundreds of nested groups", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const inner = Buffer.alloc(256 * 3, "{a,").toString() + "b" + Buffer.alloc(256, "}").toString();
+console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const expected = [...Array.from({ length: 256 }, () => "{a"), "{b"];
+    expect(stdout.trim()).toBe(JSON.stringify(expected));
+    expect(exitCode).toBe(0);
+  });
+
   test("empty string", () => {
     expect($.braces("")).toEqual([""]);
     expect($.braces("", { parse: true })).toBeString();

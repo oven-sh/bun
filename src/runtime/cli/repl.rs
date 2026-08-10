@@ -2591,10 +2591,14 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             // A doubled `+`/`-` is postfix inc/dec, which ends an expression.
             let postfix_incdec =
                 matches!(prev, b'+' | b'-') && prev_idx > 0 && code[prev_idx - 1] == prev;
-            // `x!` (TS non-null assertion) ends an expression; `!x` does not.
-            let postfix_bang = prev == b'!'
-                && prev_idx > 0
-                && (is_word_char(code[prev_idx - 1]) || matches!(code[prev_idx - 1], b')' | b']'));
+            // `x!` or `x!!` (TS non-null assertion) ends an expression; `!x` does not.
+            let postfix_bang = prev == b'!' && {
+                let mut j = prev_idx;
+                while j > 0 && code[j - 1] == b'!' {
+                    j -= 1;
+                }
+                j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b')' | b']'))
+            };
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
             // `}` ends an expression when it closes an object literal, not a block.

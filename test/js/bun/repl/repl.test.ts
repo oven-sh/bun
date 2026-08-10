@@ -809,11 +809,15 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("division after a non-null assertion", async () => {
-      const { stdout, exitCode } = await runRepl(["q = (84! / 2); q", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("42");
-      expect(output).not.toContain("SyntaxError");
-      expect(exitCode).toBe(0);
+      const single = await runRepl(["q = (84! / 2); q", ".exit"]);
+      expect(stripAnsi(single.stdout)).toContain("42");
+      expect(stripAnsi(single.stdout)).not.toContain("SyntaxError");
+      expect(single.exitCode).toBe(0);
+
+      const chained = await runRepl(["q = (86!! / 2); q", ".exit"]);
+      expect(stripAnsi(chained.stdout)).toContain("43");
+      expect(stripAnsi(chained.stdout)).not.toContain("SyntaxError");
+      expect(chained.exitCode).toBe(0);
     });
 
     test("a JSX closing tag is not a regex start", async () => {

@@ -273,11 +273,10 @@ pub mod expect {
                 out,
                 fmt_options,
             )?;
-            // `FormatOptions.flush` is false, so the formatter does not flush
-            // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes. Every `Err` out of this function has a JS
-            // exception pending (the formatter throws before failing), so the
-            // writer error is thrown here too and callers can simply `?` it.
+            // The formatter ignores the result of its own flush. Throw the
+            // writer error here so that, like the formatter's failures, every
+            // `Err` from this function has a JS exception pending and callers
+            // can simply `?` it.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }

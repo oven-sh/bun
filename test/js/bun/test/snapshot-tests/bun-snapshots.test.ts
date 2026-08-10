@@ -76,6 +76,8 @@ describe("toMatchSnapshot errors", () => {
         }),
       ],
       [
+        // Keep this a single property: until #37331 lands, the property walk
+        // only surfaces an exception thrown while formatting the last key.
         "$$typeof getter on a nested value",
         () => ({
           a: {
@@ -150,7 +152,7 @@ describe("toMatchSnapshot errors", () => {
     });
 
     it("still throws the formatting error after the property matchers matched", () => {
-      // A fresh object per call: matching property matchers writes them into the received object.
+      // Fresh object per call: matched property matchers are written into the received object (#3521).
       const makeValue = () => ({
         n: 1,
         get $$typeof(): unknown {

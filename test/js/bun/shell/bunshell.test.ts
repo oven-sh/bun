@@ -1122,8 +1122,8 @@ booga"
           import { rmdirSync } from "fs";
           const target = process.argv[2];
           rmdirSync(process.cwd());
-          const { stdout, exitCode } = await Bun.$\`pwd\`.cwd(target).quiet();
-          console.log(JSON.stringify({ pwd: stdout.toString().trim(), exitCode }));
+          const { stdout, stderr, exitCode } = await Bun.$\`pwd\`.cwd(target).quiet();
+          console.log(JSON.stringify({ pwd: stdout.toString().trim(), stderr: stderr.toString(), exitCode }));
         `,
       });
       mkdirSync(join(String(dir), "gone"));
@@ -1136,7 +1136,7 @@ booga"
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe(JSON.stringify({ pwd: String(dir), exitCode: 0 }));
+      expect(stdout.trim()).toBe(JSON.stringify({ pwd: String(dir), stderr: "", exitCode: 0 }));
       expect(exitCode).toBe(0);
     });
 

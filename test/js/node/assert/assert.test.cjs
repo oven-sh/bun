@@ -91,4 +91,20 @@ describe("assert.partialDeepStrictEqual", () => {
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
   });
+
+  test("objects with different Object.prototype.toString tags are never partially equal", () => {
+    assert.partialDeepStrictEqual(
+      { [Symbol.toStringTag]: "A", x: 1, y: 2 },
+      { [Symbol.toStringTag]: "A", x: 1 },
+    );
+    expect(() =>
+      assert.partialDeepStrictEqual({ [Symbol.toStringTag]: "A", x: 1 }, { [Symbol.toStringTag]: "B", x: 1 }),
+    ).toThrow(assert.AssertionError);
+
+    // ArrayBuffer-family values compare tags through the same path.
+    assert.partialDeepStrictEqual(new ArrayBuffer(2), new ArrayBuffer(2));
+    expect(() => assert.partialDeepStrictEqual(new ArrayBuffer(2), new SharedArrayBuffer(2))).toThrow(
+      assert.AssertionError,
+    );
+  });
 });

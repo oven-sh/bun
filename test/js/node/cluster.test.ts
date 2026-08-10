@@ -893,6 +893,52 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
+test("round-robin accepted socket buffers early bytes until a 'data' listener is attached", async () => {
+  using dir = tempDir("cluster-early-bytes", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  let c;
+  worker.on("message", m => {
+    if (m === "connected") return c.end("early", () => worker.send("attach"));
+    console.log(JSON.stringify(m));
+    worker.kill();
+    process.exit(0);
+  });
+  cluster.on("listening", (_w, addr) => {
+    c = net.connect(addr.port, "127.0.0.1");
+    c.on("error", () => {});
+  });
+} else {
+  net.createServer(sock => {
+    process.once("message", () => {
+      if (sock.readableEnded) return process.send({ endedBeforeListener: true, data: "" });
+      let data = "";
+      sock.on("data", d => { data += d; });
+      sock.on("end", () => process.send({ endedBeforeListener: false, data }));
+    });
+    process.send("connected");
+  }).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { endedBeforeListener: false, data: "early" },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test("worker listen(0, 'localhost') resolves before querying the primary", async () => {
   using dir = tempDir("cluster-dns", {
     "main.ts": `

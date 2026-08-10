@@ -4216,9 +4216,6 @@ function onClusterConnection(err, clientHandle) {
     self.prependOnceListener("connection", connectionListener);
   }
   self.emit("connection", socket);
-  if (!self.pauseOnConnect) {
-    socket.resume();
-  }
 }
 
 function createServer(options, connectionListener) {

@@ -56,6 +56,7 @@ export default class RoundRobinHandle {
 
   onServerConnection(socket) {
     const handle = makeAcceptedHandle(socket);
+    socket.on("error", noop);
     socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
     this.distribute(0, handle);
   }
@@ -157,42 +158,52 @@ export default class RoundRobinHandle {
       return; // Worker is closing (or has closed) the server.
     }
 
-    const handle = peek(this.handles);
+    for (;;) {
+      const handle = peek(this.handles);
 
-    if (handle === null) {
-      this.free.set(worker.id, worker); // Add to ready queue again.
-      return;
-    }
+      if (handle === null) {
+        this.free.set(worker.id, worker); // Add to ready queue again.
+        return;
+      }
 
-    remove(handle);
+      remove(handle);
 
-    const message = { act: "newconn", key: this.key };
+      const message = { act: "newconn", key: this.key };
 
-    this.inFlight.set(worker.id, handle);
-    const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
-      if (this.inFlight.get(worker.id) !== handle) return;
-      this.inFlight.delete(worker.id);
-      if (reply.accepted) handle.close();
-      else this.distribute(0, handle); // Worker is shutting down. Send to another.
+      this.inFlight.set(worker.id, handle);
+      const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
+        if (this.inFlight.get(worker.id) !== handle) return;
+        this.inFlight.delete(worker.id);
+        if (reply.accepted) handle.close();
+        else this.distribute(0, handle); // Worker is shutting down. Send to another.
 
-      this.handoff(worker);
-    });
-    if (sent === null) {
+        this.handoff(worker);
+      });
+      if (sent !== null) return;
+
       const { id } = worker;
       this.inFlight.delete(id);
-      if (handle.fd >= 0) this.distribute(0, handle);
-      else handle.close();
+      if (handle.fd < 0) {
+        // Peer went away while queued: drop it and move on to the next connection.
+        handle.close();
+        continue;
+      }
+      this.distribute(0, handle);
       if (this.all.has(id)) {
         this.free.set(id, worker);
       }
+      return;
     }
   }
 }
 
+function noop() {}
+
 function makeAcceptedHandle(socket) {
   return {
     get fd() {
-      return socket.destroyed ? -1 : socket._handle.fd;
+      const nativeSocket = socket._handle;
+      return socket.destroyed || !nativeSocket ? -1 : nativeSocket.fd;
     },
     close(cb?) {
       socket.destroy();

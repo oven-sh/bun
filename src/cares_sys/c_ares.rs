@@ -429,6 +429,12 @@ impl struct_hostent {
         // SAFETY: caller guarantees `this` was allocated by c-ares (or is null).
         unsafe { ares_free_hostent(this) };
     }
+
+    /// True when `h_aliases` has at least one entry (a CNAME was present).
+    pub fn has_aliases(&self) -> bool {
+        // SAFETY: h_aliases is either null or a NULL-terminated array of C strings.
+        !self.h_aliases.is_null() && unsafe { !(*self.h_aliases).is_null() }
+    }
 }
 
 pub struct hostent_with_ttls {
@@ -511,6 +517,16 @@ impl hostent_with_ttls {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)
+    }
+
+    /// True when the inner hostent has at least one address in `h_addr_list`.
+    pub fn has_addresses(&self) -> bool {
+        if self.hostent.is_null() {
+            return false;
+        }
+        // SAFETY: hostent non-null; h_addr_list is null or NULL-terminated.
+        let h = unsafe { &*self.hostent };
+        !h.h_addr_list.is_null() && unsafe { !(*h.h_addr_list).is_null() }
     }
 
     pub fn parse_aaaa(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
@@ -1372,6 +1388,7 @@ pub struct struct_ares_uri_reply {
 }
 
 pub struct struct_any_reply {
+    pub cname_reply: Option<Box<hostent_with_ttls>>,
     pub a_reply: Option<Box<hostent_with_ttls>>,
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
     pub mx_reply: *mut struct_ares_mx_reply,
@@ -1387,6 +1404,7 @@ pub struct struct_any_reply {
 impl Default for struct_any_reply {
     fn default() -> Self {
         Self {
+            cname_reply: None,
             a_reply: None,
             aaaa_reply: None,
             mx_reply: ptr::null_mut(),
@@ -1446,18 +1464,28 @@ impl struct_any_reply {
         let abuf = buffer.as_ptr();
         let alen = c_int::try_from(buffer.len()).unwrap_or(c_int::MAX);
 
+        // Node's `ns_t_cname_or_a`: a CNAME in the answer is reported as CNAME, not A.
         match hostent_with_ttls::parse_a(buffer) {
             Ok(result) => {
-                reply.a_reply = Some(result);
-                any_success = true;
+                // SAFETY: parse_a succeeded → hostent is non-null.
+                let has_cname = unsafe { (*result.hostent).has_aliases() };
+                if has_cname {
+                    reply.cname_reply = Some(result);
+                    any_success = true;
+                } else if result.has_addresses() {
+                    reply.a_reply = Some(result);
+                    any_success = true;
+                }
             }
             Err(err) => last_error = Some(err as c_int),
         }
 
         match hostent_with_ttls::parse_aaaa(buffer) {
             Ok(result) => {
-                reply.aaaa_reply = Some(result);
-                any_success = true;
+                if result.has_addresses() {
+                    reply.aaaa_reply = Some(result);
+                    any_success = true;
+                }
             }
             Err(err) => last_error = Some(err as c_int),
         }
@@ -1545,8 +1573,8 @@ impl struct_any_reply {
 
 impl Drop for struct_any_reply {
     fn drop(&mut self) {
-        // a_reply / aaaa_reply are Box<hostent_with_ttls>; their Drop frees the
-        // inner hostent via ares_free_hostent.
+        // cname_reply / a_reply / aaaa_reply are Box<hostent_with_ttls>; their
+        // Drop frees the inner hostent via ares_free_hostent.
         // SAFETY: each field is either null or a c-ares allocation matching its free fn.
         unsafe {
             if !self.mx_reply.is_null() {

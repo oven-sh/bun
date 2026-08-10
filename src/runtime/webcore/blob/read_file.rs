@@ -634,13 +634,12 @@ impl ReadFile {
             if cfg!(debug_assertions) {
                 panic!("assertion failure - store should not be null");
             }
-return completion.complete(ReadFileResultType::Err(SystemError {
+            return completion.complete(ReadFileResultType::Err(SystemError {
                 code: BunString::static_("INTERNAL_ERROR").into(),
                 message: BunString::static_("assertion failure - store should not be null").into(),
                 syscall: BunString::static_("read").into(),
                 ..Default::default()
             }));
-
         }
 
         let _store = this.store.take().unwrap();
@@ -660,7 +659,6 @@ return completion.complete(ReadFileResultType::Err(SystemError {
         completion.complete(ReadFileResultType::Result(ReadFileRead {
             buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
         }))
-
     }
 
     pub(crate) fn run(&mut self, task: ReadFileTask) {

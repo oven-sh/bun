@@ -545,7 +545,9 @@ impl BlobExt for Blob {
                     // The read's thread stopped and this runs at teardown with no loop to return to: an
                     // exception the handler leaves pending is reported (a termination stands down).
                     // SAFETY: as for `call`.
-                    if let Err(err) = H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err))) {
+                    if let Err(err) =
+                        H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)))
+                    {
                         let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
                         let _ = bun_jsc::task::report_error_or_terminate(global, err);
                     }

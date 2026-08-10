@@ -25,8 +25,12 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
-    pub callback:
-        fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void) -> JsResult<()>,
+    pub callback: fn(
+        chunk: &MutableString,
+        has_more: bool,
+        err: Option<S3Error>,
+        ctx: *mut c_void,
+    ) -> JsResult<()>,
     pub(crate) has_schedule_callback: AtomicBool,
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) signals: Signals,

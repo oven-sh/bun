@@ -3268,6 +3268,14 @@ fn ensure_source_code_printer() {
     }
 }
 
+/// Made on first use: thread-locals are not in a snapshot, so a restored process arrives here with the slot empty.
+pub(crate) fn source_code_printer() -> NonNull<bun_js_printer::BufferPrinter> {
+    ensure_source_code_printer();
+    SOURCE_CODE_PRINTER
+        .get()
+        .expect("ensure_source_code_printer just set it")
+}
+
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
 fn drop_source_code_printer() {
     if let Some(printer) = SOURCE_CODE_PRINTER.take() {
@@ -4245,9 +4253,7 @@ impl VirtualMachine {
         }
         let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
 
-        let printer = SOURCE_CODE_PRINTER
-            .get()
-            .expect("source_code_printer not initialized");
+        let printer = source_code_printer();
 
         // Note: the §Dispatch shim takes path/loader/module_type/printer/
         // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see

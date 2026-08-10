@@ -1936,7 +1936,6 @@ static void snapshotRestoreAndRun(const char* path)
     snapshotReprobeCPUDispatch();
     Bun__startupSnapshotAdoptMainThreadVM();
     JSC::JSLockHolder restoreLock(*vm); // held until 'restore' has been emitted: releasing a JSLock drains microtasks, and snapshotted continuations must not run before the app hears about the restore
-    vm->refreshStackBoundsAfterSnapshotRestore(); // before any JSLock/sanitizeStack: the VM still holds the builder's stack addresses (asserts once the stack lands elsewhere, i.e. with ASLR)
     {
         JSC::JSLockHolder lock(*vm);
         vm->didRestoreFromStartupSnapshot();

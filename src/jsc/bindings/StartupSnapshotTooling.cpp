@@ -754,7 +754,7 @@ static void dumpDirtyMap(JSC::VM& vm)
             auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
             uint32_t sz = it->second;
             // re-diff this block
-            size_t first = SIZE_MAX, last = 0, cntw = 0;
+            size_t first = SIZE_MAX, cntw = 0;
             for (size_t off = 0; off + 8 <= sz; off += 8) {
                 uintptr_t a = b + off;
                 uintptr_t page = a & ~(pg - 1);
@@ -768,7 +768,6 @@ static void dumpDirtyMap(JSC::VM& vm)
                 if (memcmp(&o, (void*)a, 8)) {
                     cntw++;
                     if (first == SIZE_MAX) first = off;
-                    last = off;
                 }
             }
             if (cntw == 1 && first == 0)
@@ -1294,7 +1293,7 @@ static void dumpMutatedSnapshotObjects(JSC::VM& vm)
         bool bfContents = false;
         if (JSC::Butterfly* bf = object->butterfly(); bf && !bfPtr) { // same butterfly: did its out-of-line slots / elements change?
             JSC::Structure* st = object->structure();
-            size_t pre = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue) + (JSC::hasIndexedProperties(object->indexingType()) ? sizeof(JSC::IndexingHeader) : 0);
+            size_t pre = st->outOfLineCapacity() * sizeof(JSC::EncodedJSValue) + sizeof(JSC::IndexingHeader); // the header slot always sits between the out-of-line slots and the pointer
             size_t post = JSC::hasIndexedProperties(object->indexingType()) ? std::min<size_t>(bf->vectorLength(), 256) * sizeof(JSC::EncodedJSValue) : 0;
             uintptr_t base = (uintptr_t)bf - pre;
             size_t n = std::min(pre + post, origBf.size());

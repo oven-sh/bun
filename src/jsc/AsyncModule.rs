@@ -1253,9 +1253,7 @@ impl AsyncModule {
         // swap the buffer out and write it back via the `_writeback`
         // guard — same observable effect (the thread-local's buffer is
         // reused). Matches RuntimeTranspilerStore.rs.
-        let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
-            .get()
-            .expect("source_code_printer not initialized");
+        let mut printer_ptr = crate::virtual_machine::source_code_printer();
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let mut printer = core::mem::replace(
             unsafe { printer_ptr.as_mut() },

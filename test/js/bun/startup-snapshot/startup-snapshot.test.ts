@@ -66,6 +66,23 @@ snapshotTest("stdin's tty reader set up on a high descriptor number still delive
   expect(out).toContain('stdin data after restore: "z"');
 });
 
+snapshotTest("an unhandled rejection in a restored process exits 1, exactly like a normal boot", async () => {
+  using dir = tempDir("bun-snapshot-unhandled", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "unhandled-fixture.js");
+  const plain = Bun.spawnSync({ cmd: [bunExe(), fixture], env: { ...buildEnv, PLAIN: "1" }, stderr: "pipe", stdout: "pipe" });
+  expect(plain.exitCode).toBe(1);
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("unhandled after restore");
+  expect(code).toBe(plain.exitCode); // 1; a restored process used to exit 0 here
+});
+
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});
   const img = join(String(dir), "s.snapshot");

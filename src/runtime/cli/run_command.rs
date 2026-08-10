@@ -1647,30 +1647,7 @@ impl Run {
             vm.on_before_exit();
         }
 
-        if log_has_msgs(vm) {
-            dump_build_error(vm);
-            Output::flush();
-        }
-
-        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
-        vm.global().handle_rejected_promises();
-        vm.on_exit();
-
-        if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            print_unhandled_version_note(vm);
-        }
-
-        // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
-        // members from libbun.a in CI's split link-only mode and keeps them
-        // through `--gc-sections`. Without them, dlopen'd NAPI modules see
-        // `undefined symbol: uv_*` instead of the friendly crash message.
-        // (Rust-defined `#[no_mangle]` exports don't need this; the imported
-        // C symbols do.)
-        crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
-        bun_crash_handler::fix_dead_code_elimination();
-        vm.global_exit();
+        finish_run_and_exit(vm);
     }
 }
 
@@ -2080,9 +2057,7 @@ pub extern "C" fn Bun__startupSnapshotContinueEventLoop() -> ! {
         vm.auto_tick_active();
     }
     vm.on_before_exit();
-    vm.global().handle_rejected_promises();
-    vm.on_exit();
-    vm.global_exit();
+    finish_run_and_exit(vm);
 }
 
 #[inline]
@@ -2161,6 +2136,35 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
         Output::flush();
     }
     exit_with_unhandled_note(vm);
+}
+
+/// The end of every run, however it began — a loaded entry point or a restored snapshot: report what is left, let the
+/// exit hooks run, turn an unhandled rejection into exit code 1, and exit. Both paths call this so they cannot drift.
+fn finish_run_and_exit(vm: &mut VirtualMachine) -> ! {
+    if log_has_msgs(vm) {
+        dump_build_error(vm);
+        Output::flush();
+    }
+
+    vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+    vm.global().handle_rejected_promises();
+    vm.on_exit();
+
+    if ANY_UNHANDLED.load(Ordering::Relaxed) {
+        print_unhandled_version_note(vm);
+    }
+
+    // These create undefined references to externally-defined C symbols
+    // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+    // members from libbun.a in CI's split link-only mode and keeps them
+    // through `--gc-sections`. Without them, dlopen'd NAPI modules see
+    // `undefined symbol: uv_*` instead of the friendly crash message.
+    // (Rust-defined `#[no_mangle]` exports don't need this; the imported
+    // C symbols do.)
+    crate::napi::fix_dead_code_elimination();
+    crate::webcore::bake_response::fix_dead_code_elimination();
+    bun_crash_handler::fix_dead_code_elimination();
+    vm.global_exit();
 }
 
 /// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean

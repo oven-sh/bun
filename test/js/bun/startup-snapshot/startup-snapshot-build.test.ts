@@ -175,7 +175,6 @@ snapshotTest(
     expect(viaFile.stdout.toString()).toContain("epoch 1");
     expect(viaFile.exitCode).toBe(0);
   },
-  60_000,
 );
 
 snapshotTest(

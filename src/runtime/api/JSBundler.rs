@@ -1383,6 +1383,15 @@ pub mod js_bundler {
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
                     )));
                 }
+                if has_all_html
+                    && this.compile.as_ref().is_some_and(|c| {
+                        c.snapshot != bun_options_types::context::CompileStartupSnapshot::Off
+                    })
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use snapshot with target 'browser' for standalone HTML: it is not a process to snapshot"
+                    )));
+                }
             }
 
             scopeguard::ScopeGuard::into_inner(plugins);

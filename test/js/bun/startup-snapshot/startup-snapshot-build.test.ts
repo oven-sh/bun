@@ -281,6 +281,7 @@ snapshotTest(
   "Bun.build({ snapshot }) is the flag's equivalent; it needs compile, and bad values are rejected up front",
   async () => {
     using dir = tempDir("bun-snapshot-jsapi", {
+      "page.html": "<!doctype html><title>x</title>",
       "build.ts": [
         "const [exe, entry] = process.argv.slice(2);",
         "const r = await Bun.build({ entrypoints: [entry], compile: { outfile: exe }, snapshot: true });",
@@ -291,6 +292,7 @@ snapshotTest(
         "  { target: 'bun-' + process.platform + '-' + (process.arch === 'arm64' ? 'arm64' : 'x64'), snapshot: 'yes' },", // the target shorthand enables compile: this one must reach snapshot validation
         "  { compile: { outfile: exe + '-bad' }, snapshot: { mode: 'sometimes' } },",
         "  { compile: { outfile: exe + '-bad' }, snapshot: { io: 'everything' } },",
+        "  { entrypoints: [new URL('./page.html', import.meta.url).pathname], target: 'browser', compile: true, snapshot: true },", // standalone HTML is not a process
         "];",
         "for (const config of bad) {",
         "  try { await Bun.build({ entrypoints: [entry], ...config }); console.log('accepted', JSON.stringify(config)); }",
@@ -311,6 +313,7 @@ snapshotTest(
     expect(stdout.match(/rejected: TypeError: snapshot must be true or an object/g)).toHaveLength(2); // both with compile and with the target shorthand
     expect(stdout).toContain('rejected: TypeError: snapshot.mode must be "auto" or "manual"');
     expect(stdout).toContain('rejected: TypeError: snapshot.io must be "strict", "local" or "network"');
+    expect(stdout).toContain("rejected: TypeError: Cannot use snapshot with target 'browser'"); // the JS-API half of the standalone-HTML rule
     expect(stdout).not.toContain("accepted");
     expect(code).toBe(0);
     expect(runExe(exe).stdout).toContain("[js] restored epoch 1");

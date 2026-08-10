@@ -70,7 +70,7 @@ Bun.startupSnapshot.take({
 
 ## What a restored launch gets from its environment
 
-The runtime refreshes what it owns before your code runs again: `process.argv`, `process.env`, the working directory, `process.pid`, the clocks (`performance.now()`, `process.uptime()`), every source of randomness, timers, the DNS cache, its own threads, standard input and output, which are the launcher's, and the IPC channel to a parent that spawned the launch with one (`process.send`). Files and sockets that were open when the snapshot was taken are gone; the program receives hangups for them after `"restore"`.
+The runtime refreshes what it owns before your code runs again: `process.argv`, `process.env`, the working directory, `process.pid`, the clocks (`performance.now()`, `process.uptime()`), the time zone, every source of randomness, timers, the DNS cache, its own threads, standard input and output, which are the launcher's, and the IPC channel to a parent that spawned the launch with one (`process.send`). Files and sockets that were open when the snapshot was taken are gone; the program receives hangups for them after `"restore"`.
 
 What it cannot refresh is anything your code derived from those before the snapshot was taken:
 

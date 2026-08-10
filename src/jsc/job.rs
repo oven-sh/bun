@@ -373,7 +373,9 @@ impl<C: JobContext> Job<C> {
         let job = Self::build(cx, off, js);
         // SAFETY: as in `schedule`; the executor owns it now, and nothing else
         // reaches `off` until the callback (teardown releases only the JS side).
-        dispatch(unsafe { &raw mut (*job).task }, unsafe { &raw mut (*job).off });
+        dispatch(unsafe { &raw mut (*job).task }, unsafe {
+            &raw mut (*job).off
+        });
     }
 
     /// JS thread: allocate the job, link it into the VM's live list, and take

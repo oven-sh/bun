@@ -117,6 +117,12 @@ async function compileShim(dir: string): Promise<string> {
   return shim;
 }
 
+// Chain ahead of any LD_PRELOAD the test runner itself was started with.
+function preload(shim: string): string {
+  const existing = bunEnv.LD_PRELOAD;
+  return existing ? `${shim}:${existing}` : shim;
+}
+
 async function runFixture(extraEnv: Record<string, string>) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", FIXTURE],
@@ -146,7 +152,7 @@ test.skipIf(!enabled)(
     // With every pidfd epoll_ctl ADD/MOD failing, the signal must still be
     // delivered and the exit must still be observed.
     const marker = join(String(dir), "fired");
-    expect(await runFixture({ LD_PRELOAD: shim, BUN_EPOLL_FAIL_MARKER: marker })).toEqual({
+    expect(await runFixture({ LD_PRELOAD: preload(shim), BUN_EPOLL_FAIL_MARKER: marker })).toEqual({
       exited: 137,
       signalCode: "SIGKILL",
       killed: true,
@@ -177,7 +183,7 @@ test.skipIf(!enabled)(
        clearTimeout(timer);
        console.log(JSON.stringify({ exited, exitCode: p.exitCode }));`,
       ],
-      env: { ...bunEnv, LD_PRELOAD: shim, BUN_EPOLL_FAIL_MARKER: marker },
+      env: { ...bunEnv, LD_PRELOAD: preload(shim), BUN_EPOLL_FAIL_MARKER: marker },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

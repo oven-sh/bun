@@ -793,7 +793,7 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("regex after a statement block", async () => {
-      const { stdout, exitCode } = await runRepl(['if (true) {} /"/.test(\'"\')', ".exit"]);
+      const { stdout, exitCode } = await runRepl(["if (true) {} /\"/.test('\"')", ".exit"]);
       const output = stripAnsi(stdout);
       expect(output).toContain("true");
       expect(output).not.toContain("SyntaxError");

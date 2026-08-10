@@ -3,8 +3,8 @@ import { buildSync } from "esbuild";
 import { chmodSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDir, type DirectoryTree } from "harness";
 import path from "path";
-import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
 import { gzipSync } from "zlib";
+import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
 
 // The `bun` npm package's postinstall, bundled with esbuild as upload-npm.ts does and run with
 // node as npm does, in a project that installed bun without its optionalDependencies:

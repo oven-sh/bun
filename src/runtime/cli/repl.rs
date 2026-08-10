@@ -2605,10 +2605,8 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                         | b'~'
                 );
             if starts_regex {
-                // Skip the regex body: quotes and brackets inside it are not
-                // code. A `/` inside a `[...]` class does not terminate it. A
-                // newline means the literal is unterminated (regexes cannot
-                // span lines); stop there and let evaluation report the error.
+                // Skip the regex body; a `/` inside a `[...]` class does not
+                // terminate it, and a newline does (regexes cannot span lines).
                 i += 1;
                 let mut in_class = false;
                 while i < code.len() && code[i] != b'\n' {

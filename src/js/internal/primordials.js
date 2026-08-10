@@ -23,17 +23,18 @@ const createSafeIterator = (factory, next_) => {
   return SafeIterator;
 };
 
-// Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
-const FunctionPrototypeCall = $getByIdDirect(Function.prototype, "call");
-
 function getGetter(cls, getter) {
   // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor doesn't work on built-ins like Typed Arrays.
-  return FunctionPrototypeCall.bind(cls.prototype.__lookupGetter__(getter));
+  const fn = cls.prototype.__lookupGetter__(getter);
+  return obj => fn.$call(obj);
 }
 
 function uncurryThis(func) {
-  // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
-  return FunctionPrototypeCall.bind(func);
+  // Not `Function.prototype.call.bind(func)`: JSC dispatches bound functions
+  // far slower than a direct call (~35ns vs ~1ns per call), and these wrappers
+  // sit in per-character loops of util.inspect/format. The `$apply` intrinsic
+  // keeps the dispatch tamper-proof, like internal/repl/node-primordials.js.
+  return (thisArg, ...args) => func.$apply(thisArg, args);
 }
 
 const copyProps = (src, dest) => {

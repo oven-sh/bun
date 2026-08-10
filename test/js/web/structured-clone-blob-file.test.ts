@@ -478,8 +478,8 @@ describe("structuredClone with Blob and File", () => {
       // NUL payload below is that the rejection is a clean JS error and the
       // path never reaches the syscall layer where debug builds used to
       // abort in ZStr::as_cstr.
-      expect(() => deserialize(good)).toThrow();
-      expect(() => v8.deserialize(good)).toThrow();
+      expect(() => deserialize(good)).toThrow("Unable to deserialize data.");
+      expect(() => v8.deserialize(good)).toThrow("Unable to deserialize data.");
 
       const bad = Buffer.from(good);
       bad.set(Buffer.from("/e\0tc/host\0s____", "latin1"), at);
@@ -608,8 +608,8 @@ describe("structuredClone with Blob and File", () => {
 
       test("fd >= 0 is rejected from caller-supplied buffers too", () => {
         for (const fd of [0, 1, fdSentinel]) {
-          expect(() => deserialize(craftFd(fd))).toThrow();
-          expect(() => v8.deserialize(craftFd(fd))).toThrow();
+          expect(() => deserialize(craftFd(fd))).toThrow("Unable to deserialize data.");
+          expect(() => v8.deserialize(craftFd(fd))).toThrow("Unable to deserialize data.");
         }
       });
     });
@@ -630,8 +630,8 @@ describe("structuredClone with Blob and File", () => {
         // Serializing a path-backed Blob is still allowed; only reconstructing
         // one from the resulting raw bytes is not.
         const payload = serialize(Bun.file(join(String(dir), "secret.txt")));
-        expect(() => deserialize(payload)).toThrow();
-        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+        expect(() => deserialize(payload)).toThrow("Unable to deserialize data.");
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow("Unable to deserialize data.");
       });
 
       test("wire bytes naming a file descriptor are rejected", () => {
@@ -641,8 +641,8 @@ describe("structuredClone with Blob and File", () => {
         const fd = openSync(join(String(dir), "fd.txt"), "r");
         try {
           const payload = serialize(Bun.file(fd));
-          expect(() => deserialize(payload)).toThrow();
-          expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+          expect(() => deserialize(payload)).toThrow("Unable to deserialize data.");
+          expect(() => v8.deserialize(Buffer.from(payload))).toThrow("Unable to deserialize data.");
         } finally {
           closeSync(fd);
         }
@@ -658,8 +658,8 @@ describe("structuredClone with Blob and File", () => {
         const index = payload.indexOf(Buffer.from(placeholder));
         expect(index).toBeGreaterThan(-1);
         payload.set(Buffer.from(s3Path), index);
-        expect(() => deserialize(payload)).toThrow();
-        expect(() => v8.deserialize(payload)).toThrow();
+        expect(() => deserialize(payload)).toThrow("Unable to deserialize data.");
+        expect(() => v8.deserialize(payload)).toThrow("Unable to deserialize data.");
       });
 
       test("bytes-backed Blob and File still round-trip through deserialize", async () => {
@@ -720,10 +720,13 @@ describe("structuredClone with Blob and File", () => {
             let outcome;
             try {
               const blob = de(payload);
-              blob.slice(0, 10); // pre-fix: aborts on the unclamped size
+              // Pre-fix the record decoded and this aborted on the unclamped
+              // size; with the gate the catch below reports the rejection, and
+              // a gate regression surfaces as threw:false (or the abort).
+              blob.slice(0, 10);
               outcome = { threw: false, size: String(blob.size) };
             } catch (e) {
-              outcome = { threw: true };
+              outcome = { threw: true, message: String(e.message) };
             }
             process.stdout.write(JSON.stringify(outcome) + "\\n");
           }
@@ -736,7 +739,7 @@ describe("structuredClone with Blob and File", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        const expected = { threw: true };
+        const expected = { threw: true, message: "Unable to deserialize data." };
         expect({
           stderr,
           outcomes: stdout

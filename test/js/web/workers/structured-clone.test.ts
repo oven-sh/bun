@@ -395,13 +395,13 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       } else if (structuredCloneFn === jscSerializeRoundtrip) {
         test("file from path is rejected", () => {
           const blob = Bun.file(join(import.meta.dir, "example.txt"));
-          expect(() => structuredCloneFn(blob)).toThrow();
+          expect(() => structuredCloneFn(blob)).toThrow("Unable to deserialize data.");
         });
         test("file from fd is rejected", () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
           try {
             const blob = Bun.file(fd);
-            expect(() => structuredCloneFn(blob)).toThrow();
+            expect(() => structuredCloneFn(blob)).toThrow("Unable to deserialize data.");
           } finally {
             closeSync(fd);
           }

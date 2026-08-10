@@ -2005,7 +2005,7 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        // `size` is untrusted (wire bytes, remote Content-Length): saturate instead of panicking the cast.
+        // `size` is a u64 bounded only by its writers; saturate so an unclamped value can never abort this cast.
         let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.

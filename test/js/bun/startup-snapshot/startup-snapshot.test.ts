@@ -97,6 +97,25 @@ overlapTest(
   },
 );
 
+snapshotTest("the frozen heap holds up under JSC's GC verifier", async () => {
+  // JSC options are frozen at VM init, so they travel with the snapshot: set at build time, the verifier re-marks every collection
+  // in the restored process independently of the immortal fast paths and RELEASE_ASSERTs on any disagreement. Engagement was
+  // confirmed by timing (a verified full collection here takes ~40 ms against ~3 ms without); the assertion is that it stays quiet.
+  using dir = tempDir("bun-snapshot-verifygc", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "gctime-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_JSC_verifyGC: "1" }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(out).toContain("; #3 "); // the third verified full collection completed
+  expect(code).toBe(0);
+});
+
 const memoryTest = test.skipIf(!hasSnapshots || !isLinux); // RssAnon is the private-memory figure; macOS is covered by the __DATA bound above
 memoryTest("a restored process holds much less private memory than one that builds the same state itself", async () => {
   using dir = tempDir("bun-snapshot-private-memory", {});

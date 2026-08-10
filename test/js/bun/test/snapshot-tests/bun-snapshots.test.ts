@@ -61,4 +61,35 @@ describe("toMatchSnapshot errors", () => {
       expect({ a: 4 }).toMatchSnapshot({ a: expect.any("not a constructor") });
     }).toThrow();
   });
+
+  it("should throw if formatting a nested value throws, instead of leaving that property out", () => {
+    // The snapshot formatter reads `$$typeof` off every object to detect React elements.
+    const reads: string[] = [];
+    const value = {
+      a: {
+        get $$typeof(): unknown {
+          reads.push("a");
+          throw new Error("boom");
+        },
+      },
+      b: {
+        get $$typeof(): unknown {
+          reads.push("b");
+          return undefined;
+        },
+      },
+    };
+
+    expect(() => {
+      // This is what used to get recorded: `a` dropped, the walk carried on with `b`.
+      expect(value).toMatchInlineSnapshot(`
+        {
+          "b": {
+            "$$typeof": [native code],
+          },
+        }
+      `);
+    }).toThrow();
+    expect(reads).toEqual(["a"]);
+  });
 });

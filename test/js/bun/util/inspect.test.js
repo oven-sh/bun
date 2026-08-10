@@ -928,3 +928,67 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("a nested value throws while formatting with { sorted: true }", () => {
+  const custom = Symbol.for("nodejs.util.inspect.custom");
+  const throwing = (visited, name) => ({
+    [custom]() {
+      visited.push(name);
+      throw new Error("boom");
+    },
+  });
+  const formattable = (visited, name) => ({
+    [custom]() {
+      visited.push(name);
+      return name;
+    },
+  });
+
+  it("throws and stops the walk at the throwing property, like the unsorted walk", () => {
+    const visited = [];
+    // `a` is neither first in insertion order nor last in sort order.
+    const obj = { c: formattable(visited, "c"), a: throwing(visited, "a"), b: formattable(visited, "b") };
+
+    expect(() => Bun.inspect(obj, { sorted: true })).toThrow("boom");
+    expect(visited).toEqual(["a"]);
+
+    visited.length = 0;
+    expect(() => Bun.inspect(obj)).toThrow("boom");
+    expect(visited).toEqual(["c", "a"]);
+  });
+
+  it("Bun.inspect.table", () => {
+    const visited = [];
+    const rows = [{ cell: { a: throwing(visited, "a"), b: formattable(visited, "b") } }];
+
+    expect(() => Bun.inspect.table(rows, { sorted: true })).toThrow("boom");
+    expect(visited).toEqual(["a"]);
+  });
+
+  it("does not read the following properties while the exception is pending", async () => {
+    // Most of the Bun object's properties are initialized lazily by a native
+    // callback the first time they are read. "A0" sorts right before one of them
+    // (Bun.Archive), so reading on with the exception from "A0" still pending
+    // trips the native callback's exception check in debug/ASAN builds.
+    const fixture = `
+      Bun.A0 = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } };
+      try {
+        Bun.inspect(Bun, { sorted: true });
+        console.log("returned");
+      } catch (e) {
+        console.log("caught:", e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("caught: boom\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

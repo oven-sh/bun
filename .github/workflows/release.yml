@@ -111,7 +111,7 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
+    if: ${{ github.repository_owner == 'oven-sh' && (github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true') }}
     # With id-token, npm publishes through the trusted publisher registered for this
     # repository, workflow file and environment on npmjs.com, and NPM_TOKEN is only a
     # fallback for as long as bun-types has none registered.

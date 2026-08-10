@@ -64,7 +64,7 @@ export function hasBanner(stderr: string): boolean {
 }
 
 /** Reads the target's stderr until one full banner has been printed. */
-export async function waitForBanner(proc: Subprocess<any, "pipe", any>): Promise<string> {
+export async function waitForBanner(proc: Subprocess<any, any, "pipe">): Promise<string> {
   const reader = proc.stderr.getReader();
   try {
     return await readStreamUntil(reader, hasBanner);
@@ -86,9 +86,10 @@ export const inspecteeEnv = (() => {
 })();
 
 /**
- * Spawns bun running `script` with a random inspector port and returns it once
- * it has printed its pid on the first stdout line, i.e. once JS is executing.
- * `script` must `console.log(process.pid)` first.
+ * Spawns bun running `script` with a random inspector port and returns once the
+ * script has printed its pid, which must be its first stdout line. The script
+ * should print it only after any setup the test relies on (signal listeners),
+ * since the caller may signal the process as soon as this returns.
  */
 export async function spawnTarget(script: string, extraArgs: string[] = []) {
   const proc = Bun.spawn({
@@ -122,8 +123,12 @@ export async function debugProcess(pid: number): Promise<void> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ exitCode, hasError: stderr.includes("error:") }).toEqual({ exitCode: 0, hasError: false });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, hasError: stderr.includes("error:") }).toEqual({
+    stdout: "",
+    exitCode: 0,
+    hasError: false,
+  });
 }
 
 /**

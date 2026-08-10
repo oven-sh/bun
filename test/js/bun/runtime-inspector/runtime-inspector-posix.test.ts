@@ -71,9 +71,9 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
 
   test("a user SIGUSR1 listener takes precedence", async () => {
     const { proc, pid } = await spawnTarget(
-      `console.log(process.pid);
-       let n = 0;
+      `let n = 0;
        process.on("SIGUSR1", () => { console.log("user " + ++n); if (n === 3) process.exit(0); });
+       console.log(process.pid);
        setInterval(() => {}, 1000);`,
     );
     await using _ = proc;
@@ -98,9 +98,9 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
 
   test("removing the last user listener hands SIGUSR1 back to the inspector", async () => {
     const { proc, pid } = await spawnTarget(
-      `console.log(process.pid);
-       const onSignal = () => { console.log("user"); process.off("SIGUSR1", onSignal); console.log("removed"); };
+      `const onSignal = () => { console.log("user"); process.off("SIGUSR1", onSignal); console.log("removed"); };
        process.on("SIGUSR1", onSignal);
+       console.log(process.pid);
        setInterval(() => {}, 1000);`,
     );
     await using _ = proc;
@@ -153,7 +153,7 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
   });
 });
 
-async function expectSigusr1Ignored(proc: Subprocess<any, "pipe", "pipe">) {
+async function expectSigusr1Ignored(proc: Subprocess<any, any, "pipe">) {
   const reader = proc.stderr.getReader();
   let stderr = await readStreamUntil(reader, hasBanner);
 

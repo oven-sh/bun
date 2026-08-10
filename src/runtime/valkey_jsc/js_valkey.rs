@@ -1866,7 +1866,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
             match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(jsc::JsError::Thrown) if this.global_object.has_pending_termination_exception() => {
+                Err(jsc::JsError::Thrown)
+                    if this.global_object.has_pending_termination_exception() =>
+                {
                     return Err(jsc::JsError::Thrown);
                 }
                 Err(jsc::JsError::Thrown) => {

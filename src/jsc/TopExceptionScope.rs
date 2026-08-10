@@ -536,7 +536,6 @@ impl ExceptionValidationScope {
         let _ = should_have_exception;
     }
 
-
     /// If no exception, returns.
     /// If the termination exception is pending, `Err(Thrown)` (so you can `?`).
     /// If a non-termination exception, assertion failure.

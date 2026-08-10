@@ -2636,19 +2636,11 @@ impl BufferAction {
         self.tag
     }
 
-    pub(crate) fn fulfill(
-        &mut self,
-        global: &JSGlobalObject,
-        blob: &mut AnyBlob,
-    ) -> JsResult<()> {
+    pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
         blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
     }
 
-    pub(crate) fn reject(
-        &mut self,
-        global: &JSGlobalObject,
-        err: &StreamError,
-    ) -> JsResult<()> {
+    pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) -> JsResult<()> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }

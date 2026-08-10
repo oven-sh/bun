@@ -148,7 +148,6 @@ impl Taskable for S3HttpSimpleTask {
     }
 }
 
-
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
@@ -176,7 +175,12 @@ impl Callback {
         Ok(())
     }
 
-    fn not_found(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
+    fn not_found(
+        &self,
+        code: &[u8],
+        message: &[u8],
+        context: *mut c_void,
+    ) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,

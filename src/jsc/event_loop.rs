@@ -192,7 +192,9 @@ impl Stopped {
     pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
         match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
             Err(err) => err,
-            Ok(()) => unreachable!("throwTerminationException returned without an exception pending"),
+            Ok(()) => {
+                unreachable!("throwTerminationException returned without an exception pending")
+            }
         }
     }
 }

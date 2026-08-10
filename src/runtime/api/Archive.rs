@@ -660,11 +660,7 @@ pub enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(
-        self,
-        global: &JSGlobalObject,
-        promise: &mut JSPromise,
-    ) -> JsResult<()> {
+    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> JsResult<()> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),

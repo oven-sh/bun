@@ -110,10 +110,7 @@ export default class RoundRobinHandle {
     return this.all.has(worker.id);
   }
 
-  // A live act:close leaves an unacked newconn to its ack (the worker redistributes it by declining).
-  // `channelGone`: no ack is coming. After a crash the connection was never adopted by anyone alive,
-  // so it goes to another worker; after a graceful disconnect the worker already adopted or declined
-  // it, and only the primary's copy is dropped.
+  // With the channel still up the unacked newconn is settled by its ack; once it is gone, a crashed worker's goes to another worker and a disconnected worker's (already settled by it) is dropped.
   remove(worker, channelGone = false) {
     if (channelGone) {
       const pending = this.inFlight.get(worker.id);

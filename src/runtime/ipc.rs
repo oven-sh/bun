@@ -937,8 +937,7 @@ pub struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
-    /// disconnect() arrived while a handle was awaiting its ack: node postpones the disconnect until
-    /// the messages queued behind that handle have been flushed.
+    /// disconnect() arrived while a handle awaited its ack; like node, close only once the queue behind it has flushed.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,

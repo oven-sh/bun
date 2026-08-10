@@ -755,10 +755,7 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
                 &raw mut len,
             )
         };
-        // node (net.createServerHandle): anything that is not a usable server socket is EINVAL, and
-        // the primary's descriptor is left untouched. A stream socket with a peer (a spawned child's
-        // stdio is a socketpair) can never listen, so it is rejected here rather than adopted and
-        // later closed on wind-down.
+        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
         if rc != 0 || (ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM) {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
         }

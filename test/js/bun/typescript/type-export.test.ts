@@ -558,7 +558,7 @@ describe("re-export of type alongside value at runtime (#7384)", () => {
 // matches what `bun build` / `--compile` already produced and what
 // ts-node/tsx do. Pin it so the trade-off is explicit.
 test.concurrent("ts barrel re-exporting a missing value name links without error", async () => {
-  const dir = tempDirWithFiles("reexport-missing-value", {
+  await using dir = tempDir("reexport-missing-value", {
     "lib.ts": "export const foo = 1;",
     "barrel.ts": `export { foo, fooo } from "./lib";`,
     "via-ns.ts": `

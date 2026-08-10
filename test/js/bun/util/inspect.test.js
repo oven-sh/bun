@@ -467,6 +467,54 @@ describe("crash testing", () => {
   }
 });
 
+// An exception thrown while looking up a property (Proxy trap, lazily initialized
+// property) used to stay pending while the next property was looked up, and a
+// throwing getPrototypeOf trap crashed the walk up the prototype chain.
+// Run in a child so a regression fails this test instead of killing the runner.
+it("Bun.inspect ignores exceptions thrown while enumerating properties", async () => {
+  const code = `
+    {
+      const target = { a: 1, b: 2 };
+      const proto = new Proxy(target, {
+        get(t, key, receiver) {
+          if (key in target) throw new Error("get " + String(key));
+          return Reflect.get(t, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 1;
+      console.log(Bun.inspect(obj));
+    }
+    {
+      const proto = new Proxy({ fromProto: 2 }, {
+        getPrototypeOf() { throw new Error("getPrototypeOf"); },
+      });
+      const obj = Object.create(proto);
+      obj.own = 1;
+      console.log(Bun.inspect(obj));
+    }
+    {
+      // Several of Bun's lazily initialized properties (Bun.$ among them) call
+      // Symbol() when first accessed, so this makes their initializers throw.
+      globalThis.Symbol = undefined;
+      const out = Bun.inspect(Bun);
+      console.log(typeof out, out.includes("inspect"));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "{\n  own: 1,\n}\n" + "{\n  own: 1,\n  fromProto: 2,\n}\n" + "string true\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("possibly formatted emojis log", () => {
   expect(Bun.inspect("✔")).toBe('"✔"');
 });

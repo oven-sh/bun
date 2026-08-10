@@ -101,15 +101,30 @@ snapshotTest("Intl objects created before the freeze work after restore and agre
   using dir = tempDir("bun-snapshot-intl", {});
   const img = join(String(dir), "s.snapshot");
   const fixture = join(import.meta.dir, "intl-fixture.js");
-  const plainRun = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, PLAIN: "1" }, stdout: "pipe", stderr: "pipe" });
+  const plainRun = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, PLAIN: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [plainOut] = await Promise.all([plainRun.stdout.text(), plainRun.stderr.text(), plainRun.exited]);
   expect(plainOut.split("\n").length).toBeGreaterThanOrEqual(10);
   {
-    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(code).toBe(0);
   }
-  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [restoredOut, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(err).toContain("[snapshot] restored");
   expect(restoredOut).toBe(plainOut);

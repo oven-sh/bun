@@ -5178,7 +5178,9 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
+                    let irp = Self::printed_import_record_path(
+                        self.import_record(s.import_record_index as usize),
+                    );
                     self.print_import_record_path(
                         self.import_record(s.import_record_index as usize),
                     );
@@ -5186,7 +5188,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(irp);
+                            let irp_id = mi.str(&irp);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5362,7 +5364,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
+                    let irp = Self::printed_import_record_path(import_record);
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
@@ -5371,7 +5373,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(irp);
+                            let id = mi.str(&irp);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -5884,11 +5886,11 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
+                        let import_record_path = Self::printed_import_record_path(record);
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(import_record_path);
+                            let irp_id = mi.str(&import_record_path);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6064,27 +6066,41 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
+        fn prints_namespace_in_path(import_record: &ImportRecord) -> bool {
+            import_record
+                .flags
+                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
+                && !import_record.path.is_file()
+        }
+
+        /// The module specifier exactly as `print_import_record_path` writes it,
+        /// so the ModuleInfo record names the same module JSC will request.
+        fn printed_import_record_path(import_record: &ImportRecord) -> std::borrow::Cow<'_, [u8]> {
+            if Self::prints_namespace_in_path(import_record) {
+                let path = &import_record.path;
+                let mut out = Vec::with_capacity(path.namespace.len() + 1 + path.text.len());
+                out.extend_from_slice(path.namespace);
+                out.push(b':');
+                out.extend_from_slice(path.text);
+                std::borrow::Cow::Owned(out)
+            } else {
+                std::borrow::Cow::Borrowed(import_record.path.text)
+            }
+        }
+
         pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord) {
             if IS_JSON {
                 unreachable!();
             }
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
-            if import_record
-                .flags
-                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-                && !import_record.path.is_file()
-            {
-                self.print(quote);
+            self.print(quote);
+            if Self::prints_namespace_in_path(import_record) {
                 self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
-            } else {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
             }
+            self.print_string_characters_utf8(import_record.path.text, quote);
+            self.print(quote);
         }
 
         #[inline]

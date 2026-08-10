@@ -2771,8 +2771,11 @@ fn os_entropy(bytes: &mut [u8]) {
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
-    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
-    let r = CELL.get_or_init(|| {
+    // Per process, not once: a snapshot built at one path is routinely restored by the same executable at another (a compiled
+    // executable is built in one place and deployed to another), and process.execPath must say where this one is.
+    static CELL: crate::startup_snapshot::ProcessDerived<crate::CrateResult<ZBox>> =
+        crate::startup_snapshot::ProcessDerived::new();
+    let r = CELL.get(|| {
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),

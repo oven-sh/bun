@@ -1233,11 +1233,11 @@ impl All {
         &mut self,
         then: bun_core::Timespec,
         now: bun_core::Timespec,
-    ) {
+    ) -> usize {
         let delta_ns: i128 = (now.sec as i128 - then.sec as i128) * 1_000_000_000
             + (now.nsec as i128 - then.nsec as i128);
         if then.sec == 0 && then.nsec == 0 {
-            return;
+            return 0;
         }
         let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
         while let Some(min) = self.timers.peek() {
@@ -1245,6 +1245,7 @@ impl All {
             unsafe { self.timers.remove(min) };
             nodes.push(min);
         }
+        let moved = nodes.len();
         for t in nodes {
             // SAFETY: node was just removed from the heap and is otherwise owned by its TimerObject.
             unsafe {
@@ -1255,6 +1256,7 @@ impl All {
                 self.timers.insert(t);
             }
         }
+        moved
     }
 
     /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`

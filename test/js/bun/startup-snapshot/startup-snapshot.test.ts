@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, linkSync, readdirSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir, tls } from "harness";
 import { join } from "path";
 
@@ -96,6 +96,25 @@ overlapTest(
     expect(exitCode).toBe(0);
   },
 );
+
+snapshotTest("process.execPath is where this launch's executable is, even when the snapshot was built at another path", async () => {
+  // The same executable at a second path (a hard link, so it is byte-identical and the snapshot accepts it): build with one, restore with the other.
+  using dir = tempDir("bun-snapshot-execpath", {});
+  const other = join(String(dir), "bun-elsewhere");
+  linkSync(bunExe(), other);
+  const img = join(String(dir), "s.snapshot");
+  const code = `void process.execPath; process.on("restore", () => { console.log("[js] execPath=" + process.execPath); process.exit(0); }); setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 10);`;
+  await Bun.write(join(String(dir), "app.js"), code);
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), join(String(dir), "app.js")], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , c] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(c).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [other, join(String(dir), "app.js")], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(out).toContain("[js] execPath=" + require("fs").realpathSync(other));
+});
 
 snapshotTest("a strict build refuses servers and UDP sockets, not just listen/connect", async () => {
   using dir = tempDir("bun-snapshot-strict-servers", {});
@@ -513,6 +532,7 @@ snapshotTest(
       stderr: "pipe",
     });
     const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(err).toMatch(/\[snapshot\] rebased [1-9]\d* timers/); // the kept interval was moved onto this process's clock (on one machine the old deadlines are merely overdue, which the tick counts cannot tell apart)
     for (const variant of ["default", "stdio-ignore-pipe-pipe", "shell+ignore", "shell+pipe-in"]) {
       expect(out, err.slice(-600)).toContain(`[js] restored ${variant}: status=0 stdout="out\\n" stderr="err\\n"`);
     }

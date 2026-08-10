@@ -1944,20 +1944,6 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         let vm = unsafe { &mut *vm_ptr };
         // SAFETY: `vm.jsc_vm` is the snapshot's live JSC VM, now owned by this thread.
         unsafe { Bun__VM__refreshStackBoundsAfterSnapshotRestore(vm.jsc_vm) };
-        {
-            let state = crate::jsc_hooks::runtime_state();
-            if !state.is_null() {
-                let then = bun_core::Timespec {
-                    sec: bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[0]
-                        .load(::std::sync::atomic::Ordering::Relaxed),
-                    nsec: bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[1]
-                        .load(::std::sync::atomic::Ordering::Relaxed),
-                };
-                let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
-                // SAFETY: main thread; RuntimeState live; no JS on the stack.
-                unsafe { (*state).timer.rebase_after_snapshot_restore(then, now) };
-            }
-        }
     }
     {
         // The resolver/node:fs "top level dir" is the builder's cwd; re-read where this process runs.
@@ -2003,6 +1989,34 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         vm.origin_timestamp = bun_jsc::virtual_machine::get_origin_timestamp();
     }
     crate::jsc_hooks::adopt_main_thread_runtime_state();
+    {
+        // Timers armed before the freeze carry the building process's monotonic deadlines; shift them by the difference between
+        // that clock and this one. Has to come after the runtime state is adopted (it lives in a thread-local this thread did
+        // not have a moment ago) — before that point there is nothing to rebase and the kept timers would silently stay on the
+        // builder's clock.
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "runtime state adopted just above");
+        if !state.is_null() {
+            let then = bun_core::Timespec {
+                sec: bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[0]
+                    .load(::std::sync::atomic::Ordering::Relaxed),
+                nsec: bun_core::startup_snapshot::SNAPSHOT_MONOTONIC[1]
+                    .load(::std::sync::atomic::Ordering::Relaxed),
+            };
+            let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+            // SAFETY: main thread; RuntimeState live; no JS on the stack.
+            let moved = unsafe { (*state).timer.rebase_after_snapshot_restore(then, now) };
+            if bun_core::env_var::BUN_STARTUP_SNAPSHOT_VERBOSE
+                .get()
+                .unwrap_or(false)
+            {
+                bun_core::Output::err_generic(
+                    "[snapshot] rebased {} timers onto this process's clock",
+                    (moved,),
+                );
+            }
+        }
+    }
     // SAFETY: main-thread VM adopted; single-threaded at this point of restore.
     unsafe {
         (*vm_ptr)

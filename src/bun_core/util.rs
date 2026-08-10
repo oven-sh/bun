@@ -4601,7 +4601,7 @@ impl SpawnStatus {
     pub fn is_ok(self) -> bool {
         self.code == 0
     }
-    /// Exit status as the spawner reports it (128 + signal for a signal death).
+    /// Exit status as the spawner reports it; -1 when the child died of a signal (or, on Windows, no code was available).
     #[inline]
     pub fn code(self) -> i32 {
         self.code

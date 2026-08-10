@@ -154,7 +154,8 @@ impl BuildCommand {
             let env_ptr = this_transpiler.env;
             let exe_dir = match bun_core::dirname(exe) {
                 Some(parent) if !parent.is_empty() && parent != b"." => {
-                    match bun_sys::Dir::cwd().make_open_path(parent, Default::default()) {
+                    match bun_sys::Dir::cwd().open_dir(parent, Default::default()) {
+                        // the executable already exists there; a typo must not create directories
                         Ok(d) => d,
                         Err(err) => {
                             Output::err(err, "could not open {}", (bun_fmt::quote(parent),));
@@ -1575,6 +1576,10 @@ pub(crate) fn run_startup_snapshot_step(
             Err(e) => format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e),
             Ok(st) if st.code() == NOT_QUIET => format!(
                 "{} did not become quiet, so no snapshot was taken (see above for what kept it busy; --snapshot=manual lets the app call Bun.startupSnapshot.take() at a moment of its choosing)",
+                bstr::BStr::new(&exe_abs)
+            ),
+            Ok(st) if st.code() == -1 => format!(
+                "{} was killed by a signal while its snapshot was being taken (see its output above)",
                 bstr::BStr::new(&exe_abs)
             ),
             Ok(st) if !st.is_ok() => format!(

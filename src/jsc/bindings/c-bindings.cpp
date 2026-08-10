@@ -1155,9 +1155,11 @@ extern "C" __attribute__((visibility("default"), used)) int bun_startup_snapshot
 #else
     if (!BUN_COMPILED.size)
         return 0;
-    const BlobHeader* header = reinterpret_cast<const BlobHeader*>(static_cast<uintptr_t>(BUN_COMPILED.size)); // the payload's address
-    base = header->data;
-    len = header->size;
+    // BUN_COMPILED.size holds the injected payload's address: a BlobHeader-shaped [u64 length][bytes...], but only page-aligned
+    // (4K on x86-64), so it must not be read through the 16K-aligned type.
+    const uint8_t* header = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(BUN_COMPILED.size));
+    memcpy(&len, header, sizeof len);
+    base = header + sizeof(uint64_t);
 #endif
     if (len < kOffsetsSize + sizeof kPayloadTrailer)
         return 0;

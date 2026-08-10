@@ -1797,8 +1797,11 @@ extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
             size_t pg = getpagesize();
             uintptr_t alignedStart = (start + pg - 1) & ~(pg - 1);
             uintptr_t end = (start + 8 + len) & ~(pg - 1);
-            int rc = madvise(reinterpret_cast<void*>(alignedStart), end - alignedStart, atoi(adv));
-            fprintf(stderr, "[memdebug] madvise(%p, %zu, %d) = %d errno=%d\n", (void*)alignedStart, (size_t)(end - alignedStart), atoi(adv), rc, errno);
+            if (end > alignedStart) {
+                int rc = madvise(reinterpret_cast<void*>(alignedStart), end - alignedStart, atoi(adv));
+                fprintf(stderr, "[memdebug] madvise(%p, %zu, %d) = %d errno=%d\n", (void*)alignedStart, (size_t)(end - alignedStart), atoi(adv), rc, errno);
+            } else
+                fprintf(stderr, "[memdebug] payload spans no whole page of its own; nothing to advise\n");
         }
     }
 #endif

@@ -55,6 +55,25 @@ for (const fixture of ["smoke-fixture.js", "heavy-fixture.js"]) {
 // Restored, that is the build process's stack address, and a launch whose stack ASLR happened to place over the same
 // range died in JSC's stack sanitizer. Forced deterministically: no ASLR for both processes, and a build environment
 // large enough that the builder's environ sits well below where the restored process's frames end up.
+snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
+  using dir = tempDir("bun-snapshot-sab", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "sab-fixture.js");
+  const plainRun = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, PLAIN: "1" }, stdout: "pipe", stderr: "pipe" });
+  const [plainOut] = await Promise.all([plainRun.stdout.text(), plainRun.stderr.text(), plainRun.exited]);
+  expect(plainOut).toContain("aliased=true sameBuffer=true atomicsAdd=7->12");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(out).toBe(plainOut);
+  expect(code).toBe(0);
+});
+
 snapshotTest("Intl objects created before the freeze work after restore and agree with a plain run", async () => {
   using dir = tempDir("bun-snapshot-intl", {});
   const img = join(String(dir), "s.snapshot");

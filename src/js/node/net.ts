@@ -3563,8 +3563,7 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
-      // A shared cluster handle is released when the listener stops, as node's handle.close() does,
-      // not once connections drain: a close()+listen() on the same address must not race the primary.
+      // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
       if (clusterHandle) {
         this[kClusterHandle] = null;

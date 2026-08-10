@@ -331,7 +331,7 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
-      ...(cfg.windows ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
+      ...(cfg.windows || cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }), // as every other mimalloc routing: not under ASAN
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",

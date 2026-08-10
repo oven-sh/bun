@@ -1216,10 +1216,4 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
     return pe_section_data;
 }
 
-// No snapshots on Windows: the allocator there is not built with the hook, so this only keeps the symbol defined for the Rust side.
-extern "C" int bun_is_compiled_executable(void)
-{
-    return 0;
-}
-
 #endif

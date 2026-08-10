@@ -97,6 +97,22 @@ overlapTest(
   },
 );
 
+snapshotTest("an array from the snapshot can grow past its capacity after restore", async () => {
+  using dir = tempDir("bun-snapshot-butterfly", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "butterfly-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(out).toContain("[js] grown-after-restore ok");
+  expect(code).toBe(0);
+});
+
 snapshotTest("TLS verification derived from the builder's environment is re-derived at restore", async () => {
   using dir = tempDir("bun-snapshot-tls-reject", { "cert.pem": tls.cert, "key.pem": tls.key });
   const img = join(String(dir), "s.snapshot");

@@ -78,9 +78,7 @@ for (const abs of cxxSources) {
   scanned++;
   const content = await file(abs).text();
   // Blank comments out instead of deleting them so reported line numbers stay accurate.
-  const stripped = content
-    .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, " "))
-    .replace(/\/\/[^\n]*/g, "");
+  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, " ")).replace(/\/\/[^\n]*/g, "");
   for (const m of stripped.matchAll(PUT_CALL)) {
     const argText = m[1];
     for (const { name, re, hint } of BANNED) {

@@ -14,8 +14,8 @@ use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
 use crate::tarball_stream::TarballStream;
 use bun_install::{
-    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
-    Repository,
+    Dependency, DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID,
+    PackageManifestError, Repository, Resolution,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
@@ -792,6 +792,73 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
+                    // Private repositories will 404 on the tarball fetch. Match npm
+                    // and fallback to invoke a git clone which uses the user's stored
+                    // credentials.
+                    // We keep the Github resolution (rather than swap to Git) and just
+                    // swap the task for a clone task. PackageManager's Github resolution
+                    // path has a corresponding branch for handling clones.
+                    if extract.resolution.tag == bun_install::ResolutionTag::Github {
+                        let github_res: Resolution = extract.resolution;
+                        let github_repo: Repository = *github_res.github();
+                        let url = alloc_github_git_clone_url(manager, &github_repo);
+
+                        // `enqueue_git_clone` reads the clone URL from
+                        // `Repository.repo`; append the github git URL to the
+                        // lockfile string buffer so the handle is valid. This repo
+                        // is only used for the clone URL — the stored resolution
+                        // stays `github_res`.
+                        let url_repo = {
+                            let mut builder = manager.lockfile.string_builder();
+                            builder.count(&url);
+                            builder.allocate()?;
+                            Repository {
+                                repo: builder.append::<bun_semver::String>(&url),
+                                ..Default::default()
+                            }
+                        };
+
+                        let clone_id = Task::Id::for_git_clone(&url);
+
+                        // Move the failed tarball task's waiters onto the clone
+                        // task so they resolve when the clone→checkout completes.
+                        {
+                            let waiters =
+                                manager.task_queue.remove(&task.task_id).unwrap_or_default();
+                            let entry = manager
+                                .task_queue
+                                .get_or_put_context(clone_id, ())
+                                .expect("unreachable");
+                            if entry.found_existing {
+                                entry.value_ptr.extend(waiters);
+                            } else {
+                                *entry.value_ptr = waiters;
+                            }
+                        }
+
+                        if !manager.has_created_network_task(clone_id, is_required) {
+                            // Clone the dependency (and copy the name) out before
+                            // the `&mut manager` enqueue borrow — `Dependency` is
+                            // `Clone` (its `Version` holds a union, so not `Copy`).
+                            let dependency: Dependency = manager.lockfile.buffers.dependencies
+                                [extract.dependency_id as usize]
+                                .clone();
+                            let name = extract.name.slice().to_vec();
+                            let task_ptr = enqueue::enqueue_git_clone(
+                                manager,
+                                clone_id,
+                                &name,
+                                &url_repo,
+                                extract.dependency_id,
+                                &dependency,
+                                &github_res,
+                                None,
+                            );
+                            manager.task_batch.push(ThreadPoolBatch::from(task_ptr));
+                        }
+                        continue;
+                    }
+
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         let err = match response.status_code {
                             400 => crate::Error::TarballHTTP400,
@@ -1306,7 +1373,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // SAFETY: `clone.res.tag == Git` — git-clone tasks are
                             // only enqueued for git resolutions; `value.git` is
                             // the active union arm.
-                            let resolved = &clone.res.git().resolved;
+                            let resolved = &clone.res.repository().resolved;
                             let checkout_id =
                                 Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
                             C::on_package_download_error_store(
@@ -1349,7 +1416,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     };
                     // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
-                    let git = *clone.res.git();
+                    let git = *clone.res.repository();
                     // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                     // and is not reallocated while resolve tasks are draining.
                     let string_buf = unsafe {
@@ -1428,7 +1495,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
-                        let repo = &resolution.git().repo;
+                        let repo = &resolution.repository().repo;
                         C::on_package_download_error_store(
                             extract_ctx,
                             task.id,
@@ -1515,7 +1582,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     // SAFETY: `pkg.resolution.value` is an untagged union
                                     // discriminated by `pkg.resolution.tag`;
                                     // `Tag::Git` was checked when the resolution was set.
-                                    repo.resolved = pkg.resolution.git().resolved;
+                                    repo.resolved = pkg.resolution.repository().resolved;
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         &dep,
@@ -1710,6 +1777,32 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
         // repo might be empty if dep is https://github.com/... style
         if !repo.is_empty() { "/" } else { "" },
         bstr::BStr::new(committish),
+    )
+    .expect("unreachable");
+    out
+}
+
+pub fn alloc_github_git_clone_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
+    let mut github_server_url: &[u8] = b"https://github.com";
+    if let Some(url) = this.env().get(b"GITHUB_SERVER_URL") {
+        if !url.is_empty() {
+            github_server_url = url;
+        }
+    }
+
+    let owner = this.lockfile.str(&repository.owner);
+    // Unlike `alloc_github_url`, we don't need to guard against an empty repo, since we validate
+    // against that upstream in `hosted_git_info`. Honestly unclear if  `alloc_github_url` needs it
+    // either. The change history that introduced the guard is about the trailing slash issue.
+    let repo = this.lockfile.str(&repository.repo);
+
+    let mut out = Vec::new();
+    write!(
+        &mut out,
+        "{}/{}/{}.git",
+        bstr::BStr::new(strings::without_trailing_slash(github_server_url)),
+        bstr::BStr::new(owner),
+        bstr::BStr::new(repo),
     )
     .expect("unreachable");
     out

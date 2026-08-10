@@ -97,6 +97,29 @@ overlapTest(
   },
 );
 
+const memoryTest = test.skipIf(!hasSnapshots || !isLinux); // RssAnon is the private-memory figure; macOS is covered by the __DATA bound above
+memoryTest("a restored process holds much less private memory than one that builds the same state itself", async () => {
+  using dir = tempDir("bun-snapshot-private-memory", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "private-memory-fixture.js");
+  const anon = (out: string) => Number(/rss-anon-kb=(\d+)/.exec(out)![1]);
+  const plainRun = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, PLAIN: "1" }, stdout: "pipe", stderr: "pipe" });
+  const [plainOut] = await Promise.all([plainRun.stdout.text(), plainRun.stderr.text(), plainRun.exited]);
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img }, stdout: "pipe", stderr: "pipe" });
+  const [restoredOut, err] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(restoredOut).toContain("items=60000");
+  const plain = anon(plainOut), restored = anon(restoredOut);
+  // The graph is tens of MB private in the plain run and lives in clean snapshot pages in the restored one; the ratio has a
+  // wide margin (measured ~2x on the real programs in the PR description), so this fails only if the feature stops working.
+  expect(restored, `plain ${plain} KB vs restored ${restored} KB`).toBeLessThan(plain * 0.75);
+});
+
 snapshotTest("process.execPath is where this launch's executable is, even when the snapshot was built at another path", async () => {
   // The same executable at a second path (a hard link, so it is byte-identical and the snapshot accepts it): build with one, restore with the other.
   using dir = tempDir("bun-snapshot-execpath", {});

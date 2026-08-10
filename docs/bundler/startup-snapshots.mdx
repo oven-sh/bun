@@ -68,6 +68,22 @@ Bun.startupSnapshot.take({
 
 `process.on("restore")` is available in both modes. Its listeners run before anything else in a restored launch, so state that must be recomputed per machine can be recomputed there; `main()` functions run after them.
 
+### Servers
+
+`Bun.serve()` (and `node:http`, which listens through it) needs no adjustment. A server created before the snapshot does not bind on the build machine — a socket opened there could not exist in a restored launch anyway. Instead it keeps its options, and every restored launch binds it again, in creation order, before `"restore"` listeners run; a launch whose bind fails exits reporting the error, just as the program would have at startup. Calling `server.stop()` before the snapshot is taken means no launch binds it.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { app } from "./app"; // the expensive part ends up in the snapshot
+
+const server = Bun.serve({ port: 3000, fetch: app.fetch });
+
+process.on("restore", () => {
+  console.log(`listening on ${server.url}`); // bound again by the time this runs
+});
+```
+
+Because the server binds per launch, `server.port` and `server.url` have no value while the snapshot is being built: `port` is `undefined` and `url` throws. Code that needs them at startup belongs in a `"restore"` listener or `Bun.startupSnapshot.main()`, which run in every launch that has them.
+
 ## What a restored launch gets from its environment
 
 The runtime refreshes what it owns before your code runs again: `process.argv`, `process.env`, the working directory, `process.pid`, the clocks (`performance.now()`, `process.uptime()`), the time zone, every source of randomness, timers, the DNS cache, its own threads, standard input and output, which are the launcher's, the IPC channel to a parent that spawned the launch with one (`process.send`), and the defaults it derives from the environment, such as the default S3 client and TLS verification. Files and sockets that were open when the snapshot was taken are gone; the program receives hangups for them after `"restore"`.
@@ -84,7 +100,7 @@ When the snapshot is written, the build prints which environment variables were 
 
 ## What the build may do
 
-While the snapshot is being taken, operations whose result would be frozen into every launch are refused: `fetch()` and other network use, `node:fs`, subprocesses, DNS and sockets throw an error saying so. If the program fails because of that, or never becomes quiet, no snapshot is taken and the build fails, saying what happened; the executable it built is left in place, so it can still be used or the step re-run with different settings.
+While the snapshot is being taken, operations whose result would be frozen into every launch are refused: `fetch()` and other network use, `node:fs`, subprocesses, DNS and sockets throw an error saying so. (`Bun.serve()` is not one of them — it defers its bind to the restored launch, as described above.) If the program fails because of that, or never becomes quiet, no snapshot is taken and the build fails, saying what happened; the executable it built is left in place, so it can still be used or the step re-run with different settings.
 
 Programs that legitimately read their own files or run helpers while starting up can be allowed to:
 

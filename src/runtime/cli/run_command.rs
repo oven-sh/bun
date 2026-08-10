@@ -1682,6 +1682,12 @@ fn record_passthrough_offset(passthrough: &[Box<[u8]>]) {
 
 /// Under BUN_STARTUP_SNAPSHOT_IO=local, everything the app touched on this machine before the freeze — the results are in the snapshot.
 fn print_local_io_audit() {
+    let servers = crate::server::pending_snapshot_server_count();
+    if servers > 0 {
+        bun_core::Output::print_errorln(format_args!(
+            "snapshot: {servers} server(s) were created before the freeze; every launch binds them at restore, before 'restore' listeners run"
+        ));
+    }
     let stdio = bun_core::startup_snapshot::take_stdio_notes();
     if !stdio.is_empty() {
         bun_core::Output::print_errorln(format_args!(

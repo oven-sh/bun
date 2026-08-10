@@ -652,7 +652,7 @@ snapshotTest("a snapshot is refused while a worker thread is running, and says s
   expect(code).toBe(70); // the runtime's "did not become quiet" exit
 });
 
-snapshotTest("a strict build refuses servers and UDP sockets, not just listen/connect", async () => {
+snapshotTest("a strict build refuses UDP sockets and fs, while Bun.serve defers its bind", async () => {
   using dir = tempDir("bun-snapshot-strict-servers", {});
   await using p = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "strict-servers-fixture.js")],
@@ -665,7 +665,7 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
     stderr: "pipe",
   });
   const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-  expect(out).toContain("[js] serve refused");
+  expect(out).toContain("[js] serve created"); // deferred to bind at restore, not refused
   expect(out).toContain("[js] udp refused");
   for (const op of [
     "readdir",
@@ -689,6 +689,134 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
   ])
     expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
   for (const op of ["stdout-write", "stdin-access"]) expect(out).toContain(`[js] ${op} created`); // stdio is exempt from the gate
+});
+
+snapshotTest("Bun.serve() before the snapshot binds again at restore, before 'restore' listeners run", async () => {
+  using dir = tempDir("bun-snapshot-serve-pending", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "serve-pending-fixture.js");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const buildOut = build.stdout.toString();
+  expect(buildOut).toContain("[js] building port: undefined"); // only known per launch
+  expect(buildOut).toContain("[js] building url: throws");
+  expect(buildOut).toContain("[js] building publish: 0"); // nothing bound, nothing subscribed
+  expect(buildOut).toContain("[js] building subscriberCount: 0");
+  expect(build.stderr.toString()).toContain("server(s) were created before the freeze");
+  expect(build.stderr.toString()).toContain("[snapshot] wrote");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("[snapshot] restored");
+  expect(stdout).toContain("[js] restore port type: number"); // already bound when the listener ran
+  expect(stdout).toContain("[js] restore url: http:");
+  expect(stdout).toContain("[js] fetch -> 200 reloaded handler /abc"); // reload() during the build carried into the restored bind
+  expect(exitCode).toBe(0);
+});
+
+snapshotTest("server.stop() before the snapshot drops the pending bind", async () => {
+  using dir = tempDir("bun-snapshot-serve-stop", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "serve-pending-stop-fixture.js");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(build.stderr.toString()).toContain("[snapshot] wrote");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr.slice(-600)).toContain("[js] kept ->"); // wait for the fetch line before the others
+  expect(stdout).toContain("[js] kept -> kept");
+  expect(stdout).toContain("[js] dropped port: 0"); // never bound in the restored launch
+  expect(exitCode).toBe(0);
+});
+
+snapshotTest("a bind that fails at restore ends the launch like a startup throw", async () => {
+  using dir = tempDir("bun-snapshot-serve-unix", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "serve-pending-unix-fixture.js");
+  const unixPath = join(String(dir), "s.sock");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, UNIX_PATH: unixPath },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(build.stderr.toString()).toContain("[snapshot] wrote"); // two pending servers on one path: fine until a launch binds
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/EADDRINUSE|Failed to listen on unix socket/); // the second server's path is taken by the first
+  expect(stdout).not.toContain("[js] restore ran"); // the launch ended before 'restore' listeners
+  expect(exitCode).not.toBe(0);
+});
+
+snapshotTest("a node:http server created before the snapshot listens again at restore", async () => {
+  using dir = tempDir("bun-snapshot-serve-node", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "serve-pending-node-http-fixture.js");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(build.stdout.toString()).toContain("[js] building address: null"); // not bound while building
+  expect(build.stderr.toString()).toContain("[snapshot] wrote");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr.slice(-600)).toContain("[js] restore address port type: number");
+  expect(stdout).toContain("[js] node fetch -> node ok");
+  expect(exitCode).toBe(0);
+});
+
+snapshotTest("auto mode: Bun.serve() at module scope snapshots with no code changes", async () => {
+  using dir = tempDir("bun-snapshot-serve-auto", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "serve-pending-auto-fixture.js");
+  const build = Bun.spawnSync({
+    cmd: [bunExe(), fixture],
+    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_AUTO: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(build.stdout.toString()).toContain("[js] module evaluated");
+  // the pending server holds no event-loop ref, so startup drains and auto mode takes the snapshot
+  expect(build.stderr.toString()).toContain("[snapshot] wrote");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr.slice(-600)).toContain("[js] auto serve -> auto server ok");
+  expect(exitCode).toBe(0);
 });
 
 snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived for a launch on a terminal", async () => {

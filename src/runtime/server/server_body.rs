@@ -1468,7 +1468,9 @@ where
 
         let topic = topic_value.to_slice(global)?;
 
-        if topic.slice().is_empty() {
+        if topic.slice().is_empty() || self.app.is_none() {
+            // `app` is `None` only for a snapshot-pending server, which cannot
+            // have subscribers: nothing is bound yet.
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1662,7 +1664,12 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        let app = self.app.unwrap().cast::<c_void>();
+        // `None` only for a snapshot-pending server: nothing is bound, so
+        // there is no subscriber to deliver to.
+        let Some(app) = self.app else {
+            return Ok(JSValue::js_number(0.0));
+        };
+        let app = app.cast::<c_void>();
 
         if topic.len == 0 {
             httplog!("publish() topic invalid");
@@ -2254,12 +2261,17 @@ where
     ) {
         httplog!("onReload");
 
-        // SAFETY: `on_reload` is only reachable while the server is running
-        // (`self.app` set in `listen()`).
-        self.app_mut().clear_routes();
-        if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app {
-                bun_opaque::opaque_deref_mut(h3a).clear_routes();
+        // `app` is `None` only for a snapshot-pending server (reload() during
+        // a snapshot build): adopt the new config below as usual, and skip the
+        // route (re-)registration — the restore-time bind runs `set_routes()`
+        // against whatever the config holds by then.
+        let has_app = self.app.is_some();
+        if has_app {
+            self.app_mut().clear_routes();
+            if Self::HAS_H3 {
+                if let Some(h3a) = self.h3_app {
+                    bun_opaque::opaque_deref_mut(h3a).clear_routes();
+                }
             }
         }
 
@@ -2343,9 +2355,11 @@ where
             self.user_routes.clear();
         }
 
-        let route_list_value = self.set_routes();
-        if new_config.had_routes_object {
-            Self::js_gc_route_list_set(server_js, global, route_list_value);
+        if has_app {
+            let route_list_value = self.set_routes();
+            if new_config.had_routes_object {
+                Self::js_gc_route_list_set(server_js, global, route_list_value);
+            }
         }
 
         if self.inspector_server_id.get() != 0 {
@@ -2627,7 +2641,10 @@ where
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
         // with a fresh `&mut self` under the outer frame's borrow.
+        // `SNAPSHOT_PENDING`: no listener exists, but a graceful stop() must
+        // still run so the pending bind-at-restore entry is dropped.
         if self.has_listener()
+            || self.flags.contains(ServerFlags::SNAPSHOT_PENDING)
             || (abrupt
                 && !self.flags.contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
@@ -2649,6 +2666,12 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // Building a snapshot: the port is only known once a launch binds.
+            // `undefined` rather than a throw so code that reads it
+            // incidentally (node:http's listen path does) keeps working.
+            return JSValue::UNDEFINED;
+        }
         let config_port = match &self.config.address {
             server_config::Address::Unix(_) => return JSValue::UNDEFINED,
             server_config::Address::Tcp { port, .. } => *port,
@@ -2744,6 +2767,13 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // A URL built now would freeze this build's address into every
+            // launch; throw so the read moves to where the server is bound.
+            return Err(global.throw(format_args!(
+                "server.url is not available while building a snapshot: the server binds again in each restored launch, so the address is only known then. Read it after restore (process.on('restore') or Bun.startupSnapshot.main())"
+            )));
+        }
         let mut url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
@@ -2830,7 +2860,11 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener()
+        // A snapshot-pending server has no listener yet but is not "closed":
+        // it binds when a launch restores. Hand out the lazy promise so e.g.
+        // node:http's close tracking does not see an already-settled one.
+        if !self.flags.contains(ServerFlags::SNAPSHOT_PENDING)
+            && !self.has_listener()
             && self.pending_requests.get() == 0
             && !self.has_active_connections()
             && !self.has_active_web_sockets()

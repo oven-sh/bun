@@ -1,6 +1,8 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
 #endif
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include "root.h"
 #include "StartupSnapshot.h"
 #include "JSEnvironmentVariableMap.h"
@@ -100,8 +102,6 @@
 #include <dlfcn.h>
 #include <hwy/targets.h>
 #include "wtf/SIMDUTF.h"
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses (popped at the end of the file)
 #include <signal.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -1998,6 +1998,6 @@ extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM*, const char*)
     exit(1);
 }
 
-#pragma clang diagnostic pop
 
 #endif // BUN_STARTUP_SNAPSHOT_SUPPORTED
+#pragma clang diagnostic pop

@@ -13,7 +13,6 @@
 #include "ZigSourceProvider.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
-#include "IsolatedModuleCache.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 // ref: JSModuleLoader.cpp
@@ -170,20 +169,16 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
-    if (provider->m_resolvedSource.module_info == nullptr) {
-        dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
-    }
+    // module_info stays on the provider until ~SourceProvider: JSC analyzes the
+    // same JSSourceCode more than once (require(esm) sync replay re-issues
+    // makeModule on an already-fetched entry; --isolate reuses providers across
+    // globals), and every call must produce the same record.
+    ASSERT_WITH_MESSAGE(provider->m_resolvedSource.module_info, "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().data());
+    if (provider->m_resolvedSource.module_info == nullptr) [[unlikely]]
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise));
 
     auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
-    // Under --isolate the same SourceProvider is reused across globals via the
-    // IsolatedModuleCache, so module_info must remain alive on the provider;
-    // ~SourceProvider frees it. Otherwise, free now.
-    if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(moduleInfo);
-        provider->m_resolvedSource.module_info = nullptr;
-    }
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }

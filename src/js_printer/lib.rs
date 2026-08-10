@@ -620,6 +620,10 @@ pub mod analyze_transpiled_module {
                     self.record_kinds[idx] = RecordKind::ImportInfoSingleTypeScript;
                 }
             }
+            // Build-time indexes only; the runtime keeps this struct alive for the
+            // SourceProvider's lifetime, so drop them now.
+            self.strings_map = HashMap::default();
+            self.exported_names = HashMap::default();
             self.finalized = true;
             Ok(())
         }

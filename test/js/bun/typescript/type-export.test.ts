@@ -579,3 +579,31 @@ test.concurrent("ts barrel re-exporting a missing value name links without error
     expect(named.exitCode).toBe(1);
   }
 });
+
+// require(esm) replays part of the load synchronously and JSC hands the same
+// fetched source to the module analyzer a second time. The prebuilt module
+// record attached to runtime ESM must survive that second call; when it was
+// freed after the first one, the shared dependency `a` failed with
+// "module_info is null" for the whole graph.
+describe.each([
+  { name: "js", esm: "mjs", cjs: "cjs" },
+  { name: "ts", esm: "ts", cjs: "cts" },
+])("cjs entry requiring an esm graph with a shared dep ($name)", ({ esm, cjs }) => {
+  test.concurrent("loads and evaluates the shared dep once", async () => {
+    await using dir = tempDir("require-esm-diamond", {
+      [`entry.${cjs}`]: `require("./app.${esm}");`,
+      [`app.${esm}`]: `
+        import * as P from "./a.${esm}";
+        import Q from "./mid.${cjs}";
+        console.log(JSON.stringify({ P: P.value, Q, aEval: globalThis.aEval }));
+      `,
+      [`mid.${cjs}`]: `const y = require("./y.${esm}"); module.exports = { mid: y.y };`,
+      [`y.${esm}`]: `import { value } from "./a.${esm}"; export const y = "y:" + value;`,
+      [`a.${esm}`]: `export const value = "a"; globalThis.aEval = (globalThis.aEval ?? 0) + 1;`,
+    });
+    const result = await run([bunExe(), `entry.${cjs}`], String(dir));
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout.trim())).toEqual({ P: "a", Q: { mid: "y:a" }, aEval: 1 });
+    expect(result.exitCode).toBe(0);
+  });
+});

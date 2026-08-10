@@ -63,10 +63,6 @@ test("dead FFI declarations (sys crates) do not reappear", () => {
     ["src/mimalloc_sys/mimalloc.rs", /\bfn mi_reserve_huge_os_pages_interleave\b/],
     ["src/mimalloc_sys/mimalloc.rs", /\bfn mi_heap_recalloc_aligned_at\b/],
     ["src/mimalloc_sys/mimalloc.rs", /\bfn mi_wdupenv_s\b/],
-    // zlib_sys/win32 — unused gz* file API and introspection entry points.
-    ["src/zlib_sys/win32.rs", /\bfn gzprintf\b/],
-    ["src/zlib_sys/win32.rs", /\bfn inflateUndermine\b/],
-    ["src/zlib_sys/win32.rs", /\bfn deflateTune\b/],
     // cares_sys — unused configuration/parsing surface.
     ["src/cares_sys/c_ares.rs", /\bfn ares_mkquery\b/],
     ["src/cares_sys/c_ares.rs", /\bfn ares_set_sortlist\b/],

@@ -4801,13 +4801,9 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
-    /// Whether to attach `ModuleInfo` to runtime-transpiled ESM so JSC builds
-    /// the `JSModuleRecord` from Bun's printer output instead of re-parsing.
-    /// The record carries `m_isTypeScript` / `SingleTypeScript` entries that
-    /// let a TypeScript re-export of a type-only name resolve (#7384).
-    ///
-    /// Process-wide (no VM state) so the transpiler cache can hash the same
-    /// answer into its key: entries written with it off carry no esm_record.
+    /// Attach `ModuleInfo` to runtime-transpiled ESM so JSC builds the module
+    /// record from Bun's output (keeps TypeScript type-only re-exports linkable,
+    /// #7384). Process-wide so `RuntimeTranspilerCache` can hash it into its key.
     pub fn use_module_info_for_esm() -> bool {
         !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
             .unwrap_or(false)

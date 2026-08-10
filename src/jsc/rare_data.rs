@@ -287,7 +287,6 @@ pub struct RareData {
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
     spawn_sync_event_loop_: Option<Box<SpawnSyncEventLoop>>,
-
 }
 
 pub(crate) type FilePollStore = Async::file_poll::Store;

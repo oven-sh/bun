@@ -146,6 +146,36 @@ describe("path long inputs", () => {
   });
 });
 
+// `String` objects are not strings for validateString().
+test("String objects are rejected like any other non-string", () => {
+  class MyString extends String {}
+  for (const ns of [path.posix, path.win32]) {
+    for (const value of [new String("/a/b.js"), new MyString("/a/b.js")]) {
+      for (const fn of [
+        "resolve",
+        "normalize",
+        "isAbsolute",
+        "join",
+        "relative",
+        "dirname",
+        "basename",
+        "extname",
+        "parse",
+      ]) {
+        expect(() => ns[fn](value, "x"), fn).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining("Received an instance of "),
+          }),
+        );
+      }
+      expect(() => ns.basename("x", value)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      // Non-strings pass through toNamespacedPath() untouched.
+      expect(ns.toNamespacedPath(value)).toBe(value);
+    }
+  }
+});
+
 describe("path module shape", () => {
   test("matches Node.js", () => {
     const keys = [
@@ -191,7 +221,7 @@ describe("path module shape", () => {
 
 // process.chdir() on the main thread must invalidate a Worker's cached cwd
 // (Node's does_own_process_state.js / worker_thread.js `cwdCounter`).
-test("path.resolve() and process.cwd() in a Worker follow the main thread's process.chdir()", async () => {
+test.concurrent("path.resolve() and process.cwd() in a Worker follow the main thread's process.chdir()", async () => {
   using dir = tempDir("path-worker-cwd", { "sub/.keep": "" });
   await using proc = Bun.spawn({
     cmd: [
@@ -219,11 +249,10 @@ w.postMessage(0);`,
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const lines = stdout.trim().split(/\r?\n/);
   expect(lines[0].split(" ")[0]).toBe(lines[0].split(" ")[1]); // before: resolve agrees with cwd
-  expect(lines[1]).toBe("sub sub");
-  expect(exitCode).toBe(0);
+  expect({ after: lines[1], stderr, exitCode }).toEqual({ after: "sub sub", stderr: "", exitCode: 0 });
 });

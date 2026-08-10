@@ -31,7 +31,6 @@
 
 #include "BunString.h"
 #include "headers.h"
-#include "Path.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Synchronousness.h"

@@ -17,7 +17,6 @@
 #include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
-#include "Path.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"

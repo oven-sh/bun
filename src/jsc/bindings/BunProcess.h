@@ -32,7 +32,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     // Value of the process-wide chdir counter when m_cachedCwd was filled, so a chdir on any
     // thread invalidates every thread's cache (Node's worker `cwdCounter`).
-    unsigned m_cachedCwdGeneration { 0 };
+    uint32_t m_cachedCwdGeneration { 0 };
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
 
@@ -84,10 +84,9 @@ public:
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
-    // process.cwd(): the cached string, re-queried after any thread's process.chdir().
-    // Returns nullptr with an exception pending if the working directory cannot be read.
+    // process.cwd(): the cached string, re-queried after any thread changes the working
+    // directory. Returns nullptr with an exception pending if it cannot be read.
     JSString* getCachedCwd(JSGlobalObject*);
-    static void invalidateCachedCwd();
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);

@@ -4,7 +4,8 @@
 // process.cwd().
 //
 // The corpus lives in node-path-parity.json as [namespace, fn, args, expected]
-// where `expected` is a string/boolean, a parse() object, or { error: { code, message } }.
+// where `expected` is a string/boolean, a parse() object, or { error: { code, message } };
+// regenerate it with `node node-path-parity.gen.mjs > node-path-parity.json`.
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import fixture from "./node-path-parity.json" with { type: "json" };

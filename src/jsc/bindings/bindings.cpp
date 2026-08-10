@@ -3262,6 +3262,49 @@ void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, 
     // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
+// JSString::value() with the rope-resolution exception surfaced. On success `*out` views the
+// string's characters, which stay valid for as long as the JSString is reachable.
+extern "C" bool JSC__JSString__view(JSC::JSString* string, JSC::JSGlobalObject* globalObject, ZigString* out)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    *out = Zig::toZigString(value.data.impl());
+    return true;
+}
+
+// StringPrototypeSlice on a string that has already been resolved (JSString::value()/view()):
+// a substring cell sharing the original's buffer.
+extern "C" JSC::EncodedJSValue JSC__JSString__substring(JSC::JSString* string, JSC::JSGlobalObject* globalObject, uint32_t offset, uint32_t length)
+{
+    return JSC::JSValue::encode(JSC::jsSubstringOfResolved(globalObject->vm(), string, offset, length));
+}
+
+extern "C++" {
+template<typename CharacterType>
+static JSC::EncodedJSValue toJSStringCopyingSpan(JSC::VM& vm, std::span<const CharacterType> characters)
+{
+    if (characters.empty())
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    if (characters.size() == 1 && characters[0] <= JSC::maxSingleCharacterString)
+        return JSC::JSValue::encode(vm.smallStrings.singleCharacterString(characters[0]));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(WTF::StringImpl::create(characters))));
+}
+}
+
+// A new JSString with a copy of the given Latin-1 characters. `length <= String::MaxLength`.
+extern "C" JSC::EncodedJSValue JSC__JSValue__fromLatin1(JSC::JSGlobalObject* globalObject, const Latin1Character* characters, size_t length)
+{
+    return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
+}
+
+// A new JSString with a copy of the given UTF-16 code units. `length <= String::MaxLength`.
+extern "C" JSC::EncodedJSValue JSC__JSValue__fromUTF16(JSC::JSGlobalObject* globalObject, const char16_t* characters, size_t length)
+{
+    return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
+}
+
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 

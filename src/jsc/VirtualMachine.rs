@@ -4935,6 +4935,9 @@ impl VirtualMachine {
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
         bun_sys::chdir(to)?;
+        // The working directory is process-wide: every thread's cached `process.cwd()` string
+        // is now stale, whether or not the getcwd() below succeeds.
+        CWD_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let mut buf = bun_paths::PathBuffer::uninit();
         let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
@@ -6904,4 +6907,14 @@ pub fn plugin_runner_on_resolve_jsc(
         }
     };
     Ok(Some(ErrorableString::ok(out)))
+}
+
+/// Bumped by [`VirtualMachine::set_process_cwd`] on any thread. Each `Bun::Process` tags its
+/// cached `process.cwd()` string with the value it saw, so a chdir anywhere invalidates every
+/// thread's cache (Node's worker `cwdCounter`). Starts at 1 so a zero-initialized tag is stale.
+static CWD_GENERATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Process__cwdGeneration() -> u32 {
+    CWD_GENERATION.load(core::sync::atomic::Ordering::Relaxed)
 }

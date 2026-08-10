@@ -1031,9 +1031,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
-    // the next process.cwd() re-query the OS - do not re-populate it here.
-    Process::invalidateCachedCwd();
+    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets the next
+    // process.cwd() re-query the OS; Bun__Process__setCwd bumped the cache generation.
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -4586,13 +4585,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
-// Bumped by process.chdir() on any thread; starts at 1 so a zero-initialized cache is stale.
-static std::atomic<unsigned> s_cwdGeneration { 1 };
-
-void Process::invalidateCachedCwd()
-{
-    s_cwdGeneration.fetch_add(1, std::memory_order_relaxed);
-}
+// Bumped whenever any thread changes the working directory (VirtualMachine::set_process_cwd);
+// never 0, so a zero-initialized cache is stale.
+extern "C" uint32_t Bun__Process__cwdGeneration();
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/main/worker_thread.js#L114-L129
@@ -4601,7 +4596,7 @@ JSString* Process::getCachedCwd(JSC::JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    unsigned generation = s_cwdGeneration.load(std::memory_order_relaxed);
+    uint32_t generation = Bun__Process__cwdGeneration();
     if (auto* cached = m_cachedCwd.get(); cached && m_cachedCwdGeneration == generation) [[likely]]
         return cached;
 
@@ -4617,6 +4612,12 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     JSString* cwd = defaultGlobalObject(globalObject)->processObject()->getCachedCwd(globalObject);
     return cwd ? JSValue(cwd) : JSValue();
+}
+
+// process.cwd() for native callers: the cached JSString, or {} with an exception pending.
+extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(getCachedCwd(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

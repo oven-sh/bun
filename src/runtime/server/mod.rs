@@ -325,6 +325,14 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
     pub(crate) on_connection: JSValue,
 
+    /// uws-app parser flags (`set_flags` arguments) that arrived while a
+    /// snapshot-pending server had no app — node:http pushes them right after
+    /// `Bun.serve()` returns; applied by [`Self::bind_snapshot_pending`].
+    pub(crate) deferred_app_flags: Option<(bool, bool, u8, bool)>,
+
+    /// Same deferral for `set_max_http_header_size`.
+    pub(crate) deferred_max_http_header_size: Option<u64>,
+
     pub(crate) inspector_server_id: jsc::DebuggerId,
 }
 
@@ -1692,6 +1700,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 lenient_http_flags,
                 http_allow_half_open,
             );
+        } else if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // No app to accept them yet; the restore-time bind applies them.
+            self.deferred_app_flags = Some((
+                require_host_header,
+                use_strict_method_validation,
+                lenient_http_flags,
+                http_allow_half_open,
+            ));
         }
     }
 
@@ -1699,6 +1715,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
+        } else if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // No app to accept it yet; the restore-time bind applies it.
+            self.deferred_max_http_header_size = Some(max_header_size);
         }
     }
 
@@ -2253,6 +2272,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             user_routes: Vec::new(),
             on_clienterror: JSValue::ZERO,
             on_connection: JSValue::ZERO,
+            deferred_app_flags: None,
+            deferred_max_http_header_size: None,
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 
@@ -2856,13 +2877,40 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if global.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
-        // SAFETY: `listen()` succeeded, so `this` was not freed; no other
-        // borrow is live.
-        let this_ref = unsafe { &mut *this };
-        this_ref.flags.remove(ServerFlags::SNAPSHOT_PENDING);
+        let (wrapper, needs_client_error, needs_connection) = {
+            // SAFETY: `listen()` succeeded, so `this` was not freed; the
+            // borrow ends with this block (the register_* calls below
+            // re-derive from the raw pointer).
+            let this_ref = unsafe { &mut *this };
+            this_ref.flags.remove(ServerFlags::SNAPSHOT_PENDING);
+            // node:http pushed its custom options right after `Bun.serve()`
+            // returned, when there was no app to accept them; apply what the
+            // server held onto.
+            if let Some((require_host, strict_method, lenient, half_open)) =
+                this_ref.deferred_app_flags.take()
+            {
+                this_ref.set_flags(require_host, strict_method, lenient, half_open);
+            }
+            if let Some(max) = this_ref.deferred_max_http_header_size.take() {
+                this_ref.set_max_http_header_size(max);
+            }
+            (
+                this_ref.js_value.try_get(),
+                !this_ref.on_clienterror.is_empty(),
+                !this_ref.on_connection.is_empty(),
+            )
+        };
+        // The callbacks were stored (and GC-rooted) by the setters during the
+        // build; only the uws registration was waiting for the app.
+        if needs_client_error {
+            Self::register_client_error_thunk(this);
+        }
+        if needs_connection {
+            Self::register_connection_thunk(this);
+        }
         // The wrapper was created when the build run called `Bun.serve()` and
         // `js_value` has kept it alive since.
-        if let Some(obj) = this_ref.js_value.try_get() {
+        if let Some(obj) = wrapper {
             if route_list != JSValue::ZERO {
                 // Root the fresh RouteList in the wrapper's cached-value slot
                 // exactly as `serve_with!` does.

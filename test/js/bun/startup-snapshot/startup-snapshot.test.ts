@@ -791,7 +791,10 @@ snapshotTest("a node:http server created before the snapshot listens again at re
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout, stderr.slice(-600)).toContain("[js] restore address port type: number");
-  expect(stdout).toContain("[js] node fetch -> node ok");
+  expect(stdout).toContain("[js] node fetch -> node ok connection seen: true"); // connection filter re-registered at bind
+  expect(stdout).toContain("[js] big header rejected"); // maxHeaderSize applied to the restored app
+  expect(stdout).toContain("[js] clientError: HPE_HEADER_OVERFLOW"); // clientError callback re-registered at bind
+  expect(stdout).toContain("[js] clientError: HPE_INVALID_CONSTANT");
   expect(exitCode).toBe(0);
 });
 

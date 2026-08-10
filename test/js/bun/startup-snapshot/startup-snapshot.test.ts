@@ -235,7 +235,11 @@ snapshotTest("a snapshot is refused while a worker thread is running, and says s
   using dir = tempDir("bun-snapshot-worker", {});
   await using p = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "worker-fixture.js")],
-    env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"), BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT: "1" },
+    env: {
+      ...buildEnv,
+      BUN_STARTUP_SNAPSHOT_OUT: join(String(dir), "s.snapshot"),
+      BUN_STARTUP_SNAPSHOT_QUIET_TIMEOUT: "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

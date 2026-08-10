@@ -600,9 +600,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 /// when called off the main thread.
 pub(crate) fn can_start_at_runtime() -> bool {
     let this: &VirtualMachine = VirtualMachine::get();
-    this.is_main_thread
-        && this.debugger.is_none()
-        && !HAS_CREATED_DEBUGGER.load(Ordering::Relaxed)
+    this.is_main_thread && this.debugger.is_none() && !HAS_CREATED_DEBUGGER.load(Ordering::Relaxed)
 }
 
 /// Shared tail of every "start the inspector after startup" path

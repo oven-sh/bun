@@ -128,11 +128,7 @@ describe.concurrent("process._debugProcess", () => {
 
   test.skipIf(isWindows)("reports kill() failures as system errors", async () => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `try { process._debugProcess(2147483646); } catch (e) { console.log(e.code, e.syscall); }`,
-      ],
+      cmd: [bunExe(), "-e", `try { process._debugProcess(2147483646); } catch (e) { console.log(e.code, e.syscall); }`],
       env: bunEnv,
       stdout: "pipe",
     });

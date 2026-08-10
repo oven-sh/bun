@@ -3505,28 +3505,10 @@ impl VirtualMachine {
     }
 
     /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
-    pub fn load_extra_env_and_source_code_printer(&mut self) {
-        // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
-        // `&'static mut Loader` is independent of `&self`, so `map` may be held
-        // across the `&mut self` writes below.
+    /// The channel belongs to the launch, so this runs at boot and again after a snapshot restore has reloaded the environment.
+    pub fn adopt_ipc_channel_from_env(&mut self) {
         let env = self.transpiler.env_mut();
         let map = &mut env.map;
-
-        ensure_source_code_printer();
-        // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, `__bun_macro_context_deinit` must not free it.
-        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
-
-        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
-            self.hide_bun_stackframes = false;
-        }
-
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
-            .unwrap_or(false)
-        {
-            self.transpiler_store.enabled = false;
-        }
-
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;
@@ -3560,6 +3542,31 @@ impl VirtualMachine {
                 }
             }
         }
+    }
+
+    pub fn load_extra_env_and_source_code_printer(&mut self) {
+        // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
+        // `&'static mut Loader` is independent of `&self`, so `map` may be held
+        // across the `&mut self` writes below.
+        let env = self.transpiler.env_mut();
+        let map = &mut env.map;
+
+        ensure_source_code_printer();
+        // The runtime VM owns the printer from here on — even if a macro had
+        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
+
+        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
+            self.hide_bun_stackframes = false;
+        }
+
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
+            .unwrap_or(false)
+        {
+            self.transpiler_store.enabled = false;
+        }
+
+        self.adopt_ipc_channel_from_env();
 
         // Node.js checks if this is set to "1" and no other value
         if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {

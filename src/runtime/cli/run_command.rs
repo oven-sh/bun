@@ -1947,6 +1947,7 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         if let Some(env) = unsafe { vm.transpiler.env.as_mut() } {
             let _ = env.reload_process_after_snapshot_restore();
         }
+        vm.adopt_ipc_channel_from_env(); // before process.env is rebuilt below: this scrubs the channel variable, as boot does
         // SAFETY: FFI; rebuilds the JS `process.env` object from the (now current) loader map.
         unsafe { Bun__Process__reloadEnvAfterSnapshotRestore(vm.global) };
         // Descriptors 0-2 are this launch's, but everything derived from the builder's is in the snapshot: colors (Output), the

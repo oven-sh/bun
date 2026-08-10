@@ -66,6 +66,32 @@ snapshotTest("stdin's tty reader set up on a high descriptor number still delive
   expect(out).toContain('stdin data after restore: "z"');
 });
 
+snapshotTest("a restored process spawned with an ipc channel can use it, and hides the channel variable from its env", async () => {
+  using dir = tempDir("bun-snapshot-ipc", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "ipc-fixture.js");
+  {
+    await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img }, stdout: "pipe", stderr: "pipe" });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+  }
+  const { promise: received, resolve } = Promise.withResolvers<unknown>();
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message, child) {
+      resolve(message);
+      child.send("ack");
+    },
+  });
+  const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out).not.toContain("no process.send"); // what a restored process used to say
+  expect(await received).toEqual({ channelVarScrubbed: true });
+  expect(code).toBe(0);
+});
+
 snapshotTest("an unhandled rejection in a restored process exits 1, exactly like a normal boot", async () => {
   using dir = tempDir("bun-snapshot-unhandled", {});
   const img = join(String(dir), "s.snapshot");

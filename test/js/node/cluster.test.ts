@@ -1141,21 +1141,32 @@ if (cluster.isPrimary) {
 }, 30_000);
 
 test.skipIf(isWindows)(
-  "worker death mid-handoff redistributes the connection to another worker",
+  "worker death mid-handoff closes the in-flight connection instead of handing it to another worker",
   async () => {
     using dir = tempDir("cluster-mid-handoff", {
       "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
+  const events = [];
   const die = cluster.fork({ ROLE: "die" });
-  const live = cluster.fork({ ROLE: "live" });
-  live.on("message", m => { console.log(m); die.kill(); live.kill(); process.exit(0); });
-  let listening = 0;
-  cluster.on("listening", (_w, addr) => {
-    if (++listening !== 2) return;
-    const c = net.connect(addr.port, "127.0.0.1", () => c.write("hi"));
-    c.on("error", () => {});
+  let live;
+  // Forking live only once die is listening puts die first in the round-robin order, so c1 goes to die.
+  die.once("listening", () => { live = cluster.fork({ ROLE: "live" }); });
+  cluster.on("listening", (worker, addr) => {
+    if (worker !== live) return;
+    live.on("message", m => {
+      events.push(m);
+      console.log(JSON.stringify(events));
+      process.exit(0);
+    });
+    const c1 = net.connect(addr.port, "127.0.0.1", () => c1.write("first"));
+    c1.on("error", () => {});
+    c1.once("close", () => {
+      events.push("c1 closed");
+      const c2 = net.connect(addr.port, "127.0.0.1", () => c2.write("second"));
+      c2.on("error", () => {});
+    });
   });
 } else if (process.env.ROLE === "die") {
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
@@ -1173,7 +1184,10 @@ if (cluster.isPrimary) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
+    expect({ events: JSON.parse(stdout.trim()), stderr }).toEqual({
+      events: ["c1 closed", "live got: second"],
+      stderr: expect.any(String),
+    });
     expect(exitCode).toBe(0);
   },
   30_000,

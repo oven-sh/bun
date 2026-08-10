@@ -4201,16 +4201,8 @@ function onClusterConnection(err, clientHandle) {
     const remote = socket.remoteAddress;
     const t = isIP(remote);
     if (t && blockList.check(remote, `ipv${t}`)) {
-      const data = {
-        localAddress: socket.localAddress,
-        localPort: socket.localPort,
-        localFamily: socket.localFamily,
-        remoteAddress: remote,
-        remotePort: socket.remotePort,
-        remoteFamily: socket.remoteFamily,
-      };
+      // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
       socket.destroy();
-      self.emit("drop", data);
       return;
     }
   }

@@ -990,24 +990,27 @@ if (cluster.isPrimary) {
   30_000,
 );
 
-test("round-robin worker honors server.blockList", async () => {
+test("round-robin worker closes a server.blockList peer silently, like node", async () => {
   using dir = tempDir("cluster-blocklist", {
     "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on("message", m => { console.log(m); worker.kill(); process.exit(m === "drop" ? 0 : 1); });
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });
   cluster.on("listening", (_w, addr) => {
     const c = net.connect(addr.port, "127.0.0.1");
     c.on("error", () => {});
-    c.on("close", () => {});
+    // The blocked peer is closed by the worker; node emits neither 'connection' nor 'drop' for it.
+    c.on("close", () => worker.send("report"));
   });
 } else {
   const bl = new net.BlockList();
   bl.addAddress("127.0.0.1");
-  const server = net.createServer({ blockList: bl }, () => process.send("connection"));
-  server.on("drop", () => process.send("drop"));
+  const seen = { connection: false, drop: false };
+  const server = net.createServer({ blockList: bl }, () => { seen.connection = true; });
+  server.on("drop", () => { seen.drop = true; });
+  process.on("message", () => server.close(() => process.send({ ...seen, clientClosed: true })));
   server.listen(0, "127.0.0.1");
 }
 `,
@@ -1020,7 +1023,10 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "drop", stderr: expect.any(String) });
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ connection: false, drop: false, clientClosed: true }),
+    stderr: expect.any(String),
+  });
   expect(exitCode).toBe(0);
 }, 30_000);
 

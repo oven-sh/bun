@@ -234,9 +234,26 @@ pub(crate) fn do_send(
             }
         }
     }
+    // serialize() already detached a non-keepOpen net.Socket from its native handle, so if that
+    // handle is not going out after all nothing else will ever close it (node: postSend on error).
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
+        if target.is_object() {
+            match target.get(global_object, "close") {
+                Ok(Some(f)) if f.is_callable() => {
+                    if let Err(e) = f.call(global_object, target, &[]) {
+                        global_object.report_active_exception_as_unhandled(e);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => global_object.report_active_exception_as_unhandled(e),
+            }
+        }
+    };
+
     #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
+        close_detached(global_object, pause_target);
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
@@ -252,6 +269,7 @@ pub(crate) fn do_send(
     }
     if zig_handle.is_none() {
         message = original_message;
+        close_detached(global_object, pause_target);
         pause_target = JSValue::UNDEFINED;
     }
 
@@ -274,6 +292,7 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
+        close_detached(global_object, pause_target);
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,
@@ -319,6 +338,9 @@ pub(crate) fn emit_handle_ipc_message(
         }
         let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = get_ipc_instance(vm) else {
+            // Adopting a server/dgram handle takes a loop turn; a message that arrived right before
+            // the channel's EOF is still delivered, as node delivers it.
+            Process__emitMessageEvent(global_this, message, handle);
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.

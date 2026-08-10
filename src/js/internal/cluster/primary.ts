@@ -101,11 +101,13 @@ function removeWorker(worker) {
   }
 }
 
-function removeHandlesForWorker(worker) {
+// `channelGone`: the worker's channel has closed, so nothing it still holds will be acked. A
+// primary-initiated disconnect() is not that yet — the channel stays up until the pending acks arrive.
+function removeHandlesForWorker(worker, channelGone) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
-    if (handle.remove(worker, true)) handles.delete(key);
+    if (handle.remove(worker, channelGone)) handles.delete(key);
   });
 }
 
@@ -132,7 +134,7 @@ cluster.fork = function (env) {
      * still want to access it.
      */
     if (!worker.isConnected()) {
-      removeHandlesForWorker(worker);
+      removeHandlesForWorker(worker, true);
       removeWorker(worker);
     }
 
@@ -149,7 +151,7 @@ cluster.fork = function (env) {
      * associated with this worker because it is
      * not connected to the primary anymore.
      */
-    removeHandlesForWorker(worker);
+    removeHandlesForWorker(worker, true);
 
     /*
      * Remove the worker from the workers list only
@@ -349,7 +351,7 @@ Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
   this.process.disconnect();
-  removeHandlesForWorker(this);
+  removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;
 };

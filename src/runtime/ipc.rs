@@ -937,7 +937,7 @@ pub struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
-    /// disconnect() arrived while a handle awaited its ack; like node, close only once the queue behind it has flushed.
+    /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
@@ -1089,7 +1089,7 @@ impl SendQueue {
         if self.windows.get().try_close_after_write {
             return false;
         }
-        self.socket_is_open() && !self.pending_close.get()
+        self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1266,12 +1266,10 @@ impl SendQueue {
             self.socket.set(SocketUnion::Closed);
             return;
         }
-        if self.pending_close.get() || self.close_after_flush.get() {
+        // Peer-gone and exit paths land here too: a postponed disconnect never outranks them.
+        self.close_after_flush.set(false);
+        if self.pending_close.get() {
             return; // close already requested
-        }
-        if next_tick && self.waiting_for_ack.get().is_some() {
-            self.close_after_flush.set(true);
-            return;
         }
         if !next_tick {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1279,6 +1277,19 @@ impl SendQueue {
         }
         self.pending_close.set(true);
         self.schedule_deferred();
+    }
+
+    /// A user-initiated disconnect(). Like node, the channel reports disconnected at once but the
+    /// close waits while a handle is awaiting its ack, so the messages queued behind it still go out.
+    pub fn disconnect(&self) {
+        if self.socket_is_open()
+            && !self.pending_close.get()
+            && self.waiting_for_ack.get().is_some()
+        {
+            self.close_after_flush.set(true);
+            return;
+        }
+        self.close_socket_next_tick(true);
     }
 
     fn start_message(
@@ -1510,7 +1521,6 @@ impl SendQueue {
         match next {
             Next::Nothing => {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
-                    self.close_after_flush.set(false);
                     self.close_socket_next_tick(true);
                 }
                 self.update_ref(global);

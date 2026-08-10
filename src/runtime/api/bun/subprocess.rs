@@ -849,7 +849,9 @@ impl Subprocess<'_> {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.disconnect_ipc(true);
+        if let Some(ipc_data) = this.ipc() {
+            ipc_data.disconnect();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1473,8 +1475,8 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // Avoid keeping the callback alive longer than necessary
-            js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            // The ipc callback stays: a received server/dgram handle finishes adopting a loop turn
+            // later and still has to be delivered after the channel's EOF (node delivers it too).
 
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =

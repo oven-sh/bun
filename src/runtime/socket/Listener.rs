@@ -503,7 +503,9 @@ impl Listener {
                 || (matches!(connection, UnixOrHost::Fd(_))
                     && matches!(
                         mapped,
-                        Some(bun_sys::SystemErrno::ENOTSOCK) | Some(bun_sys::SystemErrno::EBADF)
+                        Some(bun_sys::SystemErrno::ENOTSOCK)
+                            | Some(bun_sys::SystemErrno::EBADF)
+                            | Some(bun_sys::SystemErrno::EOPNOTSUPP)
                     )) {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {

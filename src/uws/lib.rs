@@ -1228,7 +1228,8 @@ pub mod ssl_wrapper {
         /// Process-wide bundled root store from `root_certs.cpp` — built once and
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
         /// CTX. Returns null if root loading fails (treated as "no roots").
-        // safe: no args; idempotent lazy init reading a process global — no preconditions.
+        // safe: the by-value flag is collapsed to 0/1 before indexing on the C++ side;
+        // idempotent lazy init of a process global — no preconditions.
         safe fn us_get_shared_default_ca_store(use_system_ca: i32) -> *mut boring_sys::X509_STORE;
         /// The system-CA decision an SSL_CTX built by usockets was created with.
         fn us_ssl_ctx_use_system_ca(ctx: *mut boring_sys::SSL_CTX) -> i32;

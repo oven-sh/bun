@@ -1,5 +1,6 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "BunClientData.h"
 
 #include "ExceptionOr.h"
 #include "JavaScriptCore/CallData.h"
@@ -209,17 +210,16 @@ JSC_DEFINE_HOST_FUNCTION(functionTotalAllocatedHeapBytes,
     // JSC's allocation counter resets each GC cycle, so accumulate deltas
     // across reads into a monotonic total. Bytes allocated between the last
     // read and a GC reset are lost, making this a lower bound whose accuracy
-    // improves with read frequency. One VM per thread, so thread_local state
-    // is per-VM.
-    static thread_local size_t lastCycleBytes = 0;
-    static thread_local size_t totalBytes = 0;
+    // improves with read frequency. State lives on the VM's client data so a
+    // VM created on a reused native thread starts from zero.
+    auto* clientData = WebCore::clientData(vm);
     size_t current = vm.heap.totalBytesAllocatedThisCycle();
-    if (current >= lastCycleBytes)
-        totalBytes += current - lastCycleBytes;
+    if (current >= clientData->lastCycleAllocatedBytes)
+        clientData->totalAllocatedHeapBytes += current - clientData->lastCycleAllocatedBytes;
     else
-        totalBytes += current;
-    lastCycleBytes = current;
-    return JSValue::encode(jsNumber(totalBytes));
+        clientData->totalAllocatedHeapBytes += current;
+    clientData->lastCycleAllocatedBytes = current;
+    return JSValue::encode(jsNumber(clientData->totalAllocatedHeapBytes));
 }
 
 JSC::Structure*

@@ -25,7 +25,8 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import path from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -83,6 +84,41 @@ describe("bun:jsc", () => {
     fullGC();
     expect(totalAllocatedHeapBytes()).toBeGreaterThanOrEqual(after);
     expect(sink.length).toBe(10_000);
+  });
+  it("totalAllocatedHeapBytes is per-VM in workers", async () => {
+    // Inflate the main-thread counter well past anything a fresh worker VM
+    // could plausibly allocate during startup.
+    let sink: unknown[] = [];
+    for (let i = 0; i < 50_000; i++) {
+      sink.push({ i, arr: new Array(16).fill(i) });
+    }
+    const mainBytes = totalAllocatedHeapBytes();
+    expect(sink.length).toBe(50_000);
+
+    using dir = tempDir("jsc-alloc-worker", {
+      "worker.ts": `
+        import { totalAllocatedHeapBytes } from "bun:jsc";
+        const first = totalAllocatedHeapBytes();
+        let sink = [];
+        for (let i = 0; i < 10_000; i++) {
+          sink.push({ i, arr: new Array(16).fill(i) });
+        }
+        const second = totalAllocatedHeapBytes();
+        postMessage({ first, second, sinkLength: sink.length });
+      `,
+    });
+    const worker = new Worker(path.join(String(dir), "worker.ts"));
+    const { promise, resolve, reject } = Promise.withResolvers<{ first: number; second: number; sinkLength: number }>();
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = event => reject(new Error(event.message));
+    const result = await promise;
+    worker.terminate();
+
+    // The worker's counter grows with its own allocations and is independent
+    // of the main thread's much larger accumulated total.
+    expect(result.sinkLength).toBe(10_000);
+    expect(result.second).toBeGreaterThan(result.first);
+    expect(result.first).toBeLessThan(mainBytes);
   });
   it("getRandomSeed", () => {
     expect(getRandomSeed()).toBeDefined();

@@ -168,6 +168,12 @@ public:
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Accumulator for bun:jsc totalAllocatedHeapBytes(): JSC's per-cycle
+    // allocation counter resets at GC; these fold it into a monotonic
+    // per-VM total.
+    size_t lastCycleAllocatedBytes { 0 };
+    size_t totalAllocatedHeapBytes { 0 };
+
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
     // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so

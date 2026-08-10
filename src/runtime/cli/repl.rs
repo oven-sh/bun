@@ -2664,8 +2664,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             b'`' => in_template = true,
             b'{' => {
                 brace_count += 1;
-                // `=> {` opens a body; otherwise `{` after an operator, opener,
-                // or expression keyword (not `do`/`else`) is an object literal.
+                // `=> {` is a body; `{` after an operator/opener/expression keyword is an object.
                 let arrow = prev == b'>' && prev_idx > 0 && code[prev_idx - 1] == b'=';
                 let expr_pos = !arrow
                     && (matches!(

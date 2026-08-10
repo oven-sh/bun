@@ -178,13 +178,19 @@ test.skipIf(isWindows)("resolver query errors leave errno undefined", async () =
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + port]);
 
-    const queryErr = await new Promise(resolve => resolver.resolve4("invalid.invalid", err => resolve(err)));
+    const queryErr = await new Promise((resolve, reject) =>
+      resolver.resolve4("invalid.invalid", err =>
+        err ? resolve(err) : reject(new Error("expected resolve4 to fail")),
+      ),
+    );
     expect(queryErr.code).toBe("ENOTFOUND");
     expect(queryErr.syscall).toBe("queryA");
     expect(queryErr.hostname).toBe("invalid.invalid");
     expect(queryErr.errno).toBeUndefined();
 
-    const reverseErr = await new Promise(resolve => resolver.reverse("192.0.2.1", err => resolve(err)));
+    const reverseErr = await new Promise((resolve, reject) =>
+      resolver.reverse("192.0.2.1", err => (err ? resolve(err) : reject(new Error("expected reverse to fail")))),
+    );
     expect(reverseErr.code).toBe("ENOTFOUND");
     expect(reverseErr.syscall).toBe("getHostByAddr");
     expect(reverseErr.errno).toBeUndefined();

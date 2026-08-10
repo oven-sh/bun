@@ -7,6 +7,7 @@ import {
   countBanners,
   hasBanner,
   IDLE,
+  inspecteeEnv,
   readStreamToEnd,
   readStreamUntil,
   spawnTarget,
@@ -121,7 +122,7 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
   test.each(["--inspect=0", "--inspect-wait=0", "--inspect-brk=0"])("SIGUSR1 is ignored under %s", async flag => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), flag, "-e", IDLE],
-      env: bunEnv,
+      env: inspecteeEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -139,7 +140,7 @@ describe.skipIf(isWindows).concurrent("SIGUSR1 activation", () => {
          process.off("SIGUSR1", onSignal);
          ${IDLE}`,
       ],
-      env: bunEnv,
+      env: inspecteeEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

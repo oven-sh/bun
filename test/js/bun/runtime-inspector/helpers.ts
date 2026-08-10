@@ -74,6 +74,18 @@ export async function waitForBanner(proc: Subprocess<any, "pipe", any>): Promise
 }
 
 /**
+ * Environment for the process being inspected. Answering `Runtime.evaluate` (or pausing) runs
+ * JSC's InjectedScript, whose unchecked getOwnNonIndexPropertyNames exception scope in the prebuilt
+ * WebKit aborts the process under BUN_JSC_validateExceptionChecks, which the ASAN lanes set (the
+ * reason test/cli/inspect/inspect.test.ts is in test/no-validate-exceptions.txt). Same workaround
+ * as test/js/node/inspector/inspector.test.ts; ASAN/LSAN and the signalling processes keep bunEnv.
+ */
+export const inspecteeEnv = (() => {
+  const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+  return env;
+})();
+
+/**
  * Spawns bun running `script` with a random inspector port and returns it once
  * it has printed its pid on the first stdout line, i.e. once JS is executing.
  * `script` must `console.log(process.pid)` first.
@@ -81,20 +93,25 @@ export async function waitForBanner(proc: Subprocess<any, "pipe", any>): Promise
 export async function spawnTarget(script: string, extraArgs: string[] = []) {
   const proc = Bun.spawn({
     cmd: [bunExe(), "--inspect-port=0", ...extraArgs, "-e", script],
-    env: bunEnv,
+    env: inspecteeEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const reader = proc.stdout.getReader();
-  let first: string;
   try {
-    first = await readStreamUntil(reader, s => s.includes("\n"));
-  } finally {
-    reader.releaseLock();
+    const reader = proc.stdout.getReader();
+    let first: string;
+    try {
+      first = await readStreamUntil(reader, s => s.includes("\n"));
+    } finally {
+      reader.releaseLock();
+    }
+    const pid = parseInt(first, 10);
+    expect(pid).toBeGreaterThan(0);
+    return { proc, pid };
+  } catch (error) {
+    proc.kill();
+    throw error;
   }
-  const pid = parseInt(first, 10);
-  expect(pid).toBeGreaterThan(0);
-  return { proc, pid };
 }
 
 /** Runs `process._debugProcess(pid)` in a separate bun and asserts it succeeded. */

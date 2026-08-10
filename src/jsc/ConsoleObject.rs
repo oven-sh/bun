@@ -4373,8 +4373,7 @@ pub mod formatter {
                     // Boxed primitives render as `[Number: 1]` etc., not as
                     // the value their payload tag suggests.
                     measurable = false;
-                    i += 1;
-                    continue;
+                    break;
                 }
                 let estimated: usize = match tag.tag {
                     TagPayload::String | TagPayload::StringPossiblyFormatted => {
@@ -4416,6 +4415,14 @@ pub mod formatter {
                     TagPayload::Boolean => 4 + usize::from(!element.to_boolean()),
                     TagPayload::Null => 4,
                     TagPayload::Undefined => 9,
+                    TagPayload::Symbol => {
+                        // `Symbol(description)`
+                        "Symbol()".len() + element.get_description(self.global_this).len
+                    }
+                    TagPayload::BigInt => {
+                        // `123n`
+                        element.get_zig_string(self.global_this)?.slice().len() + 1
+                    }
                     _ => {
                         if !tag.tag.is_primitive() {
                             return Ok(ArrayLayout {
@@ -4423,11 +4430,15 @@ pub mod formatter {
                                 force_multiline: false,
                             });
                         }
-                        // Symbol / BigInt: width unknown without materializing.
                         measurable = false;
                         0
                     }
                 };
+                // An unmeasurable entry decides the layout (packed fallback);
+                // stop scanning.
+                if !measurable {
+                    break;
+                }
                 count += 1;
                 total_len += estimated + 2;
                 max_len = max_len.max(estimated);

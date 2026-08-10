@@ -987,14 +987,31 @@ describe("multiline array layout", () => {
   it("measures the escaped width of strings when choosing the layout", () => {
     // Raw length is 20, but each entry renders as 42 characters of "\n"
     // escapes plus quotes, so these must not pack several per line.
-    const escaped = Array.from({ length: 8 }, () => "\n".repeat(20));
-    const line = `  "${"\\n".repeat(20)}"`;
+    const escaped = Array.from({ length: 8 }, () => Buffer.alloc(20, "\n").toString());
+    const line = `  "${Buffer.alloc(40, "\\n").toString()}"`;
     expect(Bun.inspect(escaped)).toBe("[\n" + escaped.map((_, i) => line + (i === 7 ? "" : ",")).join("\n") + "\n]");
   });
 
   it("measures doubles with scientific notation at their rendered width", () => {
     expect(Bun.inspect([1e100, 2e100, 3e100, 4e100, 5e100, 6e100, 7e100])).toBe(
       "[ 1e+100, 2e+100, 3e+100, 4e+100, 5e+100, 6e+100, 7e+100 ]",
+    );
+  });
+
+  it("measures BigInt and Symbol entries at their rendered width", () => {
+    const digits = Buffer.alloc(40, "7").toString();
+    const bigs = Array.from({ length: 7 }, () => BigInt(digits));
+    expect(Bun.inspect(bigs)).toBe("[\n" + bigs.map((_, i) => `  ${digits}n${i === 6 ? "" : ","}`).join("\n") + "\n]");
+
+    const description = `long-symbol-description-${Buffer.alloc(20, "a").toString()}`;
+    const symbols = Array.from({ length: 7 }, () => Symbol(description));
+    expect(Bun.inspect(symbols)).toBe(
+      "[\n" + symbols.map((_, i) => `  Symbol(${description})${i === 6 ? "" : ","}`).join("\n") + "\n]",
+    );
+
+    // short ones still pack
+    expect(Bun.inspect(Array.from({ length: 12 }, (_, i) => BigInt(i)))).toBe(
+      "[\n  0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n\n]",
     );
   });
 

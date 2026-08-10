@@ -77,6 +77,19 @@ static DEFAULT_MANAGER_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 /// The manager belonging to this process, if one has been made since the last restore.
+
+/// Set when the reader thread returns, however it returns; the freeze-time shutdown waits on it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct MarkExited(&'static PathWatcherManager);
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Drop for MarkExited {
+    fn drop(&mut self) {
+        self.0
+            .thread_exited
+            .store(true, core::sync::atomic::Ordering::Release);
+    }
+}
+
 fn current_manager() -> Option<&'static PathWatcherManager> {
     use core::sync::atomic::Ordering;
     let m = DEFAULT_MANAGER.load(Ordering::Acquire);
@@ -125,6 +138,8 @@ pub(crate) struct PathWatcherManager {
     /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     running: AtomicBool,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    thread_exited: core::sync::atomic::AtomicBool,
 
     /// Monotonic kevent generation counter (FreeBSD). Bumped under `mutex`.
     /// `Cell` so the bump is a safe `.get()/.set()` instead of a raw deref.
@@ -155,6 +170,8 @@ impl Default for PathWatcherManager {
             platform_fd: Cell::new(Fd::INVALID),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             running: AtomicBool::new(true),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            thread_exited: core::sync::atomic::AtomicBool::new(false),
             #[cfg(target_os = "freebsd")]
             next_gen: Cell::new(1),
         }
@@ -891,6 +908,7 @@ impl Linux {
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
+        let _exited = MarkExited(manager);
         use bun_sys::linux::IN;
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
@@ -1638,3 +1656,34 @@ impl Kqueue {
 // ────────────────────────────────────────────────────────────────────────────────
 // Windows stub
 // ────────────────────────────────────────────────────────────────────────────────
+
+/// Before a snapshot is frozen: no thread of ours may exist. The inotify reader blocks in `read`; removing a watch makes it
+/// return, `running` makes it leave, and the freeze waits (bounded) for it to be gone. The restored process gets a fresh
+/// manager for its epoch (`current_manager`), so nothing here needs undoing there.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn shutdown_for_snapshot() -> bool {
+    use core::sync::atomic::Ordering;
+    let Some(manager) = current_manager() else {
+        return true;
+    };
+    if manager.thread_exited.load(Ordering::Acquire) {
+        return true;
+    }
+    manager.running.store(false, Ordering::Release);
+    let fd = manager.inotify_fd().native();
+    // SAFETY: plain inotify calls on our own descriptor; "/" always exists. The add/remove pair exists only to produce an event.
+    unsafe {
+        let wd = libc::inotify_add_watch(fd, c"/".as_ptr(), libc::IN_DELETE_SELF as u32);
+        if wd >= 0 {
+            libc::inotify_rm_watch(fd, wd as _); // the descriptor is i32 on glibc/musl and u32 on bionic
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !manager.thread_exited.load(Ordering::Acquire) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::yield_now();
+    }
+    true
+}

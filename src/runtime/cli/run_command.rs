@@ -1787,6 +1787,15 @@ pub fn take_startup_snapshot_and_exit(vm: &mut bun_jsc::virtual_machine::Virtual
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate(); // the mDNSResponder connection is per-process; a fresh one is opened on the first lookup after restore
     #[cfg(target_os = "macos")]
     crate::node::fs_events::shutdown_for_snapshot();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if !crate::node::path_watcher::shutdown_for_snapshot() {
+        bun_core::Output::err_generic(
+            "snapshot: the fs.watch thread did not stop; no snapshot taken",
+            (),
+        );
+        bun_core::Output::flush();
+        bun_core::Global::exit(70);
+    }
     bun_threading::work_pool::WorkPool::stop_all_threads_for_snapshot();
     // The HTTP client thread exists once anything fetched (allowed by --snapshot-io=network); a no-op if it never started.
     if !bun_http::http_thread::shutdown_for_exit() {
@@ -1917,7 +1926,8 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
     let vm_ptr = bun_jsc::virtual_machine::VirtualMachine::main_thread_vm_ptr();
     assert!(!vm_ptr.is_null(), "snapshot has no main-thread VM");
     bun_core::startup_snapshot::did_restore();
-    bun_boringssl_sys::reinit_fork_detection_after_snapshot_restore();
+    // SAFETY: this is the restore, on the only thread of the new process so far.
+    unsafe { bun_boringssl_sys::reinit_fork_detection_after_snapshot_restore() };
     bun_threading::work_pool::WorkPool::did_restore_from_snapshot();
     bun_jsc::virtual_machine::VirtualMachine::adopt_on_current_thread(vm_ptr);
     {

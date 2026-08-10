@@ -1129,9 +1129,12 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 #endif // OS(DARWIN) / __linux__
 
 // Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
+extern "C" __attribute__((weak)) int Bun__startupSnapshotPlacementWanted(void);
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
-    return BUN_COMPILED.size != 0;
+    if (Bun__startupSnapshotPlacementWanted)
+        return Bun__startupSnapshotPlacementWanted(); // marked to take a snapshot, or carrying one
+    return BUN_COMPILED.size != 0; // no runtime linked in (dependency-only build): any payload
 }
 
 #elif defined(_WIN32)
@@ -1185,7 +1188,7 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
     return pe_section_data;
 }
 
-// No snapshots on Windows, and mimalloc may call this during its own initialization, so it answers without looking at the PE section.
+// No snapshots on Windows: the allocator there is not built with the hook, so this only keeps the symbol defined for the Rust side.
 extern "C" int bun_is_compiled_executable(void)
 {
     return 0;

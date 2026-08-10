@@ -604,11 +604,13 @@ static void fileSnapshotHeap(JSC::VM& vm)
             uintptr_t a = (uintptr_t)probe;
             auto it = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(a, UINTPTR_MAX));
             if (it != frozenRanges.begin() && a < std::prev(it)->second) inFrozen++;
+            mi_free(probe);
         }
         void* probe2 = WTF::fastMalloc(100);
         uintptr_t a2 = (uintptr_t)probe2;
         auto it2 = std::upper_bound(frozenRanges.begin(), frozenRanges.end(), std::make_pair(a2, UINTPTR_MAX));
         bool f2 = it2 != frozenRanges.begin() && a2 < std::prev(it2)->second;
+        WTF::fastFree(probe2);
         fprintf(stderr, "[filesnap] post-switch probes landing in frozen ranges: mi_malloc %zu/64, fastMalloc %d\n", inFrozen, (int)f2);
     }
     std::sort(snapshotRuns.begin(), snapshotRuns.end(), [](const FrozenRun& x, const FrozenRun& y) { return x.start < y.start; });
@@ -963,6 +965,10 @@ static void dumpDirtyMap(JSC::VM& vm)
             size_t liveCount = 0;
             mi_prof_visit_live([](uintptr_t, size_t, const uintptr_t*, uint8_t, void* arg) -> bool { ++*static_cast<size_t*>(arg); return true; }, &liveCount);
             Raw raw { (Rec*)mmap(nullptr, (liveCount + 1024) * sizeof(Rec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0), liveCount + 1024, 0 };
+            if (raw.recs == MAP_FAILED) {
+                fprintf(stderr, "[owners] could not allocate the record buffer; report skipped\n");
+                return;
+            }
             mi_prof_visit_live([](uintptr_t addr, size_t, const uintptr_t* frames, uint8_t nframes, void* arg) -> bool {
                 Raw* r = static_cast<Raw*>(arg);
                 if (r->n >= r->cap) return false;
@@ -1400,6 +1406,12 @@ static void snapshotTrapArm()
     const size_t pg = getpagesize();
     s_trapCap = 1 << 18;
     s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (s_trapRecs == MAP_FAILED) {
+        s_trapRecs = nullptr;
+        s_trapCap = 0; // the handler records nothing; faults are still resolved
+        fprintf(stderr, "[snapshottrap] could not allocate the record buffer; recording disabled\n");
+        return;
+    }
     struct sigaction sa {};
     sa.sa_sigaction = snapshotTrapHandler;
     sa.sa_flags = SA_SIGINFO | SA_NODEFER;
@@ -1494,8 +1506,19 @@ void startupSnapshotToolingInstall()
     signal(SIGXCPU, memdebugSignal);
 }
 
+static bool onMainThread()
+{
+#if OS(DARWIN)
+    return pthread_main_np() != 0;
+#else
+    return gettid() == getpid();
+#endif
+}
+
 extern "C" void Bun__startupSnapshotToolingTick(JSC::VM* vm)
 {
+    if (!onMainThread()) // every loop ticks this, workers included; the state below is the main VM's
+        return;
     int req = s_requested.exchange(0);
     bool fromCmdFile = false;
     if (!s_dir)

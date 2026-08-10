@@ -2807,3 +2807,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
 }
+
+/// Asked by the allocator during its own initialization (before `main`), through the weak hook `c-bindings.cpp` prefers over
+/// its "any compiled executable" fallback: deterministic placement is only wanted by an executable that is marked to take a
+/// snapshot or carries one, so an ordinary `--compile` output pays nothing. Reads only the executable's own section.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__startupSnapshotPlacementWanted() -> core::ffi::c_int {
+    let wanted = !StandaloneModuleGraph::startup_snapshot_build_flags_early().is_empty()
+        || StandaloneModuleGraph::embedded_startup_snapshot_early().is_some();
+    core::ffi::c_int::from(wanted)
+}

@@ -580,11 +580,8 @@ impl BunxCommand {
         };
         let mut start = temp_dir_len + 1;
         loop {
-            let end = match cache_root[start..]
-                .iter()
-                .position(|b| *b == bun_paths::SEP)
-            {
-                Some(i) => start + i,
+            let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {
+                Some(i) => i,
                 None => cache_root.len(),
             };
             if end == start {
@@ -648,7 +645,7 @@ impl BunxCommand {
                 _ => return false,
             }
             is_leaf = false;
-            match cache_dir[..end].iter().rposition(|b| *b == bun_paths::SEP) {
+            match strings::last_index_of_char(&cache_dir[..end], bun_paths::SEP) {
                 Some(idx) if idx > temp_dir_len => end = idx,
                 _ => return true,
             }
@@ -901,9 +898,7 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = path
-                .split(|b| *b == DELIMITER)
-                .filter(|s: &&[u8]| !s.is_empty());
+            let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),

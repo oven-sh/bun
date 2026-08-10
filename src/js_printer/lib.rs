@@ -5841,6 +5841,9 @@ pub(crate) mod __gated_printer {
                                 Loader::Json5 => {
                                     self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
                                 }
+                                Loader::Xml => {
+                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
+                                }
                                 Loader::Wasm => {
                                     self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
                                 }
@@ -5907,6 +5910,7 @@ pub(crate) mod __gated_printer {
                                         }
                                         Loader::Html => FP::host_defined(mi.str(b"html")),
                                         Loader::Json5 => FP::host_defined(mi.str(b"json5")),
+                                        Loader::Xml => FP::host_defined(mi.str(b"xml")),
                                         Loader::Md => FP::host_defined(mi.str(b"md")),
                                     }
                                 } else {

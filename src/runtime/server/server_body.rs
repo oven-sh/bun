@@ -492,7 +492,10 @@ pub mod BunInfo {
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(bun_core::Environment::ARCH))),
+            prop(
+                b"arch",
+                str_expr(arch_tag_name(bun_core::Environment::ARCH)),
+            ),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(
@@ -2036,9 +2039,7 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !upgrade_header
-            .slice()
-            .split(|&c| c == b',')
+        if !strings::split(upgrade_header.slice(), b",")
             .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
         {
             return Ok(JSValue::FALSE);
@@ -2606,16 +2607,17 @@ where
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if self.app.is_none() || self.deinit_running.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::js_number(0.0));
         }
         // On a Bun.serve server each close reaches `on_connection_filter(-1)`
         // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it.
+        // while this frame owns it. One-shot sweep (Node semantics): busy
+        // connections are spared and are NOT marked to close later.
         self.deinit_running.set(true);
-        self.app_mut().close_idle_connections();
+        let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
         self.deinit_if_we_can();
-        Ok(JSValue::UNDEFINED)
+        Ok(JSValue::js_number(closed as f64))
     }
 
     pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {

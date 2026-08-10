@@ -58,7 +58,7 @@ pub(crate) use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
-pub use http_thread::{defer_shutdown_reclaim, shutdown_for_exit};
+pub use http_thread::shutdown_for_exit;
 pub use internal_state::InternalState;
 pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
@@ -365,14 +365,14 @@ pub(crate) fn strip_port_from_host(host: &[u8]) -> &[u8] {
     }
     // IPv6 with brackets: "[::1]:port"
     if host[0] == b'[' {
-        if let Some(bracket) = host.iter().rposition(|&b| b == b']') {
+        if let Some(bracket) = strings::last_index_of_char(host, b']') {
             // Return everything up to and including ']'
             return &host[0..bracket + 1];
         }
         return host;
     }
     // IPv4 or hostname: find last colon
-    if let Some(colon) = host.iter().rposition(|&b| b == b':') {
+    if let Some(colon) = strings::last_index_of_char(host, b':') {
         return &host[0..colon];
     }
     host
@@ -734,7 +734,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
     if hostname.is_empty() {
         return false;
     }
-    for item in no_proxy_text.split(|&b| b == b',') {
+    for item in strings::split(no_proxy_text, b",") {
         let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
         if entry.is_empty() {
             continue;
@@ -751,7 +751,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 
         // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
         // with port is "[::1]:8080"; host:port has a single colon.
-        let colon_count = entry.iter().filter(|&&b| b == b':').count();
+        let colon_count = strings::count_char(entry, b':');
         let has_port = if strings::starts_with_char(entry, b'[') {
             strings::index_of(entry, b"]:").is_some()
         } else {

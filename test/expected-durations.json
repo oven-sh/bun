@@ -1875,7 +1875,7 @@
     "musl": 0,
     "windows": 0
   },
-  "js/bun/bun-object/deep-equals.spec.ts": {
+  "js/bun/bun-object/deep-equals.test.ts": {
     "default": 0,
     "asan": 20,
     "musl": 0,

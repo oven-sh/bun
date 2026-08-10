@@ -43,12 +43,31 @@ impl JSValueNapiExt for JSValue {
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
+    /// Work the pool handed back during teardown: its `complete` callback is
+    /// how the addon learns the outcome and frees the work (Node calls it from
+    /// environment cleanup too); script it tries to run is refused at the boundary.
+    unsafe fn release_unrun(this: *mut Self) {
+        let vm = VirtualMachine::get().as_mut();
+        let global = vm.global();
+        // SAFETY: fn contract — the addon's live work object the pool posted.
+        unsafe { (*this).run_from_js(vm, global) };
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
+    /// `this` is the TSFN itself, which the env's cleanup hook (`env_teardown`,
+    /// run with the exit handlers before the queue is released) already
+    /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
+    /// A finalizer queued before the loop stopped: Node runs an addon's
+    /// finalizers during environment cleanup (script already forbidden), and
+    /// an addon counts on them (external buffers freed when a Worker exits).
+    unsafe fn release_unrun(this: *mut Self) {
+        NapiFinalizerTask::run_on_js_thread(this);
+    }
 }
 
 bun_output::declare_scope!(napi, visible);
@@ -67,12 +86,15 @@ bun_opaque::opaque_ffi! {
     pub struct NapiEnv;
 }
 
+#[allow(improper_ctypes)] // `vm_handle::Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
+    /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
+    fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
 }
 
@@ -80,6 +102,12 @@ impl NapiEnv {
     pub(crate) fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
+    }
+
+    /// Any thread holding an env ref: the env's VM handle.
+    pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
+        // SAFETY: the env holds a reference for its whole lifetime.
+        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -1417,6 +1445,12 @@ extern "C" fn napi_get_typedarray_info(
     }
     let _keep = jsc::EnsureStillAlive(typedarray);
 
+    // Keep the pointer valid for the view's lifetime, as in Node: the
+    // arraybuffer out-param below would otherwise invalidate it.
+    if !maybe_data.is_null() && !typedarray.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
+    }
+
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
@@ -1725,8 +1759,10 @@ pub(crate) struct napi_async_work {
     pub task: WorkPoolTask,
     pub(crate) concurrent_task: ConcurrentTask,
     // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    pub(crate) event_loop: bun_ptr::BackRef<EventLoop>,
-    pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
+    /// How the pool thread delivers completion / cancellation to the VM.
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
+    /// JS thread only.
+    pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
     pub(crate) execute: napi_async_execute_callback,
     pub(crate) complete: Option<napi_async_complete_callback>,
@@ -1757,9 +1793,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            loop_handle: global.bun_vm().loop_handle(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1783,6 +1817,10 @@ impl napi_async_work {
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // The work object belongs to the addon and `execute` receives this
+        // env: counted, so the VM waits for it (Node likewise settles its
+        // threadpool requests before an environment is freed).
+        self.loop_handle.embedded_work_scheduled();
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1794,34 +1832,47 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
-        if let Err(state) = self.status.compare_exchange(
-            AsyncWorkStatus::Pending as u32,
-            AsyncWorkStatus::Started as u32,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            if state == AsyncWorkStatus::Cancelled as u32 {
-                // `concurrent_task` is the live inline field of this heap work;
-                // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
-                        self.concurrent_task
-                            .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
-                return;
-            }
+        let handle = self.loop_handle.clone();
+        // A VM that is already stopping cancels work it has not started, as
+        // Node's environment cleanup does (uv_cancel); otherwise `execute` runs
+        // with the VM held open.
+        let vm = handle.borrow_if_running();
+        let started = vm.is_some()
+            && match self.status.compare_exchange(
+                AsyncWorkStatus::Pending as u32,
+                AsyncWorkStatus::Started as u32,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => true,
+                Err(state) => state != AsyncWorkStatus::Cancelled as u32,
+            };
+        if started {
+            (self.execute)(self.env.get(), self.data);
+            self.status
+                .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        } else {
+            let _ = self.cancel();
         }
-        (self.execute)(self.env.get(), self.data);
-        self.status
-            .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        drop(vm);
+        self.post_to_js_thread(self_ptr);
+        // `self` may already be freed by the JS thread; the handle is ours.
+        handle.embedded_work_finished();
+    }
 
-        // `concurrent_task` is the live inline field of this heap work; the
-        // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
-                self.concurrent_task
-                    .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+    /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
+    /// live inline field of this heap work; the queue takes ownership of its
+    /// `next` link. Counted work, so the VM has not closed its handle; a VM
+    /// tearing down runs `complete` from its queue release (status cancelled
+    /// if `execute` never ran), as Node does at environment cleanup.
+    fn post_to_js_thread(&mut self, self_ptr: *mut Self) {
+        let ct = core::ptr::NonNull::from(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        );
+        let bun_jsc::vm_handle::Posted::Queued = self.loop_handle.post_task(ct) else {
+            unreachable!("VM handle closed with napi async work outstanding");
+        };
     }
 
     pub(crate) fn cancel(&mut self) -> bool {
@@ -1989,42 +2040,13 @@ unsafe extern "C" {
         finalize_hint: *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn napi_create_buffer_copy(
-    env_: napi_env,
-    length: usize,
-    data: *const u8,
-    result_data: *mut *mut c_void,
-    result_: *mut napi_value,
-) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
-    let env = preamble!(env_);
-    let result = get_out!(env, result_);
-    let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
-        Ok(b) => b,
-        Err(_) => return env.generic_failure(),
-    };
-    if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
-        if length > 0 {
-            // SAFETY: caller guarantees `data` points to at least `length` bytes.
-            let src = unsafe { bun_core::ffi::slice(data, length) };
-            array_buf.slice_mut()[..length].copy_from_slice(src);
-        }
-        write_out(
-            result_data,
-            if length > 0 {
-                array_buf.ptr.cast::<c_void>()
-            } else {
-                ptr::null_mut()
-            },
-        );
-    }
-
-    result.set(env, buffer);
-
-    env.ok()
+    pub(super) fn napi_create_buffer_copy(
+        env: napi_env,
+        length: usize,
+        data: *const c_void,
+        result_data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 unsafe extern "C" {
@@ -2041,6 +2063,10 @@ extern "C" fn napi_get_buffer_info(
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     let env = get_env!(env_);
     let value = value_.get();
+    // Keep the pointer valid for the buffer's lifetime, as in Node.
+    if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
+    }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
@@ -2399,7 +2425,11 @@ pub(crate) struct ThreadSafeFunction {
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
+    /// JS-thread uses; `None` once the env has been torn down.
     pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
+    /// How addon threads (`napi_call_threadsafe_function`) schedule a
+    /// dispatch on the VM.
+    pub(crate) loop_handle: bun_jsc::LoopHandle,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2778,8 +2808,7 @@ impl ThreadSafeFunction {
     }
 
     /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
-    /// thread can be inside `tick()` with its own `&mut` at the same time.
+    /// `release_locked`); the VM is reached only through its handle.
     fn schedule_dispatch(&mut self) {
         let prev = self
             .dispatch_state
@@ -2787,11 +2816,20 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                let Some(event_loop) = self.event_loop.as_ref() else {
+                if self.event_loop.is_none() {
                     // env torn down: the loop is gone, nothing to schedule onto.
                     return;
-                };
-                event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                }
+                let ct = ConcurrentTask::create_from(self_ptr);
+                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.loop_handle.post_task(ct) {
+                    // VM torn down before the env cleanup hook ran here: no
+                    // dispatch will happen; the queued calls are released by the
+                    // teardown path. Free the task and fall back to Idle.
+                    // SAFETY: refused ⇒ we own the task box.
+                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    self.dispatch_state
+                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
+                }
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -2912,20 +2950,20 @@ impl ThreadSafeFunction {
         drop(self.env.take());
         self.env_teardown_done.store(true, Ordering::SeqCst);
         // Cleanup hooks are the loop's last tick: a task still queued for this
-        // TSFN will never run (no tag arm in `__bun_release_task_at_shutdown`
-        // dereferences it either). With no thread_count reference left, nobody
-        // else can reach this, so free it here.
+        // TSFN will never run (and its `release_unrun` does not dereference it).
+        // With no thread_count reference left, nobody else can reach this, so
+        // free it here.
         self.thread_count.load(Ordering::SeqCst) <= 0
     }
 
+    /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        self.poll_ref
-            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 
+    /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn unref(&mut self) {
-        self.poll_ref
-            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn acquire(&mut self) -> napi_status {
@@ -3073,6 +3111,7 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
+        loop_handle: vm.loop_handle(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -5102,10 +5141,25 @@ impl NapiFinalizerTask {
         let is_main_thread = VirtualMachine::get_or_null().is_some();
 
         if !is_main_thread {
-            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+            // Off the JS thread (e.g. an external buffer finalized from a GC
+            // helper thread): post through the env's VM handle. If the VM is
+            // already torn down the finalizer can never run; free the task but
+            // not the env ref — the env's count is not atomic and the env goes
+            // with its VM — as the cleanup-hooks-already-ran case below does.
+            // SAFETY: env is valid (held by NapiEnvRef).
+            let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            let ct = ConcurrentTask::create(Task::init(this));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                handle.post(bun_jsc::LoopKind::Regular, ct)
+            {
+                // SAFETY: refused ⇒ we own both boxes.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    let task = bun_core::heap::take(this);
+                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
+                }
+            }
             return;
         }
 

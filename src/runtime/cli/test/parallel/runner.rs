@@ -453,6 +453,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::yaml => "yaml",
         L::json5 => "json5",
         L::md => "md",
+        L::xml => "xml",
         L::_none => "_none",
     }
 }
@@ -570,7 +571,7 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled {
-                crate::jsc_hooks::close_isolation_handles(vm);
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
                     .jest

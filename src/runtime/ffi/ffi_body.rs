@@ -752,7 +752,7 @@ impl CompileC {
             // Check standard C compiler environment variables for include paths.
             // These are used by systems like NixOS where standard FHS paths don't exist.
             if let Some(c_include_path) = env_var::C_INCLUDE_PATH.get() {
-                for path in c_include_path.split(|b| *b == b':') {
+                for path in bun_core::strings::split(c_include_path, b":") {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_sys_include_path(&path_z).is_err() {
@@ -768,7 +768,7 @@ impl CompileC {
 
             // Check standard C compiler environment variable for library paths.
             if let Some(library_path) = env_var::LIBRARY_PATH.get() {
-                for path in library_path.split(|b| *b == b':') {
+                for path in bun_core::strings::split(library_path, b":") {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
                         if state.add_library_path(&path_z).is_err() {
@@ -1270,13 +1270,16 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn close_jsc_callback(_global_this: &JSGlobalObject, callback: JSValue) -> JSValue {
+    pub fn close_jsc_callback(
+        _global_this: &JSGlobalObject,
+        callback: JSValue,
+    ) -> JsResult<JSValue> {
         unsafe extern "C" {
             fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
         unsafe { Bun__JSCFFICallbackClose(callback) };
-        JSValue::UNDEFINED
+        Ok(JSValue::UNDEFINED)
     }
 
     pub fn callback(
@@ -1296,11 +1299,7 @@ impl FFI {
         let mut function = Function::default();
         let func = &mut function;
 
-        if let Some(val) = generate_symbol_for_function(global_this, interface, func)
-            .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
-            })
-        {
+        if let Some(val) = generate_symbol_for_function(global_this, interface, func)? {
             return Ok(val);
         }
 
@@ -1332,11 +1331,14 @@ impl FFI {
             )
         };
         if cb.is_empty() {
-            return Ok(if global_this.has_exception() {
-                global_this.take_error(JsError::Thrown)
-            } else {
+            // An exception left by the constructor (OOM, or a termination
+            // request landing in it) is the caller's, not a value.
+            if global_this.has_exception() {
+                return Err(JsError::Thrown);
+            }
+            return Ok(
                 ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this)
-            });
+            );
         }
         Ok(cb)
     }
@@ -1363,24 +1365,22 @@ impl FFI {
         self.functions.with_mut(|f| f.clear_retaining_capacity());
     }
 
-    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JSValue {
+    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
-            return global.to_invalid_arguments(format_args!("Expected an object"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected an object")));
         }
 
         let mut function = Function::default();
-        if let Some(val) = generate_symbol_for_function(global, object, &mut function)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global)))
-        {
-            return val;
+        if let Some(val) = generate_symbol_for_function(global, object, &mut function)? {
+            return Ok(val);
         }
 
         let _ = function;
         let text: &[u8] =
             b"// bun:ffi callbacks are compiled by JavaScriptCore (no C source is generated)\n";
-        jsc::bun_string_jsc::create_utf8_for_js(global, text).unwrap_or(JSValue::ZERO)
+        jsc::bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub fn print(
@@ -1390,7 +1390,7 @@ impl FFI {
     ) -> JsResult<JSValue> {
         if let Some(is_callback) = is_callback_val {
             if is_callback.to_boolean() {
-                return Ok(Self::print_callback(global, object));
+                return Self::print_callback(global, object);
             }
         }
 
@@ -1449,16 +1449,16 @@ impl FFI {
         global: &JSGlobalObject,
         name_str: ZigString,
         object_value: JSValue,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         }
         let Some(object) = object_value.get_object() else {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         };
 
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
@@ -1498,19 +1498,17 @@ impl FFI {
         };
 
         if name.is_empty() {
-            return global.to_invalid_arguments(format_args!("Invalid library name"));
+            return Ok(global.to_invalid_arguments(format_args!("Invalid library name")));
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
-            .unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
-            return val;
+            return Ok(val);
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
         let dylib: bun_sys::DynLib = 'brk: {
@@ -1540,7 +1538,7 @@ impl FFI {
                                 syscall: bun_core::String::clone_utf8(b"dlopen").into(),
                                 ..Default::default()
                             };
-                            return system_error.to_error_instance(global);
+                            return Ok(system_error.to_error_instance(global));
                         }
                     }
                 }
@@ -1574,7 +1572,7 @@ impl FFI {
                     dylib.close();
                     // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                     unsafe { &*lib_ptr }.do_close();
-                    return ret;
+                    return Ok(ret);
                 };
 
                 function.symbol_from_dynamic_library = Some(resolved_symbol);
@@ -1584,7 +1582,7 @@ impl FFI {
                 dylib.close();
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return err;
+                return Ok(err);
             }
             let target = function
                 .symbol_from_dynamic_library
@@ -1592,14 +1590,15 @@ impl FFI {
             let str = ZigString::init(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &str, function, target, js_object);
             if cb.is_empty() {
+                // An exception the constructor left pending is the caller's.
                 let ret = if global.has_exception() {
-                    global.take_error(JsError::Thrown)
+                    Err(JsError::Thrown)
                 } else {
-                    global.to_invalid_arguments(format_args!(
+                    Ok(global.to_invalid_arguments(format_args!(
                         "Failed to create FFI function for symbol \"{}\" in \"{}\"",
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
-                    ))
+                    )))
                 };
                 dylib.close();
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1614,7 +1613,7 @@ impl FFI {
         lib_ref.functions.set(symbols);
         lib_ref.dylib.set(Some(dylib));
         symbols_value_set_cached(js_object, global, obj);
-        js_object
+        Ok(js_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1623,26 +1622,27 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
-    pub(crate) fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
+    pub(crate) fn link_symbols(
+        global: &JSGlobalObject,
+        object_value: JSValue,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         }
         let Some(object) = object_value.get_object() else {
-            return invalid_options_arg(global);
+            return Ok(invalid_options_arg(global));
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
-            .unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
-            return val;
+            return Ok(val);
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
+            return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
         let obj = JSValue::create_empty_object(global, symbols.len());
@@ -1664,25 +1664,26 @@ impl FFI {
                 ));
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return ret;
+                return Ok(ret);
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
-                return err;
+                return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
             let name = ZigString::init(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &name, function, target, js_object);
             if cb.is_empty() {
+                // An exception the constructor left pending is the caller's.
                 let err = if global.has_exception() {
-                    global.take_error(JsError::Thrown)
+                    Err(JsError::Thrown)
                 } else {
-                    global.to_invalid_arguments(format_args!(
+                    Ok(global.to_invalid_arguments(format_args!(
                         "Failed to create FFI function for symbol \"{}\"",
                         BStr::new(function_name.as_bytes())
-                    ))
+                    )))
                 };
                 // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
                 unsafe { &*lib_ptr }.do_close();
@@ -1694,7 +1695,7 @@ impl FFI {
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
         unsafe { &*lib_ptr }.functions.set(symbols);
         symbols_value_set_cached(js_object, global, obj);
-        js_object
+        Ok(js_object)
     }
 
     pub fn create_cfunction(

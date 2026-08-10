@@ -247,7 +247,14 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
     // The FunctionCallbackInfo object is a view located at the argc slot
     const auto& info = *reinterpret_cast<const Info*>(&slot(Info::kArgcIndex));
 
-    functionTemplate->m_callback(info);
+    {
+        // Keep the return-value slot rescuable while addon code runs: handle
+        // scopes closing inside the callback must not strand the Address the
+        // inline ReturnValue::Set stored there.
+        GlobalInternals::ActiveReturnValueSlotScope returnValueScope(
+            isolate->globalInternals(), &slot(Info::kReturnValueIndex));
+        functionTemplate->m_callback(info);
+    }
 
     TaggedPointer& return_value = slot(Info::kReturnValueIndex);
     if (return_value.isEmpty()) {

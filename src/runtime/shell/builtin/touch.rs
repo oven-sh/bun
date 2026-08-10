@@ -321,6 +321,15 @@ impl ShellTouchTask {
 
 impl bun_event_loop::Taskable for ShellTouchTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {

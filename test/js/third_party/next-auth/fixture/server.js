@@ -1,5 +1,4 @@
 import net from "net";
-import { parse } from "url";
 import http from "http";
 import next from "next";
 import { expect } from "bun:test";
@@ -53,8 +52,7 @@ const handle = app.getRequestHandler();
 app.prepare().then(() => {
   const server = http
     .createServer((req, res) => {
-      const parsedUrl = parse(req.url, true);
-      handle(req, res, parsedUrl);
+      handle(req, res);
     })
     .listen(0, "127.0.0.1", () => {
       console.log("server listening", server.address().port);

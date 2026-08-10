@@ -563,7 +563,7 @@ impl<'a> Run<'a> {
         let result = vm.run_with_api_lock(|| {
             macro_callback
                 .call(global, JSValue::ZERO, args)
-                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
         });
 
         let mut runner = Run {
@@ -838,7 +838,9 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
-                vm.as_mut().wait_for_promise(promise);
+                if vm.as_mut().wait_for_promise(promise).is_err() {
+                    return Err(MacroError::Js(JsError::Terminated));
+                }
 
                 let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;

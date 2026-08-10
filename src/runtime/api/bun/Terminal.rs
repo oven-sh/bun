@@ -1653,6 +1653,11 @@ impl Terminal {
                 } else {
                     bun_core::tty::Mode::Normal
                 },
+                // Never Drain on the PTY master: with the child blocked in
+                // write() on a full PTY, the drain waits on a lock only our
+                // own reads can release, freezing the JS thread for as long
+                // as the child stays blocked.
+                bun_core::tty::SetAttrWhen::Now,
             );
             self.tty_state.set(state);
             if tty_result != 0 {
@@ -1959,8 +1964,16 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
-        let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this);
+        let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
+            .to_node_buffer(global_this)
+        {
+            Ok(data) => data,
+            // OOM / a termination request: that exception is reported by the loop.
+            Err(err) => {
+                global_this.report_active_exception_as_unhandled(err);
+                return true;
+            }
+        };
 
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,

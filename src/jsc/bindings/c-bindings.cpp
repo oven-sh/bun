@@ -1128,7 +1128,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 #endif // OS(DARWIN) / __linux__
 
-// Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
+// Whether this executable carries a payload at all; StartupSnapshot.cpp gates on it. (The allocator asks the narrower question below.)
 extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
 {
     return BUN_COMPILED.size != 0; // any compiled executable; StartupSnapshot.cpp gates on this (and its Windows stub wraps it)

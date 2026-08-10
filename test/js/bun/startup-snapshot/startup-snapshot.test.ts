@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, linkSync, realpathSync } from "fs";
+import { copyFileSync, existsSync, linkSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir, tls } from "harness";
 import { join } from "path";
 
@@ -163,7 +163,12 @@ snapshotTest(
     // The same executable at a second path (a hard link, so it is byte-identical and the snapshot accepts it): build with one, restore with the other.
     using dir = tempDir("bun-snapshot-execpath", {});
     const other = join(String(dir), "bun-elsewhere");
+    try {
     linkSync(bunExe(), other);
+  } catch (e: any) {
+    if (e?.code !== "EXDEV") throw e;
+    copyFileSync(bunExe(), other); // tmp on another filesystem: a copy is just as byte-identical
+  }
     const img = join(String(dir), "s.snapshot");
     const code = `void process.execPath; process.on("restore", () => { console.log("[js] execPath=" + process.execPath); process.exit(0); }); setTimeout(() => Bun.startupSnapshot.take({ timers: "cancel" }), 10);`;
     await Bun.write(join(String(dir), "app.js"), code);

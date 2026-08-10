@@ -4735,8 +4735,8 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
-                            let name_id = mi.str(local_name);
                             if tlm.is_export {
+                                let name_id = mi.str(local_name);
                                 mi.add_export_info_local(name_id, name_id);
                             }
                         }
@@ -4850,8 +4850,9 @@ pub(crate) mod __gated_printer {
                                                     {
                                                         if Self::MAY_HAVE_MODULE_INFO {
                                                             if let Some(mi) = self.module_info() {
-                                                                let name_id = mi.str(str.slice8());
                                                                 if tlm.is_export {
+                                                                    let name_id =
+                                                                        mi.str(str.slice8());
                                                                     mi.add_export_info_local(
                                                                         name_id, name_id,
                                                                     );
@@ -4885,8 +4886,8 @@ pub(crate) mod __gated_printer {
                                                         // reshaped for borrowck — bump access first.
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
-                                                            let name_id = mi.str(str8);
                                                             if tlm.is_export {
+                                                                let name_id = mi.str(str8);
                                                                 mi.add_export_info_local(
                                                                     name_id, name_id,
                                                                 );
@@ -4999,8 +5000,8 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let name_id = mi.str(local_name);
                             if s.func.flags.contains(G::FnFlags::IsExport) {
+                                let name_id = mi.str(local_name);
                                 mi.add_export_info_local(name_id, name_id);
                             }
                         }
@@ -5030,8 +5031,8 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let name_id = mi.str(name_str);
                             if s.is_export {
+                                let name_id = mi.str(name_str);
                                 mi.add_export_info_local(name_id, name_id);
                             }
                         }

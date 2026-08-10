@@ -584,6 +584,10 @@ impl Loader {
             self.map.remove(&key);
         }
         self.did_load_process = false;
+        // Derived lazily from the environment being replaced: re-derived from the new one on next use. The credentials in
+        // particular must not outlive the environment they came from.
+        self.reject_unauthorized.set(None);
+        self.aws_credentials = None;
         self.load_process()
     }
 

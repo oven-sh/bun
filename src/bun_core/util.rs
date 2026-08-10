@@ -3924,7 +3924,15 @@ pub fn standalone_passthrough_offset() -> usize {
 fn argv_view_init() -> ArgvView {
     let storage: &'static [ZBox] = argv_storage();
     let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-    // Splice the executable's own compile-time options, then BUN_OPTIONS tokens, after argv[0].
+    // Final order is [argv0, compile-time options, BUN_OPTIONS tokens, the user's arguments], so BUN_OPTIONS overrides what
+    // was compiled in. `append_options_env` inserts at position 1, so the group that must end up leftmost is spliced last.
+    // Counts are stored even when a group is absent: this runs again in a process restored from a snapshot, whose
+    // environment may lack a BUN_OPTIONS the building process had.
+    let before = view.len();
+    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
+        append_options_env::<&'static ZStr>(opts, &mut view);
+    }
+    set_bun_options_argc(view.len() - before);
     // SAFETY: written once during single-threaded startup.
     let compile_opts = unsafe { COMPILE_EXEC_ARGV.read() };
     let before = view.len();
@@ -3932,13 +3940,6 @@ fn argv_view_init() -> ArgvView {
         append_options_env::<&'static ZStr>(compile_opts, &mut view);
     }
     COMPILE_EXEC_ARGC.store(view.len() - before, core::sync::atomic::Ordering::Relaxed);
-    // Stored even when absent: this runs again in a process restored from a snapshot, whose environment may lack a
-    // BUN_OPTIONS the building process had.
-    let before = view.len();
-    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        append_options_env::<&'static ZStr>(opts, &mut view);
-    }
-    set_bun_options_argc(view.len() - before);
     ArgvView(RacyCell::new(Vec::leak(view)))
 }
 

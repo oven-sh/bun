@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Snapshot round-trip: the fixture snapshots itself at idle, a fresh process restores it and continues.
@@ -96,6 +96,30 @@ overlapTest(
     expect(exitCode).toBe(0);
   },
 );
+
+snapshotTest("TLS verification derived from the builder's environment is re-derived at restore", async () => {
+  using dir = tempDir("bun-snapshot-tls-reject", { "cert.pem": tls.cert, "key.pem": tls.key });
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "tls-reject-fixture.js");
+  const files = { TLS_CERT: join(String(dir), "cert.pem"), TLS_KEY: join(String(dir), "key.pem") };
+  {
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, ...files, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_IO: "network", NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out).toContain("[js] build ok 200");
+    expect(code).toBe(0);
+  }
+  const { NODE_TLS_REJECT_UNAUTHORIZED: _unset, ...launchEnv } = { ...restoreEnv, ...files, BUN_STARTUP_SNAPSHOT_IN: img };
+  await using p = Bun.spawn({ cmd: [bunExe(), fixture], env: launchEnv, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(err).toContain("[snapshot] restored");
+  expect(out).toContain("[js] restored rejected"); // the builder's "don't verify" must not be what this launch runs with
+  expect(code).toBe(0);
+});
 
 snapshotTest("a snapshot built with the parent-death watchdog on does not fire it at restore", async () => {
   // The builder's watch (on the builder's parent) is in the snapshot; a restored process must watch its own parent instead of

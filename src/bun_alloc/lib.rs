@@ -1579,24 +1579,11 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     }
 }
 
-/// One `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` of `len` RW bytes.
-/// Aborts on `MAP_FAILED`. Returned pointer is page-aligned and the region
-/// reads as all-zeros until written.
-#[cfg(unix)]
-#[inline]
-fn bss_mmap_noreserve(len: usize) -> *mut u8 {
-    // SAFETY: `MAP_ANONYMOUS` ignores fd/offset; `len` is non-zero; on success
-    // the region is owned exclusively by this process and zero-filled on first
-    // touch.
-    // `MAP_NORESERVE` is Linux-specific (skip swap reservation for overcommit).
-    // macOS has no equivalent (always overcommits); FreeBSD removed the flag
-    // in 11 (it was always a no-op there). Only set it where it exists.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
-    // Where a snapshot may be built or mapped, this reservation has to land at the same address in every process; the
-    // allocator decides that once and hands out the same kind of bump hint it uses for its own reservations.
+/// Where a snapshot may be built or mapped (the targets deps/mimalloc.ts builds the hint machinery for), this reservation
+/// has to land at the same address in every process; the allocator decides that once and hands out the same kind of bump
+/// hint it uses for its own reservations. Null = no preference.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+fn snapshot_reserve_hint(len: usize) -> *mut libc::c_void {
     // Bottom of the address window StartupSnapshot.cpp captures as ours (0x1f0'0000'0000..); mimalloc's own hinted arenas start above it.
     const SNAPSHOT_RESERVE_BASE: usize = 0x1f0_0000_0000;
     const SNAPSHOT_RESERVE_ALIGN: usize = 4 << 20;
@@ -1613,6 +1600,33 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
         hint = SNAPSHOT_HINT.fetch_add(aligned, core::sync::atomic::Ordering::AcqRel)
             as *mut libc::c_void;
     }
+    hint
+}
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+))]
+fn snapshot_reserve_hint(_len: usize) -> *mut libc::c_void {
+    core::ptr::null_mut()
+}
+
+/// One `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` of `len` RW bytes.
+/// Aborts on `MAP_FAILED`. Returned pointer is page-aligned and the region
+/// reads as all-zeros until written.
+#[cfg(unix)]
+#[inline]
+fn bss_mmap_noreserve(len: usize) -> *mut u8 {
+    // SAFETY: `MAP_ANONYMOUS` ignores fd/offset; `len` is non-zero; on success
+    // the region is owned exclusively by this process and zero-filled on first
+    // touch.
+    // `MAP_NORESERVE` is Linux-specific (skip swap reservation for overcommit).
+    // macOS has no equivalent (always overcommits); FreeBSD removed the flag
+    // in 11 (it was always a no-op there). Only set it where it exists.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+    let hint = snapshot_reserve_hint(len);
     // SAFETY: anonymous private mapping — fd/offset ignored, `len` is non-zero
     // (callers pass `size_of` of a non-ZST); the hint is advisory; failure handled below.
     let p = unsafe {

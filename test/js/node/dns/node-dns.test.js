@@ -157,6 +157,42 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
   }
 });
 
+// Node only sets a numeric `errno` on DNS errors when libuv reported a
+// numeric error (getaddrinfo/getnameinfo). c-ares resolver failures carry a
+// string code and leave `errno` undefined. https://github.com/oven-sh/bun/issues/37320
+test.skipIf(isWindows)("resolver query errors leave errno undefined", async () => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      // Reply NXDOMAIN to every query.
+      const res = Buffer.from(query);
+      res[2] = 0x81; // QR=1, RD=1
+      res[3] = 0x83; // RA=1, RCODE=3 (NXDOMAIN)
+      res.fill(0, 6, 12); // ANCOUNT/NSCOUNT/ARCOUNT = 0
+      socket.send(res, rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + port]);
+
+    const queryErr = await new Promise(resolve => resolver.resolve4("invalid.invalid", err => resolve(err)));
+    expect(queryErr.code).toBe("ENOTFOUND");
+    expect(queryErr.syscall).toBe("queryA");
+    expect(queryErr.hostname).toBe("invalid.invalid");
+    expect(queryErr.errno).toBeUndefined();
+
+    const reverseErr = await new Promise(resolve => resolver.reverse("192.0.2.1", err => resolve(err)));
+    expect(reverseErr.code).toBe("ENOTFOUND");
+    expect(reverseErr.syscall).toBe("getHostByAddr");
+    expect(reverseErr.errno).toBeUndefined();
+  } finally {
+    socket.close();
+  }
+});
+
 test("dns.resolveTxt (txt.socketify.dev)", () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveTxt("txt.socketify.dev", (err, results) => {

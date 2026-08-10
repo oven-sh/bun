@@ -640,6 +640,21 @@ fn any_reply_to_js(
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────
+
+/// Node's `dnsException` only assigns a numeric `errno` when libuv reported a
+/// numeric error (the getaddrinfo/getnameinfo family). c-ares resolver
+/// failures carry a string code, so Node leaves their `errno` undefined;
+/// overwrite the c-ares enum value `SystemError` put there.
+fn clear_errno_for_resolver_syscall(
+    instance: JSValue,
+    global_this: &JSGlobalObject,
+    syscall: &[u8],
+) {
+    if strings::has_prefix_comptime(syscall, b"query") || strings::eql(syscall, b"getHostByAddr") {
+        instance.put(global_this, b"errno", JSValue::UNDEFINED);
+    }
+}
+
 pub(crate) struct ErrorDeferred {
     pub errno: c_ares::Error,
     pub syscall: &'static [u8],
@@ -694,6 +709,7 @@ impl ErrorDeferred {
             b"name",
             bstr::String::static_(b"DNSException").to_js(global_this)?,
         );
+        clear_errno_for_resolver_syscall(instance, global_this, self.syscall);
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
@@ -782,6 +798,7 @@ pub(crate) fn error_to_js_with_syscall(
         b"name",
         bstr::String::static_(b"DNSException").to_js(global_this)?,
     );
+    clear_errno_for_resolver_syscall(instance, global_this, syscall);
     Ok(instance)
 }
 
@@ -825,6 +842,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
         b"name",
         bstr::String::static_(b"DNSException").to_js(global_this)?,
     );
+    clear_errno_for_resolver_syscall(instance, global_this, syscall);
     Ok(instance)
 }
 

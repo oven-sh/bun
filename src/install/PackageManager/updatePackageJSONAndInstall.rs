@@ -29,31 +29,14 @@ use super::{
 
 fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
     let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
-    let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-    buffer_writer.append_newline = preserve_trailing_newline;
-    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-
-    if let Err(e) = js_printer::print_json(
-        &mut writer,
-        root,
+    let printed = print_package_json(
         &entry.source,
-        js_printer::PrintJsonOptions {
-            indent: entry.indentation,
-            mangled_props: None,
-            ..Default::default()
-        },
-    ) {
-        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
-        Global::crash();
-    }
-    let old = core::mem::replace(
-        &mut entry.source.contents,
-        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
+        root,
+        entry.indentation,
+        preserve_trailing_newline,
     );
+    // Cached `root` AST slices borrow the old buffer; pin it instead of freeing.
+    let old = core::mem::replace(&mut entry.source.contents, Cow::Owned(printed));
     entry.stale_contents.push(old);
 }
 
@@ -694,6 +677,16 @@ fn update_package_json_and_install_with_manager_with_updates(
             .to_vec();
     }
 
+    // Commit the fanned-out workspace members: read back the versions the
+    // install step resolved, write each member's package.json, and refresh its
+    // cache entry. This runs before the catalog pass below, which re-reads the
+    // root from the cache and must compose on top of these dependency edits.
+    if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        for member in plan.members.iter_mut() {
+            commit_workspace_member_update(manager, member)?;
+        }
+    }
+
     if editing_catalogs
         && manager.workspace_name_hash.is_some()
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
@@ -889,14 +882,6 @@ fn update_package_json_and_install_with_manager_with_updates(
                     }
                 }
             }
-        }
-    }
-
-    // Commit the fanned-out workspace members: read back the versions the
-    // install step resolved and write each member's package.json to disk.
-    if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        for member in plan.members.iter_mut() {
-            commit_workspace_member_update(manager, member)?;
         }
     }
 
@@ -1210,6 +1195,15 @@ fn commit_workspace_member_update(
     manager: &mut PackageManager,
     member: &mut MemberUpdate,
 ) -> Result<(), Error> {
+    // A stale lockfile can select a workspace that install's re-resolve drops
+    // (for `Some(hash)`, `get_workspace_package_id` returning the root id means
+    // a miss); don't rewrite it against the root's resolutions.
+    if member.name_hash.is_some()
+        && manager.lockfile.get_workspace_package_id(member.name_hash) == 0
+    {
+        return Ok(());
+    }
+
     let source =
         bun_ast::Source::init_path_string(&b"package.json"[..], &member.source_before_install[..]);
     let json_arena = bun_alloc::Arena::new();
@@ -1251,6 +1245,29 @@ fn commit_workspace_member_update(
     let mut path_zbuf = PathBuffer::uninit();
     let path_z = bun_paths::resolve_path::z(&member.package_json_path, &mut path_zbuf);
     File::write_file(Fd::cwd(), path_z, &new_source).map_err(Error::from)?;
+
+    // Refresh the cache so later readers (the root catalog pass) compose on
+    // top of this write instead of a stale snapshot.
+    if let GetResult::Entry(entry) = manager.workspace_package_json_cache.get_with_path(
+        manager.log_mut(),
+        &member.package_json_path,
+        GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    ) {
+        let old = core::mem::replace(&mut entry.source.contents, Cow::Owned(new_source));
+        entry.stale_contents.push(old);
+        // reshaped for borrowck — `entry` borrows the cache; reparse needs the
+        // log. Demote like the other cache-entry sites in this file.
+        let entry_ptr: *mut MapEntry = core::ptr::from_mut(entry);
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid
+        // until the next `get_with_path`; `log_mut` is a disjoint field.
+        if let Err(err) = unsafe { &mut *entry_ptr }.reparse_root(manager.log_mut()) {
+            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+            Global::crash();
+        }
+    }
     Ok(())
 }
 

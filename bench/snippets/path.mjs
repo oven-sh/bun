@@ -54,16 +54,30 @@ const cases = {
   ],
 };
 
-// A non-Latin-1 variant to exercise the UTF-16 code path.
-cases.normalize.push(["/home/usér/プロジェクト/../src/./index.js"]);
+// Non-Latin-1 variants to exercise the UTF-16 code path of every function.
+const wide = "/home/usér/プロジェクト";
+cases.resolve.push([wide, "src/../lib", "索引.js"]);
+cases.normalize.push([wide + "/../src/./index.js"]);
 cases.join.push(["/home/usér", "プロジェクト", "src/index.js"]);
-cases.basename.push(["/home/usér/プロジェクト/索引.html", ".html"]);
+cases.relative.push([wide + "/İ/a", wide + "/İ/b/索引.js"]);
+cases.toNamespacedPath.push(["C:\\usér\\プロジェクト\\索引.js"]);
+cases.dirname.push([wide + "/索引.html"]);
+cases.basename.push([wide + "/索引.html", ".html"]);
+cases.extname.push([wide + "/索引.tar.gz"]);
+cases.parse.push([wide + "/索引.html"]);
+cases.format.push([{ dir: wide, base: "索引.html" }]);
 
-// A long (2000+ character) input.
+// Long (2000+ character) variants.
 const long = "/modules/@scope/package-name/dist/esm".repeat(50);
+cases.resolve.push([long, "../lib/./index.js"]);
 cases.normalize.push([long + "/../lib/./index.js"]);
 cases.join.push([long, "../lib", "index.js"]);
 cases.relative.push([long + "/a/b", long + "/c/d"]);
+cases.toNamespacedPath.push(["C:" + long.replaceAll("/", "\\")]);
+cases.dirname.push([long + "/index.js"]);
+cases.basename.push([long + "/index.js", ".js"]);
+cases.extname.push([long + "/index.js"]);
+cases.parse.push([long + "/index.js"]);
 
 const fmt = a => {
   const s = typeof a === "string" ? JSON.stringify(a) : JSON.stringify(a).replaceAll('"', "");

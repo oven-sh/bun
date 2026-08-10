@@ -25,6 +25,12 @@
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
 
+#if OS(WINDOWS)
+static constexpr bool isWindows = true;
+#else
+static constexpr bool isWindows = false;
+#endif
+
 namespace Bun {
 
 using namespace JSC;
@@ -274,12 +280,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
-        WTF::StringView paths[] = { val, "noop.js"_s };
-#if OS(WINDOWS)
-        val = Bun::NodePath::join(true, paths);
-#else
-        val = Bun::NodePath::join(false, paths);
-#endif
+        String noop = "noop.js"_s;
+        BunString lhs = Bun::toString(val);
+        BunString rhs = Bun::toString(noop);
+        BunString result;
+        Bun__Path__joinString(isWindows, &lhs, &rhs, &result);
+        val = result.transferToWTFString();
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -548,11 +554,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-#if OS(WINDOWS)
-        dirname = Bun::NodePath::dirname(globalObject, true, parent.filename);
-#else
-        dirname = Bun::NodePath::dirname(globalObject, false, parent.filename);
-#endif
+        dirname = JSValue::decode(Bun__Path__dirname(globalObject, isWindows, JSValue::encode(parent.filename)));
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));

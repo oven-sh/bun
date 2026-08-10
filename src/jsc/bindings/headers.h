@@ -442,10 +442,6 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObj
 
 #endif
 
-#ifdef __cplusplus
-
-
-#endif
 
 CPP_DECL JSC::EncodedJSValue ArrayBufferSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
 CPP_DECL JSC::EncodedJSValue ArrayBufferSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);

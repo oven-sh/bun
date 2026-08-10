@@ -1031,10 +1031,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
     // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
     // the next process.cwd() re-query the OS - do not re-populate it here.
-    processObject->clearCachedCwd();
+    Process::invalidateCachedCwd();
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -4587,27 +4586,37 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
-static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
+// Bumped by process.chdir() on any thread; starts at 1 so a zero-initialized cache is stale.
+static std::atomic<unsigned> s_cwdGeneration { 1 };
+
+void Process::invalidateCachedCwd()
+{
+    s_cwdGeneration.fetch_add(1, std::memory_order_relaxed);
+}
+
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/main/worker_thread.js#L114-L129
+JSString* Process::getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    unsigned generation = s_cwdGeneration.load(std::memory_order_relaxed);
+    if (auto* cached = m_cachedCwd.get(); cached && m_cachedCwdGeneration == generation) [[likely]]
         return cached;
-    }
 
     auto cwd = Bun__Process__getCwd(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
+    m_cachedCwd.set(vm, this, cwdStr);
+    m_cachedCwdGeneration = generation;
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 
-extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(getCachedCwd(globalObject));
+    JSString* cwd = defaultGlobalObject(globalObject)->processObject()->getCachedCwd(globalObject);
+    return cwd ? JSValue(cwd) : JSValue();
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

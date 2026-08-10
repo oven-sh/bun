@@ -27,7 +27,6 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-#[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
 use bun_core::strings;

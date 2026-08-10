@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import path from "node:path";
-const common = require("../test/common");
+import common from "../test/common/index.js";
 
 describe("path.parse", () => {
   test("general", () => {

@@ -765,7 +765,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 #else
     constexpr bool isWindows = false;
 #endif
-    JSValue dirnameValue = Bun::NodePath::dirname(globalObject, isWindows, filenameValue);
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, isWindows, JSValue::encode(filenameValue)));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);

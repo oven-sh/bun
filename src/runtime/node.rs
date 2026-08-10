@@ -22,6 +22,9 @@ pub use types::{
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
 
+#[path = "node/path.rs"]
+pub mod path;
+
 #[path = "node/node_os.rs"]
 pub mod os;
 // codegen (`generated_js2native.rs`) addresses this by its file-stem name.

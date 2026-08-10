@@ -972,6 +972,26 @@ describe("multiline array layout", () => {
     );
   });
 
+  it("prints one string per line even with six or fewer entries", () => {
+    const six = Array.from({ length: 6 }, (_, i) => `long-string-number-${i}-aaaaaaaaaaaaaaaaaaaa`);
+    expect(Bun.inspect(six)).toBe(
+      "[\n" +
+        six
+          .map(s => `  "${s}",`)
+          .join("\n")
+          .slice(0, -1) +
+        "\n]",
+    );
+  });
+
+  it("separates multiline objects after a primitive with },\\n{", () => {
+    expect(Bun.inspect([1, { a: 1 }, { b: 2 }])).toBe(
+      ["[ 1, {", "    a: 1,", "  },", "  {", "    b: 2,", "  }", "]"].join("\n"),
+    );
+    // elements that format inline keep the array on one line
+    expect(Bun.inspect([1, [2, 3]])).toBe("[ 1, [ 2, 3 ] ]");
+  });
+
   it("separates multiline objects with },\\n{ instead of }, {", () => {
     const objs = [
       { id: "1ced6c78-1309-49f1-a111-de1010956fc1" },
@@ -1009,6 +1029,24 @@ describe("multiline array layout", () => {
     // short arrays stay on a single line
     expect(Bun.inspect(["a", "b", "c"])).toBe('[ "a", "b", "c" ]');
     expect(Bun.inspect([1, 2, 3])).toBe("[ 1, 2, 3 ]");
+  });
+
+  it("prints one string per line when the entries sit past index 100 in a sparse array", () => {
+    const sparse = [];
+    for (let i = 100; i < 110; i++) {
+      sparse[i] = `sparse-long-string-entry-${i}-aaaaaaaaaaaa`;
+    }
+    expect(Bun.inspect(sparse)).toBe(
+      [
+        "[",
+        "  100 x empty items,",
+        ...Array.from({ length: 10 }, (_, i) => {
+          const comma = i === 9 ? "" : ",";
+          return `  "sparse-long-string-entry-${i + 100}-aaaaaaaaaaaa"${comma}`;
+        }),
+        "]",
+      ].join("\n"),
+    );
   });
 
   it("one string per line inside a nested object", () => {

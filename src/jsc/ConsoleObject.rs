@@ -2676,6 +2676,24 @@ pub mod formatter {
         }
     }
 
+    /// Pass-through writer that records whether a newline went by, so the
+    /// array printer knows an element wrapped onto multiple lines.
+    struct NewlineTracker<'w> {
+        inner: &'w mut dyn bun_io::Write,
+        saw_newline: bool,
+    }
+
+    impl bun_io::Write for NewlineTracker<'_> {
+        fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+            self.saw_newline = self.saw_newline || strings::contains_char(buf, b'\n');
+            self.inner.write_all(buf)
+        }
+
+        fn flush(&mut self) -> bun_io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
     /// Failure-tracking writer wrapper over `&mut dyn bun_io::Write`.
     // PERF: dynamic dispatch rather than monomorphization — profile if hot.
     pub struct WrappedWriter<'w> {
@@ -4313,13 +4331,9 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Layout decision for one array, made before printing it.
-        ///
-        /// Mirrors Node's `groupArrayElements` heuristic: once an array wraps
-        /// onto multiple lines, several elements share a line only when the
-        /// entries are uniformly short primitives; otherwise each element gets
-        /// its own line (and consecutive multiline elements separate as
-        /// `},\n{` instead of `}, {`).
+        /// Decide, before printing, whether a wrapped array packs several
+        /// elements per line (uniformly short primitives) or prints one
+        /// element per line. Mirrors Node's `groupArrayElements` heuristic.
         fn array_layout(
             &self,
             value: JSValue,
@@ -4328,19 +4342,19 @@ pub mod formatter {
             tag_opts: TagOptions,
         ) -> JsResult<ArrayLayout> {
             use crate::StringJsc as _;
-            // Only the first 100 elements are printed; ignore the rest.
-            let limit = len.min(100);
+            // The printer shows at most 100 present entries; measure that
+            // same set, skipping holes without spending the budget on them.
             let mut max_len: usize = 0;
             let mut total_len: usize = 0;
             let mut count: usize = 0;
             let mut measurable = true;
             let mut i: u32 = 0;
-            while u64::from(i) < limit {
+            while count < 100 && u64::from(i) < len {
                 let element = value.get_direct_index(self.global_this, i);
                 if element.is_empty() {
                     if js_type.is_array() {
                         match value.next_present_index(i + 1) {
-                            Some(next) if u64::from(next) < limit => i = next,
+                            Some(next) if u64::from(next) < len => i = next,
                             _ => break,
                         }
                     } else {
@@ -4369,8 +4383,7 @@ pub mod formatter {
                                 force_multiline: false,
                             });
                         }
-                        // Symbol / BigInt: width unknown without
-                        // materializing; keep the packed layout.
+                        // Symbol / BigInt: width unknown without materializing.
                         measurable = false;
                         0
                     }
@@ -4381,7 +4394,7 @@ pub mod formatter {
                 i += 1;
             }
 
-            if !measurable || count <= 6 {
+            if !measurable || count == 0 {
                 return Ok(ArrayLayout {
                     one_per_line: false,
                     force_multiline: false,
@@ -4394,9 +4407,8 @@ pub mod formatter {
             let one_per_line = !packs;
             Ok(ArrayLayout {
                 one_per_line,
-                // The single-line rendering would overflow the line budget, so
-                // open the bracket in multiline form immediately instead of
-                // leaving the first element dangling after `[ `.
+                // Open the bracket in multiline form when a single line would
+                // overflow, instead of leaving the first element after `[ `.
                 force_multiline: one_per_line && self.estimated_line_length + total_len + 2 > 80,
             })
         }
@@ -4414,9 +4426,6 @@ pub mod formatter {
             let tag_opts = self.tag_opts();
 
             let len = value.get_length(self.global_this)?;
-
-            // TODO: DerivedArray does not get passed along in JSType, and it's
-            // not clear why.
 
             if len == 0 {
                 if writer_.write_all(b"[]").is_err() {
@@ -4594,7 +4603,14 @@ pub mod formatter {
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
-                    self.format::<C>(tag, writer_, element, self.global_this)?;
+                    let mut tracking = NewlineTracker {
+                        inner: &mut *writer_,
+                        saw_newline: false,
+                    };
+                    self.format::<C>(tag, &mut tracking, element, self.global_this)?;
+                    // Elements after a multiline one each start a fresh line
+                    // (`},\n{` instead of `}, {`).
+                    was_good_time = was_good_time || (layout.one_per_line && tracking.saw_newline);
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,

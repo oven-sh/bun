@@ -579,6 +579,30 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// Lazy property initializers on the Bun object (Bun.$, Bun.sql) run JS that can throw
+// when the user replaces globals they depend on. The pending exception must not leak
+// into the rest of the property walk: in debug builds it tripped exception-scope
+// assertions, in release builds it made every later property report as missing.
+it("Bun.inspect(Bun) survives lazy property initializers that throw", async () => {
+  const code = `
+    globalThis.Symbol = [];
+    const out = Bun.inspect(Bun);
+    if (!out.includes("write")) throw new Error("inspect output truncated: " + out.length);
+    try { Bun.$; } catch {}
+    try { Bun.sql; } catch {}
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

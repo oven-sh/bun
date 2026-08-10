@@ -82,18 +82,11 @@ if (common.isWindows) {
   assert.strictEqual(resolvedPath.toLowerCase(), process.cwd().toLowerCase());
 }
 
-// Test originally was this:
-//
-//   if (!common.isWindows) {
-//     // Test handling relative paths to be safe when process.cwd() fails.
-//     process.cwd = () => '';
-//     assert.strictEqual(process.cwd(), '');
-//     const resolved = path.resolve();
-//     const expected = '.';
-//     assert.strictEqual(resolved, expected);
-//   }
-//
-// In Bun, path.resolve() reads the same cached working directory that backs
-// process.cwd() rather than calling the (possibly monkey-patched) JS function,
-// so overriding process.cwd has no effect on it and an empty cwd cannot be
-// simulated this way.
+if (!common.isWindows) {
+  // Test handling relative paths to be safe when process.cwd() fails.
+  process.cwd = () => '';
+  assert.strictEqual(process.cwd(), '');
+  const resolved = path.resolve();
+  const expected = '.';
+  assert.strictEqual(resolved, expected);
+}

@@ -4614,14 +4614,36 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
     return cwd ? JSValue(cwd) : JSValue();
 }
 
-// process.cwd() for native callers: the cached JSString, or {} with an exception pending.
-extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// `process.cwd()` as node's lib/ code calls it: the cached JSString, unless the `cwd`
+// property has been replaced (e.g. by a test double), in which case that is called like
+// Node would. Returns {} with an exception pending on failure.
+extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexicalGlobalObject)
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto* process = globalObject->processObject();
+    // The static-table property is only materialized once it has been read or written.
+    if (JSValue custom = process->getDirect(vm, builtinNames(vm).cwdPublicName())) [[unlikely]] {
+        auto* function = dynamicDowncast<JSFunction>(custom);
+        if (!function || !function->isHostFunction() || function->nativeFunction() != Process_functionCwd) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto callData = JSC::getCallData(custom);
+            if (callData.type == CallData::Type::None) [[unlikely]] {
+                JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
+                return {};
+            }
+            JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
+            RETURN_IF_EXCEPTION(scope, {});
+            auto* string = result.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, JSValue::encode(string));
+        }
+    }
     return JSValue::encode(getCachedCwd(globalObject));
 }
 

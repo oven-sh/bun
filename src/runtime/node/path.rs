@@ -339,6 +339,12 @@ impl<'a> Input<'a> {
     fn at(&self, i: usize) -> u32 {
         self.chars.at(i)
     }
+    /// Keeps the viewed string reachable up to this point (for the cwd, which
+    /// unlike an argument is not necessarily referenced from anywhere else).
+    #[inline]
+    fn keep_alive(&self) {
+        self.string.ensure_still_alive();
+    }
 }
 
 unsafe extern "C" {
@@ -354,9 +360,9 @@ unsafe extern "C" {
 
 /// Resolves `value` (already known to be a primitive string) to a flat view.
 /// The view borrows the JSString's storage, which stays alive for as long as
-/// the string is reachable — every string viewed here is either an argument
-/// on the JS stack or the process object's cached cwd, and in the one place a
-/// cwd view could outlive that (see `win32::resolve`) it is copied.
+/// the string is reachable: arguments are on the JS stack for the whole call,
+/// and each entry point keeps a cwd string alive on the native stack until its
+/// result has been built ([`Input::keep_alive`]).
 #[inline]
 fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
     debug_assert!(value.is_string_literal());
@@ -380,9 +386,8 @@ fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
     })
 }
 
-/// `process.cwd()` — the cached string that function returns, not a call
-/// through the (possibly monkey-patched) `process.cwd` property, so stubbing
-/// `process.cwd` in JS does not affect path.resolve() the way it does in Node.
+/// `process.cwd()`: the process object's cached string or, when user code has
+/// replaced `process.cwd`, whatever that returns (lib/path.js calls it too).
 #[inline]
 fn get_cwd<'a>(global: &JSGlobalObject) -> JsResult<Input<'a>> {
     let string = jsc::call_zero_is_throw(global, || Bun__Process__getCachedCwd(global))?;
@@ -1723,26 +1728,22 @@ mod win32 {
 
     /// The resolve() fast path's return value as an owned copy: `path` itself on
     /// Windows, `StringPrototypeReplace(path, /\//g, '\\')` elsewhere.
-    pub(super) fn returned_cwd<'o, C: Unit>(cwd: &[C], out: &'o mut Buf<C>) -> &'o [C] {
+    pub(super) fn returned_cwd<'o, C: Unit, S: Unit>(cwd: &[S], out: &'o mut Buf<C>) -> &'o [C] {
         let o = reserve(out, cwd.len());
-        if cfg!(windows) {
-            o.copy_from_slice(cwd);
-        } else {
-            for (d, c) in o.iter_mut().zip(cwd) {
-                *d = if c.as_u32() == CHAR_FORWARD_SLASH as u32 {
-                    ch(CHAR_BACKWARD_SLASH)
-                } else {
-                    *c
-                };
-            }
+        for (d, c) in o.iter_mut().zip(cwd) {
+            let u = c.as_u32();
+            *d = if !cfg!(windows) && u == CHAR_FORWARD_SLASH as u32 {
+                ch(CHAR_BACKWARD_SLASH)
+            } else {
+                C::from_u32(u)
+            };
         }
         &out[..]
     }
 
     /// `win32.resolve(path)` for internal callers with an already-validated
     /// string: scans, then builds into whichever of `out8`/`out16` matches. The
-    /// result never borrows the cwd string (a second cwd fetch could otherwise
-    /// replace and unroot it).
+    /// result is always an owned copy, never a view of the cwd string.
     pub(super) fn resolve<'o>(
         global: &JSGlobalObject,
         path: Chars<'o>,
@@ -2553,11 +2554,14 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
                     if !cwd.string.is_empty() {
                         return Ok(cwd.string);
                     }
-                    return with_chars!(cwd.chars, |s| to_js(global, s));
+                    let result = with_chars!(cwd.chars, |s| to_js(global, s));
+                    cwd.keep_alive();
+                    return result;
                 }
             }
         }
         let mut cwd_storage: Buf<u16> = Buf::new();
+        let mut cwd: Option<Input<'_>> = None;
 
         // in visit (reverse) order
         let mut stack: SmallVec<[Input<'_>; 16]> = SmallVec::new();
@@ -2588,9 +2592,10 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         }
 
         if !resolved_absolute {
-            let cwd = posix::cwd(global, &mut cwd_storage)?;
-            stack.push(cwd);
-            all_8bit &= cwd.is_8bit();
+            let c = posix::cwd(global, &mut cwd_storage)?;
+            stack.push(c);
+            all_8bit &= c.is_8bit();
+            cwd = Some(c);
         }
 
         let mut parts: SmallVec<[Chars<'_>; 16]> = SmallVec::with_capacity(stack.len());
@@ -2601,15 +2606,18 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         macro_rules! finish {
             ($C:ty) => {{
                 let mut out: Buf<$C> = Buf::new();
-                let result =
-                    posix::resolve::<$C>(&parts, &mut out).map_err(|_| throw_too_long(global))?;
-                if stack.len() == 1 {
-                    return to_js_reusing(global, result, &stack[0]);
+                match posix::resolve::<$C>(&parts, &mut out) {
+                    Err(TooLong) => Err(throw_too_long(global)),
+                    Ok(result) if stack.len() == 1 => to_js_reusing(global, result, &stack[0]),
+                    Ok(result) => to_js(global, result),
                 }
-                return to_js(global, result);
             }};
         }
-        if all_8bit { finish!(u8) } else { finish!(u16) }
+        let result = if all_8bit { finish!(u8) } else { finish!(u16) };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
+        }
+        result
     } else {
         let mut cwd_storage: Buf<u16> = Buf::new();
         let mut cwd: Option<Input<'_>> = None;
@@ -2629,28 +2637,31 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             &mut cwd,
             &mut cwd_storage,
         )?;
-        if let Some(cwd) = st.return_cwd {
-            return with_chars!(cwd.chars, |s| {
-                if cfg!(windows) || index_of(s, CHAR_FORWARD_SLASH, 0) == -1 {
-                    return Ok(cwd.string);
-                }
-                let mut out = buf_like(s);
-                to_js(global, win32::returned_cwd(s, &mut out))
-            });
-        }
         let too_long = |_| throw_too_long(global);
-        if st.all_8bit {
+        let result = if let Some(returned) = st.return_cwd {
+            with_chars!(returned.chars, |s| {
+                if cfg!(windows) || index_of(s, CHAR_FORWARD_SLASH, 0) == -1 {
+                    Ok(returned.string)
+                } else {
+                    let mut out = buf_like(s);
+                    to_js(global, win32::returned_cwd(s, &mut out))
+                }
+            })
+        } else if st.all_8bit {
             let mut out: Buf<u8> = Buf::new();
-            return to_js(
-                global,
-                win32::resolve_build::<u8>(&st, &mut out).map_err(too_long)?,
-            );
+            win32::resolve_build::<u8>(&st, &mut out)
+                .map_err(too_long)
+                .and_then(|r| to_js(global, r))
+        } else {
+            let mut out: Buf<u16> = Buf::new();
+            win32::resolve_build::<u16>(&st, &mut out)
+                .map_err(too_long)
+                .and_then(|r| to_js(global, r))
+        };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
         }
-        let mut out: Buf<u16> = Buf::new();
-        to_js(
-            global,
-            win32::resolve_build::<u16>(&st, &mut out).map_err(too_long)?,
-        )
+        result
     }
 }
 
@@ -2738,10 +2749,15 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
             all_8bit &= c.is_8bit();
             cwd = Some(c);
         }
-        if all_8bit {
-            return posix::relative::<u8>(global, from.chars, to.chars, cwd.as_ref());
+        let result = if all_8bit {
+            posix::relative::<u8>(global, from.chars, to.chars, cwd.as_ref())
+        } else {
+            posix::relative::<u16>(global, from.chars, to.chars, cwd.as_ref())
+        };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
         }
-        posix::relative::<u16>(global, from.chars, to.chars, cwd.as_ref())
+        result
     } else {
         // Scan both operands first so both can be built at one width, sharing one cwd fetch.
         let mut cwd: Option<Input<'_>> = None;
@@ -2775,27 +2791,26 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 let mut to_out: Buf<$C> = Buf::new();
                 let build = |st: &win32::ResolveState<'_>, out| -> JsResult<&[$C]> {
                     match st.return_cwd {
-                        Some(cwd) => {
-                            let mut wide: Buf<$C> = Buf::new();
-                            let s: &[$C] = with_chars!(cwd.chars, |s| {
-                                copy_units(reserve(&mut wide, s.len()), s);
-                                &wide[..]
-                            });
-                            Ok(win32::returned_cwd(s, out))
-                        }
+                        Some(cwd) => Ok(with_chars!(cwd.chars, |s| win32::returned_cwd(s, out))),
                         None => win32::resolve_build::<$C>(st, out).map_err(too_long),
                     }
                 };
-                let from_orig = build(&from_st, &mut from_out)?;
-                let to_orig = build(&to_st, &mut to_out)?;
-                return win32::relative::<$C>(global, from_orig, to_orig);
+                build(&from_st, &mut from_out)
+                    .and_then(|from_orig| Ok((from_orig, build(&to_st, &mut to_out)?)))
+                    .and_then(|(from_orig, to_orig)| {
+                        win32::relative::<$C>(global, from_orig, to_orig)
+                    })
             }};
         }
-        if is_8bit(&from_st) && is_8bit(&to_st) {
+        let result = if is_8bit(&from_st) && is_8bit(&to_st) {
             finish!(u8)
         } else {
             finish!(u16)
+        };
+        if let Some(cwd) = cwd {
+            cwd.keep_alive();
         }
+        result
     }
 }
 
@@ -2823,6 +2838,10 @@ fn to_namespaced_path(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         &mut out16,
         &mut cwd_storage,
     )?;
+    // `resolved_path` is an owned copy; the cwd string is no longer needed.
+    if let Some(cwd) = cwd {
+        cwd.keep_alive();
+    }
 
     with_chars!(resolved_path, |r| {
         if r.len() <= 2 {

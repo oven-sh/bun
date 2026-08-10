@@ -176,6 +176,35 @@ test("String objects are rejected like any other non-string", () => {
   }
 });
 
+test("matchesGlob compiles patterns per platform", () => {
+  // Same pattern string, different glob: `\\` is a separator for win32 only, so a
+  // matcher cached by the posix call must not be reused by the win32 one.
+  expect(path.posix.matchesGlob("dir\\a.js", "dir\\a.js")).toBe(false);
+  expect(path.win32.matchesGlob("dir\\a.js", "dir\\a.js")).toBe(true);
+});
+
+// lib/path.js calls process.cwd(), so replacing it (e.g. with a test double) is
+// observable through resolve()/relative().
+test("path.resolve() and path.relative() use an overridden process.cwd()", () => {
+  const originalCwd = process.cwd;
+  try {
+    const fake = process.platform === "win32" ? "C:\\fake\\dir" : "/fake/dir";
+    process.cwd = () => fake;
+    expect(path.resolve("x")).toBe(path.join(fake, "x"));
+    expect(path.resolve()).toBe(fake);
+    expect(path.relative("x/y", "x")).toBe("..");
+    expect(path.posix.resolve("a")).toBe(path.posix.join(process.platform === "win32" ? "/fake/dir" : fake, "a"));
+    // Handling of relative paths stays safe when process.cwd() fails.
+    process.cwd = () => "";
+    expect(path.posix.resolve()).toBe(".");
+    expect(path.posix.resolve("a/..", "b")).toBe("b");
+    expect(path.win32.resolve("a", "..")).toBe(".");
+  } finally {
+    process.cwd = originalCwd;
+  }
+  expect(path.resolve()).toBe(process.cwd());
+});
+
 describe("path module shape", () => {
   test("matches Node.js", () => {
     const keys = [

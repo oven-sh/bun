@@ -848,6 +848,14 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a private field named like a keyword does not start a regex", async () => {
+      const { stdout, exitCode } = await runRepl(["class C { #in = 84; q = this.#in / 2 }; new C().q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
     test("regex after a conditional's closing paren", async () => {
       const { stdout, exitCode } = await runRepl(['if (true) x = /"/; x', ".exit"]);
       const output = stripAnsi(stdout);

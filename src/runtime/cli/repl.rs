@@ -2527,7 +2527,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     let mut prev_idx = 0usize;
     let mut word_start = 0usize;
     let mut word_end = 0usize;
-    // `obj.in` is a property access, not the `in` keyword.
+    // `obj.in` / `this.#in` is a member access, not the `in` keyword.
     let mut word_after_dot = false;
     // Parens opened by `if`/`for`/`while`/`with`; a `/` after such a `)` is a regex.
     let mut paren_stack: Vec<bool> = Vec::new();
@@ -2659,7 +2659,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
         if is_word_char(ch) {
             if word_end != i {
                 word_start = i;
-                word_after_dot = prev == b'.';
+                word_after_dot = matches!(prev, b'.' | b'#');
             }
             word_end = i + 1;
         }

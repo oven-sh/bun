@@ -11,7 +11,12 @@ const objs = {
   dn: new Intl.DisplayNames("fr", { type: "region" }),
   seg: new Intl.Segmenter("ja", { granularity: "word" }),
   locale: new Intl.Locale("en-Latn-US-u-ca-gregory"),
+  dur: typeof Intl.DurationFormat === "function" ? new Intl.DurationFormat("en", { style: "long" }) : null,
 };
+// Iteration objects held across the boundary too: a Segments object, and an iterator that has already been advanced one step.
+const heldSegments = objs.seg.segment("今日は良い天気ですね");
+const heldIterator = heldSegments[Symbol.iterator]();
+const firstBeforeBoundary = heldIterator.next().value.segment;
 function use() {
   return [
     ["ä", "a", "z"].sort(objs.collator.compare).join(""),
@@ -23,6 +28,9 @@ function use() {
     objs.dn.of("JP"),
     Array.from(objs.seg.segment("東京都に住んでいます"), s => s.segment).join("/"),
     objs.locale.maximize().toString(),
+    objs.dur ? objs.dur.format({ hours: 1, minutes: 2 }) : "(no DurationFormat)",
+    heldSegments.containing(3).segment,
+    firstBeforeBoundary + ">" + Array.from({ length: 3 }, () => heldIterator.next().value?.segment).join("|"),
     new Date(0).toLocaleString("en-GB", { timeZone: "UTC" }),
   ].join("\n");
 }

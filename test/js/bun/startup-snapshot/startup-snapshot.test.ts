@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, linkSync, readdirSync } from "fs";
+import { existsSync, linkSync, readdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir, tls } from "harness";
 import { join } from "path";
 
@@ -108,7 +108,7 @@ snapshotTest("Intl objects created before the freeze work after restore and agre
     stderr: "pipe",
   });
   const [plainOut] = await Promise.all([plainRun.stdout.text(), plainRun.stderr.text(), plainRun.exited]);
-  expect(plainOut.split("\n").length).toBeGreaterThanOrEqual(10);
+  expect(plainOut.split("\n").length).toBeGreaterThanOrEqual(13);
   {
     await using p = Bun.spawn({
       cmd: [bunExe(), fixture],
@@ -227,7 +227,7 @@ snapshotTest(
     });
     const [out, err] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     expect(err).toContain("[snapshot] restored");
-    expect(out).toContain("[js] execPath=" + require("fs").realpathSync(other));
+    expect(out).toContain("[js] execPath=" + realpathSync(other));
   },
 );
 

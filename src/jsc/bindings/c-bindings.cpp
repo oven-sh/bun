@@ -1129,6 +1129,11 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 #endif // OS(DARWIN) / __linux__
 
 // Called by our mimalloc before main (compiled executables get deterministic address hints from their first allocation); a function because BUN_COMPILED is a local symbol in the final link.
+extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
+{
+    return BUN_COMPILED.size != 0; // any compiled executable; StartupSnapshot.cpp gates on this (and its Windows stub wraps it)
+}
+
 #if OS(DARWIN) || defined(__linux__) // the only builds whose allocator is given this hook (deps/mimalloc.ts)
 // Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`; the runtime
 // that adds the snapshot fields to it also const-asserts these three numbers, so the two cannot drift apart): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
@@ -1139,10 +1144,6 @@ static constexpr size_t kOffsetsSnapshotLengthOffset = 36;
 static constexpr uint32_t kTakeStartupSnapshotFlag = 1u << 4;
 static constexpr char kPayloadTrailer[16] = { '\n', '-', '-', '-', '-', ' ', 'B', 'u', 'n', '!', ' ', '-', '-', '-', '-', '\n' };
 
-extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
-{
-    return BUN_COMPILED.size != 0; // any compiled executable; StartupSnapshot.cpp gates on this (and its Windows stub wraps it)
-}
 
 // Asked by the pinned mimalloc during its own initialization (MI_STARTUP_SNAPSHOT_HOST_FN): deterministic placement is only
 // wanted by an executable that is marked to take a snapshot or carries one, so an ordinary compiled executable pays nothing.

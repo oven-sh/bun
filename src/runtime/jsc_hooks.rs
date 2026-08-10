@@ -1380,16 +1380,17 @@ fn body_mixin_get_blob(
     Ok(None)
 }
 
-/// `process.exit(code)`. Main-thread is `noreturn`; in a
-/// worker it returns and the caller `panic!`s.
-///
-/// # Safety
-/// `global` is the live VM global.
+/// The app (or the runtime, in auto mode) asked for a snapshot and the loop has unwound to its top: write it and exit.
 fn take_snapshot(vm: *mut VirtualMachine) -> ! {
     // SAFETY: main-thread VM handed over by `EventLoop::tick` at top level.
     crate::cli::run_command::take_startup_snapshot_and_exit(unsafe { &mut *vm })
 }
 
+/// `process.exit(code)`. Main-thread is `noreturn`; in a
+/// worker it returns and the caller `panic!`s.
+///
+/// # Safety
+/// `global` is the live VM global.
 unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
     // SAFETY: per fn contract — `global` is the live VM global. The deref is
     // performed once here in the hook shim so the user-facing `process::exit`

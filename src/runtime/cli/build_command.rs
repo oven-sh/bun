@@ -1587,8 +1587,12 @@ pub(crate) fn run_startup_snapshot_step(
                 bstr::BStr::new(&exe_abs),
                 st.code()
             ),
+            Ok(_) if mode == CompileStartupSnapshot::Manual => format!(
+                "{} exited without taking a snapshot: with --snapshot=manual the app has to call Bun.startupSnapshot.take() before it exits",
+                bstr::BStr::new(&exe_abs)
+            ),
             Ok(_) => format!(
-                "{} exited without taking a snapshot: in manual mode the app has to call Bun.startupSnapshot.take() (or build with --snapshot for the runtime to take it once startup drains)",
+                "{} exited before its startup work drained, so no snapshot was taken: an app that exits on its own cannot be snapshotted in auto mode (--snapshot=manual lets it call Bun.startupSnapshot.take() at the right moment)",
                 bstr::BStr::new(&exe_abs)
             ),
         }

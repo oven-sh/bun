@@ -514,6 +514,93 @@ test("dns.promises.reverse", async () => {
   }
 });
 
+// Node validates the address before querying: a string that is not an
+// IPv4/IPv6 literal throws `getHostByAddr EINVAL <ip>` from the callback API
+// and rejects from the promises API, never ENOTFOUND (issue #37317).
+describe("dns.reverse with invalid IP", () => {
+  const UV_EINVAL = isWindows ? -4071 : -22;
+
+  function expectEinval(err, ip) {
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("Error");
+    expect(err.message).toBe(`getHostByAddr EINVAL ${ip}`);
+    expect(err.code).toBe("EINVAL");
+    expect(err.syscall).toBe("getHostByAddr");
+    expect(err.hostname).toBe(ip);
+    expect(err.errno).toBe(UV_EINVAL);
+  }
+
+  test.each([
+    "1.2.3",
+    "127.1",
+    "01.2.3.4",
+    "0x7f000001",
+    "10/8",
+    "example.com",
+    "999.999.999.999",
+    "::ffff:::1",
+  ])(
+    "dns.reverse(%j) throws synchronously",
+    ip => {
+      let called = false;
+      let err;
+      try {
+        dns.reverse(ip, () => {
+          called = true;
+        });
+      } catch (e) {
+        err = e;
+      }
+      expectEinval(err, ip);
+      expect(called).toBe(false);
+    },
+  );
+
+  test("dns.Resolver reverse throws synchronously", () => {
+    const resolver = new dns.Resolver();
+    let err;
+    try {
+      resolver.reverse("1.2.3", () => {});
+    } catch (e) {
+      err = e;
+    }
+    expectEinval(err, "1.2.3");
+  });
+
+  test("dns.promises.reverse rejects", async () => {
+    // The promises API must reject, not throw synchronously.
+    const promise = dns.promises.reverse("1.2.3");
+    expect(promise).toBeInstanceOf(Promise);
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expectEinval(err, "1.2.3");
+  });
+
+  test("dns.promises.Resolver reverse rejects", async () => {
+    const resolver = new dns_promises.Resolver();
+    const promise = resolver.reverse("1.2.3");
+    expect(promise).toBeInstanceOf(Promise);
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expectEinval(err, "1.2.3");
+  });
+
+  test("dns.reverse with a non-string ip still throws a TypeError", () => {
+    expect(() => dns.reverse(123, () => {})).toThrow(TypeError);
+    expect(() => dns.promises.reverse(123)).toThrow(TypeError);
+  });
+
+  test("an IPv6 literal with a zone id is not rejected as EINVAL", () => {
+    // uv_inet_pton ignores a '%zone' suffix, so Node accepts this; the query
+    // itself may still fail asynchronously.
+    expect(() => dns.reverse("fe80::1%lo", () => {})).not.toThrow();
+  });
+});
+
 describe("test invalid arguments", () => {
   it.each([
     // TODO: dns.resolveAny is not implemented yet

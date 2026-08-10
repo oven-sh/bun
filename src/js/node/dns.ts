@@ -852,7 +852,15 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    // An invalid IP throws EINVAL synchronously; the promises API rejects.
+    try {
+      return translateErrorCode(dns.reverse(ip));
+    } catch (err) {
+      if (err.name === "TypeError" || err.name === "RangeError") {
+        throw err;
+      }
+      return Promise.$reject(withTranslatedError(err));
+    }
   },
 
   Resolver: class Resolver {
@@ -944,7 +952,15 @@ const promises = {
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      // An invalid IP throws EINVAL synchronously; the promises API rejects.
+      try {
+        return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      } catch (err) {
+        if (err.name === "TypeError" || err.name === "RangeError") {
+          throw err;
+        }
+        return Promise.$reject(withTranslatedError(err));
+      }
     }
 
     setLocalAddress(first, second) {

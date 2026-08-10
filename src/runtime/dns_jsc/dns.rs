@@ -5070,6 +5070,36 @@ impl Resolver {
 
         let ip_slice = ip_str.to_slice_clone(global_this)?;
         let ip = ip_slice.slice();
+
+        // Node validates the address with `uv_inet_pton` before querying
+        // c-ares: anything that is not a strict IPv4/IPv6 literal throws
+        // `getHostByAddr EINVAL <ip>` synchronously instead of failing the
+        // query with ENOTFOUND. `ares_inet_pton` is laxer (it zero-fills
+        // short dotted forms like "1.2.3"), so parse with `core::net`, which
+        // matches libuv's strictness; like libuv, ignore a `%zone` suffix on
+        // the IPv6 attempt.
+        let is_valid_ip = core::str::from_utf8(ip)
+            .is_ok_and(|s| s.parse::<core::net::Ipv4Addr>().is_ok())
+            || {
+                let head = &ip[..strings::index_of_char_usize(ip, b'%').unwrap_or(ip.len())];
+                core::str::from_utf8(head).is_ok_and(|s| s.parse::<core::net::Ipv6Addr>().is_ok())
+            };
+        if !is_valid_ip {
+            let system_error = SystemError {
+                errno: -bun_errno::uv_e::INVAL,
+                code: bun::String::static_(b"EINVAL").into(),
+                message: bun::String::create_format(format_args!(
+                    "getHostByAddr EINVAL {}",
+                    bstr::BStr::new(ip)
+                ))
+                .into(),
+                syscall: bun::String::static_(b"getHostByAddr").into(),
+                hostname: bun::String::clone_utf8(ip).into(),
+                ..Default::default()
+            };
+            return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
+        }
+
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {

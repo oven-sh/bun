@@ -2492,10 +2492,12 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 #endif
 #endif
 
-        header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+        auto* cpusArray = JSC::constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
-        header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+        header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), cpusArray, 0);
+        auto* networkInterfacesArray = JSC::constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), networkInterfacesArray, 0);
 
         return header;
     };

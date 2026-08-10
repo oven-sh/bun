@@ -660,9 +660,6 @@ export function createOnWarning(process, redirectPath, disabledArr) {
   }
 
   return function onWarning(warning) {
-    // Node only seeds this from --no-warnings; also honoring a runtime assignment lets
-    // test/js/node/test/common apply a test's `--no-warnings` flag without re-spawning.
-    if (process.noProcessWarnings) return;
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";

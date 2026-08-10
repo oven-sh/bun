@@ -164,10 +164,11 @@ if (process.argv.length === 2 &&
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--no-warnings" && process.versions.bun) {
         // Keep scanning so a later --expose-internals / --expose-gc in the
-        // same Flags line still installs its shim in-process. Bun's onWarning
-        // printer re-reads Node's process.noProcessWarnings alias on every
-        // warning, so setting it here silences the print like the flag does.
+        // same Flags line still installs its shim in-process. This runs before
+        // the test registers any listener, so dropping the bootstrap printer
+        // plus seeding the alias is exactly the state --no-warnings produces.
         process.noProcessWarnings = true;
+        process.removeAllListeners('warning');
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {

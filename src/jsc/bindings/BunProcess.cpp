@@ -1740,10 +1740,14 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDefaultOnWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* process = globalObject->processObject();
+    // The emitter invokes with the process it was registered on (setThisObject below);
+    // fall back for a listener plucked out of listeners('warning') and called bare.
+    auto* process = dynamicDowncast<Process>(callFrame->thisValue());
+    if (!process)
+        process = defaultGlobalObject(lexicalGlobalObject)->processObject();
+    auto* globalObject = defaultGlobalObject(process->globalObject());
     auto* onWarning = process->ensureOnWarning(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer args;
@@ -1762,6 +1766,8 @@ void Process::installDefaultWarningListener(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject(this->globalObject());
     auto* onWarning = JSFunction::create(vm, globalObject, 1, "onWarning"_s, Process_functionDefaultOnWarning, ImplementationVisibility::Public);
     wrapped().addListener(builtinNames(vm).warningPublicName(), WebCore::JSEventListener::create(*onWarning, *this, false, globalObject->world()), false, false);
+    // The listener map holds the function weakly and is only marked through this object.
+    vm.writeBarrier(this, onWarning);
     wrapped().setThisObject(this);
 }
 

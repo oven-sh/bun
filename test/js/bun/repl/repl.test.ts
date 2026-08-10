@@ -780,6 +780,32 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("division after an object literal inside a function body", async () => {
+      const { stdout, exitCode } = await runRepl(["function g() { return {valueOf: () => 84} / 2 }", "g()", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a non-null assertion", async () => {
+      const { stdout, exitCode } = await runRepl(["q = (84! / 2)", "q", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a JSX closing tag is not a regex start", async () => {
+      // Line 1 may fail at runtime (no JSX runtime configured), but it must
+      // evaluate as one line so line 2 still runs.
+      const { stdout, exitCode } = await runRepl(["q = (<a></a>)", "40 + 2", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a method named like a conditional keyword does not make its paren a regex context", async () => {
+      const { stdout, exitCode } = await runRepl(["o = { if: (n) => n }; q = (o.if(84) / 2)", "q", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
     test("regex after a conditional's closing paren", async () => {
       const { stdout, exitCode } = await runRepl(['if (true) x = /"/; x', ".exit"]);
       const output = stripAnsi(stdout);

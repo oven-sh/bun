@@ -2588,13 +2588,22 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             // A doubled `+`/`-` is postfix inc/dec, which ends an expression.
             let postfix_incdec =
                 matches!(prev, b'+' | b'-') && prev_idx > 0 && code[prev_idx - 1] == prev;
-            // `}` ends a statement block at top level, but an object literal inside `()`/`[]`.
-            let after_block = prev == b'}' && paren_count <= 0 && bracket_count <= 0;
+            // `x!` (TS non-null assertion) ends an expression; `!x` does not.
+            let postfix_bang = prev == b'!'
+                && prev_idx > 0
+                && (is_word_char(code[prev_idx - 1]) || matches!(code[prev_idx - 1], b')' | b']'));
+            // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
+            let jsx_close = prev == b'<' && prev_idx + 1 == i;
+            // `}` ends a statement block at top level, but an object literal inside a group.
+            let after_block =
+                prev == b'}' && paren_count <= 0 && bracket_count <= 0 && brace_count <= 0;
             let starts_regex = prev == 0
                 || after_keyword
                 || after_block
                 || (prev == b')' && last_paren_conditional)
                 || (!postfix_incdec
+                    && !postfix_bang
+                    && !jsx_close
                     && matches!(
                         prev,
                         b'(' | b'['
@@ -2659,6 +2668,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 paren_count += 1;
                 paren_stack.push(
                     is_word_char(prev)
+                        && !word_after_dot
                         && matches!(
                             &code[word_start..word_end],
                             b"if" | b"for" | b"while" | b"with"

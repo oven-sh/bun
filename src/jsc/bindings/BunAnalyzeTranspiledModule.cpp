@@ -13,6 +13,7 @@
 #include "ZigSourceProvider.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
+#include "IsolatedModuleCache.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 // ref: JSModuleLoader.cpp
@@ -156,6 +157,27 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
     });
 }
 
+} // namespace JSC
+
+void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue moduleRecordValue)
+{
+    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!moduleRecord)
+        return;
+    auto* provider = moduleRecord->sourceCode().provider();
+    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
+        return;
+    if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM()))
+        return;
+    auto& resolvedSource = static_cast<Zig::SourceProvider*>(provider)->m_resolvedSource;
+    if (resolvedSource.module_info) {
+        zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(resolvedSource.module_info));
+        resolvedSource.module_info = nullptr;
+    }
+}
+
+namespace JSC {
+
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
@@ -169,10 +191,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
-    // module_info stays on the provider until ~SourceProvider: JSC analyzes the
-    // same JSSourceCode more than once (require(esm) sync replay re-issues
-    // makeModule on an already-fetched entry; --isolate reuses providers across
-    // globals), and every call must produce the same record.
+    // module_info stays on the provider until the module links (or, under
+    // --isolate, until ~SourceProvider): JSC analyzes the same JSSourceCode more
+    // than once (require(esm) sync replay re-issues makeModule on an entry whose
+    // modulePromise is still pending; --isolate reuses providers across globals),
+    // and every call must produce the same record. See releaseModuleInfoAfterLink.
     ASSERT_WITH_MESSAGE(provider->m_resolvedSource.module_info, "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().data());
     if (provider->m_resolvedSource.module_info == nullptr) [[unlikely]]
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise));

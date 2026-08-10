@@ -244,8 +244,10 @@ impl<'a> ProcessHandle<'a> {
                 // `is_done()` = EOF already counted out of `remaining_fds`.
                 // OHOS: skip the buffered read — it re-registers the poll
                 // (EAGAIN → register_poll) and races the FIONREAD drain for
-                // bytes; its internal buffer can swallow output the drain
-                // would have read from the fd (see drain_ohos_pipes).
+                // bytes, swallowing output the drain would have read from
+                // the fd (see drain_ohos_pipes). The force-end below still
+                // applies so a detached child holding the write end cannot
+                // stall the finish.
                 #[cfg(all(unix, not(target_env = "ohos")))]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);

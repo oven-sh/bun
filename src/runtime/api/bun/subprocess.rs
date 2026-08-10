@@ -1568,6 +1568,42 @@ impl Subprocess<'_> {
     }
 }
 
+/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
+/// Subprocess owns without a reader/writer in front of them; record that so a
+/// thread teardown closes them through us (and `finalize_streams` then finds
+/// the slots empty) instead of anyone closing them twice.
+#[cfg(windows)]
+impl Subprocess<'_> {
+    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
+        // SAFETY: `this` is the live boxed Subprocess (stable address).
+        let me = unsafe { &*this };
+        for item in me.stdio_pipes.get().iter() {
+            if let StdioResult::Buffer(buffer) = item {
+                bun_sys::windows::libuv::open_handles::set_owner(
+                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
+                        .cast_mut()
+                        .cast(),
+                    this.cast(),
+                    Some(Self::stop_for_vm_teardown),
+                );
+            }
+        }
+    }
+
+    /// `uv::open_handles` entry point: close every stdio pipe still held here.
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
+        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
+        // Subprocess; each pipe leaves the list as its uv_close is issued.
+        let me = unsafe { &*this.cast::<Self>() };
+        for item in me.stdio_pipes.replace(Vec::new()) {
+            if let StdioResult::Buffer(buffer) = item {
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
     // safely free the pipes

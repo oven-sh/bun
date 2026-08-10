@@ -80,6 +80,8 @@ describe("toMatchSnapshot errors", () => {
       },
     };
 
+    // The matcher reports formatting failures with its own message rather than
+    // rethrowing the getter's error.
     expect(() => {
       // This is what used to get recorded: `a` dropped, the walk carried on with `b`.
       expect(value).toMatchInlineSnapshot(`
@@ -89,7 +91,7 @@ describe("toMatchSnapshot errors", () => {
           },
         }
       `);
-    }).toThrow();
+    }).toThrow("Failed to pretty format value");
     expect(reads).toEqual(["a"]);
   });
 });

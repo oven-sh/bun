@@ -579,6 +579,26 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+it("Bun.inspect(Bun) does not crash when the Symbol global is clobbered", async () => {
+  // Lazy properties on the Bun object (Bun.$, Bun.sql) evaluate internal
+  // modules that call Symbol() at the top level, so reading them throws when
+  // the global Symbol is overwritten. The pending exception must not leak into
+  // the lookup of the next property during the inspect walk.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.Symbol = NaN; Bun.inspect(Bun); try { Bun.sql } catch {} console.log("ok");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

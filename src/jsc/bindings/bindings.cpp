@@ -5596,10 +5596,12 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
-                    continue;
-                // Ignore exceptions from "Get" proxy traps.
+                bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+                // Ignore exceptions from "Get" proxy traps and static lazy
+                // property callbacks, which report the slot as not found.
                 CLEAR_IF_EXCEPTION(scope);
+                if (!hasProperty)
+                    continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto

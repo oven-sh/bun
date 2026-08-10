@@ -678,6 +678,17 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
+// Snapshot restore: the override static and the VM's date cache both hold the building process's zone; this launch's TZ (or its
+// absence, i.e. the system zone of this machine) applies instead. The caches are reset either way, since the cached zone is stale either way.
+extern "C" void Bun__refreshTimeZoneAfterSnapshotRestore(JSGlobalObject* globalObject, const char* tz, size_t tzLen)
+{
+    if (tzLen > 0 && tzLen < 32)
+        WTF::setTimeZoneOverride(String::fromUTF8(std::span { tz, tzLen }));
+    else
+        WTF::setTimeZoneOverride(String());
+    resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+}
+
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
     /* Node only treats the exact string "0" as disabling verification. */

@@ -1928,6 +1928,11 @@ pub unsafe extern "C" fn Bun__startupSnapshotNoteStdioStream(fd: i32, site: *con
 unsafe extern "C" {
     fn Bun__Process__useSharedEnvForSnapshotBuild(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__Process__reloadEnvAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
+    fn Bun__refreshTimeZoneAfterSnapshotRestore(
+        global: *mut bun_jsc::JSGlobalObject,
+        tz: *const u8,
+        tz_len: usize,
+    );
     fn Bun__Process__recreateStdioAfterSnapshotRestore(global: *mut bun_jsc::JSGlobalObject);
     fn Bun__BunObject__refreshLaunchDerivedProperties(global: *mut bun_jsc::JSGlobalObject);
     safe fn Bun__Process__reinstallSignalHandlersAfterSnapshotRestore();
@@ -1992,6 +1997,11 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         // SAFETY: main-thread VM; single-threaded at this point of restore.
         let vm = unsafe { &mut *vm_ptr };
         vm.forget_env_derived_defaults_for_snapshot_restore();
+        {
+            let tz: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(&[]); // this launch's, since the loader was just reloaded
+            // SAFETY: FFI; `tz` is borrowed from the loader for the duration of the call, and `vm.global` is the live global.
+            unsafe { Bun__refreshTimeZoneAfterSnapshotRestore(vm.global, tz.as_ptr(), tz.len()) };
+        }
         vm.origin_timer = std::time::Instant::now(); // performance.now()/process.uptime()/hrtime count from this launch, not the builder's
         vm.origin_timestamp = bun_jsc::virtual_machine::get_origin_timestamp();
     }

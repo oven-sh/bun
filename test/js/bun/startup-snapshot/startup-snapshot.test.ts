@@ -333,6 +333,44 @@ snapshotTest(
   },
 );
 
+snapshotTest(
+  "dates in a restored process follow the launch's time zone, whether TZ is set differently or not at all",
+  async () => {
+    using dir = tempDir("bun-snapshot-tz", {});
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "tz-fixture.js");
+    {
+      // buildEnv pins TZ to UTC, as CI does; that is the zone frozen into the snapshot.
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true);
+    }
+    const { TZ: _utc, ...withoutTZ } = restoreEnv;
+    for (const launchEnv of [{ ...restoreEnv, TZ: "Asia/Tokyo" }, withoutTZ]) {
+      const plain = Bun.spawnSync({
+        cmd: [bunExe(), fixture],
+        env: { ...launchEnv, PLAIN: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...launchEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(out).toBe(plain.stdout.toString()); // used to report the builder's UTC in both launches
+    }
+  },
+);
+
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});
   const img = join(String(dir), "s.snapshot");

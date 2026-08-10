@@ -129,8 +129,8 @@ export namespace t {
    */
   export const globalObject = builtinType<never>()("globalObject");
   /**
-   * Can only be used as an argument type.
-   * Tells the code generator to pass `*JSC.VirtualMachine` as a parameter
+   * Can only be used as an argument type. The generated host function passes the
+   * `JSGlobalObject*` for this argument; the native side takes its `VirtualMachine` from it.
    */
   export const virtualMachine = builtinType<never>()("virtualMachine");
 

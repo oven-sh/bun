@@ -617,8 +617,6 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // `report_unhandled` reports the uncaught exception, with a guard
-            // for `Terminated` (which carries no pending exception to take).
             use bun_jsc::JsResultExt as _;
             bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
             return;

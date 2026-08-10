@@ -1213,7 +1213,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub(crate) fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> Result<(), Stopped> {
+    pub(crate) fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
@@ -1231,15 +1231,24 @@ impl JSValkeyClient {
         let _exit = self.vm().enter_event_loop_scope();
 
         if let Some(this_value) = self.this_value.get().try_get() {
-            let hello_value: JSValue = 'js_hello: {
-                match protocol_jsc::resp_value_to_js(value, &global_object) {
-                    Ok(v) => break 'js_hello v,
-                    Err(err) => {
-                        // TODO: how should we handle this? old code ignore the exception instead
-                        // of cleaning it up. Now we clean it up, and behave the same as old code.
-                        let _ = global_object.take_exception(err);
-                        break 'js_hello JSValue::UNDEFINED;
+            let hello_value = match protocol_jsc::resp_value_to_js(value, &global_object) {
+                Ok(v) => v,
+                // The HELLO reply did not convert: that is this connect's failure. Reject the
+                // connection promise with it (a stop just unwinds; the socket entry stands down).
+                Err(err) => {
+                    let error = global_object.take_exception(err);
+                    if error.is_termination_exception() || !global_object.script_allowed() {
+                        return Err(err);
                     }
+                    if let Some(promise) = Js::connection_promise_get_cached(this_value) {
+                        Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
+                        JSPromise::opaque_mut(promise.as_promise().unwrap())
+                            .reject(&global_object, Ok(error))?;
+                        self.client_mut().flags.connection_promise_returns_client = false;
+                    } else {
+                        let _ = self.vm().as_mut().uncaught_exception(&global_object, error, false);
+                    }
+                    return Ok(());
                 }
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);

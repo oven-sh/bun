@@ -1536,10 +1536,7 @@ impl ValkeyClient {
         self.parent().global_object
     }
 
-    pub(crate) fn on_valkey_connect(
-        &mut self,
-        value: &mut RESPValue,
-    ) -> Result<(), bun_jsc::Stopped> {
+    pub(crate) fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsResult<()> {
         self.parent().on_valkey_connect(value)
     }
 

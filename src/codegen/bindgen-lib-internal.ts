@@ -23,15 +23,6 @@ export let structHashToSelf = new Map<string, Struct>();
 export const str = (v: any) => JSON.stringify(v);
 /** Capitalize */
 export const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-/** Escape an identifier */
-/** Snake Case */
-export const snake = (s: string) =>
-  s[0].toLowerCase() +
-  s
-    .slice(1)
-    .replace(/([A-Z])/g, "_$1")
-    .replace(/-/g, "_")
-    .toLowerCase();
 /** Camel Case */
 export const camel = (s: string) =>
   s[0].toLowerCase() + s.slice(1).replace(/[_-](\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");

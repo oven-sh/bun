@@ -42,7 +42,7 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
-    if ex.is_termination_exception() {
+    if ex.is_termination_exception() || !global.script_allowed() {
         return Err(Stopped);
     }
     let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();

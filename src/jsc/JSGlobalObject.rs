@@ -1057,7 +1057,7 @@ impl JSGlobalObject {
     ///
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
+        if !exception.is_termination_exception() && self.script_allowed() {
             let _ = self
                 .bun_vm()
                 .as_mut()
@@ -1379,7 +1379,7 @@ impl JSGlobalObject {
         crate::mark_binding();
         let taken = self.take_exception(proof);
         // A terminated worker's pending exception (or its closed gate) is not an error to report.
-        if taken.is_termination_exception() {
+        if taken.is_termination_exception() || !self.script_allowed() {
             return;
         }
         let exc = taken

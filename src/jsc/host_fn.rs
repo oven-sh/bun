@@ -237,8 +237,8 @@ impl IntoHostSetterReturn for JsResult<()> {
 // `false` is the signal for "exception already thrown". The Rust thunk wraps in an
 // `ExceptionValidationScope` and re-derives the ABI bool from `JsResult`, so
 // `false` must round-trip to `Err(Thrown)` here — discarding it (as `Ok(())`)
-// makes `host_setter_result` return `true` and trips
-// `assert_exception_presence_matches(false)` while an exception is pending.
+// makes `host_setter_result` return `true` and trips the boundary's unwind assertion
+// (`assert_unwind_reason_matches`) while an exception is pending.
 impl IntoHostSetterReturn for bool {
     #[inline]
     fn into_host_setter_return(self) -> JsResult<()> {

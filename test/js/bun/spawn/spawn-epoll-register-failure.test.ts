@@ -135,7 +135,7 @@ async function runFixture(extraEnv: Record<string, string>) {
   return JSON.parse(stdout.trim());
 }
 
-test.skipIf(!enabled)(
+test.concurrent.skipIf(!enabled)(
   "kill() and exited work when pidfd epoll registration fails",
   async () => {
     using dir = tempDir("epoll-fail", {});
@@ -165,7 +165,7 @@ test.skipIf(!enabled)(
   15_000,
 );
 
-test.skipIf(!enabled)(
+test.concurrent.skipIf(!enabled)(
   "exit is observed without kill when pidfd epoll registration fails",
   async () => {
     using dir = tempDir("epoll-fail-exit", {});

@@ -830,6 +830,27 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(chained.stdout)).toContain("43");
       expect(stripAnsi(chained.stdout)).not.toContain("SyntaxError");
       expect(chained.exitCode).toBe(0);
+
+      const object = await runRepl(["q = ({ a: 1 }! / 2); q", ".exit"]);
+      expect(stripAnsi(object.stdout)).toContain("NaN");
+      expect(stripAnsi(object.stdout)).not.toContain("SyntaxError");
+      expect(object.exitCode).toBe(0);
+    });
+
+    test("division after a spread object literal", async () => {
+      const { stdout, exitCode } = await runRepl(["x = { ...{} / 2 }; 40 + 2", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after a for-await head", async () => {
+      const { stdout, exitCode } = await runRepl(['for await (const x of []) /"/.test("x"); 40 + 2', ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
     });
 
     test("a JSX closing tag is not a regex start", async () => {

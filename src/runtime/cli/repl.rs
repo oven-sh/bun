@@ -2597,7 +2597,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 while j > 0 && code[j - 1] == b'!' {
                     j -= 1;
                 }
-                j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b')' | b']'))
+                j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b')' | b']' | b'}'))
             };
             // An adjacent `</` is a JSX closing tag, not `<` followed by a regex.
             let jsx_close = prev == b'<' && prev_idx + 1 == i;
@@ -2696,6 +2696,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                             | b'>'
                             | b'^'
                             | b'~'
+                            | b'.'
                     ) || (is_word_char(prev)
                         && !word_after_dot
                         && REGEX_KEYWORDS.contains(&&code[word_start..word_end])
@@ -2710,14 +2711,29 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             b']' => bracket_count -= 1,
             b'(' => {
                 paren_count += 1;
-                paren_stack.push(
-                    is_word_char(prev)
-                        && !word_after_dot
-                        && matches!(
-                            &code[word_start..word_end],
-                            b"if" | b"for" | b"while" | b"with"
-                        ),
-                );
+                let mut head = is_word_char(prev)
+                    && !word_after_dot
+                    && matches!(
+                        &code[word_start..word_end],
+                        b"if" | b"for" | b"while" | b"with"
+                    );
+                // `for await (` is a conditional head; bare `await (` is a call-like use.
+                if !head
+                    && is_word_char(prev)
+                    && !word_after_dot
+                    && &code[word_start..word_end] == b"await"
+                {
+                    let mut j = word_start;
+                    while j > 0 && code[j - 1].is_ascii_whitespace() {
+                        j -= 1;
+                    }
+                    let end = j;
+                    while j > 0 && is_word_char(code[j - 1]) {
+                        j -= 1;
+                    }
+                    head = &code[j..end] == b"for";
+                }
+                paren_stack.push(head);
             }
             b')' => {
                 paren_count -= 1;

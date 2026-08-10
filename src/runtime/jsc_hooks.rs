@@ -3014,20 +3014,18 @@ fn transpile_source_code_inner(
                     );
                     // Rebuild the cached ESM record so JSC can skip its own
                     // analyze pass (same shape as `RuntimeTranspilerStore`).
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    let module_info: *mut core::ffi::c_void = if unsafe { &*jsc_vm }
-                        .use_module_info_for_esm()
-                        && entry.metadata.module_type != CacheModuleType::Cjs
-                        && !entry.esm_record.is_empty()
-                    {
-                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
-                            &entry.esm_record,
-                        )
-                        .map(|b| bun_core::heap::into_raw(b).cast())
-                        .unwrap_or(core::ptr::null_mut())
-                    } else {
-                        core::ptr::null_mut()
-                    };
+                    let module_info: *mut core::ffi::c_void =
+                        if VirtualMachine::use_module_info_for_esm()
+                            && entry.metadata.module_type != CacheModuleType::Cjs
+                            && !entry.esm_record.is_empty()
+                        {
+                            use bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized;
+                            ModuleInfoDeserialized::create_from_cached_record(&entry.esm_record)
+                                .map(|b| bun_core::heap::into_raw(b).cast())
+                                .unwrap_or(core::ptr::null_mut())
+                        } else {
+                            core::ptr::null_mut()
+                        };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // Node compile cache hook (transpiler-cache-hit path); must
                     // read `output_code` before it is consumed below. UTF-16
@@ -3178,10 +3176,9 @@ fn transpile_source_code_inner(
                 // Collect the ESM record while printing so JSC builds the
                 // JSModuleRecord from Bun's output instead of re-parsing (same
                 // shape as `RuntimeTranspilerStore`).
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 let mut module_info: Option<
                     Box<bun_bundler::analyze_transpiled_module::ModuleInfo>,
-                > = if unsafe { &*jsc_vm }.use_module_info_for_esm()
+                > = if VirtualMachine::use_module_info_for_esm()
                     && !is_commonjs_module
                     && loader.is_java_script_like()
                 {

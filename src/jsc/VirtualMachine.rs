@@ -4796,11 +4796,7 @@ impl VirtualMachine {
     /// Whether the per-test-isolation source provider cache is active.
     #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
     pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {
-        Self::use_isolation_source_provider_cache_with(self.test_isolation_enabled)
-    }
-
-    fn use_isolation_source_provider_cache_with(test_isolation_enabled: bool) -> bool {
-        test_isolation_enabled
+        self.test_isolation_enabled
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)
     }
@@ -4809,16 +4805,12 @@ impl VirtualMachine {
     /// the `JSModuleRecord` from Bun's printer output instead of re-parsing.
     /// The record carries `m_isTypeScript` / `SingleTypeScript` entries that
     /// let a TypeScript re-export of a type-only name resolve (#7384).
-    pub fn use_module_info_for_esm(&self) -> bool {
-        Self::use_module_info_for_esm_with(self.test_isolation_enabled)
-    }
-
-    /// Scalar form of [`Self::use_module_info_for_esm`] for the transpiler
-    /// worker, which must not form a `&VirtualMachine`.
-    pub fn use_module_info_for_esm_with(test_isolation_enabled: bool) -> bool {
+    ///
+    /// Process-wide (no VM state) so the transpiler cache can hash the same
+    /// answer into its key: entries written with it off carry no esm_record.
+    pub fn use_module_info_for_esm() -> bool {
         !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
             .unwrap_or(false)
-            || Self::use_isolation_source_provider_cache_with(test_isolation_enabled)
     }
 
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.

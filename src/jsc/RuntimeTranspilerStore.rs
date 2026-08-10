@@ -972,9 +972,7 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above.
-        let use_module_info_for_esm =
-            VirtualMachine::use_module_info_for_esm_with(unsafe { (*vm).test_isolation_enabled });
+        let use_module_info_for_esm = VirtualMachine::use_module_info_for_esm();
 
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a

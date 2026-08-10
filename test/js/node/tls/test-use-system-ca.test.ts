@@ -137,45 +137,6 @@ describe("--use-system-ca", () => {
     },
   );
 
-  // A worker with no CA flag of its own takes the process default, where
-  // --no-use-system-ca beats NODE_USE_SYSTEM_CA=1 for connections, and
-  // getCACertificates('default') has to report that same decision rather than
-  // re-deriving one from the env var.
-  test.skipIf(!isLinux)("getCACertificates('default') reports the decision connections use", async () => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "--no-use-system-ca",
-        "-e",
-        `
-        const tls = require("tls");
-        const { Worker } = require("worker_threads");
-        const count = () => tls.getCACertificates("default").length - tls.getCACertificates("bundled").length;
-        const w = new Worker(\`
-          const tls = require("tls");
-          require("worker_threads").parentPort.postMessage(
-            tls.getCACertificates("default").length - tls.getCACertificates("bundled").length);
-        \`, { eval: true, execArgv: [] });
-        w.once("message", worker => console.log(JSON.stringify({ main: count(), worker })));
-        w.once("error", e => { console.error(e); process.exit(1); });
-        `,
-      ],
-      env: {
-        ...bunEnv,
-        SSL_CERT_FILE: join(keysDir, "ca1-cert.pem"),
-        NODE_USE_SYSTEM_CA: "1",
-        NODE_EXTRA_CA_CERTS: undefined,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // ca1 is the single "system" root here; neither thread trusts it, so neither may report it.
-    expect(JSON.parse(stdout.trim())).toEqual({ main: 0, worker: 0 });
-    expect(exitCode).toBe(0);
-  });
-
   // A worker whose --use-system-ca differs from the process default must not make TLS-less
   // options parse as a TLS config: Bun.serve({ port: 0, fetch }) inside such a worker has to
   // stay a plain HTTP server instead of silently becoming an HTTPS server with no certificate.

@@ -120,7 +120,9 @@ export default class RoundRobinHandle {
     const pending = this.inFlight.get(worker.id);
     if (pending !== undefined) {
       this.inFlight.delete(worker.id);
-      this.distribute(0, pending);
+      // The worker may already have adopted this connection (its ack is lost with the channel), so
+      // handing the primary's copy to another worker could serve it twice; drop our copy, as node does.
+      pending.close();
     }
 
     if (this.all.size !== 0) return false;

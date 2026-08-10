@@ -462,8 +462,7 @@ if (cluster.isPrimary) {
   worker.on("message", m => {
     if (m.port) { const c = net.connect(m.port, "127.0.0.1"); c.on("error", () => {}); return; }
     console.log(JSON.stringify(m));
-    worker.kill();
-    process.exit(0);
+    worker.disconnect();
   });
 } else {
   const first = net.createServer(sock => {
@@ -471,8 +470,9 @@ if (cluster.isPrimary) {
     const port = first.address().port;
     first.close();
     const second = net.createServer();
-    second.on("error", err => { sock.destroy(); process.send({ relisten: err.code }); });
-    second.listen(port, "127.0.0.1", () => { sock.destroy(); process.send({ relisten: "ok", samePort: second.address().port === port }); });
+    const report = result => { sock.destroy(); second.close(); process.send(result); };
+    second.on("error", err => report({ relisten: err.code }));
+    second.listen(port, "127.0.0.1", () => report({ relisten: "ok", samePort: second.address().port === port }));
   });
   first.listen(0, "127.0.0.1", () => process.send({ port: first.address().port }));
 }
@@ -503,10 +503,10 @@ cluster.schedulingPolicy = cluster.SCHED_NONE;
 const SOCK = path.join(__dirname, "srv.sock");
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.disconnect(); });
 } else {
   const server = net.createServer();
-  server.listen(SOCK, () => process.send({ address: server.address(), expected: SOCK }));
+  server.listen(SOCK, () => { const address = server.address(); server.close(() => process.send({ address, expected: SOCK })); });
 }
 `,
   });
@@ -533,11 +533,15 @@ const NAME = "\\0bun-cluster-abstract-" + (process.env.ABSTRACT_ID || process.pi
 if (cluster.isPrimary) {
   const worker = cluster.fork({ ABSTRACT_ID: String(process.pid) });
   worker.on("message", () => {
-    const c = net.connect(NAME, () => { console.log(JSON.stringify({ connect: "ok" })); c.destroy(); worker.kill(); process.exit(0); });
-    c.on("error", err => { console.log(JSON.stringify({ connect: err.code })); worker.kill(); process.exit(0); });
+    const finish = result => { console.log(JSON.stringify(result)); worker.send("close"); };
+    const c = net.connect(NAME, () => { c.destroy(); finish({ connect: "ok" }); });
+    c.on("error", err => finish({ connect: err.code }));
   });
+  worker.on("exit", code => process.exitCode = code);
 } else {
-  net.createServer(s => s.end()).listen(NAME, () => process.send("listening"));
+  const server = net.createServer(s => s.end());
+  process.on("message", () => server.close(() => process.disconnect()));
+  server.listen(NAME, () => process.send("listening"));
 }
 `,
   });
@@ -1067,23 +1071,25 @@ if (cluster.isPrimary) {
   worker.on("message", m => {
     if (m === "connected") return c.end("early", () => worker.send("attach"));
     console.log(JSON.stringify(m));
-    worker.kill();
-    process.exit(0);
+    c.destroy();
+    worker.disconnect();
   });
   cluster.on("listening", (_w, addr) => {
     c = net.connect(addr.port, "127.0.0.1");
     c.on("error", () => {});
   });
 } else {
-  net.createServer(sock => {
+  const server = net.createServer(sock => {
     process.once("message", () => {
-      if (sock.readableEnded) return process.send({ endedBeforeListener: true, data: "" });
+      const report = result => { sock.destroy(); server.close(); process.send(result); };
+      if (sock.readableEnded) return report({ endedBeforeListener: true, data: "" });
       let data = "";
       sock.on("data", d => { data += d; });
-      sock.on("end", () => process.send({ endedBeforeListener: false, data }));
+      sock.on("end", () => report({ endedBeforeListener: false, data }));
     });
     process.send("connected");
-  }).listen(0, "127.0.0.1");
+  });
+  server.listen(0, "127.0.0.1");
 }
 `,
   });

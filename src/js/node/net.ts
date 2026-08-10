@@ -1882,7 +1882,7 @@ Socket.prototype.connect = function connect(...args) {
     if (socket) {
       connection = socket;
     }
-    if (fd) {
+    if (fd != null) {
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1911,9 +1911,9 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
-      if (!fd) this.connecting = true;
+      if (fd == null) this.connecting = true;
     }
-    if (fd) {
+    if (fd != null) {
       return this;
     }
     if (

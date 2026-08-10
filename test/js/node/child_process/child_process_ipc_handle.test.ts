@@ -474,20 +474,23 @@ const { fork } = require('node:child_process');
 const tlsMod = require('node:tls');
 const fs = require('node:fs');
 const child = fork('child.js');
-const finish = out => { console.log(JSON.stringify(out)); child.kill(); process.exit(0); };
+const sockets = [];
+const finish = out => { console.log(JSON.stringify(out)); for (const s of sockets) s.destroy(); server.close(); child.disconnect(); };
 child.on('message', m => finish({ childReceived: m }));
 const server = tlsMod.createServer({ key: fs.readFileSync('key.pem'), cert: fs.readFileSync('cert.pem') }, serverSide => {
+  sockets.push(serverSide);
   try { child.send('tls', serverSide); } catch (err) { report('serverCode', err.code); }
 });
 const codes = {};
 function report(side, code) { codes[side] = code; if ('serverCode' in codes && 'clientCode' in codes) finish({ ...codes, childReceived: null }); }
 server.listen(0, '127.0.0.1', () => {
   const clientSide = tlsMod.connect({ port: server.address().port, host: '127.0.0.1', rejectUnauthorized: false }, () => {
+    sockets.push(clientSide);
     try { child.send('tls', clientSide); } catch (err) { report('clientCode', err.code); }
   });
 });
 `,
-        "child.js": `process.on('message', m => process.send('unexpected:' + m)); setInterval(() => {}, 1000);`,
+        "child.js": `process.on('message', m => process.send('unexpected:' + m));`,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "parent.js"],
@@ -504,4 +507,43 @@ server.listen(0, '127.0.0.1', () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+    using dir = tempDir("ipc-handle-fd0", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer(sock => {
+  child.send('sock', sock);
+  child.once('message', m => { console.log(JSON.stringify(m)); sock.destroy(); server.close(); child.disconnect(); });
+});
+server.listen(0, '127.0.0.1', () => {
+  const client = net.connect(server.address().port, '127.0.0.1');
+  client.on('data', d => { client.end(); });
+  client.on('error', () => {});
+});
+`,
+      "child.js": `
+require('node:fs').closeSync(0); // the next descriptor this process receives is fd 0
+process.on('message', (m, sock) => {
+  const fd = sock && sock._handle && sock._handle.fd;
+  sock.end('hi', () => process.send({ message: m, receivedFd: fd, writable: true }));
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { message: "sock", receivedFd: 0, writable: true },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

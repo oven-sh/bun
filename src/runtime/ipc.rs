@@ -1199,12 +1199,10 @@ impl SendQueue {
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
                         item.complete(&global);
                     }
+                    // Fully written items never stay queued (on_write_complete moves them out), so
+                    // whatever is left, partially written or not, was never delivered.
                     for item in sq.queue.with_mut(std::mem::take) {
-                        if item.data.cursor > 0 {
-                            item.complete(&global);
-                        } else {
-                            item.abort_unsent(&global);
-                        }
+                        item.abort_unsent(&global);
                     }
                     if let Some(owner) = sq.owner.get() {
                         owner.handle_ipc_close();
@@ -2190,6 +2188,7 @@ fn handle_ipc_message(
     } else {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
         let mut handle_js = JSValue::UNDEFINED;
+        let mut received_fd: Option<Fd> = None;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
@@ -2223,6 +2222,7 @@ fn handle_ipc_message(
                         let fd = imported.unwrap();
                         #[cfg(not(windows))]
                         let fd = send_queue.incoming_fd.take().unwrap();
+                        received_fd = Some(fd);
                         handle_js = received_fd_to_js(fd);
                     }
                     Ok(_) => {}
@@ -2232,8 +2232,14 @@ fn handle_ipc_message(
                 }
             }
         }
-        if let Some(owner) = send_queue.owner.get() {
-            owner.handle_ipc_message(&message, handle_js);
+        match send_queue.owner.get() {
+            Some(owner) => owner.handle_ipc_message(&message, handle_js),
+            // Owner already torn down: nobody will adopt the descriptor we just acked.
+            None => {
+                if let Some(fd) = received_fd {
+                    FdExt::close(fd);
+                }
+            }
         }
     }
 }

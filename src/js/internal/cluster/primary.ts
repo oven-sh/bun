@@ -311,6 +311,8 @@ function queryServer(worker, message) {
     );
     if (sent === null && serverHandle !== null && serverHandle !== undefined) {
       send(worker, { errno: enobufsErrorCode(), key, ack: message.seq, data }, null);
+      // The worker never got the handle, so it will never send act:close for it.
+      if (handle.remove(worker) && handles.get(key) === handle) handles.delete(key);
     }
     if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
   });

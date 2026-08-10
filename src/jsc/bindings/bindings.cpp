@@ -5597,8 +5597,7 @@ restart:
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 bool hasProperty = object->getPropertySlot(globalObject, property, slot);
-                // Ignore exceptions from "Get" proxy traps and static lazy
-                // property callbacks, which report the slot as not found.
+                // Ignore exceptions from "Get" proxy traps; a throwing lazy property callback reports the slot as not found.
                 CLEAR_IF_EXCEPTION(scope);
                 if (!hasProperty)
                     continue;

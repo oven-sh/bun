@@ -82,8 +82,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
 
         // Command line
-        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);
+        JSValue commandLine = JSValue::decode(Bun__Process__createExecArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), commandLine, 0);
 
         // Node version
         header->putDirect(vm, Identifier::fromString(vm, "nodejsVersion"_s), jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
@@ -177,7 +178,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             }
             header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), cpuArray, 0);
         } else {
-            header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), constructEmptyArray(globalObject, nullptr), 0);
+            JSArray* emptyCpus = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), emptyCpus, 0);
         }
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -231,7 +234,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             }
             header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), interfacesArray, 0);
         } else {
-            header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), constructEmptyArray(globalObject, nullptr), 0);
+            JSArray* emptyInterfaces = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), emptyInterfaces, 0);
         }
 
         report->putDirect(vm, Identifier::fromString(vm, "header"_s), header, 0);
@@ -384,16 +389,19 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
     }
 
     // Native stack (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "nativeStack"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* nativeStack = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, Identifier::fromString(vm, "nativeStack"_s), nativeStack, 0);
 
     // libuv (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "libuv"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* libuvArray = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, Identifier::fromString(vm, "libuv"_s), libuvArray, 0);
 
     // Workers (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "workers"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* workersArray = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, Identifier::fromString(vm, "workers"_s), workersArray, 0);
 
     // Environment variables
     report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), globalObject->processEnvObject(), 0);

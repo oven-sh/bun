@@ -30,6 +30,9 @@ export TMPDIR="${TMPDIR:-/data/storage/el2/base/tmp}"
 # 每次全量跑前重新应用。脚本不存在时跳过（不阻塞运行）。
 export CXX="${CXX:-/storage/Users/currentUser/.harmonybrew/bin/c++}"
 export CC="${CC:-/storage/Users/currentUser/.harmonybrew/bin/cc}"
+# OHOS 平台标志：测试文件用它做平台特判（如 sharp prebuilt 不可用
+# 时 complex-workspace 用 --ignore-scripts，与 Windows 分支同理）
+export BUN_OHOS="${BUN_OHOS:-1}"
 # 兼容从根目录或 scripts/ohos/ 下运行：先找同目录，再找 scripts/ohos/
 _OHOS_PATCH_SCRIPT="$(dirname "$0")/patch-node-gyp.sh"
 [ -f "$_OHOS_PATCH_SCRIPT" ] || _OHOS_PATCH_SCRIPT="$(dirname "$0")/scripts/ohos/patch-node-gyp.sh"
@@ -218,11 +221,18 @@ run_test() {
 
   # ── 串行标记：这些测试并行跑会冲突导致 subshell 死 ──
   _serial=0
+  _exclusive=0
   case "$f" in
     *socket.io/*|*grpc-js/*|*jsonwebtoken/*|*pg-gateway/*|*resvg/*|*@napi-rs/*|*@fastify/*|*@electric-sql/*)
       _serial=1 ;;
     *fetch/fetch-http3-cold-post*|*hono/hello-world*|*wpt-h2/*|*canvas/*|*socket.io*)
       _serial=1 ;;
+    # native-plugin 编译/加载 .node 与并发 bun 进程冲突（_Znwm symbol not
+    # found：任何并发 bun test 进程存在时 .node 的 libc++ 符号解析竞争）。
+    # 独占：获取 exclusive.lock 后其他 worker 分派暂停（缓解，非根治）。
+    *native-plugin*)
+      _serial=1
+      _exclusive=1 ;;
   esac
 
   # ── 串行锁 ──
@@ -231,6 +241,11 @@ run_test() {
     while ! mkdir "$PDIR/serial.lock" 2>/dev/null; do sleep 1; done
     # 记录本测试持有锁，方便释放
     echo "$$" > "$PDIR/serial_holder" 2>/dev/null
+  fi
+
+  # ── 独占锁 ──
+  if [ "${_exclusive:-0}" -eq 1 ]; then
+    while ! mkdir "$PDIR/exclusive.lock" 2>/dev/null; do sleep 1; done
   fi
 
   START_TS=$(date +%s%N)
@@ -341,6 +356,10 @@ run_test() {
   # 释放串行锁
   if [ "$_serial" -eq 1 ]; then
     rmdir "$PDIR/serial.lock" 2>/dev/null || true
+  fi
+  # 释放独占锁
+  if [ "${_exclusive:-0}" -eq 1 ]; then
+    rmdir "$PDIR/exclusive.lock" 2>/dev/null || true
   fi
 }
 
@@ -522,11 +541,21 @@ while IFS= read -r f; do
   # 全局最大 WT：_wait_start 阶段 wt_* 可能已被回收（worker 完成时删除），
   # 动态超时依赖它计算；在分派时记录，避免 _max_wt=0 退化为 3600s 固定值。
   [ "$_wt" -gt "$_g_max_wt" ] 2>/dev/null && _g_max_wt=$_wt
-  run_test "$i" "$f" &
+  # stdin 必须重定向到 /dev/null：后台子进程（含 bun test、script 包装的
+  # terminal 测试）继承循环的 stdin（= test_files.txt fd），一旦子进程读
+  # stdin 就会消费文件剩余内容 → 主循环 read 提前 EOF → 尾部文件从未分派
+  # （2026-08-10 全量：terminal.test.ts 后 27 个文件丢失即此根因）。
+  run_test "$i" "$f" < /dev/null &
   echo "$!" > "$PDIR/pid_${i}"
 
   # 阻塞直到有空闲 slot — 通过检查已完成的 result_* 来回收 running 文件
   while true; do
+    # 独占测试运行中：非独占测试暂停分派（native-plugin 与任何并发
+    # bun 进程冲突，_Znwm symbol not found）
+    if [ "${_exclusive:-0}" -ne 1 ] && [ -d "$PDIR/exclusive.lock" ]; then
+      sleep 1
+      continue
+    fi
     # 回收所有已完成测试的 running 文件和超时 worker
     # 遍历 running_* 文件替代 seq 1 $i（OHOS 上 seq 慢，且最多 PARALLEL 个文件）
     for _jf in "$PDIR"/running_*; do
@@ -662,8 +691,14 @@ while true; do
   [ "$_g_max_wt" -gt "$_max_wt" ] 2>/dev/null && _max_wt=$_g_max_wt
   _wait_timeout=3600
   if [ "$_max_wt" -gt 0 ] 2>/dev/null; then
-    _remain_count=$(ls "$PDIR"/running_* 2>/dev/null | wc -l)
-    _remain_count=${_remain_count:-0}
+    # 超时基数 = 缺失的 result 数（而非 running_* 计数）：
+    # 最后一批 worker 完成后 running_*=0，若用 running 计数会算出
+    # (0/PARALLEL+1)*max_wt+600 ≈ 2400s 的短超时，在尾部文件因调度
+    # bug 未分派时静默提前结束（2026-08-10 全量 27 文件丢失即此）。
+    _results_now=$(ls "$PDIR"/result_* 2>/dev/null | wc -l)
+    _results_now=${_results_now:-0}
+    _remain_count=$((TOTAL_FILES - _results_now))
+    [ "$_remain_count" -lt 0 ] 2>/dev/null && _remain_count=0
     _wait_timeout=$(( (_remain_count / PARALLEL + 1) * _max_wt + 600 ))
     # 兜底：至少 2 倍单文件 WT + 余量
     _min_wait=$((_max_wt * 2 + 600))

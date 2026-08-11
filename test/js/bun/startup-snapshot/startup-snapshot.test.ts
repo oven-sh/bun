@@ -425,6 +425,37 @@ snapshotTest(
   },
 );
 
+snapshotTest(
+  "a thread can be started in a restored process (every mapping the builder owned comes back, resident or not)",
+  async () => {
+    // Falsified by an allocator whose page-map tables can be entirely untouched at build time (upstream mimalloc dev3 as of Aug 2026):
+    // the writer used to drop such mappings, and the first thread's startup then dereferenced one.
+    using dir = tempDir("bun-snapshot-thread-after", {});
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "thread-after-restore-fixture.js");
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true);
+    }
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out).toContain("thread started after restore");
+    expect(code).toBe(0);
+  },
+);
+
 snapshotTest("SharedArrayBuffers from before the freeze keep working after restore, growth included", async () => {
   using dir = tempDir("bun-snapshot-sab", {});
   const img = join(String(dir), "s.snapshot");

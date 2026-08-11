@@ -315,8 +315,10 @@ WTF::String formatStackTrace(
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
         WTF::String sourceURLForFrame = sourceURLs[i];
+        // Still -1 for the frames pass 1 skipped (no code block) or could not position.
+        bool hasPosition = originalPositions[i].line_zero_based >= 0;
 
-        if (frame.hasLineAndColumnInfo()) {
+        if (hasPosition) {
             originalLine = originalPositions[i].line();
             originalColumn = originalPositions[i].column();
             displayLine = originalLine;
@@ -371,14 +373,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (hasPosition) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 

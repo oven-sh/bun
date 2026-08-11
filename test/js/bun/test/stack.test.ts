@@ -193,6 +193,13 @@ function viaCaptureStackTrace() {
   new Captures(target);
   return target.stack;
 }
+// Column 1 used to be left out of the frame (\`fixture.js:39\` instead of \`fixture.js:39:1\`).
+function callAtColumnOne() {
+customError();
+}
+function constructAtColumnOne() {
+new Thrower(1);
+}
 
 // "fixture.js:LINE:COLUMN" of the frame for the function called \`name\`.
 function frame(stack, name) {
@@ -219,6 +226,8 @@ console.log(
     localBinding: frame(caught(localBinding).stack, "localBinding"),
     splitAcrossLines: frame(caught(splitAcrossLines).stack, "splitAcrossLines"),
     viaCaptureStackTrace: frame(viaCaptureStackTrace(), "viaCaptureStackTrace"),
+    callAtColumnOne: frame(caught(callAtColumnOne).stack, "callAtColumnOne"),
+    constructAtColumnOne: frame(caught(constructAtColumnOne).stack, "constructAtColumnOne"),
   }),
 );
 `;
@@ -236,6 +245,8 @@ console.log(
       localBinding: "fixture.js:26:10",
       splitAcrossLines: "fixture.js:29:10",
       viaCaptureStackTrace: "fixture.js:34:3",
+      callAtColumnOne: "fixture.js:39:1",
+      constructAtColumnOne: "fixture.js:42:1",
     });
   });
 
@@ -281,6 +292,13 @@ for (const [name, { source, options }] of Object.entries(cases)) {
 
   results[name] = result;
 }
+
+// A script that starts with the \`new\` puts the frame at 1:1, which used to be taken for "no position".
+try {
+  vm.runInThisContext("new Map(1)", { filename: "byte-zero.js" });
+} catch (e) {
+  results.byteZero = e.stack.match(/at byte-zero\\.js(:\\d+:\\d+)?/)[0];
+}
 console.log(JSON.stringify(results));
 `;
     await using proc = Bun.spawn({
@@ -298,6 +316,7 @@ console.log(JSON.stringify(results));
       crlf: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
       lineSeparator: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
       columnOffset: { stack: "1:131", inspect: "1:131" },
+      byteZero: "at byte-zero.js:1:1",
     });
     expect(exitCode).toBe(0);
   });

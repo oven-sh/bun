@@ -1544,14 +1544,6 @@ impl Run {
             vm.tick();
         }
 
-        // Initial synchronous evaluation of the entrypoint is done (TLA may
-        // still be pending and will resolve in the loop below); the embedded
-        // source pages are off the hot path now. Skip under --watch/--hot
-        // since those re-read source on every reload.
-        if !vm.is_watcher_enabled() {
-            bun_standalone_graph::Graph::hint_source_pages_dont_need();
-        }
-
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();

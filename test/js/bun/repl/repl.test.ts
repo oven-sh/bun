@@ -860,9 +860,9 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("division after a nested generic cast", async () => {
-      const { stdout, exitCode } = await runRepl(["q = (8 as unknown as Array<Array<number>> / 2); q", ".exit"]);
+      const { stdout, exitCode } = await runRepl(["q = (84 as unknown as Array<Array<number>> / 2); q", ".exit"]);
       const output = stripAnsi(stdout);
-      expect(output).toContain("4");
+      expect(output).toContain("42");
       expect(output).not.toContain("SyntaxError");
       expect(exitCode).toBe(0);
     });

@@ -616,8 +616,7 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // An optional peer does not keep its target alive. `Cloner::flush`
-            // binds the slot again only if a non-peer edge cloned the target.
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
             if old_dependencies[i].behavior.is_optional_peer() {
                 cloner.optional_peers.push(pending);
                 continue;

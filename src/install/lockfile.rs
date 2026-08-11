@@ -1293,8 +1293,7 @@ impl Lockfile {
 
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
-    /// Optional-peer slots, bound in `flush` once every package reachable
-    /// through a non-peer edge has been cloned.
+    /// Bound in `flush`, once `clone_queue` has decided which targets survive.
     pub(crate) optional_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
@@ -1322,12 +1321,9 @@ impl<'a> Cloner<'a> {
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
 
-        // An optional peer stays bound to its target if the target survived the
-        // clean. Loading a lockfile binds these slots before hoisting, so the
-        // `resolve` below has to see them bound as well, or it builds a
-        // different tree than the one `--frozen-lockfile` compares against and
-        // a re-save moves packages around. A target only reachable through
-        // peer slots was never cloned and the slots stay unresolved.
+        // Loading a lockfile binds optional peers before hoisting, so the hoist
+        // below has to see them bound too or `--frozen-lockfile` compares two
+        // different trees. A target nothing else cloned leaves its slots unbound.
         for pending in self.optional_peers.drain(..) {
             let mapping = self.mapping[pending.old_resolution as usize];
             if (mapping as usize) < max_package_id {
@@ -1362,21 +1358,12 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    /// Builds the tree that is saved to disk.
-    ///
-    /// The resolver leaves optional peers unresolved; hoisting binds each one
-    /// to the same-named package that ends up next to it. When that package is
-    /// placed by an edge processed after the peer's dependent, its subtree is
-    /// queued from that later edge. A lockfile loaded from disk has the binding
-    /// up front and queues the subtree from the dependent instead, which can
-    /// hoist the subtree's dependencies differently. So hoist again until a
-    /// pass binds nothing late: that pass built its tree from bindings it had
-    /// up front, which is what a reload does, and anything else would make
-    /// `--frozen-lockfile` reject the lockfile we are about to save. A pass
-    /// reports `true` only after filling an empty optional peer slot (moving a
-    /// dependent can put a target within reach of a peer the previous pass
-    /// could not bind) and no pass empties one, so this ends after at most
-    /// one pass per optional peer.
+    /// Builds the tree that is saved to disk: hoists until a pass binds no
+    /// optional peer late. A peer bound mid-pass had its target's subtree
+    /// queued from a later edge than a reload (which has the binding up
+    /// front) queues it from, so that pass can hoist differently than the
+    /// reload `--frozen-lockfile` compares against. Repeating only ever fills
+    /// more slots, so this ends.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         Ok(())
@@ -1390,8 +1377,7 @@ impl Lockfile {
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
     ) -> Result<(), tree::SubtreeError> {
-        // Runs after `resolve` bound the optional peers, so there is nothing
-        // left to bind late here.
+        // `resolve` already bound every optional peer; nothing binds late here.
         self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
@@ -1402,9 +1388,8 @@ impl Lockfile {
         Ok(())
     }
 
-    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`. Returns whether
-    /// an optional peer was bound after its dependent had been placed
-    /// (`tree::Builder::late_bound_optional_peer`).
+    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`. Returns
+    /// `tree::Builder::late_bound_optional_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,

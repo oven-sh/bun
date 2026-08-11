@@ -135,10 +135,8 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
-    /// Like `Hoisted`, for an optional peer that was bound to one package but
-    /// deduplicated onto another version of it: the slot is repointed at the
-    /// package the dependent will find next to itself, which is also what
-    /// loading the saved tree binds the edge to (`bun.lock.rs`).
+    /// `Hoisted`, and the optional peer's slot is repointed at the version it
+    /// deduplicated onto, which is what loading the saved tree binds it to.
     Rebind(PackageID),
     Placement(Placement),
 }
@@ -447,10 +445,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // could be visited multiple times before it's resolved.
     pub(crate) pending_optional_peers:
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// Set when an unresolved optional peer got bound by a package placed
-    /// after the peer's dependent (`HoistDependencyResult::ResolveReplace`),
-    /// so the target's subtree was queued later than it will be once the
-    /// binding is known up front. See `Lockfile::resolve`.
+    /// A `ResolveReplace` bound an optional peer after its dependent was
+    /// placed. See `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
@@ -1061,14 +1057,10 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // An optional peer is bound to whatever ends up next to it, so
-                // a binding that came in pointing elsewhere (carried over by
-                // `Package::clone`, or made by an earlier pass of
-                // `Lockfile::resolve`) moves to `res_id`. Only the tree being
-                // saved decides this; `filter` runs afterwards for installing
-                // and leaves the bindings alone. Required peers keep the
-                // version the resolver picked; `bun.lock.rs` re-derives that
-                // one by version rather than from the tree.
+                // An optional peer follows the version it dedupes onto (its
+                // incoming binding may be carried over from an older tree), and
+                // only the saved tree decides that. Required peers keep the
+                // resolver's pick, which `bun.lock.rs` re-derives by version.
                 let dedupe = || {
                     if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
                     {

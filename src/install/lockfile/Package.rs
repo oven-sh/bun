@@ -16,8 +16,7 @@ use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
     Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
-    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
-    invalid_package_id,
+    UpdateRequest, default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -2470,14 +2469,10 @@ impl Package<u64> {
                                 break 'bin;
                             };
 
-                            self.bin = Bin {
-                                tag: bin::Tag::NamedFile,
-                                value: bin::Value::init_named_file([
-                                    string_builder.append::<String>(bin_name),
-                                    string_builder.append::<String>(value),
-                                ]),
-                                ..Default::default()
-                            };
+                            self.bin = Bin::init_named_file([
+                                string_builder.append::<String>(bin_name),
+                                string_builder.append::<String>(value),
+                            ]);
                         }
                         n => {
                             let current_len = lockfile.buffers.extern_strings.len();
@@ -2499,16 +2494,10 @@ impl Package<u64> {
                                 i += 1;
                             }
                             debug_assert!(i == extern_strings.len());
-                            self.bin = Bin {
-                                tag: bin::Tag::Map,
-                                value: bin::Value {
-                                    map: ExternalStringList::new(
-                                        current_len as u32,
-                                        extern_strings.len() as u32,
-                                    ),
-                                },
-                                ..Default::default()
-                            };
+                            self.bin = Bin::init_map(ExternalStringList::new(
+                                current_len as u32,
+                                extern_strings.len() as u32,
+                            ));
                         }
                     }
 
@@ -2516,13 +2505,7 @@ impl Package<u64> {
                 }
                 if let ExprData::EString(stri) = &bin.expr.data {
                     if !stri.data.is_empty() {
-                        self.bin = Bin {
-                            tag: bin::Tag::File,
-                            value: bin::Value {
-                                file: string_builder.append::<String>(&stri.data),
-                            },
-                            ..Default::default()
-                        };
+                        self.bin = Bin::init_file(string_builder.append::<String>(&stri.data));
                         break 'bin;
                     }
                 }
@@ -2539,13 +2522,7 @@ impl Package<u64> {
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                     if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         if !str_.is_empty() {
-                            self.bin = Bin {
-                                tag: bin::Tag::Dir,
-                                value: bin::Value {
-                                    dir: string_builder.append::<String>(str_),
-                                },
-                                ..Default::default()
-                            };
+                            self.bin = Bin::init_dir(string_builder.append::<String>(str_));
                             break 'bin;
                         }
                     }

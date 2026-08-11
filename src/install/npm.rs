@@ -16,7 +16,7 @@ use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
-use crate::bin::{self, Bin};
+use crate::bin::Bin;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
@@ -2324,7 +2324,7 @@ impl PackageManifest {
             // so names go last because we are better able to dedupe at the end
             let mut prev_extern_bin_group: Option<core::ops::Range<usize>> = None;
             let empty_version = PackageVersion {
-                bin: Bin::init(),
+                bin: Bin::NONE,
                 ..PackageVersion::default()
             };
             // PackageVersion's explicit `_padding_*` fields are zeroed by
@@ -2431,14 +2431,10 @@ impl PackageManifest {
                                             break 'bin;
                                         };
 
-                                        package_version.bin = Bin {
-                                            tag: bin::Tag::NamedFile,
-                                            _padding_tag: [0; 3],
-                                            value: bin::Value::init_named_file([
-                                                string_builder.append::<SemverString>(bin_name),
-                                                string_builder.append::<SemverString>(value),
-                                            ]),
-                                        };
+                                        package_version.bin = Bin::init_named_file([
+                                            string_builder.append::<SemverString>(bin_name),
+                                            string_builder.append::<SemverString>(value),
+                                        ]);
                                     }
                                     _ => {
                                         let group_start = extern_strings_bin_entries_cursor;
@@ -2519,14 +2515,11 @@ impl PackageManifest {
                                             r
                                         };
 
-                                        package_version.bin = Bin {
-                                            tag: bin::Tag::Map,
-                                            _padding_tag: [0; 3],
-                                            value: bin::Value::init_map(ExternalStringList::init(
+                                        package_version.bin =
+                                            Bin::init_map(ExternalStringList::init(
                                                 &all_extern_strings_bin_entries,
                                                 &all_extern_strings_bin_entries[final_range],
-                                            )),
-                                        };
+                                            ));
                                     }
                                 }
 
@@ -2535,13 +2528,8 @@ impl PackageManifest {
                             JSON::E::JsonValue::String(stri) => {
                                 let stri = stri.slice();
                                 if !stri.is_empty() {
-                                    package_version.bin = Bin {
-                                        tag: bin::Tag::File,
-                                        _padding_tag: [0; 3],
-                                        value: bin::Value::init_file(
-                                            string_builder.append::<SemverString>(stri),
-                                        ),
-                                    };
+                                    package_version.bin =
+                                        Bin::init_file(string_builder.append::<SemverString>(stri));
                                     break 'bin;
                                 }
                             }
@@ -2563,13 +2551,8 @@ impl PackageManifest {
                         .and_then(|bin| bin.as_str())
                     {
                         if !str_.is_empty() {
-                            package_version.bin = Bin {
-                                tag: bin::Tag::Dir,
-                                _padding_tag: [0; 3],
-                                value: bin::Value::init_dir(
-                                    string_builder.append::<SemverString>(str_),
-                                ),
-                            };
+                            package_version.bin =
+                                Bin::init_dir(string_builder.append::<SemverString>(str_));
                             break 'bin;
                         }
                     }

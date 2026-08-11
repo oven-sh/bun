@@ -800,7 +800,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 integrity: Integrity::default(),
                 ..Default::default()
             },
-            bin: Bin::init(),
+            bin: Bin::NONE,
             scripts: Default::default(),
         })?;
 
@@ -1148,7 +1148,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 },
                 ..Default::default()
             },
-            bin: Bin::init(),
+            bin: Bin::NONE,
             scripts: Default::default(),
         })?;
     }

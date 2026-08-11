@@ -39,25 +39,61 @@ bun_output::declare_scope!(BinLinker, hidden);
 #[derive(Clone, Copy)]
 pub struct Bin {
     pub tag: Tag,
-    pub(crate) _padding_tag: [u8; 3],
+    _padding_tag: [u8; 3],
 
     // Largest member must be zero initialized
-    pub(crate) value: Value,
+    value: Value,
 }
 
 impl Default for Bin {
     fn default() -> Self {
-        Bin {
-            tag: Tag::None,
-            _padding_tag: [0; 3],
-            value: Value {
-                map: ExternalStringList::default(),
-            },
-        }
+        Self::NONE
     }
 }
 
 impl Bin {
+    pub(crate) const NONE: Bin = Bin {
+        tag: Tag::None,
+        _padding_tag: [0; 3],
+        value: Value::NONE,
+    };
+
+    #[inline]
+    pub(crate) fn init_file(file: String) -> Bin {
+        Bin {
+            tag: Tag::File,
+            _padding_tag: [0; 3],
+            value: Value::init_file(file),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn init_named_file(named_file: [String; 2]) -> Bin {
+        Bin {
+            tag: Tag::NamedFile,
+            _padding_tag: [0; 3],
+            value: Value::init_named_file(named_file),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn init_dir(dir: String) -> Bin {
+        Bin {
+            tag: Tag::Dir,
+            _padding_tag: [0; 3],
+            value: Value::init_dir(dir),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn init_map(map: ExternalStringList) -> Bin {
+        Bin {
+            tag: Tag::Map,
+            _padding_tag: [0; 3],
+            value: Value::init_map(map),
+        }
+    }
+
     pub(crate) fn count<B: StringBuilder>(
         &self,
         buf: &[u8],
@@ -158,29 +194,13 @@ impl Bin {
         // SAFETY: tag determines the active union field
         unsafe {
             match self.tag {
-                Tag::None => Bin {
-                    tag: Tag::None,
-                    _padding_tag: [0; 3],
-                    value: Value::init_none(),
-                },
-                Tag::File => Bin {
-                    tag: Tag::File,
-                    _padding_tag: [0; 3],
-                    value: Value::init_file(builder.append_string(self.value.file.slice(buf))),
-                },
-                Tag::NamedFile => Bin {
-                    tag: Tag::NamedFile,
-                    _padding_tag: [0; 3],
-                    value: Value::init_named_file([
-                        builder.append_string(self.value.named_file[0].slice(buf)),
-                        builder.append_string(self.value.named_file[1].slice(buf)),
-                    ]),
-                },
-                Tag::Dir => Bin {
-                    tag: Tag::Dir,
-                    _padding_tag: [0; 3],
-                    value: Value::init_dir(builder.append_string(self.value.dir.slice(buf))),
-                },
+                Tag::None => Bin::NONE,
+                Tag::File => Bin::init_file(builder.append_string(self.value.file.slice(buf))),
+                Tag::NamedFile => Bin::init_named_file([
+                    builder.append_string(self.value.named_file[0].slice(buf)),
+                    builder.append_string(self.value.named_file[1].slice(buf)),
+                ]),
+                Tag::Dir => Bin::init_dir(builder.append_string(self.value.dir.slice(buf))),
                 Tag::Map => {
                     for (i, extern_string) in
                         self.value.map.get(prev_external_strings).iter().enumerate()
@@ -189,14 +209,10 @@ impl Bin {
                             builder.append_external_string(extern_string.slice(buf));
                     }
 
-                    Bin {
-                        tag: Tag::Map,
-                        _padding_tag: [0; 3],
-                        value: Value::init_map(ExternalStringList::new(
-                            extern_strings_slice_off,
-                            extern_strings_slice.len() as u32,
-                        )),
-                    }
+                    Bin::init_map(ExternalStringList::new(
+                        extern_strings_slice_off,
+                        extern_strings_slice.len() as u32,
+                    ))
                 }
             }
         }
@@ -237,13 +253,7 @@ impl Bin {
         }
         if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
-                return Ok(Bin {
-                    tag: Tag::File,
-                    _padding_tag: [0; 3],
-                    value: Value {
-                        file: buf.append(str_)?,
-                    },
-                });
+                return Ok(Bin::init_file(buf.append(str_)?));
             }
         }
         Ok(Bin::default())
@@ -261,13 +271,10 @@ impl Bin {
                 let Some((Some(bin_name), Some(value))) = pairs.next() else {
                     return Ok(Bin::default());
                 };
-                return Ok(Bin {
-                    tag: Tag::NamedFile,
-                    _padding_tag: [0; 3],
-                    value: Value {
-                        named_file: [buf.append(bin_name)?, buf.append(value)?],
-                    },
-                });
+                return Ok(Bin::init_named_file([
+                    buf.append(bin_name)?,
+                    buf.append(value)?,
+                ]));
             }
             _ => {
                 let current_len = extern_strings.len();
@@ -289,13 +296,10 @@ impl Bin {
                 }
                 debug_assert!(i == num_props);
                 let new = &extern_strings[current_len..current_len + num_props];
-                return Ok(Bin {
-                    tag: Tag::Map,
-                    _padding_tag: [0; 3],
-                    value: Value {
-                        map: ExternalStringList::init(extern_strings.as_slice(), new),
-                    },
-                });
+                return Ok(Bin::init_map(ExternalStringList::init(
+                    extern_strings.as_slice(),
+                    new,
+                )));
             }
         }
         Ok(Bin::default())
@@ -306,13 +310,7 @@ impl Bin {
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {
-            return Ok(Bin {
-                tag: Tag::Dir,
-                _padding_tag: [0; 3],
-                value: Value {
-                    dir: buf.append(bin_str)?,
-                },
-            });
+            return Ok(Bin::init_dir(buf.append(bin_str)?));
         }
         Ok(Bin::default())
     }
@@ -448,17 +446,9 @@ impl Bin {
         Ok(())
     }
 
-    pub(crate) fn init() -> Bin {
-        Bin {
-            tag: Tag::None,
-            _padding_tag: [0; 3],
-            value: Value::init_none(),
-        }
-    }
-
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union whose every byte is initialized (see
+    // `Value::NONE`); reading the wrong variant is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;
@@ -482,15 +472,15 @@ pub use bun_semver::StringBuilder;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union Value {
+pub(crate) union Value {
     /// no "bin", or empty "bin"
-    pub none: (),
+    none: (),
 
     /// "bin" is a string
     /// ```json
     /// "bin": "./bin/foo",
     /// ```
-    pub(crate) file: String,
+    file: String,
 
     // Single-entry map
     ///```json
@@ -498,7 +488,7 @@ pub union Value {
     ///     "babel": "./cli.js",
     /// }
     ///```
-    pub(crate) named_file: [String; 2],
+    named_file: [String; 2],
 
     /// "bin" is a directory
     ///```json
@@ -506,7 +496,7 @@ pub union Value {
     ///     "bin": "./bin",
     /// }
     ///```
-    pub(crate) dir: String,
+    dir: String,
     // "bin" is a map
     ///```json
     /// "bin": {
@@ -514,37 +504,41 @@ pub union Value {
     ///     "babel-cli": "./cli.js",
     /// }
     ///```
-    pub(crate) map: ExternalStringList,
+    map: ExternalStringList,
 }
+
+const _: () = assert!(
+    core::mem::size_of::<[String; 2]>() == core::mem::size_of::<Value>(),
+    "Value::NONE zeroes the union through `named_file`, which must be its largest member",
+);
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
+    const NONE: Value = Value {
+        named_file: [String::EMPTY; 2],
+    };
+
     #[inline]
-    pub(crate) fn init_none() -> Value {
-        // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    }
-    #[inline]
-    pub(crate) fn init_file(file: String) -> Value {
-        let mut v = Self::init_none();
+    fn init_file(file: String) -> Value {
+        let mut v = Self::NONE;
         v.file = file;
         v
     }
     #[inline]
-    pub(crate) fn init_named_file(named_file: [String; 2]) -> Value {
-        let mut v = Self::init_none();
+    fn init_named_file(named_file: [String; 2]) -> Value {
+        let mut v = Self::NONE;
         v.named_file = named_file;
         v
     }
     #[inline]
-    pub(crate) fn init_dir(dir: String) -> Value {
-        let mut v = Self::init_none();
+    fn init_dir(dir: String) -> Value {
+        let mut v = Self::NONE;
         v.dir = dir;
         v
     }
     #[inline]
-    pub(crate) fn init_map(map: ExternalStringList) -> Value {
-        let mut v = Self::init_none();
+    fn init_map(map: ExternalStringList) -> Value {
+        let mut v = Self::NONE;
         v.map = map;
         v
     }

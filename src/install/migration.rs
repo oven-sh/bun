@@ -8,7 +8,7 @@ use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::bin::{self, Bin};
+use crate::bin::Bin;
 use crate::dependency::{
     self, Behavior, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _, Value as DepValue,
     Version as DepVersion,
@@ -643,21 +643,10 @@ fn migrate_npm_lockfile<'a>(
                         .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                     if strings::eql(key, pkg_name) {
-                        break 'bin Bin {
-                            tag: bin::Tag::File,
-                            _padding_tag: [0; 3],
-                            value: bin::Value::init_file(sb.append(script_value)?),
-                        };
+                        break 'bin Bin::init_file(sb.append(script_value)?);
                     }
 
-                    break 'bin Bin {
-                        tag: bin::Tag::NamedFile,
-                        _padding_tag: [0; 3],
-                        value: bin::Value::init_named_file([
-                            sb.append(key)?,
-                            sb.append(script_value)?,
-                        ]),
-                    };
+                    break 'bin Bin::init_named_file([sb.append(key)?, sb.append(script_value)?]);
                 }
 
                 let off = this.buffers.extern_strings.len() as u32;
@@ -683,14 +672,10 @@ fn migrate_npm_lockfile<'a>(
                     );
                 }
 
-                break 'bin Bin {
-                    tag: bin::Tag::Map,
-                    _padding_tag: [0; 3],
-                    value: bin::Value::init_map(ExternalStringList::new(off, len)),
-                };
+                break 'bin Bin::init_map(ExternalStringList::new(off, len));
             }
         } else {
-            Bin::init()
+            Bin::NONE
         };
 
         let meta_value = lockfile::Meta {

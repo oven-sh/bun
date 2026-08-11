@@ -351,6 +351,19 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
+/// Returned by the callback entry points to the vtable thunk, which acts on it through
+/// [`LifecycleScriptSubprocess::settle`] only once the entry point's `&mut self` has ended.
+#[derive(Clone, Copy)]
+#[must_use]
+enum Disposition {
+    Retain,
+    /// Index into [`LockfileScripts::NAMES`].
+    SpawnScript(u8),
+    Destroy,
+    /// Process exit code.
+    DestroyAndExit(u8),
+}
+
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
     /// OutputReader parent backrefs), so it lives behind `*mut Self`.
@@ -370,14 +383,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
     }
 
-    pub(crate) fn on_reader_done(&mut self) {
+    fn on_reader_done(&mut self) -> Disposition {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
-        self.maybe_finished();
+        self.maybe_finished()
     }
 
-    pub(crate) fn on_reader_error(&mut self, err: &bun_sys::Error) {
+    fn on_reader_error(&mut self, err: &bun_sys::Error) -> Disposition {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
@@ -389,22 +402,52 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             <&'static str>::from(err.get_errno()),
         );
         Output::flush();
-        self.maybe_finished();
+        self.maybe_finished()
     }
 
-    fn maybe_finished(&mut self) {
+    fn maybe_finished(&mut self) -> Disposition {
         if !self.has_called_process_exit || self.remaining_fds != 0 {
-            return;
+            return Disposition::Retain;
         }
 
         let process = self.process;
         if process.is_null() {
-            return;
+            return Disposition::Retain;
         }
         // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
         // `spawn_next_script`; we hold a strong ref until `reset_polls`.
         let status = unsafe { (*process).status.clone() };
-        self.handle_exit(status);
+        self.handle_exit(status)
+    }
+
+    /// # Safety
+    /// `this` must be the pointer returned by [`Self::new`] (see [`Self::spawn_next_script`]),
+    /// and the `&mut self` that produced `disposition` must have ended.
+    unsafe fn settle(this: *mut Self, disposition: Disposition) {
+        match disposition {
+            Disposition::Retain => {}
+            Disposition::SpawnScript(index) => {
+                // SAFETY: caller contract; `this` is the allocation-rooted pointer.
+                if let Err(err) = unsafe { Self::spawn_next_script(this, index) } {
+                    Output::err_generic(
+                        "Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        (
+                            bstr::BStr::new(LockfileScripts::NAMES[index as usize]),
+                            err.name(),
+                        ),
+                    );
+                    Global::exit(1);
+                }
+            }
+            // SAFETY: caller contract; `this` came from `Self::new` and no borrow of it is live.
+            Disposition::Destroy => unsafe { Self::destroy(this) },
+            Disposition::DestroyAndExit(code) => {
+                // SAFETY: as above.
+                unsafe { Self::destroy(this) };
+                Output::flush();
+                Global::exit(u32::from(code));
+            }
+        }
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
@@ -827,7 +870,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    fn handle_exit(&mut self, status: Status) {
+    fn handle_exit(&mut self, status: Status) -> Disposition {
         bun_output::scoped_log!(
             Script,
             "{} - {} finished {}",
@@ -858,8 +901,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
                         }
                         self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
-                        return;
+                        self.delete_package_dir();
+                        return Disposition::Destroy;
                     }
                     self.print_output();
                     bun_core::pretty_errorln!(
@@ -868,10 +911,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     );
-                    // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                    unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                    Output::flush();
-                    Global::exit(exit.code as u32);
+                    return Disposition::DestroyAndExit(exit.code);
                 }
 
                 if !self.foreground
@@ -901,9 +941,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             debug_assert!(previous_step == Step::RunPreinstall as u32);
                             installer.start_task(ctx.entry_id);
                             self.decrement_pending_script_tasks();
-                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                            return;
+                            return Disposition::Destroy;
                         }
                         _ => {}
                     }
@@ -914,26 +952,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 {
                     if self.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
-                        // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
-                        // uniquely owned here; we do not touch `self` again on the
-                        // success path before `return`, so the stored backrefs derived
-                        // from this pointer are not invalidated by a later reborrow.
-                        if let Err(err) = unsafe {
-                            Self::spawn_next_script(
-                                std::ptr::from_mut::<Self>(self),
-                                u8::try_from(new_script_index).expect("int cast"),
-                            )
-                        } {
-                            Output::err_generic(
-                                "Failed to run script <b>{}<r> due to error <b>{}<r>",
-                                (
-                                    bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
-                                    err.name(),
-                                ),
-                            );
-                            Global::exit(1);
-                        }
-                        return;
+                        return Disposition::SpawnScript(
+                            u8::try_from(new_script_index).expect("int cast"),
+                        );
                     }
                 }
 
@@ -961,8 +982,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 // the last script finished
                 self.decrement_pending_script_tasks();
-                // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                Disposition::Destroy
             }
             Status::Signaled(signal) => {
                 self.print_output();
@@ -993,8 +1013,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
                     }
                     self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
-                    return;
+                    self.delete_package_dir();
+                    return Disposition::Destroy;
                 }
 
                 bun_core::pretty_errorln!(
@@ -1003,10 +1023,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
-                // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                Output::flush();
-                Global::exit(1);
+                Disposition::DestroyAndExit(1)
             }
             _ => {
                 Output::panic(format_args!(
@@ -1019,16 +1036,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    /// This function may free the *LifecycleScriptSubprocess
-    pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
+    fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) -> Disposition {
         if self.process != proc {
             bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             );
-            return;
+            return Disposition::Retain;
         }
         self.has_called_process_exit = true;
-        self.maybe_finished();
+        self.maybe_finished()
     }
 
     pub(crate) fn reset_polls(&mut self) {
@@ -1063,7 +1079,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn deinit_and_delete_package(&mut self) {
+    fn delete_package_dir(&self) {
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
                 "deleting optional dependency '{}' due to failed '{}' script",
@@ -1084,9 +1100,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             };
             let _ = dir.delete_tree(basename);
         }
-
-        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
     pub(crate) fn spawn_package_scripts(
@@ -1177,8 +1190,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
+        on_process_exit(process, status, rusage) => LifecycleScriptSubprocess::settle(
+            this,
             (*this).on_process_exit(process, status, rusage),
+        ),
     }
 }
 
@@ -1194,8 +1209,8 @@ bun_spawn::link_impl_ProcessExit! {
 bun_io::impl_buffered_reader_parent! {
     LifecycleScript for LifecycleScriptSubprocess<'a>;
     has_on_read_chunk = false;
-    on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(&err);
+    on_reader_done  = |this| Self::settle(this, (*this).on_reader_done());
+    on_reader_error = |this, err| Self::settle(this, (*this).on_reader_error(&err));
     loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &mut (*(*this).manager.as_ptr()).event_loop,

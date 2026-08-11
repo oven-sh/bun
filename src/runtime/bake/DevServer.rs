@@ -1196,23 +1196,6 @@ impl Drop for DevServer {
         }
         self.bundler_framework_views.clear();
 
-        for rb in &mut self.route_bundles {
-            if let Some(bundle) = rb.client_bundle.take() {
-                // SAFETY: stored ref from `StaticRoute::init_*`; no live borrow.
-                unsafe { StaticRoute::deref_(bundle.as_ptr()) };
-            }
-            if let route_bundle::Data::Html(html) = &mut rb.data {
-                if let Some(cached) = html.cached_response.take() {
-                    // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
-                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
-                }
-                // SAFETY: paired with the `ref_` taken in
-                // `get_or_put_route_bundle` when this bundle was created; the
-                // raw `html_bundle` field has no Drop, so release it here.
-                unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
-            }
-        }
-
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
     }
@@ -1775,7 +1758,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 Ok(b) => b,
                 Err(e) => bun_core::handle_oom(Err(e)),
             };
-        let response = StaticRoute::init_from_any_blob(
+        let response = route_bundle::StaticRouteRef::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
@@ -1783,10 +1766,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 ..Default::default()
             },
         );
-        // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
-        scopeguard::defer! { unsafe { StaticRoute::deref_(response) } };
-        // SAFETY: `response` is live until `_deref` runs after this returns.
-        unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
+        // SAFETY: `response` holds a ref for the duration of the call.
+        unsafe { StaticRoute::on_request(response.as_ptr(), bun_uws::AnyRequest::H1(req), resp) };
         return;
     }
 
@@ -1826,8 +1807,8 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     };
     req.set_yield(false);
-    // SAFETY: asset is a live `*mut StaticRoute` held by the content-addressable store
-    unsafe { StaticRoute::on(asset, resp) };
+    // SAFETY: `dev.assets` holds a ref on `asset` for as long as it is stored.
+    unsafe { StaticRoute::on(asset.as_ptr(), resp) };
 }
 
 pub(super) use bun_core::fmt::parse_hex_to_int;
@@ -2354,8 +2335,6 @@ fn check_route_failures(
 }
 
 impl DevServer {
-    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
-    #[allow(clippy::needless_borrow)]
     fn append_route_entry_points_if_not_stale(
         &mut self,
         entry_points: &mut EntryPointList,
@@ -2403,9 +2382,10 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-                let bundle_path = unsafe { &(&(*html.html_bundle).bundle).path };
-                entry_points.append(bundle_path, entry_point_list::Flags::CLIENT)?;
+                entry_points.append(
+                    &html.html_bundle.bundle.path,
+                    entry_point_list::Flags::CLIENT,
+                )?;
             }
         }
 
@@ -2748,9 +2728,13 @@ impl DevServer {
             route_bundle::Data::Html(_)
         ));
 
-        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
-        let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
-            Some(b) => b.as_ptr(),
+        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
+        // this fn; the shared reborrow ends with this statement.
+        let cached: Option<*mut StaticRoute> =
+            unsafe { (*route_bundle).data.html().cached_response.as_ref() }
+                .map(route_bundle::StaticRouteRef::as_ptr);
+        let blob: *mut StaticRoute = match cached {
+            Some(blob) => blob,
             None => 'generate: {
                 // SAFETY: `generate_html_payload` reads `route_bundle.data` /
                 // `client_graph` and never reallocates `route_bundles`. No
@@ -2761,7 +2745,7 @@ impl DevServer {
                 }
                 .expect("oom");
 
-                let route_ptr = StaticRoute::init_from_any_blob(
+                let response = route_bundle::StaticRouteRef::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
@@ -2770,13 +2754,10 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
+                let blob = response.as_ptr();
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
-                // `route_ptr` is the fresh heap-alloc'd StaticRoute (write provenance, non-null).
-                unsafe {
-                    (*route_bundle).data.html_mut().cached_response =
-                        Some(bun_ptr::BackRef::from_raw_mut(route_ptr))
-                };
-                break 'generate route_ptr;
+                unsafe { (*route_bundle).data.html_mut().cached_response = Some(response) };
+                break 'generate blob;
             }
         };
         // SAFETY: blob is a live boxed StaticRoute owned by html.cached_response
@@ -2800,8 +2781,6 @@ const SCRIPT_UNREF_PAYLOAD: &str = concat!(
 );
 
 impl DevServer {
-    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
-    #[allow(clippy::needless_borrow)]
     fn generate_html_payload(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -2812,10 +2791,7 @@ impl DevServer {
         // is read-only in this fn — `&RouteBundle` suffices.
         let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
-        debug_assert!(
-            // SAFETY: `html_bundle` is a live `*mut HTMLBundleRoute` held strong by `route_bundle::Html`.
-            unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index)
-        );
+        debug_assert!(html.html_bundle.dev_server_id.get() == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
         let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
         let bundled_html = html.bundled_html_text.as_ref().unwrap();
@@ -2827,8 +2803,7 @@ impl DevServer {
         let after_head_end = &bundled_html[script_injection_offset..];
 
         let mut display_name = strings::without_suffix_comptime(
-            // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-            paths::basename(unsafe { &(&(*html.html_bundle).bundle).path }),
+            paths::basename(&html.html_bundle.bundle.path),
             b".html",
         );
         // TODO: function for URL safe chars
@@ -2959,9 +2934,12 @@ impl DevServer {
         // immediately decays to a raw pointer.
         let route_bundle: *mut RouteBundle =
             unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
-        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
-        let client_bundle: *mut StaticRoute = match unsafe { (*route_bundle).client_bundle } {
-            Some(cb) => cb.as_ptr(),
+        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
+        // this fn; the shared reborrow ends with this statement.
+        let cached: Option<*mut StaticRoute> = unsafe { (*route_bundle).client_bundle.as_ref() }
+            .map(route_bundle::StaticRouteRef::as_ptr);
+        let client_bundle: *mut StaticRoute = match cached {
+            Some(client_bundle) => client_bundle,
             None => 'generate: {
                 // SAFETY: `generate_client_bundle` reads `*route_bundle` and
                 // never reallocates `route_bundles`; no `&mut` into
@@ -2969,7 +2947,7 @@ impl DevServer {
                 let payload =
                     unsafe { Self::generate_client_bundle(&mut *self_ptr, &*route_bundle) }
                         .expect("oom");
-                let route_ptr = StaticRoute::init_from_any_blob(
+                let bundle = route_bundle::StaticRouteRef::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
@@ -2978,13 +2956,10 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                // SAFETY: per-access reborrow; `route_ptr` is the fresh
-                // heap-alloc'd StaticRoute (write provenance, non-null); the
-                // route bundle holds its counted ref.
-                unsafe {
-                    (*route_bundle).client_bundle = Some(bun_ptr::BackRef::from_raw_mut(route_ptr))
-                };
-                break 'generate route_ptr;
+                let client_bundle = bundle.as_ptr();
+                // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
+                unsafe { (*route_bundle).client_bundle = Some(bundle) };
+                break 'generate client_bundle;
             }
         };
         // SAFETY: shared, statement-scoped read of `*route_bundle`.
@@ -4514,12 +4489,7 @@ pub(super) fn finalize_bundle(
                     route_bundle::Data::Framework(fw_bundle) => {
                         fw_bundle.cached_css_file_array.clear_without_deallocation()
                     }
-                    route_bundle::Data::Html(html) => {
-                        if let Some(blob) = html.cached_response.take() {
-                            // Arc<StaticRoute> drop = .deref()
-                            let _ = blob;
-                        }
-                    }
+                    route_bundle::Data::Html(html) => html.cached_response = None,
                 }
             }
             // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
@@ -4569,8 +4539,7 @@ pub(super) fn finalize_bundle(
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
                 let css_data: &[u8] = match dev.assets.get(content_hash) {
-                    // SAFETY: pointer is a live intrusively-refcounted `StaticRoute` held by `dev.assets`.
-                    Some(route) => &unsafe { &*route }.blob.internal_blob().bytes,
+                    Some(route) => &route.blob.internal_blob().bytes,
                     None => b"",
                 };
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
@@ -4806,11 +4775,7 @@ pub(super) fn finalize_bundle(
                     // / `dev.router` / `dev.server_graph` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(
-                                &mut *buf,
-                                // SAFETY: `html_bundle` is held strong by `route_bundle::Html`; live here.
-                                &unsafe { &*html.html_bundle }.bundle.path,
-                            ))
+                            Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
@@ -5299,12 +5264,9 @@ impl DevServer {
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
-                    // Bump the intrusive refcount; matched by the
-                    // `html_bundle` deref in `DevServer`'s `Drop`.
-                    // SAFETY: `html` is a live IntrusiveRc-managed allocation.
-                    unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        html_bundle: html,
+                        // SAFETY: `html` is a live IntrusiveRc-managed allocation.
+                        html_bundle: unsafe { bun_ptr::RefPtr::init_ref(html) },
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,

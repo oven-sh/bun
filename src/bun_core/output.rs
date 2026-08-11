@@ -1906,8 +1906,7 @@ fn substitute_template(
             i += 2;
             continue;
         }
-        // Literal run up to the next brace. Braces are ASCII, so splitting
-        // here never cuts a multi-byte sequence in a UTF-8 template.
+        // Literal run up to the next brace; braces are ASCII, so the run never ends inside a multi-byte sequence.
         let mut j = i + 1;
         while j < t.len() && t[j] != b'{' && t[j] != b'}' {
             j += 1;

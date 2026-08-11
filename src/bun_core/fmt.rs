@@ -714,15 +714,7 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
-/// `Display` adapter for a `&[u8]` that is expected to be UTF-8 (registry
-/// hosts, package names, semver tags: almost always ASCII) but is not
-/// guaranteed to be (argv, paths and package metadata all end up here too).
-///
-/// Cheaper than `bstr::BStr` on the install hot path: one SIMD validation and a
-/// single `write_str`, ignoring width/precision. Invalid sequences are written
-/// as U+FFFD; see [`write_bytes`].
-///
-/// Prefer the [`s`] alias at call sites.
+/// `Display` adapter over [`write_bytes`] for bytes that are usually, but not provably, UTF-8. Prefer the [`s`] alias.
 #[derive(Copy, Clone)]
 #[repr(transparent)]
 pub struct Raw<'a>(pub &'a [u8]);
@@ -738,10 +730,7 @@ pub const fn raw(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)
 }
 
-/// Writes `bytes` to a `fmt::Write` sink. Valid UTF-8 (the overwhelmingly
-/// common case) goes out in a single `write_str`; anything else is written
-/// lossily, one U+FFFD per invalid sequence, since `fmt::Write` has no byte
-/// sink.
+/// `bstr::BStr`'s Display semantics (U+FFFD per invalid sequence) without its per-chunk walk or padding: one validation, one `write_str`.
 #[inline]
 pub fn write_bytes(w: &mut (impl fmt::Write + ?Sized), bytes: &[u8]) -> fmt::Result {
     match strings::str_utf8(bytes) {
@@ -3542,8 +3531,7 @@ const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// `&[u8] -> impl Display` adapter — short alias of [`raw`] for terse call
-/// sites (`bun_fmt::s(name)`).
+/// Short alias of [`raw`] for terse call sites (`bun_fmt::s(name)`).
 #[inline(always)]
 pub const fn s(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)

@@ -2096,8 +2096,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.flags.str_encoding,
         )
         .map_err(|_| core::fmt::Error)?;
-        // Printable runs of the input are copied through as-is, so `buf` is
-        // only as valid as `data` was.
+        // Printable runs of `data` are copied through verbatim, so `buf` is only as valid as `data`.
         crate::fmt::write_bytes(f, &buf)
     }
 }

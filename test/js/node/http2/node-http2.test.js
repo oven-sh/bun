@@ -2671,8 +2671,8 @@ it("http2 client.setNextStreamID validates input", async () => {
 
 it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
   // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
-  // underflow (node ends up on stream 1 too). A server parked at 2 ** 32 - 1 used to overflow
-  // when the next id was computed; it has to read back as an unusable id, not wrap to a low one.
+  // underflow (node ends up on stream 1 too). 2 ** 32 - 1 passes the JS range check as well but
+  // is not a 31-bit stream id: node ignores it, and computing the next id from it used to overflow.
   const fixture = `
     const http2 = require("node:http2");
     const result = { client: {}, server: {} };
@@ -2724,10 +2724,132 @@ it("http2 setNextStreamID at the edges of the id space does not overflow", async
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
     client: { 0.5: 1, 1: 1 },
-    server: { 0: 2, 2: 2, 4294967295: 4294967295 },
+    server: { 0: 2, 2: 2, 4294967295: 2 },
     response: { streamId: 1, status: 200 },
   });
   expect(exitCode).toBe(0);
+});
+
+it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding them or moving backwards", async () => {
+  // Expected values come from node v26.3.0, where setNextStreamID ends up in
+  // nghttp2_session_set_next_stream_id: an id of the peer's parity, an id that is not above the
+  // current next id, or one that does not fit in 31 bits leaves the session untouched. The server
+  // side is checked while handling the client's first stream (id 1), where node reports 2 as the
+  // server's next id too.
+  const server = http2.createServer();
+  const serverSide = Promise.withResolvers();
+  server.on("stream", (stream, headers) => {
+    if (headers[":path"] !== "/first") {
+      stream.respond();
+      stream.end();
+      return;
+    }
+    try {
+      const { session } = stream;
+      // ServerHttp2Session does not expose setNextStreamID; call the native setter it would wrap.
+      const parser = session[Symbol.for("::bunhttp2native::")];
+      const set = id => {
+        parser.setNextStreamID(id);
+        return session.state.nextStreamID;
+      };
+      const seen = { initial: session.state.nextStreamID };
+      seen["set 100"] = set(100);
+      seen["set 101 (odd)"] = set(101);
+      seen["set 50 (below next)"] = set(50);
+      seen["set 100 (equal to next)"] = set(100);
+      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+        if (err) return serverSide.reject(err);
+        pushed.respond();
+        pushed.end();
+      });
+      seen["after pushStream"] = session.state.nextStreamID;
+      seen["set 50 after pushStream"] = set(50);
+      seen["set 2 ** 31 (not 31-bit)"] = set(2 ** 31);
+      seen["set 2 ** 32 - 2 (not 31-bit)"] = set(2 ** 32 - 2);
+      seen["set 2 ** 31 - 2 (highest even)"] = set(2 ** 31 - 2);
+      serverSide.resolve(seen);
+    } catch (err) {
+      serverSide.reject(err);
+    }
+    stream.respond();
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    await new Promise((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+    const pushed = new Promise(resolve =>
+      client.once("stream", (pushedStream, pushHeaders) => {
+        pushedStream.resume();
+        resolve({ id: pushedStream.id, path: pushHeaders[":path"] });
+      }),
+    );
+    const set = id => {
+      client.setNextStreamID(id);
+      return client.state.nextStreamID;
+    };
+    const request = path =>
+      new Promise((resolve, reject) => {
+        const req = client.request({ ":path": path });
+        let status;
+        req.on("error", reject);
+        req.on("response", responseHeaders => (status = responseHeaders[":status"]));
+        req.on("close", () => resolve({ id: req.id, status }));
+        req.resume();
+        req.end();
+      });
+
+    const seen = { initial: client.state.nextStreamID };
+    seen["request /first"] = await request("/first");
+    seen["set 11"] = set(11);
+    seen["set 12 (even)"] = set(12);
+    seen["set 5 (below next)"] = set(5);
+    seen["set 11 (equal to next)"] = set(11);
+    seen["request /second"] = await request("/second");
+    seen["after /second"] = client.state.nextStreamID;
+    seen["set 5 after /second"] = set(5);
+    seen["request /third"] = await request("/third");
+    seen["set 2 ** 31 + 1 (not 31-bit)"] = set(2 ** 31 + 1);
+    seen["set 2 ** 32 - 1 (not 31-bit)"] = set(2 ** 32 - 1);
+    seen["set 2 ** 31 - 1 (highest odd)"] = set(2 ** 31 - 1);
+
+    expect({ client: seen, server: await serverSide.promise, pushed: await pushed }).toEqual({
+      client: {
+        initial: 1,
+        "request /first": { id: 1, status: 200 },
+        "set 11": 11,
+        "set 12 (even)": 11,
+        "set 5 (below next)": 11,
+        "set 11 (equal to next)": 11,
+        "request /second": { id: 11, status: 200 },
+        "after /second": 13,
+        "set 5 after /second": 13,
+        "request /third": { id: 13, status: 200 },
+        "set 2 ** 31 + 1 (not 31-bit)": 15,
+        "set 2 ** 32 - 1 (not 31-bit)": 15,
+        "set 2 ** 31 - 1 (highest odd)": 2 ** 31 - 1,
+      },
+      server: {
+        initial: 2,
+        "set 100": 100,
+        "set 101 (odd)": 100,
+        "set 50 (below next)": 100,
+        "set 100 (equal to next)": 100,
+        "after pushStream": 102,
+        "set 50 after pushStream": 102,
+        "set 2 ** 31 (not 31-bit)": 102,
+        "set 2 ** 32 - 2 (not 31-bit)": 102,
+        "set 2 ** 31 - 2 (highest even)": 2 ** 31 - 2,
+      },
+      pushed: { id: 100, path: "/pushed" },
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
 });
 
 it("http2 request.destroy() with error", async () => {

@@ -35,6 +35,15 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            /* RFC 9114 §4.3.1: :path is the path and query of the target URI, or "*"
+             * for OPTIONS; anything else is malformed (§4.1.2). HttpRouter assumes a
+             * leading '/', and HttpParser rejects asterisk-form for HTTP/1 as well,
+             * so only origin-form is routed. */
+            std::string_view fullUrl = req.getFullUrl();
+            if (fullUrl.empty() || fullUrl[0] != '/') {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

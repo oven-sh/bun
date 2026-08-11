@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -1300,4 +1301,108 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+});
+
+// The native client always derives :path / :authority from a parsed URL, so
+// these use node:quic to put arbitrary bytes in the pseudo-headers, the way a
+// hostile peer would.
+describe("Bun.serve HTTP/3 request target and authority", () => {
+  function serveRecordingHits(hits: string[]) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      routes: {
+        "/declared": () => {
+          hits.push("route");
+          return new Response("route");
+        },
+      },
+      fetch(req) {
+        hits.push("fetch");
+        return Response.json({ url: req.url, host: req.headers.get("host") });
+      },
+    });
+  }
+
+  async function rawH3(port: number, headers: Record<string, string>) {
+    const client = await connect(
+      { address: "127.0.0.1", port, family: "ipv4" },
+      { servername: "localhost", verifyPeer: "manual" },
+    );
+    try {
+      await client.opened;
+      const status = Promise.withResolvers<string | undefined>();
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ...headers },
+        onheaders(received: Record<string, string>) {
+          status.resolve(received[":status"]);
+        },
+      });
+      const chunks: Uint8Array[] = [];
+      for await (const batch of stream) chunks.push(...batch);
+      // FIN arrived, so the response headers (if any) were delivered already.
+      stream.closed.then(
+        () => status.resolve(undefined),
+        () => status.resolve(undefined),
+      );
+      return { status: await status.promise, body: Buffer.concat(chunks).toString() };
+    } finally {
+      await client.close();
+    }
+  }
+
+  // Same rule as HTTP/1 (serve.test.ts, "not a valid authority"): the request
+  // is still served, but an :authority that cannot be a URL authority stays out
+  // of req.url, so new URL(req.url) cannot disagree with the router about the
+  // host or the path.
+  test.each(["good.com@evil", "a/b", "a?b", "a b"])(
+    "req.url is the request target when :authority is %j",
+    async authority => {
+      const hits: string[] = [];
+      using server = serveRecordingHits(hits);
+      const res = await rawH3(server.port, { ":path": "/x", ":authority": authority });
+      expect(res.status).toBe("200");
+      expect(JSON.parse(res.body)).toEqual({ url: "/x", host: authority });
+      expect(hits).toEqual(["fetch"]);
+    },
+  );
+
+  test("req.url is the request target when :authority is absent", async () => {
+    const hits: string[] = [];
+    using server = serveRecordingHits(hits);
+    const res = await rawH3(server.port, { ":path": "/x" });
+    expect(res.status).toBe("200");
+    expect(JSON.parse(res.body)).toEqual({ url: "/x", host: null });
+    expect(hits).toEqual(["fetch"]);
+  });
+
+  test("a valid :authority becomes req.url, normalized like an HTTP/1 Host header", async () => {
+    const hits: string[] = [];
+    using server = serveRecordingHits(hits);
+    const res = await rawH3(server.port, { ":path": "/x/./y/../z?q=1", ":authority": `LOCALHOST:${server.port}` });
+    expect(res.status).toBe("200");
+    expect(JSON.parse(res.body)).toEqual({
+      url: `https://localhost:${server.port}/x/z?q=1`,
+      host: `LOCALHOST:${server.port}`,
+    });
+    expect(hits).toEqual(["fetch"]);
+  });
+
+  // RFC 9114 4.3.1: :path is the path and query of the target URI. The router
+  // assumes that shape, so anything else used to be routed on what followed
+  // the first byte ("xdeclared" hit the /declared route, an absolute URL fell
+  // through to fetch()) and reached the handler verbatim as req.url. "*" is
+  // the asterisk-form the RFC allows for OPTIONS; HTTP/1 rejects it too.
+  test.each(["https://other-tenant/declared", "xdeclared", "*", ""])(
+    "a :path of %j is rejected with 400 before routing",
+    async path => {
+      const hits: string[] = [];
+      using server = serveRecordingHits(hits);
+      const res = await rawH3(server.port, { ":path": path, ":authority": `127.0.0.1:${server.port}` });
+      expect(res).toEqual({ status: "400", body: "" });
+      expect(hits).toEqual([]);
+    },
+  );
 });

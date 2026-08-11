@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -126,11 +125,24 @@ pub struct Loader {
     pub quiet: bool,
 
     pub(crate) did_load_process: bool,
-    pub(crate) reject_unauthorized: Cell<Option<bool>>,
+    /// Atomic because the bundle thread asks too, when a cross-target
+    /// `Bun.build({ compile })` downloads its target (see `download_to_path`).
+    pub(crate) reject_unauthorized: bun_core::AtomicCell<TlsRejectUnauthorized>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
     aws_credentials: Option<S3Credentials>,
 }
+
+/// Memo of [`Loader::get_tls_reject_unauthorized`].
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub(crate) enum TlsRejectUnauthorized {
+    Unknown,
+    No,
+    Yes,
+}
+// SAFETY: `#[repr(u8)]` with payload-free variants: 1 byte, no padding.
+bun_core::unsafe_impl_atom!(TlsRejectUnauthorized);
 
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
 // Overwritten on every `load_node_js_config` call. NOT set-once despite the
@@ -291,12 +303,18 @@ impl Loader {
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn get_tls_reject_unauthorized(&self) -> bool {
-        if let Some(reject_unauthorized) = self.reject_unauthorized.get() {
-            return reject_unauthorized;
+        match self.reject_unauthorized.load() {
+            TlsRejectUnauthorized::Yes => return true,
+            TlsRejectUnauthorized::No => return false,
+            TlsRejectUnauthorized::Unknown => {}
         }
         // default: true
         let result = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") != Some(b"0");
-        self.reject_unauthorized.set(Some(result));
+        self.reject_unauthorized.store(if result {
+            TlsRejectUnauthorized::Yes
+        } else {
+            TlsRejectUnauthorized::No
+        });
         result
     }
 
@@ -575,7 +593,7 @@ impl Loader {
             custom_files_loaded: StringArrayHashMap::default(),
             quiet: false,
             did_load_process: false,
-            reject_unauthorized: Cell::new(None),
+            reject_unauthorized: bun_core::AtomicCell::new(TlsRejectUnauthorized::Unknown),
             aws_credentials: None,
         }
     }

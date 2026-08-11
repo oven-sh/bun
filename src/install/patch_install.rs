@@ -693,13 +693,8 @@ impl PatchTask {
             sys::Result::Ok(f) => f,
         };
 
-        // SHA-1/64 (not Wyhash11): a constructed wyhash collision would let
-        // two distinct patches share one `_patch_hash=` cache folder.
-        // Truncation keeps the u64 folder-suffix / tag-file interface.
         let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
 
-        // `read_fill_buf` always reads from file offset 0, so looping over it
-        // re-hashes the first chunk; track the file offset explicitly.
         const CHUNK_SIZE: usize = 64 * 1024;
         let mut chunk = vec![0u8; CHUNK_SIZE];
         let mut offset: u64 = 0;

@@ -1384,7 +1384,8 @@ describe("Bun.serve HTTP/3 request target and authority", () => {
   // RFC 9114 4.3.1: :path is the path and query of the target URI. The router
   // assumes that shape, so anything else used to be routed on what followed
   // the first byte ("xdeclared" hit the /declared route, an absolute URL fell
-  // through to fetch()) and reached the handler verbatim as req.url.
+  // through to fetch()) and reached the handler verbatim as req.url. "*" is
+  // the asterisk-form the RFC allows for OPTIONS; HTTP/1 rejects it too.
   test.each(["https://other-tenant/declared", "xdeclared", "*", ""])(
     "a :path of %j is rejected with 400 before routing",
     async path => {

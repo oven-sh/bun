@@ -3773,6 +3773,13 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
+            // The response ends with its header block (HEAD, 204/304,
+            // Content-Length: 0). Skipped when reuse is already off, which
+            // includes the redirect case whose discarded 3xx body may be in
+            // `to_read`.
+            if self.state.flags.allow_keepalive {
+                self.on_bytes_past_response_end(to_read.len());
+            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;
@@ -4526,6 +4533,24 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// `count` bytes arrived after the point where the response's framing
+    /// (Content-Length, the terminating chunk, or a header block that cannot
+    /// be followed by a body) says the response ends. Requests are never
+    /// pipelined, so they belong to no request of ours and the connection's
+    /// framing can no longer be trusted: it must be closed, not pooled, or
+    /// they (and whatever the origin sends next) would be read as the reply to
+    /// the next request that reuses it.
+    fn on_bytes_past_response_end(&mut self, count: usize) {
+        if count > 0 {
+            bun_core::scoped_log!(
+                fetch,
+                "{} bytes past the end of the response, disabling keep-alive",
+                count
+            );
+            self.state.flags.allow_keepalive = false;
+        }
+    }
+
     pub(crate) fn handle_response_body(
         &mut self,
         incoming_data: &[u8],
@@ -4533,10 +4558,9 @@ impl<'a> HTTPClient<'a> {
     ) -> crate::Result<bool> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
-        if let Some(len) = content_length
-            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
-        {
-            self.state.flags.allow_keepalive = false;
+        if let Some(len) = content_length {
+            let remaining = len.saturating_sub(self.state.total_body_received);
+            self.on_bytes_past_response_end(incoming_data.len().saturating_sub(remaining));
         }
         // is it exactly as much as we need?
         if is_only_buffer
@@ -4655,22 +4679,12 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `undecoded` is the non-negative return of `phr_decode_chunked`: bytes
-    /// that followed the terminating chunk and trailer section. Requests are
-    /// never pipelined, so those bytes belong to no request of ours; as with
-    /// the Content-Length overshoot in `handle_response_body`, the framing of
-    /// the connection can no longer be trusted and it must not be pooled.
+    /// `undecoded` is the non-negative return of `phr_decode_chunked`: the
+    /// number of bytes that followed the terminating chunk and trailer section.
     fn on_last_chunk(&mut self, undecoded: isize) {
         debug_assert!(undecoded >= 0);
         self.state.flags.received_last_chunk = true;
-        if undecoded > 0 {
-            bun_core::scoped_log!(
-                fetch,
-                "{} bytes after the last chunk, disabling keep-alive",
-                undecoded
-            );
-            self.state.flags.allow_keepalive = false;
-        }
+        self.on_bytes_past_response_end(undecoded.unsigned_abs());
     }
 
     fn handle_response_body_chunked_encoding_from_multiple_packets(

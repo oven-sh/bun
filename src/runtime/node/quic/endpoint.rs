@@ -112,12 +112,9 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 /// seconds unit `transportParams.maxIdleTimeout` uses.
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
 pub(super) const MS_PER_SEC: u64 = 1_000;
-/// lsquic.h `es_cc_algo`. Never left at lsquic's own default (3, "adaptive"):
-/// adaptive commits each connection to Cubic or BBRv1 on its first RTT
-/// sample, and since these engines only run when the event loop ticks them,
-/// that sample (and every later bandwidth sample BBRv1 would act on) measures
-/// the JS that ran between two ticks rather than the path. On a busy loop
-/// BBRv1 shrinks cwnd to its 4-packet floor and stays there.
+/// lsquic.h `es_cc_algo`. Never lsquic's own default, adaptive (3): it picks
+/// BBRv1 off a handshake RTT that here measures event-loop ticks, and BBRv1
+/// then pins cwnd at its 4-packet floor whenever the loop is busy.
 const CC_ALGO_CUBIC: c_uint = 1;
 const CC_ALGO_BBR: c_uint = 2;
 
@@ -939,8 +936,7 @@ fn apply_transport_params(
     // Node's default max_idle_timeout is 10 seconds
     // (node/src/quic/transportparams.h DEFAULT_MAX_IDLE_TIMEOUT); lsquic's is 30.
     s.idle_timeout(10);
-    // Node's default `cc` is cubic (ngtcp2's default); see CC_ALGO_CUBIC for
-    // why lsquic's adaptive default is not usable here.
+    // Node's default `cc` is cubic; see CC_ALGO_CUBIC.
     s.cc_algo(CC_ALGO_CUBIC);
     if !options.is_object() {
         local_tp.max_idle_timeout = match s.get_idle_timeout_ms() {
@@ -1075,9 +1071,7 @@ fn apply_transport_params(
         let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
         let algo = match name.as_slice() {
             b"bbr" => CC_ALGO_BBR,
-            // 'cubic', and 'reno': lsquic ships no Reno (NGTCP2_CC_ALGO_RENO
-            // in node's backend), so it gets Cubic, the closest loss-based
-            // option.
+            // Also 'reno': lsquic has no Reno, Cubic is the closest loss-based option.
             _ => CC_ALGO_CUBIC,
         };
         s.cc_algo(algo);

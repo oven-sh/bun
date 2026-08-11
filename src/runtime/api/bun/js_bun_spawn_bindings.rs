@@ -367,22 +367,15 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_hide: bool = false;
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
-    let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
+    // Owned here until it moves into the Subprocess at the very end; every
+    // earlier return releases it by dropping it.
+    let mut abort_signal: Option<jsc::AbortSignalRef> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
-        (&mut abort_signal, &mut terminal_info),
-        |(abort_signal, terminal_info): (
-            &mut Option<*mut WebCore::AbortSignal>,
-            &mut Option<TerminalCreateResult>,
-        )| {
-            if let Some(signal) = abort_signal.take() {
-                // signal was ref()'d when stored; unref releases that ref.
-                // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is
-                // the centralised non-null deref proof.
-                WebCore::AbortSignal::opaque_ref(signal).unref();
-            }
+        &mut terminal_info,
+        |terminal_info: &mut Option<TerminalCreateResult>| {
             // If we created a new terminal but spawn failed, close it. The
             // writer/reader/finalize deref paths release the remaining refs.
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
@@ -395,8 +388,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple.
-    let (abort_signal, terminal_info) = &mut *defer_guard;
+    // Note: reshaped for borrowck — re-borrow through the guard.
+    let terminal_info = &mut *defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns.
@@ -511,15 +504,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
 
             if let Some(signal_val) = args.get_truthy(global_this, "signal")? {
-                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // `from_js` returns a live FFI handle owned by JS.
-                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                    // is the centralised non-null deref proof.
-                    let sig = WebCore::AbortSignal::opaque_ref(signal);
-                    if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
+                if let Some(signal) = WebCore::AbortSignal::ref_from_js(signal_val) {
+                    if let Some(abort_error) = signal.node_abort_error_if_aborted(global_this) {
                         return Err(global_this.throw_value(abort_error));
                     }
-                    **abort_signal = Some(sig.ref_());
+                    abort_signal = Some(signal);
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -1336,7 +1325,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         closed: Default::default(),
         this_value: Default::default(),
         weak_file_sink_stdin_ptr: Cell::new(None),
-        abort_signal: Cell::new(None),
+        abort_signal: JsCell::new(None),
         event_loop_timer_refd: Cell::new(false),
         event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
@@ -1801,16 +1790,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // SAFETY: `signal` is a live *mut AbortSignal carrying the +1 ref taken
-        // above; ownership of that ref transfers to `subprocess.abort_signal`.
+        signal.pending_activity_ref();
         // `add_listener` may synchronously fire `on_abort_signal` (already
-        // aborted), which re-enters via `subprocess_ptr` — write through the
-        // raw pointer so no `&mut Subprocess` is held across the call.
-        unsafe {
-            (*signal).pending_activity_ref();
-            let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-            (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
-        }
+        // aborted), which re-enters via `subprocess_ptr`, so the store below
+        // goes through the raw pointer rather than a `&mut Subprocess`.
+        let _ = signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+        // SAFETY: `subprocess_ptr` is the live Subprocess allocated above;
+        // `clear_abort_signal` releases the ref and the pending-activity count.
+        unsafe { (*subprocess_ptr).abort_signal.set(Some(signal)) };
     }
 
     if !IS_SYNC {
@@ -1847,13 +1834,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
+                signal.pending_activity_ref();
+                let _ = signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
                 // SAFETY: see the matching block above.
-                unsafe {
-                    (*signal).pending_activity_ref();
-                    let _ =
-                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-                    (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
-                }
+                unsafe { (*subprocess_ptr).abort_signal.set(Some(signal)) };
             }
         }
         sys::Result::Err(_) => {

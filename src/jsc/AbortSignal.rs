@@ -47,6 +47,8 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__toJS(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
+    // Frees the signal at count zero. Only `ext_deref` (the `Drop` of
+    // `AbortSignalRef`) may call this; see the note on `ref_`.
     safe fn WebCore__AbortSignal__unref(arg0: &AbortSignal);
     // `*mut Timeout` is round-tripped opaquely through C++ (stored from
     // `AbortSignal__Timeout__create`, never dereferenced on the C++ side), so
@@ -159,17 +161,14 @@ impl AbortSignal {
         ))
     }
 
+    /// Takes a ref and returns the same pointer carrying it. The caller owns
+    /// that `+1`; the only way to release it is to adopt it into an
+    /// [`AbortSignalRef`] and drop that. There is deliberately no inherent
+    /// `unref(&self)`: `&AbortSignal` is reachable from every `AbortSignalRef`
+    /// (and, being an opaque ZST handle, from any pointer), so a safe release on
+    /// the pointee would let safe code drop a ref it does not own.
     pub fn ref_(&self) -> *mut AbortSignal {
         WebCore__AbortSignal__ref(self)
-    }
-
-    pub fn unref(&self) {
-        WebCore__AbortSignal__unref(self)
-    }
-
-    pub fn detach(&self, ctx: *mut c_void) {
-        self.clean_native_bindings(ctx);
-        self.unref();
     }
 
     /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
@@ -188,6 +187,8 @@ impl AbortSignal {
         WebCore__AbortSignal__create(global)
     }
 
+    /// Creates a signal and returns it carrying a `+1` the caller owns; same
+    /// release rule as [`AbortSignal::ref_`].
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
         crate::mark_binding!();
         WebCore__AbortSignal__new(global)
@@ -199,9 +200,9 @@ impl AbortSignal {
     ///
     /// Thread-safety: not thread-safe; call only on the owning thread/loop.
     ///
-    /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
-    /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
-    /// caching the pointer across turns.
+    /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold an
+    /// [`AbortSignalRef`] to `self` for the duration and avoid caching the
+    /// pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held

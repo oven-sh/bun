@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_ptr::RefCount;
 
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine,
+    self as jsc, AbortSignalRef, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef,
+    JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -147,10 +147,9 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
-    /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
-    /// handle whose refcount lives on the C++ side.
-    pub(crate) abort_signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// The `signal` spawn option, held (with a pending-activity count on it)
+    /// while our abort listener is registered; `clear_abort_signal` drops both.
+    pub(crate) abort_signal: JsCell<Option<AbortSignalRef>>,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -364,15 +363,9 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
-    ///
-    /// `abort_signal` holds a +1 C++-intrusive ref taken in
-    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
-    /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
-    /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
-        self.abort_signal.get().map(bun_ptr::BackRef::from)
+    pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
+        self.abort_signal.get().as_deref()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1279,13 +1272,10 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
-            // `signal` was stored with a +1 C++ intrusive ref (taken in
-            // `spawn_maybe_sync`); it stays live until `unref()` below, so the
-            // `BackRef` invariant (pointee outlives holder) holds for this scope.
+        if let Some(signal) = self.abort_signal.replace(None) {
             signal.pending_activity_unref();
             signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            signal.unref();
+            // Dropping `signal` releases the ref taken in `spawn_maybe_sync`.
         }
     }
 

@@ -385,18 +385,18 @@ mod shim {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
-    /// Release BOTH refcounts the request holds on its AbortSignal.
-    /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
-    /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
-    /// be dereferenced after this call.
+    /// Release BOTH refcounts the request holds on its AbortSignal:
+    /// `pending_activity_unref()` drops the GC-visibility count and dropping
+    /// the adopted `AbortSignalRef` releases the intrusive C++ count taken at
+    /// creation (which may free the signal). `s` must not be dereferenced
+    /// after this call.
     #[inline]
     pub(super) fn signal_release(s: NonNull<AbortSignal>) {
-        // See `signal_aborted`. Order: pending-activity first,
-        // then the owning intrusive ref (which may free). `BackRef` is dropped
-        // before `unref()` returns, so no dangling deref.
-        let signal = bun_ptr::BackRef::from(s);
+        // SAFETY: `s` was just `take()`n out of `ctx.signal`, which held the
+        // `+1` from `AbortSignal::new()` since the request was created, so
+        // this adopt is the only release of that ref.
+        let signal = unsafe { jsc::AbortSignalRef::adopt(s.as_ptr()) };
         signal.pending_activity_unref();
-        signal.unref();
     }
     #[inline]
     pub(super) fn iec_trigger(

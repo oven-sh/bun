@@ -55,7 +55,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{AbortSignalRef, HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -129,10 +129,10 @@ impl SignalRef {
 impl Drop for SignalRef {
     fn drop(&mut self) {
         if let Some(sig) = self.0.take() {
-            // `sig` was obtained from `AbortSignal::ref_()` which bumped the
-            // C++ intrusive refcount; the pointee outlives this `BackRef`
-            // until `unref()` releases that +1.
-            bun_ptr::BackRef::from(sig).unref();
+            // SAFETY: `sig` is the `+1` taken by `ref_()` in `extract_signal`
+            // and was not handed to `FetchOptions` (`take()` would have cleared
+            // it), so adopting it here releases that ref exactly once.
+            drop(unsafe { AbortSignalRef::adopt(sig.as_ptr()) });
         }
     }
 }

@@ -19,7 +19,8 @@ use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
+    self as jsc, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc,
+    StrongOptional,
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;
@@ -1303,14 +1304,13 @@ impl FetchTasklet {
         let Some(signal) = self.signal.take() else {
             return;
         };
-        // `signal` is a live C++-owned WebCore::AbortSignal*; we hold one ref
-        // (taken in `fetch.rs` before populating FetchOptions). Order matters:
-        // cleanNativeBindings first, then unref + pending_activity_unref.
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
-        let signal = bun_opaque::opaque_deref(signal);
+        // SAFETY: `signal` carries the `+1` taken in `fetch.rs` before it was
+        // moved into `FetchOptions`; it was just taken out of `self.signal`, so
+        // dropping the adopted ref below is the only release of that `+1`.
+        let signal = unsafe { AbortSignalRef::adopt(signal) };
+        // Unregister our listener while we still hold the ref.
         signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
         signal.pending_activity_unref();
-        signal.unref();
     }
 
     fn on_reject(&mut self) -> BodyValueError {

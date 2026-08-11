@@ -266,6 +266,10 @@ function translateLookupOptions(options) {
     all,
     order,
     verbatim,
+    // dns.lookup()'s contract is getaddrinfo(3): resolve the way the platform
+    // does (NSS/systemd-resolved on Linux), not via c-ares, which reads
+    // /etc/resolv.conf directly and diverges on split-DNS hosts.
+    backend: "system",
   };
 }
 

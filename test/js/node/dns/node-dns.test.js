@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -442,6 +442,53 @@ test("dns.lookup (localhost)", () => {
   });
 
   return promise;
+});
+
+// dns.lookup()'s contract is getaddrinfo(3), so it must use the system
+// resolver, not c-ares, which reads /etc/resolv.conf directly and bypasses
+// NSS/systemd-resolved on split-DNS hosts (#37378). "127.1" is a legacy IPv4
+// literal: getaddrinfo resolves it locally with no DNS traffic, while c-ares
+// treats it as a hostname and queries the configured servers, here a local
+// responder that REFUSEs every query. Linux-only: it is the one platform
+// where the default Bun.dns backend is c-ares.
+test.skipIf(process.platform !== "linux")("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
+  const fixture = `
+    const dns = require("node:dns");
+    function refused(msg) {
+      const r = Buffer.from(msg);
+      r[2] = 0x81; // QR + RD
+      r[3] = 0x85; // RA + rcode REFUSED
+      r.fill(0, 6, 12); // zero the answer counts
+      return r;
+    }
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data(sock, buf, port, addr) { sock.send(refused(buf), port, addr); } },
+    });
+    dns.setServers(["127.0.0.1:" + server.port]);
+    const fromPromises = await dns.promises.lookup("127.1").then(
+      ({ address, family }) => ({ address, family }),
+      e => ({ code: e.code }),
+    );
+    const fromCallback = await new Promise(resolve => {
+      dns.lookup("127.1", (e, address, family) => resolve(e ? { code: e.code } : { address, family }));
+    });
+    server.close();
+    console.log(JSON.stringify({ fromPromises, fromCallback }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fromPromises: { address: "127.0.0.1", family: 4 },
+    fromCallback: { address: "127.0.0.1", family: 4 },
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("dns.getServers", () => {

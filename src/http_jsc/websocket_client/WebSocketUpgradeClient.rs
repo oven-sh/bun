@@ -21,7 +21,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
-use core::ptr;
+use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_boringssl as boringssl;
@@ -139,19 +139,19 @@ impl Drop for SslCtxOwned {
 #[ref_count(destroy = Self::deinit)]
 pub struct HTTPClient<const SSL: bool> {
     ref_count: Cell<u32>,
-    tcp: Socket<SSL>,
-    outgoing_websocket: Option<*mut CppWebSocket>,
+    tcp: Cell<Socket<SSL>>,
+    outgoing_websocket: Cell<Option<NonNull<CppWebSocket>>>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: Vec<u8>,
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
-    to_send_len: usize,
+    to_send_len: Cell<usize>,
     headers_buf: [picohttp::Header; 128],
     body: Vec<u8>,
     /// Owned NUL-terminated hostname for SNI; empty when unset.
     hostname: ZBox,
     poll_ref: KeepAlive,
-    state: State,
+    state: Cell<State>,
     subprotocols: StringSet,
 
     /// Proxy state (None when not using proxy)
@@ -204,7 +204,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: caller guarantees `this` is the unique remaining ref.
         unsafe {
             (*this).clear_data();
-            debug_assert!((*this).tcp.is_detached());
+            debug_assert!((*this).tcp.get().is_detached());
             // allocated via heap::alloc in `connect`.
             bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::TYPE_NAME, this);
             drop(bun_core::heap::take(this));
@@ -214,7 +214,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Suffix of `input_body_buf` still pending write.
     fn to_send(&self) -> &[u8] {
         let len = self.input_body_buf.len();
-        &self.input_body_buf[len - self.to_send_len..]
+        &self.input_body_buf[len - self.to_send_len.get()..]
+    }
+
+    fn detach_tcp(&self) {
+        self.tcp.set(Socket::<SSL>::detached());
     }
 
     /// On error, this returns null.
@@ -222,7 +226,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn connect(
         global: &JSGlobalObject,
-        websocket: *mut CppWebSocket,
+        websocket: &CppWebSocket,
         host: &BunString,
         port: u16,
         pathname: &BunString,
@@ -446,15 +450,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
-            tcp: Socket::<SSL>::detached(),
-            outgoing_websocket: Some(websocket),
+            tcp: Cell::new(Socket::<SSL>::detached()),
+            outgoing_websocket: Cell::new(Some(NonNull::from(websocket))),
             input_body_buf,
-            to_send_len: 0,
+            to_send_len: Cell::new(0),
             headers_buf: [picohttp::Header::ZERO; 128],
             body: Vec::new(),
             hostname: ZBox::default(),
             poll_ref,
-            state: State::Initializing,
+            state: Cell::new(State::Initializing),
             proxy: proxy_state,
             ssl_config,
             secure,
@@ -475,15 +479,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 false,
             ) {
                 Ok(socket) => {
-                    // `client` is live (refcount >= 1) but no longer solely
-                    // owned — it is also installed as socket userdata — so
-                    // use field-scoped accesses only.
-                    // SAFETY: scoped write; nothing re-enters here.
-                    unsafe { (*client).tcp = socket };
-                    // SAFETY: scoped read of a `Copy` field.
-                    if unsafe { (*client).state } == State::Failed {
+                    // SAFETY: `client` is live (refcount 1, allocated above). It
+                    // is now also the socket's userdata, so it is only ever
+                    // accessed shared from here on.
+                    let client = unsafe { ThisPtr::new(client) };
+                    client.tcp.set(socket);
+                    if client.state.get() == State::Failed {
                         // SAFETY: `client` from heap::alloc above.
-                        unsafe { Self::deref(client) };
+                        unsafe { Self::deref(client.as_ptr()) };
                         return None;
                     }
                     bun_analytics::features::web_socket
@@ -499,18 +502,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         if !host_slice.slice().is_empty() {
                             // SAFETY: scoped write.
                             unsafe {
-                                (*client).hostname = ZBox::from_bytes(host_slice.slice());
+                                (*client.as_ptr()).hostname = ZBox::from_bytes(host_slice.slice());
                             }
                         }
                     }
 
                     socket.set_timeout(handshake_timeout_seconds());
-                    // SAFETY: scoped write.
-                    unsafe { (*client).state = State::Reading };
+                    client.state.set(State::Reading);
                     // +1 for cpp_websocket
-                    // SAFETY: `client` is live; `ref_` needs only `&self`.
-                    unsafe { (*client).ref_() };
-                    return Some(client);
+                    client.ref_();
+                    return Some(client.as_ptr());
                 }
                 Err(_) => {
                     // SAFETY: `client` from heap::alloc above; never
@@ -531,16 +532,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
             false,
         ) {
             Ok(sock) => {
-                // `client` is live (refcount >= 1) but no longer solely owned
-                // — it is also socket userdata — so use field-scoped accesses
-                // only.
-                // SAFETY: scoped write; nothing re-enters here.
-                unsafe { (*client).tcp = sock };
+                // SAFETY: `client` is live (refcount 1, allocated above). It is
+                // now also the socket's userdata, so it is only ever accessed
+                // shared from here on.
+                let client = unsafe { ThisPtr::new(client) };
+                client.tcp.set(sock);
                 // I don't think this case gets reached.
-                // SAFETY: scoped read of a `Copy` field.
-                if unsafe { (*client).state } == State::Failed {
+                if client.state.get() == State::Failed {
                     // SAFETY: `client` from heap::alloc above.
-                    unsafe { Self::deref(client) };
+                    unsafe { Self::deref(client.as_ptr()) };
                     return None;
                 }
                 bun_analytics::features::web_socket
@@ -552,17 +552,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // not the wss:// target.
                     if !display_host_.is_empty() {
                         // SAFETY: scoped write.
-                        unsafe { (*client).hostname = ZBox::from_bytes(display_host_) };
+                        unsafe { (*client.as_ptr()).hostname = ZBox::from_bytes(display_host_) };
                     }
                 }
 
                 sock.set_timeout(handshake_timeout_seconds());
-                // SAFETY: scoped write.
-                unsafe { (*client).state = State::Reading };
+                client.state.set(State::Reading);
                 // +1 for cpp_websocket
-                // SAFETY: `client` is live; `ref_` needs only `&self`.
-                unsafe { (*client).ref_() };
-                Some(client)
+                client.ref_();
+                Some(client.as_ptr())
             }
             Err(_) => {
                 // SAFETY: `client` from heap::alloc above; never installed
@@ -575,7 +573,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     pub(crate) fn clear_input(&mut self) {
         self.input_body_buf = Vec::new();
-        self.to_send_len = 0;
+        self.to_send_len.set(0);
     }
 
     pub(crate) fn clear_data(&mut self) {
@@ -629,14 +627,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let _guard = this.ref_guard();
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
-        // SAFETY: short-lived `&mut` for the field take; ends before any reentrant call.
-        if unsafe { (*this.as_ptr()).outgoing_websocket.take().is_some() } {
+        if this.outgoing_websocket.take().is_some() {
             // SAFETY: refcount > 1 here (the +1 from `_guard` above).
             unsafe { Self::deref(this.as_ptr()) };
         }
 
-        // Copy `tcp` out so no `&mut Self` spans the close.
-        let tcp = this.tcp;
+        let tcp = this.tcp.get();
         // Clear the socket's ext slot before closing. `us_socket_close` on a
         // SEMI_SOCKET (TCP connect still in flight — the common case when
         // `ws.close()` is called synchronously after `new WebSocket()`) skips
@@ -658,8 +654,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             tcp.close(uws::CloseCode::Failure);
         }
         if had_socket_ref {
-            // SAFETY: short-lived `&mut` for the field detach.
-            unsafe { (*this.as_ptr()).tcp.detach() };
+            this.detach_tcp();
             // SAFETY: refcount > 1 (the +1 from `_guard` above).
             unsafe { Self::deref(this.as_ptr()) };
         }
@@ -678,7 +673,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let this = unsafe { ThisPtr::new(this) };
         // Copy `tcp` out before dispatch so nothing touches `*this` after the
         // FFI call (which may reenter and pop our tag).
-        let tcp = this.tcp;
+        let tcp = this.tcp.get();
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::dispatch_abrupt_close(this.as_ptr(), code) };
 
@@ -696,10 +691,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `cancel()`, which would alias a `&mut self` argument; and the trailing
     /// `deref` may free `this`.
     unsafe fn dispatch_abrupt_close(this: *mut Self, code: ErrorCode) {
-        // SAFETY: short-lived `&mut` for the field take; ends before the FFI call.
+        // SAFETY: short-lived take; `this` is live per caller contract.
         let ws = unsafe { (*this).outgoing_websocket.take() };
         if let Some(ws) = ws {
-            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
+            CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
             // SAFETY: `this` carries root provenance; may free `this`.
             unsafe { Self::deref(this) };
         }
@@ -713,8 +708,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         bun_jsc::mark_binding!();
         // SAFETY: short-lived `&mut` borrows; each ends before the next call.
         unsafe { (*this.as_ptr()).clear_data() };
-        // SAFETY: short-lived `&mut` for the field detach; `this` is live.
-        unsafe { (*this.as_ptr()).tcp.detach() };
+        this.detach_tcp();
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::dispatch_abrupt_close(this.as_ptr(), ErrorCode::Ended) };
 
@@ -745,8 +739,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let handshake_success = success == 1;
         let mut reject_unauthorized = false;
-        if let Some(ws) = this.outgoing_websocket {
-            reject_unauthorized = CppWebSocket::opaque_ref(ws).reject_unauthorized();
+        if let Some(ws) = this.outgoing_websocket.get() {
+            reject_unauthorized = CppWebSocket::opaque_ref(ws.as_ptr()).reject_unauthorized();
         }
 
         if handshake_success {
@@ -808,15 +802,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
     pub fn handle_open(this: ThisPtr<Self>, socket: Socket<SSL>) {
         log!("onOpen");
-        // SAFETY: scoped write; nothing re-enters here.
-        unsafe { (*this.as_ptr()).tcp = socket };
+        this.tcp.set(socket);
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
         socket.set_timeout(handshake_timeout_seconds());
 
         debug_assert!(!this.input_body_buf.is_empty());
-        debug_assert!(this.to_send_len == 0);
+        debug_assert!(this.to_send_len.get() == 0);
 
         if SSL {
             if !this.hostname.is_empty() {
@@ -844,8 +837,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // If using proxy, set state to proxy_handshake
         if this.proxy.is_some() {
-            // SAFETY: scoped write.
-            unsafe { (*this.as_ptr()).state = State::ProxyHandshake };
+            this.state.set(State::ProxyHandshake);
         }
 
         let wrote = socket.write(&this.input_body_buf);
@@ -856,13 +848,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         let pending = this.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
-        // SAFETY: scoped write.
-        unsafe { (*this.as_ptr()).to_send_len = pending };
+        this.to_send_len.set(pending);
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
         // `InternalSocket` has no `PartialEq`; compare native handles.
-        socket.get_native_handle() == self.tcp.get_native_handle()
+        socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
     fn buffer_and_parse_head(&mut self, data: &[u8]) -> HeadParse {
@@ -904,7 +895,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
-        if this.state == State::Done {
+        if this.state.get() == State::Done {
             // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
             if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
@@ -920,9 +911,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if this.outgoing_websocket.is_none() {
-            // SAFETY: short-lived `&mut` writes; each ends before `socket.close`.
-            unsafe { (*this.as_ptr()).state = State::Failed };
+        if this.outgoing_websocket.get().is_none() {
+            this.state.set(State::Failed);
             // SAFETY: short-lived `&mut` for clear_data; ends before `socket.close` below.
             unsafe { (*this.as_ptr()).clear_data() };
             // No `&mut Self` is live across this call (handle_close reenters).
@@ -938,7 +928,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
-        if this.state == State::ProxyHandshake {
+        if this.state.get() == State::ProxyHandshake {
             Self::handle_proxy_response(this, socket, data);
             return;
         }
@@ -971,7 +961,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     /// Forward the handshake response to C++ as a `'handshake'` event.
-    fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
+    fn dispatch_handshake(ws: NonNull<CppWebSocket>, response: &picohttp::Response, body: &[u8]) {
         let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
             .headers
             .list
@@ -983,7 +973,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 value_len: h.value().len(),
             })
             .collect();
-        CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+        CppWebSocket::opaque_ref(ws.as_ptr()).did_receive_handshake_response(
             u16::try_from(response.status_code).unwrap_or(0),
             response.status,
             &raw_headers,
@@ -1005,9 +995,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let _scope = is_101
             .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        if let Some(ws) = this.outgoing_websocket {
+        if let Some(ws) = this.outgoing_websocket.get() {
             Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
-            if this.outgoing_websocket.is_none() {
+            if this.outgoing_websocket.get().is_none() {
                 return;
             }
         }
@@ -1091,13 +1081,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let request_buf = p.take_websocket_request_buf().into_vec();
 
         // For ws:// through proxy, send the WebSocket upgrade request
-        // SAFETY: scoped writes; `p` is dead, nothing re-enters here.
-        unsafe {
-            let me = this.as_ptr();
-            (*me).state = State::Reading;
-            (*me).input_body_buf = request_buf;
-            (*me).to_send_len = 0;
-        }
+        this.state.set(State::Reading);
+        // SAFETY: scoped write; `p` is dead, nothing re-enters here.
+        unsafe { (*this.as_ptr()).input_body_buf = request_buf };
+        this.to_send_len.set(0);
 
         // Send the WebSocket upgrade request
         let wrote = socket.write(&this.input_body_buf);
@@ -1108,8 +1095,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         let pending = this.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
-        // SAFETY: scoped write.
-        unsafe { (*this.as_ptr()).to_send_len = pending };
+        this.to_send_len.set(pending);
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
@@ -1127,8 +1113,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Get certificate verification setting
         // SAFETY: `this` is live; scoped read of a `Copy` field.
-        let reject_unauthorized = match unsafe { (*this).outgoing_websocket } {
-            Some(ws) => CppWebSocket::opaque_ref(ws).reject_unauthorized(),
+        let reject_unauthorized = match unsafe { (*this).outgoing_websocket.get() } {
+            Some(ws) => CppWebSocket::opaque_ref(ws.as_ptr()).reject_unauthorized(),
             None => true,
         };
 
@@ -1192,7 +1178,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
-        unsafe { (*this).state = State::ProxyTlsHandshake };
+        unsafe { (*this).state.set(State::ProxyTlsHandshake) };
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully
@@ -1207,9 +1193,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: scoped writes; nothing re-enters here. The Vec::new()
         // assignment frees the CONNECT request buffer.
         unsafe {
-            (*this).state = State::Reading;
+            (*this).state.set(State::Reading);
             (*this).input_body_buf = Vec::new();
-            (*this).to_send_len = 0;
+            (*this).to_send_len.set(0);
         }
 
         // Take the WebSocket upgrade request from proxy state (transfers
@@ -1253,7 +1239,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
         // SAFETY: scoped read + write; nothing re-enters here.
-        unsafe { (*this).to_send_len = (*this).input_body_buf.len() - wrote };
+        unsafe {
+            let pending = (*this).input_body_buf.len() - wrote;
+            (*this).to_send_len.set(pending);
+        }
     }
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
@@ -1392,9 +1381,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             }
 
                             // SAFETY: short-lived read of `outgoing_websocket`.
-                            if let Some(ws) = unsafe { (*this).outgoing_websocket } {
+                            if let Some(ws) = unsafe { (*this).outgoing_websocket.get() } {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
-                                CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
+                                CppWebSocket::opaque_ref(ws.as_ptr())
+                                    .set_protocol(&mut protocol_str);
                                 // `BunString` is `Copy`; explicitly drop the
                                 // ref taken by `clone_latin1`.
                                 protocol_str.deref();
@@ -1600,9 +1590,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // The tunnel forwards decrypted data to the WebSocket client.
                 bun_jsc::mark_binding!();
                 // SAFETY: short-lived reads.
-                let tcp = unsafe { (*this).tcp };
+                let tcp = unsafe { (*this).tcp.get() };
                 // SAFETY: short-lived read; `this` is live per caller contract.
-                let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
+                let has_ws = unsafe { (*this).outgoing_websocket.get().is_some() };
                 if !tcp.is_closed() && has_ws {
                     tcp.set_timeout(0);
                     log!("onDidConnect (tunnel mode)");
@@ -1612,7 +1602,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // never call cancel() to drop it. The TCP socket's ref (released
                     // in handle_close) is what keeps this struct alive to forward
                     // socket data to the tunnel after we switch to .done.
-                    // SAFETY: short-lived `&mut` for the field take.
+                    // SAFETY: short-lived take; `this` is live per caller contract.
                     let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
 
                     // Switch to forwarding before entering C++. did_connect_with_tunnel
@@ -1627,22 +1617,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // Same order as the non-tunnel arm below, which detaches the socket
                     // before did_connect.
                     // SAFETY: short-lived write.
-                    unsafe { (*this).state = State::Done };
+                    unsafe { (*this).state.set(State::Done) };
 
                     // Create the WebSocket client with the tunnel
-                    // SAFETY: live C++ back-reference.
-                    unsafe {
-                        (*ws).did_connect_with_tunnel(
-                            tunnel.as_ptr().cast::<c_void>(),
-                            overflow_ptr,
-                            overflow_len,
-                            if deflate_result.enabled {
-                                Some(&deflate_result.params)
-                            } else {
-                                None
-                            },
-                        )
-                    };
+                    CppWebSocket::opaque_ref(ws.as_ptr()).did_connect_with_tunnel(
+                        tunnel.as_ptr().cast::<c_void>(),
+                        overflow_ptr,
+                        overflow_len,
+                        if deflate_result.enabled {
+                            Some(&deflate_result.params)
+                        } else {
+                            None
+                        },
+                    );
 
                     // SAFETY: drops the outgoing_websocket ref; no `&mut Self` is live.
                     unsafe { Self::deref(this) };
@@ -1669,25 +1656,26 @@ impl<const SSL: bool> HTTPClient<SSL> {
         unsafe { (*this).clear_data() };
         bun_jsc::mark_binding!();
         // SAFETY: short-lived reads.
-        let tcp = unsafe { (*this).tcp };
+        let tcp = unsafe { (*this).tcp.get() };
         // SAFETY: short-lived read; `this` is live per caller contract.
-        let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
+        let has_ws = unsafe { (*this).outgoing_websocket.get().is_some() };
         if !tcp.is_closed() && has_ws {
             tcp.set_timeout(0);
             log!("onDidConnect");
 
-            // SAFETY: short-lived `&mut` for the field take/detach; ends before
-            // the FFI call below.
+            // SAFETY: short-lived take; `this` is live per caller contract.
             let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
-            // SAFETY: short-lived `&mut` for the field detach; ends before the FFI call below.
-            unsafe { (*this).tcp.detach() };
+            // SAFETY: `this` is live per caller contract; the shared borrow ends
+            // before the FFI call below.
+            unsafe { (*this).detach_tcp() };
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
-                // SAFETY: live C++ back-reference.
+                // SAFETY: `native_socket` is the open socket checked above, and
+                // `into_raw` yields the retained `SSL_CTX` being handed over.
                 unsafe {
-                    (*ws).did_connect(
+                    CppWebSocket::opaque_ref(ws.as_ptr()).did_connect(
                         &mut *native_socket,
                         overflow_ptr,
                         overflow_len,
@@ -1729,7 +1717,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
         cost += self.body.capacity();
-        cost += self.to_send_len;
+        cost += self.to_send_len.get();
         cost
     }
 
@@ -1745,12 +1733,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // SAFETY: `p` holds a live ref on `tunnel`.
                 unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
                 // In .done state (after WebSocket upgrade), just handle tunnel writes
-                if this.state == State::Done {
+                if this.state.get() == State::Done {
                     return;
                 }
 
                 // Flush any unwritten upgrade request bytes through the tunnel
-                if this.to_send_len == 0 {
+                if this.to_send_len.get() == 0 {
                     return;
                 }
                 // Bumps the intrusive refcount and derefs on Drop at every
@@ -1766,16 +1754,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             return;
                         }
                     };
-                // SAFETY: short-lived `&mut` write.
-                unsafe {
-                    let to_send_len = &mut (*this.as_ptr()).to_send_len;
-                    *to_send_len -= wrote.min(*to_send_len);
-                }
+                let pending = this.to_send_len.get();
+                this.to_send_len.set(pending.saturating_sub(wrote));
                 return;
             }
         }
 
-        if this.to_send_len == 0 {
+        if this.to_send_len.get() == 0 {
             return;
         }
 
@@ -1790,11 +1775,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         let wrote = usize::try_from(wrote).expect("int cast");
-        // SAFETY: short-lived `&mut` write.
-        unsafe {
-            let to_send_len = &mut (*this.as_ptr()).to_send_len;
-            *to_send_len -= wrote.min(*to_send_len);
-        }
+        let pending = this.to_send_len.get();
+        this.to_send_len.set(pending.saturating_sub(wrote));
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1810,16 +1792,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// ref and may free `this`; a `&mut self` argument would carry a Stacked
     /// Borrows protector that makes deallocating its referent UB.
     pub fn handle_connect_error(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int) {
-        // SAFETY: short-lived `&mut` for detach; ends before any reentrant call.
-        unsafe { (*this.as_ptr()).tcp.detach() };
+        this.detach_tcp();
 
         // For the TCP socket.
-        if this.state == State::Reading {
+        if this.state.get() == State::Reading {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToConnect) };
         } else {
-            // SAFETY: short-lived write.
-            unsafe { (*this.as_ptr()).state = State::Failed };
+            this.state.set(State::Failed);
         }
 
         // SAFETY: may free `this`; no `&mut Self` is live.
@@ -2190,7 +2170,7 @@ macro_rules! export_http_client {
             #[unsafe(no_mangle)]
             pub(crate) unsafe extern "C" fn $connect(
                 global: &JSGlobalObject,
-                websocket: *mut CppWebSocket,
+                websocket: &CppWebSocket,
                 host: &BunString,
                 port: u16,
                 pathname: &BunString,

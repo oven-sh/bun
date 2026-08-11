@@ -9,8 +9,7 @@ pub struct ThreadSafeStreamBuffer {
     pub(crate) mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
-    /// Called by the HTTP thread when the buffer drains before the end chunk.
-    /// Guarded by `mutex`, like `buffer`.
+    /// Called by the http thread when the buffer drains; guarded by `mutex`, like `buffer`.
     callback: Option<Callback>,
 }
 

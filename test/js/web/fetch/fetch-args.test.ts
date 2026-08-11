@@ -251,9 +251,12 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
     expect(exitCode).toBe(0);
   });
 
+  // Before the rejection was registered, handling it still reached the tracker's
+  // "handled" side, which emitted a spurious rejectionHandled event.
   test("a rejection that is handled is not reported", async () => {
     const { stdout, stderr, exitCode } = await runUnhandled(`
       process.on("unhandledRejection", () => console.log("unhandledRejection fired"));
+      process.on("rejectionHandled", () => console.log("rejectionHandled fired"));
       fetch("gopher://example.com/").catch(err => console.log("caught:", err.message));
     `);
     expect(stdout).toBe("caught: protocol must be http:, https: or s3:\n");

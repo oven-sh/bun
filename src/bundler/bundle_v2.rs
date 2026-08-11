@@ -4931,7 +4931,21 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
+        /// Joins whatever the pass still has on the pool before tearing the
+        /// workers down: a pass that fails between scheduling and the step that
+        /// normally joins (`enqueue_entry_points_*` → `wait_for_parse` on an
+        /// unresolvable entry point, `link` → `generate_chunks_in_parallel` for
+        /// the source-map tasks) gets here with tasks still running
+        /// `Worker::get`. The dev server's asynchronous pass is joined by the JS
+        /// event loop (`on_after_decrement_scan_counter`) and only gets here once
+        /// `is_done()`, so it is never ticked from in here.
         pub fn deinit_without_freeing_arena(&mut self) {
+            if !self.asynchronous && self.graph.pending_items > 0 {
+                self.wait_for_parse();
+            }
+            self.linker.source_maps.line_offset_wait_group.wait();
+            self.linker.source_maps.quoted_contents_wait_group.wait();
+
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);

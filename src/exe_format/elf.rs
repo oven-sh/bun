@@ -208,15 +208,17 @@ impl ElfFile {
     /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
     /// `.got.plt` come after it, and expanding in-place would invalidate their
     /// absolute virtual addresses.
+    ///
+    /// Re-injecting into our own earlier output works too: every block ends with the `BUN_COMPILED` slot's vaddr, so a rewrite finds the previous block and replaces it: in place when the new payload fits, otherwise at the same address with the segment regrown, so a file never carries more than one block.
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
-        let bun_section_offset = bun_section.file_offset;
         let bun_section_vaddr = bun_section.vaddr;
         let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
-        let new_content_size: u64 = header_size + payload.len() as u64;
+        let trailer_size: u64 = size_of::<u64>() as u64;
+        let new_content_size: u64 = header_size + payload.len() as u64 + trailer_size;
         let aligned_new_size = align_up(new_content_size, page_size);
 
         // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
@@ -253,6 +255,20 @@ impl ElfFile {
             return Err(ElfError::NoWritableLoadSegment);
         };
 
+        let previous_block = self.previous_block_slot(&bun_section, &rw_phdr);
+        let compiled_slot_vaddr = previous_block.unwrap_or(bun_section.vaddr);
+        if previous_block.is_some() && new_content_size <= bun_section.size {
+            // Rewriting our own earlier output with something that fits: overwrite the block in place (the slot already
+            // points at it; the trailer stays at the end of the block's capacity).
+            let start = usize::try_from(bun_section.file_offset).expect("int cast");
+            let cap = usize::try_from(bun_section.size).expect("int cast");
+            write_u64_le(&mut self.data[start..][..8], payload.len() as u64);
+            self.data[start + 8..][..payload.len()].copy_from_slice(payload);
+            self.data[start + 8 + payload.len()..start + cap - 8].fill(0);
+            write_u64_le(&mut self.data[start + cap - 8..][..8], compiled_slot_vaddr);
+            return Ok(());
+        }
+
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
         // 128-byte alignment that JSC's bytecode cache requires — see
@@ -266,7 +282,13 @@ impl ElfFile {
         // `new_file_offset` follows the segment's existing (vaddr - offset)
         // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
         // covers our new payload continuously once we grow p_filesz.
-        let new_vaddr = align_up(max_vaddr_end, page_size);
+        // A superseded block of ours is the last thing in the segment: the new one takes its place instead of
+        // accumulating behind it, so a file rewritten any number of times carries exactly one block.
+        let new_vaddr = if previous_block.is_some() {
+            bun_section.vaddr
+        } else {
+            align_up(max_vaddr_end, page_size)
+        };
         let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
         let new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
@@ -274,7 +296,7 @@ impl ElfFile {
         // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
         // past it by construction. This guard catches pathological inputs
         // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
-        if new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
+        if previous_block.is_none() && new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
 
@@ -334,9 +356,11 @@ impl ElfFile {
         // Zero the bytes between the old RW file-content end and the payload
         // start. This entire range is now inside the extended PT_LOAD's
         // file-backed region; keeping it zero preserves BSS semantics.
-        self.data[usize::try_from(move_src_start).expect("int cast")
-            ..usize::try_from(new_file_offset).expect("int cast")]
-            .fill(0);
+        if new_file_offset > move_src_start {
+            self.data[usize::try_from(move_src_start).expect("int cast")
+                ..usize::try_from(new_file_offset).expect("int cast")]
+                .fill(0);
+        }
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
         write_u64_le(
@@ -348,19 +372,24 @@ impl ElfFile {
             .copy_from_slice(payload);
 
         // Zero the padding between payload end and the relocated tail
-        let payload_end = new_file_offset + new_content_size;
+        let payload_end = new_file_offset + header_size + payload.len() as u64; // the trailer is written separately at the end of the block
         if move_dst_start > payload_end {
             self.data[usize::try_from(payload_end).expect("int cast")
                 ..usize::try_from(move_dst_start).expect("int cast")]
                 .fill(0);
         }
 
-        // Write the vaddr of the appended data at the ORIGINAL .bun section location
-        // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
-        // this vaddr (always non-zero), which the runtime dereferences as a pointer.
-        // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
+        // The block's trailer: where the `BUN_COMPILED` slot is, for the next rewrite of this file.
         write_u64_le(
-            &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
+            &mut self.data[usize::try_from(new_file_offset + aligned_new_size - trailer_size)
+                .expect("int cast")..][..8],
+            compiled_slot_vaddr,
+        );
+
+        // The runtime reads BUN_COMPILED.size as the payload's vaddr (0 = no payload); the slot sits at a fixed offset into the RW segment in every rewrite of this file.
+        let compiled_slot_offset = rw_phdr.p_offset + (compiled_slot_vaddr - rw_phdr.p_vaddr);
+        write_u64_le(
+            &mut self.data[usize::try_from(compiled_slot_offset).expect("int cast")..][..8],
             new_vaddr,
         );
 
@@ -388,7 +417,7 @@ impl ElfFile {
 
             if i == bun_section.section_index as usize {
                 shdr.sh_offset = new_file_offset;
-                shdr.sh_size = new_content_size;
+                shdr.sh_size = aligned_new_size;
                 shdr.sh_addr = new_vaddr;
             } else if shdr.sh_type != SHT_NOBITS
                 && shdr.sh_offset >= move_src_start
@@ -432,6 +461,28 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
+    /// If the `.bun` header describes a block this function wrote earlier, the `BUN_COMPILED` slot recorded in its
+    /// trailer (validated: inside the RW segment and currently pointing at this block); `None` for a clean template.
+    fn previous_block_slot(
+        &self,
+        bun_section: &BunSectionInfo,
+        rw_phdr: &Elf64_Phdr,
+    ) -> Option<u64> {
+        let word = size_of::<u64>() as u64;
+        if bun_section.size < 2 * word {
+            return None;
+        }
+        let trailer_off =
+            usize::try_from(bun_section.file_offset + bun_section.size - word).ok()?;
+        let slot_vaddr = read_u64_le(self.data.get(trailer_off..trailer_off + 8)?);
+        if slot_vaddr < rw_phdr.p_vaddr || slot_vaddr + word > rw_phdr.p_vaddr + rw_phdr.p_filesz {
+            return None;
+        }
+        let slot_off = usize::try_from(rw_phdr.p_offset + (slot_vaddr - rw_phdr.p_vaddr)).ok()?;
+        (read_u64_le(self.data.get(slot_off..slot_off + 8)?) == bun_section.vaddr)
+            .then_some(slot_vaddr)
+    }
+
     /// Returns the file offset and section index of the `.bun` section.
     fn find_bun_section(&self, ehdr: Elf64_Ehdr) -> Result<BunSectionInfo, ElfError> {
         let shdr_size = size_of::<Elf64_Shdr>();
@@ -467,6 +518,7 @@ impl ElfFile {
                     return Ok(BunSectionInfo {
                         file_offset: shdr.sh_offset,
                         vaddr: shdr.sh_addr,
+                        size: shdr.sh_size,
                         section_index: u16::try_from(i).expect("int cast"),
                     });
                 }
@@ -501,6 +553,8 @@ struct BunSectionInfo {
     file_offset: u64,
     /// Virtual address of the .bun section (sh_addr).
     vaddr: u64,
+    /// Size of whatever the header currently describes (sh_size).
+    size: u64,
     /// Index of the .bun section in the section header table.
     section_index: u16,
 }
@@ -734,6 +788,10 @@ pub(crate) struct Elf64_Shdr {
 }
 
 // --- byte helpers ---
+
+fn read_u64_le(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"))
+}
 
 #[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {

@@ -1,0 +1,16 @@
+// (func (export "load") (param i32) (result i32) local.get 0 i32.load) with one page of memory: an out-of-bounds load must
+// trap (a RuntimeError), which relies on the signal/exception handlers the runtime installed — kernel state that a
+// launch resumed from the snapshot has to install again.
+const bytes = new Uint8Array([
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x03, 0x02, 0x01, 0x00,
+  0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x11, 0x02, 0x04, 0x6c, 0x6f, 0x61, 0x64, 0x00, 0x00, 0x06, 0x6d, 0x65, 0x6d, 0x6f,
+  0x72, 0x79, 0x02, 0x00, 0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b,
+]);
+const { instance } = await WebAssembly.instantiate(bytes);
+const { load, memory } = instance.exports;
+new Uint32Array(memory.buffer)[0] = 7; // linear memory contents travel with the snapshot too
+Bun.startupSnapshot.main(() => {
+  let trap = "none";
+  try { load(0x7ffffff0); } catch (e) { trap = e.constructor.name; }
+  console.log(`[js] epoch=${Bun.startupSnapshot.epoch()} load(0)=${load(0)} out-of-bounds=${trap}`);
+});

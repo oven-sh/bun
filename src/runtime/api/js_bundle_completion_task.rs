@@ -26,6 +26,7 @@ use bun_io::KeepAlive;
 use bun_jsc::WorkPool;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
+use bun_options_types::context::CompileStartupSnapshot;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
@@ -447,12 +448,36 @@ impl JSBundleCompletionTask {
                 Some(&compile_options.executable_path.list)
             },
             flags,
+            None,
         ) {
             Ok(r) => r,
             Err(err) => {
                 return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(err.name())));
             }
         };
+
+        if matches!(result, CompileResult::Success)
+            && compile_options.snapshot != CompileStartupSnapshot::Off
+        {
+            if !compile_options.compile_target.is_default() {
+                return CompileResult::fail_fmt(format_args!(
+                    "snapshot has to run the executable, which a cross-compiled one can't do here; build without it and run `bun build --snapshot --outfile <exe>` on the target platform"
+                ));
+            }
+            match crate::cli::build_command::run_startup_snapshot_step(
+                root_dir.fd,
+                outfile_for_executable,
+                compile_options.snapshot,
+                compile_options.snapshot_io,
+                // SAFETY: as above.
+                unsafe { &mut *self.env },
+            ) {
+                Ok(bytes) => crate::cli::build_command::report_startup_snapshot_step(bytes),
+                Err(message) => {
+                    return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(&message)));
+                }
+            }
+        }
 
         if matches!(result, CompileResult::Success) {
             let entry = &mut output_files[entry_point_index];

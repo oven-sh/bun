@@ -3222,6 +3222,15 @@ declare module "bun" {
      * ```
      */
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
+    /**
+     * Snapshots (experimental; requires `compile`): after producing the executable, run it once and
+     * embed a snapshot of its started-up state, so later launches resume instead of booting. `true`
+     * takes the snapshot once startup work drains (`bun build --snapshot`); use `mode: "manual"` when
+     * the app calls `Bun.startupSnapshot.take()` itself, and `io` to let the build touch this machine
+     * (`"local"`: files, subprocesses, local sockets; `"network"`: the network too) — every use is
+     * reported when the snapshot is written. Default `io` is `"strict"`.
+     */
+    snapshot?: boolean | { mode?: "auto" | "manual"; io?: "strict" | "local" | "network" };
   }
 
   interface CompileBuildOptions {

@@ -189,7 +189,10 @@ describe.skipIf(!isASAN || isWindows)(
           });
           globalThis.keep = server;
           const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
-          await new Promise(resolve => ws.addEventListener("open", resolve));
+          const { promise, resolve, reject } = Promise.withResolvers();
+          ws.onopen = resolve;
+          ws.onclose = reject;
+          await promise;
           server.stop();
           process.exit(0);
         `,

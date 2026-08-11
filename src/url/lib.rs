@@ -101,10 +101,6 @@ pub mod whatwg {
         let mut input = *str;
         URL__getFileURLString(&mut input)
     }
-    pub fn path_from_file_url(str: &String) -> String {
-        let mut input = *str;
-        URL__pathFromFileURL(&mut input)
-    }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
     ///
@@ -130,7 +126,7 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(String::borrow_utf8(input))
         }
-        /// By-value associated forms of the free file-URL conversions.
+        /// By-value whole-string file-URL conversions.
         pub fn file_url_from_string(str: String) -> String {
             let mut input = str;
             URL__getFileURLString(&mut input)

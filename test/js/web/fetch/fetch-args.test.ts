@@ -215,8 +215,7 @@ describe("does not send a request when", () => {
 
   test("Invalid proxy string", async () => {
     const prevCount = requestCount;
-    const target = "http://" + server!.hostname + ":" + server!.port;
-    expect(async () => await fetch(target, { proxy: "://" })).toThrow("fetch() proxy URL is invalid");
+    expect(async () => await fetch(url, { proxy: "://" })).toThrow("fetch() proxy URL is invalid");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -224,8 +223,7 @@ describe("does not send a request when", () => {
 
   test("Invalid proxy object url", async () => {
     const prevCount = requestCount;
-    const target = "http://" + server!.hostname + ":" + server!.port;
-    expect(async () => await fetch(target, { proxy: { url: "://" } })).toThrow("fetch() proxy URL is invalid");
+    expect(async () => await fetch(url, { proxy: { url: "://" } })).toThrow("fetch() proxy URL is invalid");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);

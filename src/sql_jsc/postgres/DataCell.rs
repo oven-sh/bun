@@ -422,10 +422,6 @@ fn parse_array(
                             let mut has_exponent = false;
                             let mut has_negative_sign = false;
                             let mut has_positive_sign = false;
-                            // reshaped for borrowck — cannot mutate `slice` mid-loop while
-                            // iterating it (the Infinity arm). We capture the advance amount and
-                            // apply after the loop.
-                            let mut advance_after: Option<usize> = None;
                             for (index, &byte) in slice.iter().enumerate() {
                                 match byte {
                                     b'0'..=b'9' => {}
@@ -491,7 +487,7 @@ fn parse_array(
                                             } else {
                                                 array.push(SQLDataCell::float8(val));
                                             }
-                                            advance_after = Some(8 + (is_negative as usize));
+                                            slice = try_slice(slice, 8 + (is_negative as usize));
                                             break;
                                         }
 
@@ -501,9 +497,6 @@ fn parse_array(
                                         return Err(AnyPostgresError::UnsupportedArrayFormat);
                                     }
                                 }
-                            }
-                            if let Some(n) = advance_after {
-                                slice = try_slice(slice, n);
                             }
                             if is_infinity {
                                 continue;

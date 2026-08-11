@@ -270,3 +270,22 @@ test("Bun.which can find executables in a non-ascii directory", async () => {
     process.chdir(cwd);
   }
 });
+
+test("Bun.which finds a bin in a later PATH segment after earlier misses", async () => {
+  await using dir = tempDir("which-path-segments", {
+    "first/.keep": "",
+    "third/prog_in_third": "#!/usr/bin/env sh\necho posix\nexit 0\n",
+    "third/prog_in_third.cmd": "@echo win32\n@exit 0\n",
+  });
+  const d = String(dir);
+  if (!isWindows) {
+    chmodSync(join(d, "third/prog_in_third"), 0o755);
+  }
+
+  const delim = isWindows ? ";" : ":";
+  // first segment exists but misses, second doesn't exist, third hits
+  const PATH = [join(d, "first"), join(d, "does-not-exist"), join(d, "third")].join(delim);
+  const suffix = isWindows ? ".cmd" : "";
+  expect(which("prog_in_third", { PATH })).toBe(join(d, "third", "prog_in_third" + suffix));
+  expect(which("prog_in_nowhere", { PATH })).toBe(null);
+});

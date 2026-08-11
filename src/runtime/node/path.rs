@@ -1082,11 +1082,10 @@ fn format_t<'a, T: PathCharCwd>(
     //   const base = pathObject.base ||
     //     `${pathObject.name || ''}${formatExt(pathObject.ext)}`;
     let mut base_len = base.len();
-    // Borrowck: track range into buf instead of slice.
 
-    let base_or_name_ext_range: (usize, usize) = if base_len > 0 {
+    let base_or_name_ext = if base_len > 0 {
         memmove(&mut buf[0..base_len], base);
-        (0, base_len)
+        &buf[0..base_len]
     } else {
         let formatted_ext_len = {
             // Borrowck: inline format_ext_t to avoid overlapping &mut.
@@ -1115,9 +1114,9 @@ fn format_t<'a, T: PathCharCwd>(
             memmove(&mut buf[0..name_len], _name);
         }
         if buf_size > 0 {
-            (0, buf_size)
+            &buf[0..buf_size]
         } else {
-            (0, base_len)
+            &buf[0..base_len]
         }
     };
 
@@ -1126,20 +1125,17 @@ fn format_t<'a, T: PathCharCwd>(
     //     return base;
     //   }
     if dir_len == 0 {
-        return &buf[base_or_name_ext_range.0..base_or_name_ext_range.1];
+        return base_or_name_ext;
     }
 
     // Translated from the following JS code:
     //   return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
-    base_len = base_or_name_ext_range.1 - base_or_name_ext_range.0;
+    base_len = base_or_name_ext.len();
     if base_len > 0 {
         buf_offset = if dir_is_root { dir_len } else { dir_len + 1 };
         // Move all bytes to the right by dirLen + (maybe 1 for the separator).
         // Use copy_within because baseOrNameExt and buf overlap.
-        buf.copy_within(
-            base_or_name_ext_range.0..base_or_name_ext_range.1,
-            buf_offset,
-        );
+        buf.copy_within(0..base_len, buf_offset);
     }
     memmove(&mut buf[0..dir_len], dir_or_root);
     buf_size = dir_len + base_len;
@@ -1335,8 +1331,7 @@ fn join_posix_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize;
 
     // Back joined by expandable buf2 in case it is long.
-    // Borrowck: track length instead of slice into buf2.
-    let mut joined_len: usize = 0;
+    let mut joined: &[T] = &[];
 
     for path in paths {
         // validateString of `path is performed in pub fn join.
@@ -1358,13 +1353,13 @@ fn join_posix_t<'a, T: PathCharCwd>(
             buf_size += len;
             memmove(&mut buf2[buf_offset..buf_size], path);
 
-            joined_len = buf_size;
+            joined = &buf2[0..buf_size];
         }
     }
     if buf_size == 0 {
         return l::<T>(CHAR_STR_DOT);
     }
-    normalize_posix_t(&buf2[0..joined_len], buf)
+    normalize_posix_t(joined, buf)
 }
 
 /// # Safety
@@ -3475,10 +3470,9 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
 ) -> MaybeSlice<'a, T> {
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
-    // Borrowck: capture length, then re-borrow buf.
-    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
+    let resolved = resolve_windows_t(&[path], buf, buf2)?;
 
-    let len = resolved_len;
+    let len = resolved.len();
     if len <= 2 {
         buf[0..path.len()].copy_from_slice(path);
         buf[path.len()] = T::default();
@@ -3488,11 +3482,11 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     let buf_offset: usize;
     let buf_size: usize;
 
-    let byte0 = buf[0];
+    let byte0 = resolved[0];
     if byte0 == T::from_u8(CHAR_BACKWARD_SLASH) {
         // Possible UNC root
-        if buf[1] == T::from_u8(CHAR_BACKWARD_SLASH) {
-            let byte2 = buf[2];
+        if resolved[1] == T::from_u8(CHAR_BACKWARD_SLASH) {
+            let byte2 = resolved[2];
             if byte2 != T::from_u8(CHAR_QUESTION_MARK) && byte2 != T::from_u8(CHAR_DOT) {
                 // Matched non-long UNC root, convert the path to a long UNC path
 
@@ -3517,8 +3511,8 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
             }
         }
     } else if is_windows_device_root_t(byte0)
-        && buf[1] == T::from_u8(CHAR_COLON)
-        && buf[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+        && resolved[1] == T::from_u8(CHAR_COLON)
+        && resolved[2] == T::from_u8(CHAR_BACKWARD_SLASH)
     {
         // Matched device root, convert the path to a long UNC path
 
@@ -3536,7 +3530,7 @@ fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }
-    Ok(&buf[0..resolved_len])
+    Ok(resolved)
 }
 
 fn to_namespaced_path_windows_js_t<T: PathCharCwd>(

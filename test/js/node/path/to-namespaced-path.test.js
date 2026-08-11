@@ -70,6 +70,17 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.win32.toNamespacedPath(emptyObj), emptyObj);
   });
 
+  test("win32 branch coverage", () => {
+    // already-namespaced input is returned as resolved, unchanged
+    assert.strictEqual(path.win32.toNamespacedPath("\\\\?\\UNC\\a\\b"), "\\\\?\\UNC\\a\\b");
+    // device root, trailing separator preserved
+    assert.strictEqual(path.win32.toNamespacedPath("C:\\"), "\\\\?\\C:\\");
+    // resolve() collapses dot-dot segments and keeps the drive letter's case
+    assert.strictEqual(path.win32.toNamespacedPath("c:/foo/../bar"), "\\\\?\\c:\\bar");
+    // UNC root conversion inserts the UNC prefix and keeps the trailing slash
+    assert.strictEqual(path.win32.toNamespacedPath("\\\\server\\share"), "\\\\?\\UNC\\server\\share\\");
+  });
+
   test("posix", () => {
     assert.strictEqual(path.posix.toNamespacedPath("/foo/bar"), "/foo/bar");
     assert.strictEqual(path.posix.toNamespacedPath("foo/bar"), "foo/bar");

@@ -60,9 +60,10 @@ function linkerFor(triple: string, cfg: Config): string {
  * Write `.cargo/config.toml` next to the workspace `Cargo.toml` (repo root).
  * Returns the absolute path written.
  *
- * Windows-msvc targets are omitted: the MSVC linker isn't a clang driver and
- * doesn't take `-fuse-ld=lld`; that path is handled entirely via env in
- * `rust.ts` (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
+ * Windows-msvc targets get a rustflags-only section (no `linker =` line):
+ * the MSVC linker isn't a clang driver and doesn't take `-fuse-ld=lld`;
+ * that path is handled entirely via env in `rust.ts`
+ * (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
  */
 export function generateCargoConfig(cfg: Config): string {
   const outPath = resolve(cfg.cwd, ".cargo", "config.toml");
@@ -79,10 +80,20 @@ export function generateCargoConfig(cfg: Config): string {
     "# file is correct on whatever machine ran configure.",
   ];
 
+  // `-Zpolonius=next` everywhere: workspace code relies on the polonius
+  // borrow checker (see the matching push in rust.ts), so every rustc
+  // invocation that type-checks workspace crates needs it or borrowck
+  // fails. Windows-msvc triples get a rustflags-only section (their linker
+  // is env-only, see the doc comment above) so `cargo check --target
+  // *-windows-msvc` / `rust:check-all` work.
+  const polonius = `"-Z", "polonius=next"`;
   for (const triple of allRustTargets) {
-    if (tripleOs(triple) === "windows") continue;
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
+    if (tripleOs(triple) === "windows") {
+      lines.push(`rustflags = [${polonius}]`);
+      continue;
+    }
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);
     // -Qunused-arguments: rustc passes link args that don't apply to every
     // artifact kind (e.g. `-no-pie` when it links a target cdylib; none
@@ -95,7 +106,7 @@ export function generateCargoConfig(cfg: Config): string {
     // `cargo build`/`cargo check`, rust-analyzer); real linker errors still
     // fail the link.
     lines.push(
-      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
+      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages", ${polonius}]`,
     );
   }
   lines.push("");

@@ -471,27 +471,17 @@ impl<'a> Transpiler<'a> {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
                 // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
+                let buster_name = 'name: {
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
                         );
                         if !dir.is_empty() {
                             // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
+                            break 'name bun_paths::string_paths::normalize_slashes_only(
                                 &mut cache_bust_buf[..],
                                 dir,
                                 bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
                             );
                         }
                     }
@@ -500,17 +490,16 @@ impl<'a> Transpiler<'a> {
                     let parts: [&[u8]; 2] = [entry_point, b".."];
                     let top_level_dir = self.fs().top_level_dir;
 
-                    let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
+                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                        top_level_dir,
+                        &mut cache_bust_buf[..],
+                        &parts,
                     )
+                    .as_bytes()
                 };
+                let busted = self.resolver.bust_dir_cache(
+                    bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
+                );
 
                 // Only re-query if we previously had something cached.
                 if busted {

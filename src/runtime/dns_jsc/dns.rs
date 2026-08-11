@@ -4831,9 +4831,6 @@ impl Resolver {
                 *poll_entry.value_ptr
             } else {
                 let new_poll = UvDnsPoll::new(this_ptr, fd);
-                // Publish into the map first so the `GetOrPutResult` borrow can
-                // end (NLL) before we may need to `swap_remove` on init failure.
-                *poll_entry.value_ptr = new_poll;
                 // SAFETY: `Loop::get()` is the live per-thread uws loop;
                 // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
@@ -4844,6 +4841,7 @@ impl Resolver {
                     let _ = polls.swap_remove(&fd);
                     return;
                 }
+                *poll_entry.value_ptr = new_poll;
                 new_poll
             };
 

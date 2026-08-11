@@ -85,22 +85,18 @@ impl Editor {
         editor: Editor,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> bool {
-        let Some(path_env) = env.get(b"PATH") else {
-            return false;
-        };
+    ) -> Option<&'a [u8]> {
+        let path_env = env.get(b"PATH")?;
 
         if let Some(path) = BIN_NAME[editor] {
             if !path.is_empty() {
                 if let Some(bin) = which(buf, path_env, cwd, path) {
-                    *out = bin.as_bytes();
-                    return true;
+                    return Some(bin.as_bytes());
                 }
             }
         }
 
-        false
+        None
     }
 
     pub(crate) fn by_fallback_path_for_editor(
@@ -129,22 +125,15 @@ impl Editor {
         env: &mut dot_env::Loader,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> Option<Editor> {
-        // Note: borrowck — see `by_path` above; same Polonius-case reborrow.
-        let buf_ptr: *mut PathBuffer = buf;
+    ) -> Option<(Editor, &'a [u8])> {
         for &editor in &DEFAULT_PREFERENCE_LIST {
-            // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
-            if Self::by_path_for_editor(env, editor, unsafe { &mut *buf_ptr }, cwd, out) {
-                return Some(editor);
+            if let Some(bin) = Self::by_path_for_editor(env, editor, &mut *buf, cwd) {
+                return Some((editor, bin));
             }
 
-            // Note: reshaped for borrowck — by_fallback_path_for_editor writes a
-            // 'static slice; we widen `out` to accept it via a temporary.
             let mut static_out: &'static [u8] = b"";
             if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
-                *out = static_out;
-                return Some(editor);
+                return Some((editor, static_out));
             }
         }
 
@@ -465,12 +454,6 @@ impl EditorContext {
 
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
-        // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
-        // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
-        // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
-        // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &raw mut buf;
-        let mut out: &[u8] = b"";
 
         // first: choose from user preference
         if !self.name.is_empty() {
@@ -484,18 +467,16 @@ impl EditorContext {
 
             // "vscode"
             if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
-                if Editor::by_path_for_editor(
+                if let Some(bin) = Editor::by_path_for_editor(
                     env,
                     editor_,
-                    // SAFETY: see note above — exclusive per-call reborrow.
-                    unsafe { &mut *buf_ptr },
+                    &mut buf,
                     Fs::FileSystem::instance().top_level_dir,
-                    &mut out,
                 ) {
                     self.editor = Some(editor_);
                     self.path = Fs::FileSystem::instance()
                         .dirname_store
-                        .append_slice(out)
+                        .append_slice(bin)
                         .expect("unreachable");
                     return;
                 }
@@ -515,18 +496,16 @@ impl EditorContext {
 
         // EDITOR=code
         if let Some(editor_) = Editor::detect(env) {
-            if Editor::by_path_for_editor(
+            if let Some(bin) = Editor::by_path_for_editor(
                 env,
                 editor_,
-                // SAFETY: see note above — exclusive per-call reborrow.
-                unsafe { &mut *buf_ptr },
+                &mut buf,
                 Fs::FileSystem::instance().top_level_dir,
-                &mut out,
             ) {
                 self.editor = Some(editor_);
                 self.path = Fs::FileSystem::instance()
                     .dirname_store
-                    .append_slice(out)
+                    .append_slice(bin)
                     .expect("unreachable");
                 return;
             }
@@ -544,17 +523,13 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
-        if let Some(editor_) = Editor::by_fallback(
-            env,
-            // SAFETY: see note above — exclusive per-call reborrow.
-            unsafe { &mut *buf_ptr },
-            Fs::FileSystem::instance().top_level_dir,
-            &mut out,
-        ) {
+        if let Some((editor_, bin)) =
+            Editor::by_fallback(env, &mut buf, Fs::FileSystem::instance().top_level_dir)
+        {
             self.editor = Some(editor_);
             self.path = Fs::FileSystem::instance()
                 .dirname_store
-                .append_slice(out)
+                .append_slice(bin)
                 .expect("unreachable");
             return;
         }

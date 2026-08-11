@@ -1199,15 +1199,9 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let gop = self.get_or_put(key)?;
         if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // Can't return `gop` while it borrows in the branch above without
-        // NLL gymnastics; recompute via index.
-        let i = gop.index;
-        let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        Ok(gop)
     }
 }
 

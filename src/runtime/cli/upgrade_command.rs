@@ -900,9 +900,6 @@ impl UpgradeCommand {
                     .expect("oom");
 
                     let mut buf = PathBuffer::uninit();
-                    // Separate fallback buffer — borrowck holds `buf` for the lifetime
-                    // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -917,7 +914,7 @@ impl UpgradeCommand {
                             let hardcoded_system_powershell =
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
                                     system_root,
-                                    &mut buf2[..],
+                                    &mut buf[..],
                                     &[
                                         system_root,
                                         b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",

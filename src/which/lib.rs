@@ -82,12 +82,7 @@ pub fn which_for_spawn<'a>(
             let mut rel: Vec<u8> = Vec::with_capacity(bin.len() + 2);
             rel.extend_from_slice(b"./");
             rel.extend_from_slice(bin);
-            // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
-            // branch can fall through without `buf` appearing borrowed.
-            // SAFETY: the borrow does not escape this block on the None path.
-            let buf_reborrow: &'a mut PathBuffer =
-                unsafe { &mut *std::ptr::from_mut::<PathBuffer>(buf) };
-            if let Some(found) = which(buf_reborrow, b"", cwd, &rel) {
+            if let Some(found) = which(&mut *buf, b"", cwd, &rel) {
                 return Some(found);
             }
         }
@@ -354,13 +349,8 @@ pub(crate) fn which_win<'a>(
 
     // check if bin is in cwd
     if strings::index_of_char(bin, b'/').is_some() || strings::index_of_char(bin, b'\\').is_some() {
-        // NLL/Polonius limitation — raw-ptr reborrow so the None branch can
-        // fall through without `buf` appearing borrowed.
-        // SAFETY: bin_path borrow does not escape this block on the None path.
-        let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
-            buf_reborrow,
+            &mut *buf,
             &mut *path_buf,
             cwd,
             strings::without_prefix_comptime(bin, b"./"),
@@ -375,13 +365,8 @@ pub(crate) fn which_win<'a>(
 
     // iterate over system path delimiter
     for segment_part in strings::tokenize(path, b";") {
-        // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
-        // when returning a reference tied to its lifetime.
-        // SAFETY: on None the borrow ends; on Some we return immediately.
-        let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
-            buf_reborrow,
+            &mut *buf,
             &mut *path_buf,
             segment_part,
             bin,

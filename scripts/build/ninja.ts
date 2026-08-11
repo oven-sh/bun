@@ -68,7 +68,41 @@ export interface BuildNode {
   vars?: Record<string, string>;
   /** Job pool override (overrides rule's pool). */
   pool?: string;
+  /**
+   * Scheduling hint — see `SchedulePriority`. Ninja ranks ready edges by how
+   * many edges still follow them (the same for every compile, for cargo, and
+   * for every dep object: one link) and breaks the tie by position in
+   * build.ninja, so the order statements are written in is the order ninja
+   * starts them in. Statements with a priority are written ahead of
+   * everything else, highest first; statements without one keep emission
+   * order. Pure ordering: no effect on what gets built or on the command
+   * hashes in .ninja_log.
+   */
+  priority?: number;
 }
+
+/**
+ * Priorities for the edges that decide a fresh build's wall-clock time, so
+ * they start as soon as their inputs exist instead of after the ~1100 dep
+ * objects emitted before them. Measured on cold release builds: cargo, the
+ * longest edge in every profile, started 13s after its codegen inputs were
+ * ready on a 12-core machine and ~190s after on a 6-slot one; the generated
+ * TUs are emitted last, so ZigGeneratedClasses.cpp.o (27s) was the last
+ * compile to start and the C++ side finished ~10s after every other object
+ * was done. Tiers follow the measured durations: cargo (minutes) > unified
+ * bundles (3-70s, emitted largest first) > generated TUs (8-27s; they don't
+ * exist at configure time, so no size to sort by) > standalone bun sources
+ * (2-40s, largest first) > everything unprioritized (dep objects, mostly
+ * well under a second each, which pack in around the long edges). The one
+ * long dep object, sqlite3.c (84s), waits for nothing and was reached 12s
+ * into the build even on 12 cores, so it gets by without a priority.
+ */
+export const SchedulePriority = {
+  cargo: 400,
+  unifiedBundle: 300,
+  generatedTu: 200,
+  standaloneTu: 100,
+} as const;
 
 /**
  * A compile_commands.json entry.
@@ -102,6 +136,10 @@ export class Ninja {
   private readonly ninjaVersion: string;
 
   private readonly lines: string[] = [];
+  /** `rule` blocks. Written before every build statement so prioritized statements can reference any rule. */
+  private readonly ruleLines: string[] = [];
+  /** Build statements with a `priority`, written ahead of `lines` (see BuildNode.priority). */
+  private readonly prioritized: { priority: number; text: string }[] = [];
   private readonly ruleNames = new Set<string>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
@@ -159,33 +197,34 @@ export class Ninja {
     assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
     this.ruleNames.add(name);
 
-    this.lines.push(`rule ${name}`);
-    this.lines.push(`  command = ${spec.command}`);
+    const out = this.ruleLines;
+    out.push(`rule ${name}`);
+    out.push(`  command = ${spec.command}`);
     if (spec.description !== undefined) {
-      this.lines.push(`  description = ${spec.description}`);
+      out.push(`  description = ${spec.description}`);
     }
     if (spec.depfile !== undefined) {
-      this.lines.push(`  depfile = ${spec.depfile}`);
+      out.push(`  depfile = ${spec.depfile}`);
     }
     if (spec.deps !== undefined) {
-      this.lines.push(`  deps = ${spec.deps}`);
+      out.push(`  deps = ${spec.deps}`);
     }
     if (spec.restat === true) {
-      this.lines.push(`  restat = 1`);
+      out.push(`  restat = 1`);
     }
     if (spec.generator === true) {
-      this.lines.push(`  generator = 1`);
+      out.push(`  generator = 1`);
     }
     if (spec.pool !== undefined) {
-      this.lines.push(`  pool = ${spec.pool}`);
+      out.push(`  pool = ${spec.pool}`);
     }
     if (spec.rspfile !== undefined) {
-      this.lines.push(`  rspfile = ${spec.rspfile}`);
+      out.push(`  rspfile = ${spec.rspfile}`);
     }
     if (spec.rspfile_content !== undefined) {
-      this.lines.push(`  rspfile_content = ${spec.rspfile_content}`);
+      out.push(`  rspfile_content = ${spec.rspfile_content}`);
     }
-    this.lines.push("");
+    out.push("");
   }
 
   /**
@@ -234,17 +273,23 @@ export class Ninja {
     }
 
     // Wrap long lines with $\n continuations for readability
-    this.lines.push(wrapLongLine(line));
+    const stmt: string[] = [wrapLongLine(line)];
 
     if (node.pool !== undefined) {
-      this.lines.push(`  pool = ${node.pool}`);
+      stmt.push(`  pool = ${node.pool}`);
     }
     if (node.vars !== undefined) {
       for (const [k, v] of Object.entries(node.vars)) {
-        this.lines.push(`  ${k} = ${ninjaEscapeVarValue(v)}`);
+        stmt.push(`  ${k} = ${ninjaEscapeVarValue(v)}`);
       }
     }
-    this.lines.push("");
+    stmt.push("");
+
+    if (node.priority !== undefined) {
+      this.prioritized.push({ priority: node.priority, text: stmt.join("\n") });
+    } else {
+      this.lines.push(...stmt);
+    }
   }
 
   /** Shorthand for a phony target (groups other targets). */
@@ -312,7 +357,22 @@ export class Ninja {
     const defaultLines: string[] =
       this.defaults.length > 0 ? [`default ${this.defaults.map(ninjaEscapePath).join(" ")}`, ""] : [];
 
-    return [...header, ...poolLines, ...this.lines, ...defaultLines].join("\n");
+    // Stable sort: equal priorities keep emission order, which the emitters
+    // use to put the largest inputs of a tier first.
+    const prioritizedLines: string[] =
+      this.prioritized.length > 0
+        ? [
+            `# ─── Scheduling order ───`,
+            `# Ninja starts ready edges in file order; the long edges come first. See BuildNode.priority.`,
+            ``,
+            ...this.prioritized
+              .slice()
+              .sort((a, b) => b.priority - a.priority)
+              .map(p => p.text),
+          ]
+        : [];
+
+    return [...header, ...poolLines, ...this.ruleLines, ...prioritizedLines, ...this.lines, ...defaultLines].join("\n");
   }
 
   /**

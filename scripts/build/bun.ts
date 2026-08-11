@@ -37,7 +37,7 @@ import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { BuildNode, Ninja } from "./ninja.ts";
+import { SchedulePriority, type BuildNode, type Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
@@ -330,8 +330,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
-  cxxSources.push(...codegen.cppSources);
-  cxxSources.push(...codegen.bindgenV2Cpp);
+  const generatedCxx = [...codegen.cppSources, ...codegen.bindgenV2Cpp];
+  cxxSources.push(...generatedCxx);
+
+  // Scheduling tiers (see SchedulePriority). split.unified and
+  // split.standalone are already ordered largest-first, and the stable sort in
+  // Ninja.write() keeps that order within a tier.
+  const unifiedSet = new Set(split.unified);
+  const generatedSet = new Set(generatedCxx);
+  const priorityFor = (src: string): number =>
+    unifiedSet.has(src)
+      ? SchedulePriority.unifiedBundle
+      : generatedSet.has(src)
+        ? SchedulePriority.generatedTu
+        : SchedulePriority.standaloneTu;
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //
@@ -371,6 +383,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const extraFlags = extraFlagsFor(cfg, relSrc);
     const opts: Parameters<typeof cxx>[3] = {
       flags: [...cxxFlagsFull, ...extraFlags],
+      priority: priorityFor(src),
     };
     if (pchOut !== undefined && !noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.

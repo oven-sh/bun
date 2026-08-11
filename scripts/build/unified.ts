@@ -35,7 +35,7 @@
  * fine-grained incremental during heavy single-file iteration.
  */
 
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -182,9 +182,15 @@ function bundleSizeFor(cfg: Config): number {
 }
 
 export interface UnifiedSplit {
-  /** Generated UnifiedSource-*.cpp absolute paths to compile. */
+  /**
+   * Generated UnifiedSource-*.cpp absolute paths to compile, largest bundle
+   * (by member source bytes) first. Emitting them in this order is what puts
+   * the 50-70s bundles at the front of ninja's queue — see
+   * `SchedulePriority` in ninja.ts. Composition is unaffected; only the
+   * order of the returned list depends on file sizes.
+   */
   unified: string[];
-  /** Sources that compile standalone (no-unify list, or alone in their dir). */
+  /** Sources that compile standalone (no-unify list, or alone in their dir), largest first, same reason. */
   standalone: string[];
   /**
    * Original .cpp paths that were bundled (i.e. NOT in `standalone`). Used to
@@ -238,7 +244,7 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
     arr.push(abs);
   }
 
-  const unified: string[] = [];
+  const unified: { out: string; bytes: number }[] = [];
   const bundled: string[] = [];
   const tagToDir = new Map<string, string>();
   // Stable iteration: sort directory keys and basenames by code unit (default
@@ -277,7 +283,7 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
       // native backslashes in `#include "C:\..."` are escape sequences.
       const body = chunk.map(f => `#include "${slash(relative(outDir, f))}"`).join("\n") + "\n";
       writeIfChanged(out, body);
-      unified.push(out);
+      unified.push({ out, bytes: chunk.reduce((sum, f) => sum + statSync(f).size, 0) });
       bundled.push(...chunk);
     }
   }
@@ -285,10 +291,26 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
   // Prune stale bundles from previous configures (e.g. a directory shrank
   // from 3 bundles to 1). They're not in the ninja graph so they wouldn't be
   // built, but leaving them confuses grep/clangd indexing.
-  const live = new Set(unified.map(p => basename(p)));
+  const live = new Set(unified.map(b => basename(b.out)));
   for (const f of readdirSync(outDir)) {
     if (f.endsWith(".cpp") && !live.has(f)) rmSync(resolve(outDir, f));
   }
 
-  return { unified, standalone, bundled };
+  return {
+    unified: largestFirst(unified).map(b => b.out),
+    standalone: largestFirst(standalone.map(src => ({ out: src, bytes: statSync(src).size }))).map(b => b.out),
+    bundled,
+  };
+}
+
+/**
+ * Source bytes are the cost proxy. Measured on a cold release build, 10 of the
+ * 12 slowest standalone TUs were among the 12 largest files (the exceptions
+ * are the small highway_*.cpp SIMD instantiations, which still finish long
+ * before the big bundles do), and a bundle's compile time tracks how much
+ * source it pulls in on top of the shared PCH. Ties keep the deterministic
+ * input order.
+ */
+function largestFirst<T extends { bytes: number }>(items: T[]): T[] {
+  return items.slice().sort((a, b) => b.bytes - a.bytes);
 }

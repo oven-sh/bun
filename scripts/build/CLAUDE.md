@@ -79,6 +79,8 @@ Edge dependency types:
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
+**Statement order is the schedule.** Ninja ranks ready edges by how many edges follow them, which is the same for every compile and for cargo (one link), and breaks ties by position in `build.ninja`. So whatever is written first starts first: before `BuildNode.priority` existed, cargo (the longest edge of the whole build) was written after ~1100 dep objects and started minutes late on small machines. `Ninja.write()` puts statements that carry a `priority` ahead of everything else, highest first (`SchedulePriority` in `ninja.ts`: cargo, then unified bundles largest-first, then generated TUs, then standalone bun sources largest-first); everything else keeps emission order. Adding a long-running edge? Give it a priority. `ninja -C build/debug -t commands` is unaffected by any of this — it only changes order.
+
 **`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Dep outputs (`lib*.a`) are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because local sub-builds (e.g. WebKit) rewrite forwarding headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
 ## Iterating on the build system

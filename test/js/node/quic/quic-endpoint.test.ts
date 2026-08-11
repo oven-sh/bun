@@ -8,7 +8,7 @@ import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readdirSync, readFileSync } from "node:fs";
 import { BlockList } from "node:net";
-import { networkInterfaces } from "node:os";
+import { constants, networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";
 
@@ -318,8 +318,9 @@ describe("endpoint.close() while a session is live", () => {
 // them: the socket was created with flags 0 and nothing was set on it
 // afterwards. Node applies all five in Endpoint::UDP::Bind. The buffer sizes and
 // TTL are only observable through getsockopt(2) on the endpoint's own socket,
-// found here by its bound port among the process's datagram sockets.
-describe.skipIf(isWindows)("endpoint UDP socket options", () => {
+// found here by its bound port among the process's datagram sockets; those
+// read-backs need /dev/fd and a libc to dlopen, so they are POSIX-only.
+describe("endpoint UDP socket options", () => {
   const sniOpt = { "*": { keys: [key], certs: [cert] } };
   const tp = { maxIdleTimeout: 1 };
   const onSession = async (s: any) => {
@@ -356,10 +357,12 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
     return symbols().getsockopt(fd, level, option, ptr(value), ptr(length)) === 0 ? value[0] : null;
   }
 
-  // The descriptor of the inet datagram socket bound to `port`. The sockaddr
-  // starts with a native-endian u16 family on Linux and u8 len + u8 family on
-  // macOS; sin_port / sin6_port both follow at offset 2 in network byte order.
-  function udpSocketFd(port: number) {
+  // Every inet datagram socket open in this process with its bound port. The
+  // sockaddr starts with a native-endian u16 family on Linux and u8 len + u8
+  // family on macOS; sin_port / sin6_port both follow at offset 2 in network
+  // byte order.
+  function udpSockets() {
+    const out: Array<{ fd: number; port: number }> = [];
     for (const name of readdirSync("/dev/fd")) {
       const fd = Number(name);
       if (getsockopt(fd, SOL_SOCKET, SO_TYPE) !== SOCK_DGRAM) continue;
@@ -368,9 +371,15 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
       if (symbols().getsockname(fd, ptr(addr), ptr(length)) !== 0) continue;
       const family = isMacOS ? addr[1] : addr[0] | (addr[1] << 8);
       if (family !== AF_INET && family !== AF_INET6) continue;
-      if (((addr[2] << 8) | addr[3]) === port) return fd;
+      out.push({ fd, port: (addr[2] << 8) | addr[3] });
     }
-    throw new Error(`no UDP socket bound to port ${port} in this process`);
+    return out;
+  }
+
+  function udpSocketFd(port: number) {
+    const socket = udpSockets().find(s => s.port === port);
+    if (!socket) throw new Error(`no UDP socket bound to port ${port} in this process`);
+    return socket.fd;
   }
 
   const readBack = (port: number) => {
@@ -387,7 +396,28 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
   const kernelView = (requested: number, max: "rmem_max" | "wmem_max") =>
     isLinux ? 2 * Math.min(requested, Number(readFileSync(`/proc/sys/net/core/${max}`, "utf8"))) : requested;
 
-  test("udpReceiveBufferSize, udpSendBufferSize and udpTTL are set on the socket", async () => {
+  // A bind that fails does not make listen() throw: it returns the endpoint
+  // already destroyed, and `closed` carries the failure
+  // (test-quic-endpoint-bind-failure.mjs). Successful binds are closed again.
+  async function listenOutcome(endpoint: object) {
+    const ep = await listen(onSession, { sni: sniOpt, transportParams: tp, endpoint });
+    if (!ep.destroyed) {
+      const { port } = ep.address;
+      await ep.close();
+      return { bound: true, port };
+    }
+    return ep.closed.then(
+      () => "destroyed, but closed resolved",
+      (e: any) => ({ bound: false, code: e.code, message: e.message }),
+    );
+  }
+  const bindFailure = (errno: number) => ({
+    bound: false,
+    code: "ERR_QUIC_ENDPOINT_CLOSED",
+    message: `QUIC endpoint closed: Bind failure (${errno})`,
+  });
+
+  test.skipIf(isWindows)("udpReceiveBufferSize, udpSendBufferSize and udpTTL are set on the socket", async () => {
     // Well below any default so the read-back cannot be the default by accident,
     // and distinct from each other so a swapped option would show.
     const options = { udpReceiveBufferSize: 65536, udpSendBufferSize: 98304, udpTTL: 7 };
@@ -422,7 +452,7 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
   // harness's isIPv6() asks about): any interface carrying an IPv6 address
   // means the kernel will hand out AF_INET6 sockets.
   const hasIPv6Stack = Object.values(networkInterfaces()).some(addrs => addrs?.some(a => a.family === "IPv6"));
-  test.skipIf(!hasIPv6Stack)("ipv6Only turns off dual-stack on an IPv6 endpoint", async () => {
+  test.skipIf(isWindows || !hasIPv6Stack)("ipv6Only turns off dual-stack on an IPv6 endpoint", async () => {
     const address = { address: "::", family: "ipv6" as const };
     await using dualStack = await listen(onSession, { sni: sniOpt, transportParams: tp, endpoint: { address } });
     await using v6Only = await listen(onSession, {
@@ -436,28 +466,39 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
     }).toEqual({ dualStack: 0, v6Only: 1 });
   });
 
-  test("reusePort lets a second endpoint bind the same port", async () => {
+  test.skipIf(isWindows)("reusePort lets a second endpoint bind the same port", async () => {
     await using first = await listen(onSession, {
       sni: sniOpt,
       transportParams: tp,
       endpoint: { address: "127.0.0.1:0", reusePort: true },
     });
     const { port } = first.address;
-    // Without SO_REUSEPORT on both sockets this bind fails with EADDRINUSE. A
-    // failed bind does not throw: listen() returns the endpoint already
-    // destroyed and `closed` rejects (test-quic-endpoint-bind-failure.mjs).
-    const second = await listen(onSession, {
-      sni: sniOpt,
-      transportParams: tp,
-      endpoint: { address: `127.0.0.1:${port}`, reusePort: true },
+    // Without SO_REUSEPORT on both sockets this is the EADDRINUSE bind failure
+    // that test-quic-endpoint-bind-failure.mjs covers.
+    expect(await listenOutcome({ address: `127.0.0.1:${port}`, reusePort: true })).toEqual({ bound: true, port });
+  });
+
+  // Winsock has no SO_REUSEPORT. Like libuv's UV_UDP_REUSEPORT (which node's
+  // endpoint passes to uv_udp_bind), asking for it fails the bind instead of
+  // quietly binding without it.
+  test.skipIf(!isWindows)("reusePort fails the bind where SO_REUSEPORT does not exist", async () => {
+    expect(await listenOutcome({ address: "127.0.0.1:0", reusePort: true })).toEqual(
+      bindFailure(constants.errno.WSAEOPNOTSUPP),
+    );
+  });
+
+  // The options set after the socket exists can fail too; node reports that as
+  // a bind failure, and the socket that was already created has to go away
+  // with the endpoint. Linux cannot drive this branch (it clamps oversized
+  // buffer requests instead of rejecting them), but XNU fails any request
+  // above kern.ipc.maxsockbuf with ENOBUFS. 2 ** 40 also has to be clamped to
+  // fit setsockopt's int on the way there; truncating it would ask for 0.
+  test.skipIf(!isMacOS)("a socket option the kernel rejects is reported as a bind failure", async () => {
+    const before = udpSockets().length;
+    const outcome = await listenOutcome({ address: "127.0.0.1:0", udpReceiveBufferSize: 2 ** 40 });
+    expect({ outcome, leakedSockets: udpSockets().length - before }).toEqual({
+      outcome: bindFailure(constants.errno.ENOBUFS),
+      leakedSockets: 0,
     });
-    const outcome = second.destroyed
-      ? await second.closed.then(
-          () => "closed",
-          (e: Error) => e.message,
-        )
-      : { port: second.address.port };
-    if (!second.destroyed) await second.close();
-    expect(outcome).toEqual({ port });
   });
 });

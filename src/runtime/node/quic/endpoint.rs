@@ -15,6 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::socket::udp_socket::get_us_error;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
@@ -198,33 +199,23 @@ impl BindConfig {
     /// bind (node reports it as a bind failure too); the value is the errno.
     fn apply_socket_options(&self, socket: &mut uws::udp::Socket) -> Result<(), c_int> {
         let mut out: c_int = 0;
-        if self.receive_buffer_size > 0
-            && socket.buffer_size(true, self.receive_buffer_size, &mut out) != 0
-        {
-            return Err(last_socket_errno());
+        if self.receive_buffer_size > 0 {
+            setsockopt_result(socket.buffer_size(true, self.receive_buffer_size, &mut out))?;
         }
-        if self.send_buffer_size > 0
-            && socket.buffer_size(false, self.send_buffer_size, &mut out) != 0
-        {
-            return Err(last_socket_errno());
+        if self.send_buffer_size > 0 {
+            setsockopt_result(socket.buffer_size(false, self.send_buffer_size, &mut out))?;
         }
-        if self.ttl > 0 && socket.set_unicast_ttl(self.ttl) != 0 {
-            return Err(last_socket_errno());
+        if self.ttl > 0 {
+            setsockopt_result(socket.set_unicast_ttl(self.ttl))?;
         }
         Ok(())
     }
 }
 
-/// Winsock reports socket errors through `WSAGetLastError`, not the CRT errno
-/// that `last_errno` reads.
-fn last_socket_errno() -> c_int {
-    #[cfg(windows)]
-    {
-        bun_sys::windows::WSAGetLastError().map_or(0, |e| e as c_int)
-    }
-    #[cfg(not(windows))]
-    {
-        bun_sys::last_errno()
+fn setsockopt_result(rc: c_int) -> Result<(), c_int> {
+    match get_us_error::<true>(rc, bun_sys::Tag::setsockopt) {
+        Some(err) => Err(c_int::from(err.errno)),
+        None => Ok(()),
     }
 }
 

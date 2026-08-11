@@ -2787,22 +2787,37 @@ impl RunCommand {
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
-            // letter on Windows for `/abs` paths; then, on Windows only,
-            // `normalize_string` canonicalizes
-            // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
-            // input slice untouched).
+            // letter on Windows for `/abs` paths; then, on Windows only, the
+            // separators are canonicalized straight into `script_name_buf`.
+            // Both are no-ops on POSIX (`resolve_cwd` returns the input slice
+            // untouched).
             let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
-            let resolved = win_resolver
-                .resolve_cwd(target)
-                .unwrap_or_else(|_| panic!("Could not resolve path"));
-            #[cfg(windows)]
-            let resolved: &[u8] =
-                paths::resolve_path::normalize_string::<false, paths::platform::Windows>(resolved);
-            if resolved.len() >= MAX_PATH_BYTES {
+            let Ok(resolved) = win_resolver.resolve_cwd(target) else {
                 return false;
-            }
-            script_name_buf[..resolved.len()].copy_from_slice(resolved);
-            resolved.len()
+            };
+            #[cfg(windows)]
+            let len = {
+                // Normalizing writes at most one byte more than it reads (a
+                // bare `\\server\share` gains its trailing separator), and
+                // the NUL terminator needs one more.
+                if resolved.len() + 1 >= MAX_PATH_BYTES {
+                    return false;
+                }
+                paths::resolve_path::normalize_string_buf::<false, paths::platform::Windows, false>(
+                    resolved,
+                    &mut script_name_buf.0,
+                )
+                .len()
+            };
+            #[cfg(not(windows))]
+            let len = {
+                if resolved.len() >= MAX_PATH_BYTES {
+                    return false;
+                }
+                script_name_buf[..resolved.len()].copy_from_slice(resolved);
+                resolved.len()
+            };
+            len
         } else if !target.starts_with(b"..") && target[0] != b'~' {
             // open relative to cwd as-is
             if target.len() >= MAX_PATH_BYTES {

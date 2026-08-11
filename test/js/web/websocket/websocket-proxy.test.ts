@@ -568,50 +568,57 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     };
   }
 
+  // `opened` rejects on any failure before the open event (the teardown under
+  // test only produces a close event), so a broken setup reports why instead
+  // of hanging on `await opened`.
+  function connect(url: string, options: Bun.WebSocketOptions, onOpen: (ws: WebSocket) => void = () => {}) {
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<number>();
+    const ws = new WebSocket(url, options);
+    ws.onopen = () => {
+      opened.resolve();
+      onOpen(ws);
+    };
+    ws.onerror = event => opened.reject(event);
+    ws.onclose = event => {
+      opened.reject(new Error(`closed before open: ${event.code} ${event.reason}`));
+      closed.resolve(event.code);
+    };
+    return { ws, opened: opened.promise, closed: closed.promise };
+  }
+
   test.each([
     ["synchronously in onopen", true],
     ["after the open event", false],
   ])("ws.terminate() closes the connection to the proxy (%s)", async (_, terminateInOpen) => {
     using proxy = await proxyThatReportsClientClose("http");
-    const opened = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<number>();
+    const { ws, opened, closed } = connect(
+      `wss://127.0.0.1:${wssPort}`,
+      { proxy: proxy.url, tls: { rejectUnauthorized: false } },
+      ws => {
+        if (terminateInOpen) ws.terminate();
+      },
+    );
 
-    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
-      proxy: proxy.url,
-      tls: { rejectUnauthorized: false },
-    });
-    ws.onopen = () => {
-      if (terminateInOpen) ws.terminate();
-      opened.resolve();
-    };
-    ws.onclose = event => closed.resolve(event.code);
-    ws.onerror = () => {};
-
-    await opened.promise;
+    await opened;
     if (!terminateInOpen) ws.terminate();
 
-    expect(await closed.promise).toBe(1006);
+    expect(await closed).toBe(1006);
     await proxy.clientClosed;
   });
 
   test("ws.terminate() closes the connection to an HTTPS proxy", async () => {
     using proxy = await proxyThatReportsClientClose("https");
-    const opened = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<number>();
-
-    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
+    const { ws, opened, closed } = connect(`wss://127.0.0.1:${wssPort}`, {
       proxy: proxy.url,
       // Both the proxy and the wss:// server use the self-signed test cert.
       tls: { ca: tlsCerts.cert },
     });
-    ws.onopen = () => opened.resolve();
-    ws.onclose = event => closed.resolve(event.code);
-    ws.onerror = () => {};
 
-    await opened.promise;
+    await opened;
     ws.terminate();
 
-    expect(await closed.promise).toBe(1006);
+    expect(await closed).toBe(1006);
     await proxy.clientClosed;
   });
 
@@ -620,17 +627,15 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     async delivery => {
       using server = await wssServerSendingInvalidFrame(delivery);
       using proxy = await proxyThatReportsClientClose("http");
-      const closed = Promise.withResolvers<number>();
-
-      const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
+      const { ws, opened, closed } = connect(`wss://127.0.0.1:${server.port}`, {
         proxy: proxy.url,
         tls: { rejectUnauthorized: false },
       });
-      ws.onopen = () => ws.send("hello");
-      ws.onclose = event => closed.resolve(event.code);
-      ws.onerror = () => {};
 
-      expect(await closed.promise).toBe(1002);
+      await opened;
+      if (delivery === "in reply to a message") ws.send("hello");
+
+      expect(await closed).toBe(1002);
       await proxy.clientClosed;
     },
   );
@@ -650,6 +655,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
          });
          ws.onclose = event => console.log("closed", event.code);
          await new Promise(resolve => (ws.onopen = resolve));
+         console.log("open");
          ws.terminate();`,
       ],
       env: { ...bunEnv, NO_PROXY: "", no_proxy: "" },
@@ -658,7 +664,8 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("closed 1006\n");
+    // A connection that fails before opening also exits, but without "open".
+    expect(stdout).toBe("open\nclosed 1006\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

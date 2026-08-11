@@ -985,8 +985,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
-        pattern.prepend_part(route.part);
-        match route.part {
+        let part = route.part.get();
+        pattern.prepend_part(part);
+        match part {
             framework_router::Part::Param(name) => {
                 params_buf.push(name);
             }
@@ -1007,8 +1008,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let mut next: Option<framework_router::RouteIndex> = route.parent;
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
-            pattern.prepend_part(parent.part);
-            match parent.part {
+            let part = parent.part.get();
+            pattern.prepend_part(part);
+            match part {
                 framework_router::Part::Param(name) => {
                     params_buf.push(name);
                 }

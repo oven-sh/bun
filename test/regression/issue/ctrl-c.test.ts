@@ -77,28 +77,47 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
   expect(result.signalCode).toBe("SIGKILL");
 });
 
-// Share a single vite install across all of the parameterized SIGINT tests below.
-// Each test only spawns vite, waits for first stdout, sends SIGINT, and asserts on
-// exit state — none of them mutate the project directory, so reusing one install
-// avoids redundant `bun install` + tempdir setup work per iteration.
-let viteDir: string;
-let viteInstallExitCode: number | null;
+// The parameterized SIGINT tests below run a long-lived bin (originally vite's
+// dev server) through the different ways `bun` can launch one: a node_modules
+// bin by name, a package.json script, and the bin file itself, with and without
+// --bun. `long-running` is a local stand-in for vite: it prints a line once it
+// is up and then idles without installing a SIGINT handler, so the signal must
+// terminate it. It is installed as a file: dependency so `bun install` links
+// node_modules/.bin the same way it would for a registry package, without
+// contacting a registry.
+//
+// Each test only spawns the bin, waits for first stdout, sends SIGINT, and
+// asserts on exit state — none of them mutate the project directory, so one
+// shared install in beforeAll is enough.
+let projectDir: string;
+let installExitCode: number | null;
 
 beforeAll(() => {
-  viteDir = tempDirWithFiles("ctrlc", {
+  projectDir = tempDirWithFiles("ctrlc", {
     "package.json": JSON.stringify({
       name: "ctrlc",
       scripts: {
-        "dev": "vite",
+        "dev": "long-running",
       },
       devDependencies: {
-        "vite": "^6.0.1",
+        "long-running": "file:./long-running",
       },
     }),
+    "long-running/package.json": JSON.stringify({
+      name: "long-running",
+      version: "1.0.0",
+      bin: { "long-running": "cli.js" },
+    }),
+    // Like vite, this never exits on its own within the test; the timer only
+    // bounds how long a stray process can outlive a failed test.
+    "long-running/cli.js": `#!/usr/bin/env node
+console.log("long-running is ready");
+setTimeout(() => {}, 60_000);
+`,
   });
-  viteInstallExitCode = Bun.spawnSync({
+  installExitCode = Bun.spawnSync({
     cmd: [bunExe(), "install"],
-    cwd: viteDir,
+    cwd: projectDir,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -107,25 +126,25 @@ beforeAll(() => {
 });
 
 for (const mode of [
-  ["vite"],
+  ["long-running"],
   ["dev"],
-  ...(isWindows ? [] : [["./node_modules/.bin/vite"]]),
-  ["--bun", "vite"],
+  ...(isWindows ? [] : [["./node_modules/.bin/long-running"]]),
+  ["--bun", "long-running"],
   ["--bun", "dev"],
-  ...(isWindows ? [] : [["--bun", "./node_modules/.bin/vite"]]),
+  ...(isWindows ? [] : [["--bun", "./node_modules/.bin/long-running"]]),
 ]) {
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
-    expect(viteInstallExitCode).toBe(0);
+    expect(installExitCode).toBe(0);
     const proc = Bun.spawn({
       cmd: [bunExe(), ...mode],
-      cwd: viteDir,
+      cwd: projectDir,
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",
-      env: { ...bunEnv, PORT: "9876" },
+      env: bunEnv,
     });
 
-    // wait for vite to start
+    // wait for the bin to start
     const reader = proc.stdout.getReader();
     await reader.read(); // wait for first bit of stdout
     reader.releaseLock();

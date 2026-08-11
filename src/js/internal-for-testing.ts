@@ -763,11 +763,9 @@ export const quicInternals = {
    * UDP socket created afterwards (`Bun.serve({ http3 })` listeners and the
    * fetch() HTTP/3 endpoint). 0 leaves new sockets at the kernel default.
    */
-  setSocketBufferSize: $newRustFunction(
-    "runtime/socket/socket.rs",
-    "TestingAPIs.jsSetQuicSocketBufferSize",
-    1,
-  ) as (bytes: number) => void,
+  setSocketBufferSize: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetQuicSocketBufferSize", 1) as (
+    bytes: number,
+  ) => void,
 };
 
 export const fileSinkInternals = {

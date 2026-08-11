@@ -59,14 +59,14 @@ const missingPrefix = `Release "${tagName}" is missing assets: `;
 const host = platforms.filter(({ os, arch }) => os === process.platform && arch === process.arch);
 const allBins = platforms.map(({ bin }) => bin);
 
-function serveAssets(downloaded: string[]) {
+function serveAssets(downloaded: string[], unavailable?: string) {
   return Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     fetch(request) {
       const bin = path.posix.basename(new URL(request.url).pathname, ".zip");
       downloaded.push(bin);
-      return new Response(bin);
+      return new Response(bin, { status: bin === unavailable ? 404 : 200 });
     },
   });
 }
@@ -153,13 +153,8 @@ test.concurrent("dry-run fails before building anything when a host platform has
   const downloaded: string[] = [];
   using server = serveAssets(downloaded);
   const [absent] = host;
-  using dir = releaseDir(
-    "dry-run-incomplete",
-    assetsOn(
-      server,
-      allBins.filter(bin => bin !== absent.bin),
-    ),
-  );
+  const bins = allBins.filter(bin => bin !== absent.bin);
+  using dir = releaseDir("dry-run-incomplete", assetsOn(server, bins));
   const cwd = String(dir);
 
   const { stderr, exitCode } = await uploadNpm(cwd, "dry-run");
@@ -186,17 +181,30 @@ test.concurrent("publish builds and publishes every platform in platform.ts, the
   expect(npmCalls(cwd)).toEqual(npmCallsFor(allBins, ["publish", "--access", "public", "--tag", "latest"]));
 });
 
+// An asset can be listed on the release but still fail to download, e.g. while
+// upload-release.sh is replacing it; the packages built before that point stay unpublished.
+test.concurrent("publish publishes nothing when an asset fails to download", async () => {
+  const downloaded: string[] = [];
+  const [built, unavailable] = allBins;
+  using server = serveAssets(downloaded, unavailable);
+  using dir = releaseDir("publish-download-failure", assetsOn(server, allBins));
+  const cwd = String(dir);
+
+  const { stderr, exitCode } = await uploadNpm(cwd, "publish");
+  expect(stderr).toContain(`404: ${new URL(`/${unavailable}.zip`, server.url).href}`);
+  expect(exitCode).toBe(1);
+
+  expect(downloaded).toEqual([built, unavailable]);
+  expect(existsSync(path.join(cwd, "npm", "@oven", built, "package.json"))).toBe(true);
+  expect(npmCalls(cwd)).toEqual([]);
+});
+
 test.concurrent("publish publishes nothing when any platform has no asset", async () => {
   const downloaded: string[] = [];
   using server = serveAssets(downloaded);
   const absent = platforms.find(platform => !host.includes(platform))!;
-  using dir = releaseDir(
-    "publish-incomplete",
-    assetsOn(
-      server,
-      allBins.filter(bin => bin !== absent.bin),
-    ),
-  );
+  const bins = allBins.filter(bin => bin !== absent.bin);
+  using dir = releaseDir("publish-incomplete", assetsOn(server, bins));
   const cwd = String(dir);
 
   const { stderr, exitCode } = await uploadNpm(cwd, "publish");

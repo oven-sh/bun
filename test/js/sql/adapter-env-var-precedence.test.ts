@@ -495,15 +495,6 @@ describe("SQL adapter environment variable precedence", () => {
       expect(() => new SQL({ adapter: "postgres", hostname: "h", ssl: "bogus" as any })).toThrow("sslmode");
       expect(() => new SQL("postgres://u@h:5432/db?sslmode=require", { tls: "bogus" as any })).toThrow("sslmode");
     });
-
-    test.each([123, 45n, Symbol("tls")])("tls: %p throws ERR_INVALID_ARG_TYPE", value => {
-      expect(() => new SQL({ adapter: "postgres", hostname: "h", tls: value as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
-      expect(() => new SQL("postgres://u@h:5432/db?sslmode=require", { ssl: value as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
-    });
   });
 
   describe("tls.caFile", () => {

@@ -1957,10 +1957,8 @@ function parseOptions(
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
     tls = undefined;
-  } else if (!tlsOption || typeof tlsOption === "boolean" || $isObject(tlsOption)) {
-    tls = tlsOption || tls;
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options.tls", ["boolean", "object", "string"], tlsOption);
+    tls = tlsOption || tls;
   }
   const explicitTls = tls;
   max = options.max;

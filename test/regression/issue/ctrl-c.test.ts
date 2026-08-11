@@ -77,18 +77,16 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
   expect(result.signalCode).toBe("SIGKILL");
 });
 
-// The parameterized SIGINT tests below run a long-lived bin (originally vite's
-// dev server) through the different ways `bun` can launch one: a node_modules
-// bin by name, a package.json script, and the bin file itself, with and without
-// --bun. `long-running` is a local stand-in for vite: it prints a line once it
-// is up and then idles without installing a SIGINT handler, so the signal must
-// terminate it. It is installed as a file: dependency so `bun install` links
-// node_modules/.bin the same way it would for a registry package, without
-// contacting a registry.
+// The parameterized SIGINT tests below launch a long-lived bin every way `bun`
+// can launch one: by bin name, through a package.json script, and as a plain
+// file, each with and without --bun. `long-running` stands in for the vite dev
+// server these tests used to install from npm: it prints a line once it is up
+// and then idles without a SIGINT handler, so the signal must terminate it. A
+// file: dependency makes `bun install` link node_modules/.bin exactly as it
+// would for a registry package, without needing a registry.
 //
-// Each test only spawns the bin, waits for first stdout, sends SIGINT, and
-// asserts on exit state — none of them mutate the project directory, so one
-// shared install in beforeAll is enough.
+// None of the tests mutate the project directory, so one shared install in
+// beforeAll is enough.
 let projectDir: string;
 let installExitCode: number | null;
 

@@ -702,7 +702,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         std::map<std::string, SigInfo> smallSigs;
         for (uintptr_t b : changedBlocks) {
             auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, (size_t)0));
-            uint32_t sz = it->second;
+            size_t sz = it->second;
             // re-diff this block
             size_t first = SIZE_MAX, cntw = 0;
             for (size_t off = 0; off + 8 <= sz; off += 8) {
@@ -737,7 +737,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                     if (page < r->start + r->len) ipread(snapshotFd, &before, 8, r->fileOff + (a - r->start));
                 }
                 char sig[160];
-                snprintf(sig, sizeof sig, "sz%u +%zu n%zu", sz, first, cntw);
+                snprintf(sig, sizeof sig, "sz%zu +%zu n%zu", sz, first, cntw);
                 auto& sc = smallSigs[sig];
                 sc.count++;
                 if (sc.examples.size() < 3) {

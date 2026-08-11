@@ -683,7 +683,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 extern "C" void Bun__refreshTimeZoneAfterSnapshotRestore(JSGlobalObject* globalObject, const char* tz, size_t tzLen)
 {
     WTF::setTimeZoneOverride(String()); // first: a zone ICU rejects must leave the system zone in effect, as at boot, not the builder's override
-    if (tzLen > 0 && tzLen < 32)
+    if (tzLen > 0) // no length cap: boot (JSGlobalObject__setTimeZone) has none either
         WTF::setTimeZoneOverride(String::fromUTF8(std::span { tz, tzLen }));
     resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }

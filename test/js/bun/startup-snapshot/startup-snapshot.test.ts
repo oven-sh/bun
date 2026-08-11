@@ -353,7 +353,12 @@ snapshotTest(
       expect(existsSync(img)).toBe(true);
     }
     const { TZ: _utc, ...withoutTZ } = restoreEnv;
-    for (const launchEnv of [{ ...restoreEnv, TZ: "Europe/Berlin" }, withoutTZ, { ...restoreEnv, TZ: "Not/AZone" }]) {
+    for (const launchEnv of [
+      { ...restoreEnv, TZ: "Europe/Berlin" },
+      { ...restoreEnv, TZ: "America/Argentina/ComodRivadavia" }, // 32 characters: the restore path once capped names below that while boot did not
+      withoutTZ,
+      { ...restoreEnv, TZ: "Not/AZone" },
+    ]) {
       // the last one ICU rejects: system zone, as at boot
       const plain = Bun.spawnSync({
         cmd: [bunExe(), fixture],

@@ -82,10 +82,10 @@ pub struct Listener {
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
     pub(crate) group: JsCell<uws::SocketGroup>,
-    /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
-    /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
-    /// stopped listener safely.
-    pub(crate) secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+    /// `SSL_CTX` for accepted sockets; released in `do_stop`, or with the
+    /// `Listener` if it is torn down without one. `SSL_new()` per-accept takes
+    /// its own ref, so accepted sockets outlive a stopped listener safely.
+    pub(crate) secure_ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
     pub(crate) ssl: bool,
     pub(crate) protos: Option<Box<[u8]>>,
     pub(crate) reject_unauthorized: bool,
@@ -231,7 +231,7 @@ impl Listener {
                     ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: Cell::new(None),
+                    secure_ctx: JsCell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
@@ -344,6 +344,20 @@ impl Listener {
             .into_boxed_slice();
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
+        let secure_ctx: Option<boring_sys::OwnedSslCtx> = match ssl_cfg_taken.as_ref() {
+            Some(ssl_cfg) => {
+                let mut create_err = uws::create_bun_socket_error_t::none;
+                let Some(ctx) = ssl_cfg.as_usockets().create_ssl_context(&mut create_err) else {
+                    return Err(global.throw_value(
+                        crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                    ));
+                };
+                // SAFETY: `create_ssl_context` returns a +1 ref that is ours to release.
+                unsafe { boring_sys::OwnedSslCtx::from_raw(ctx) }
+            }
+            None => None,
+        };
+        let secure_ctx_ptr: Option<*mut uws::SslCtx> = secure_ctx.as_ref().map(|c| c.as_ptr());
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
             handlers,
@@ -360,7 +374,7 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: Cell::new(None),
+            secure_ctx: JsCell::new(secure_ctx),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
@@ -386,11 +400,7 @@ impl Listener {
             // SAFETY: this is still the sole owner on the error path; the
             // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
             let this_ref = unsafe { &*this };
-            if let Some(c) = this_ref.secure_ctx.take() {
-                // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-            }
-            // protos: Box drops automatically when Listener is dropped below
+            // protos / secure_ctx: drop with the Listener below
             bun_core::asan::unregister_root_region(
                 this_ref.group.as_ptr().cast::<c_void>(),
                 size_of::<uws::SocketGroup>(),
@@ -401,19 +411,6 @@ impl Listener {
             drop(unsafe { bun_core::heap::take(this) });
         });
 
-        if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
-            let mut create_err = uws::create_bun_socket_error_t::none;
-            match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref
-                    .secure_ctx
-                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
-                None => {
-                    return Err(global.throw_value(
-                        crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
-                    ));
-                }
-            }
-        }
         let kind: uws::SocketKind = if ssl_enabled {
             uws::SocketKind::BunListenerTls
         } else {
@@ -432,11 +429,6 @@ impl Listener {
         } else {
             UnixOrHost::Unix(hostname_owned)
         };
-
-        let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
-            .secure_ctx
-            .get()
-            .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
@@ -543,9 +535,7 @@ impl Listener {
                 .set(Strong::create(default_data, global));
         }
 
-        if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
-            // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.get().expect("unreachable");
+        if let (Some(ssl_config), Some(secure)) = (ssl_cfg_taken.as_ref(), secure_ctx_ptr) {
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -554,7 +544,7 @@ impl Listener {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
                         server_name,
-                        secure.as_ptr().cast(),
+                        secure,
                         core::ptr::null_mut(),
                     );
                 }
@@ -882,10 +872,7 @@ impl Listener {
             ListenerType::None => {}
         }
 
-        if let Some(ctx) = this.secure_ctx.take() {
-            // SAFETY: FFI — releases the one ref `listen()` took from the cache.
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-        }
+        this.secure_ctx.set(None);
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -960,13 +947,8 @@ impl Listener {
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx.take() {
-            // SAFETY: FFI — a Listener torn down without do_stop() still owns
-            // its ref; do_stop() already took it when it ran.
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-        }
 
-        // connection / protos / the handlers `Rc`: dropped by heap::take below
+        // connection / protos / secure_ctx / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
     }

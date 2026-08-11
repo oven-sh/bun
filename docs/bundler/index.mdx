@@ -1545,10 +1545,11 @@ Without an explicit `format`, bytecode defaults to CommonJS.
     // ESM bytecode (requires compile)
     await Bun.build({
       entrypoints: ["./index.tsx"],
-      outfile: "./mycli",
       bytecode: true,
       format: "esm",
-      compile: true,
+      compile: {
+        outfile: "./mycli",
+      },
     })
     ```
 

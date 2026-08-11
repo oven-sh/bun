@@ -558,8 +558,7 @@ impl JSBundleCompletionTask {
         result
     }
 
-    /// Producing the executable copies the whole bun binary (and downloads it
-    /// for a cross target), so it happens here and not in `on_complete` on the JS thread.
+    /// `Bun.build({ compile })`: the bundle becomes the executable before `on_complete` gets it.
     fn compile_on_bundle_thread(&mut self) {
         if self.config.compile.is_none()
             || self.cancelled.load(core::sync::atomic::Ordering::Acquire)

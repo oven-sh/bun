@@ -107,8 +107,8 @@ describe("Bun.build compile", () => {
         // milliseconds (about 50ms under a debug build).
         const gaveUp = Promise.withResolvers<Outcome>();
         const giveUp = setTimeout(gaveUp.resolve, 4_000, "did not answer the ping");
-        proc.send("ping");
         try {
+          proc.send("ping");
           outcome = await Promise.race([
             pong.promise,
             gaveUp.promise,

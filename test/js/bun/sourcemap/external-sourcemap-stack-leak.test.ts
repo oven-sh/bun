@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Formatting a stack trace hands one ZigStackFrame per frame to
 // Bun__remapStackFramePositions. When the frame's file has an external source
@@ -9,8 +9,8 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 // callers used to drop their frames without releasing it, so every read of
 // `.stack` leaked one string per remapped frame. With a long `sources` entry the
 // unfixed leak grows RSS by about FRAMES * SOURCE_NAME_LENGTH bytes per read:
-// 45 MB (release) to 50 MB (debug ASAN) over ITERATIONS reads, while a fixed
-// build moved by -6 to +2 MB over the same loop in both.
+// 44 to 50 MB over ITERATIONS reads on release and debug ASAN builds alike,
+// while a fixed build moved by -5 to +3 MB over the same loop on both.
 
 const FRAMES = 10;
 // Stays well under the 4096-byte path buffer the remap joins the name into,
@@ -18,7 +18,7 @@ const FRAMES = 10;
 const SOURCE_NAME_LENGTH = 3000;
 const WARMUP = 200;
 const ITERATIONS = 1500;
-const MAX_GROWTH_MB = isASAN ? 24 : 16;
+const MAX_GROWTH_MB = 24;
 // Formatting WARMUP + ITERATIONS ten-frame stacks takes the child a few seconds
 // on debug and ASAN builds.
 const CHILD_TIMEOUT_MS = 30_000;
@@ -106,8 +106,13 @@ describe.concurrent("error.stack with an external source map does not leak the r
         "main.js": mainSource,
       });
 
+      // --smol: each read also makes ~FRAMES * SOURCE_NAME_LENGTH bytes of
+      // garbage, the default heap sizes how much of it piles up between
+      // collections by machine RAM, and what the final Bun.gc(true) just freed
+      // is still resident when RSS is sampled. The small heap keeps that residue
+      // to a few MB on any machine; the leaked strings are never freed at all.
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "main.js", mode],
+        cmd: [bunExe(), "--smol", "main.js", mode],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",

@@ -428,9 +428,7 @@ impl CompileTarget {
     }
 }
 
-/// The version `text` names if it is spelled exactly `X.Y.Z`, which is what the download URL is
-/// built from. `Version::parse` by itself also accepts tags, extra components and overflowing
-/// numbers.
+/// Only exactly `X.Y.Z`; `Version::parse` alone also accepts tags, extra components and overflow.
 fn parse_exact_version(text: &[u8]) -> Option<Version> {
     let parsed = Version::parse(SlicedString::init(text, text)).version;
     let (major, minor, patch) = (parsed.major?, parsed.minor?, parsed.patch?);

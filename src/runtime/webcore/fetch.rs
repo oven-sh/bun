@@ -225,6 +225,42 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// file: URLs
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The `Response` for a `file:` URL wraps a blob that opens the file lazily, so
+/// `fetch()` itself has to check the path; otherwise a path that cannot be read
+/// still gets a 200 and the error only surfaces from the body reader. Returns
+/// the JS error for `fetch()` to reject with.
+///
+/// Only conditions under which the read is certain to fail are checked (the
+/// path does not stat, or is a directory). `stat` rather than an eager `open`:
+/// opening a FIFO or a device has side effects, and nothing here needs the fd.
+/// Files embedded in a standalone executable come back as byte-backed blobs,
+/// which have nothing on disk to check.
+fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> Option<JSValue> {
+    let store = file_blob.store()?;
+    let blob::store::Data::File(file) = &store.data else {
+        return None;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return None;
+    };
+
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let err = match bun_sys::stat(path.slice_z(&mut path_buf)) {
+        Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as bun_sys::Mode) => {
+            bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::read)
+        }
+        Ok(_) => return None,
+        Err(err) => err,
+    };
+    // `stat` attached the scratch copy of the path (`\\?\`-prefixed on
+    // Windows); report the path as the blob holds it.
+    Some(err.with_path(path.slice()).to_js(global_this))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Bun__fetchPreconnect
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1553,8 +1589,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
-
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
@@ -1564,7 +1598,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )),
             );
 
-            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+            let file_blob = Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+
+            if let Some(err) = file_url_unreadable_error(&file_blob, global_this) {
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+            }
+
+            // A bare +1 ref that only `Response::init` below releases, so it is
+            // created after the early return above.
+            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
+
+            break 'blob file_blob;
         };
 
         let response = bun_core::heap::into_raw(Box::new(Response::init(

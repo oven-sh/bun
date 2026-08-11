@@ -16,6 +16,7 @@ import {
   isWindows,
   rss,
   runFixtureMaxRSS,
+  tempDir,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -27,6 +28,7 @@ import type { AddressInfo } from "net";
 import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
+import { pathToFileURL } from "url";
 import { gzipSync } from "zlib";
 
 const tmp_dir = tmpdirSync();
@@ -1789,6 +1791,64 @@ it("fetch() file:// works", async () => {
   expect(fileResponseText).toEqual(bunFileText);
   gc(true);
 });
+
+describe.concurrent("fetch() file:// that cannot be read", () => {
+  // The file: branch keeps the URL's forward slashes in the path it reports,
+  // which only differs from path.join() on Windows.
+  const reportedPath = (p: string) => (isWindows ? p.replaceAll("\\", "/") : p);
+
+  it("rejects with ENOENT when the file does not exist", async () => {
+    using dir = tempDir("fetch-file-url", { "exists.txt": "exists" });
+    const missing = join(String(dir), "missing.txt");
+    const url = pathToFileURL(missing);
+
+    for (const input of [url.href, url, new Request(url)]) {
+      await expect(fetch(input)).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "stat",
+        path: reportedPath(missing),
+      });
+    }
+
+    // A sibling that does exist is unaffected.
+    const response = await fetch(pathToFileURL(join(String(dir), "exists.txt")));
+    expect([response.status, await response.text()]).toEqual([200, "exists"]);
+  });
+
+  it("rejects with EISDIR when the path is a directory", async () => {
+    using dir = tempDir("fetch-file-url-dir", {});
+
+    await expect(fetch(pathToFileURL(String(dir)))).rejects.toMatchObject({
+      code: "EISDIR",
+      syscall: "read",
+      path: reportedPath(String(dir)),
+    });
+  });
+
+  it.skipIf(isWindows)("still resolves for special files such as /dev/null", async () => {
+    const response = await fetch("file:///dev/null");
+    expect([response.status, await response.text()]).toEqual([200, ""]);
+  });
+
+  it("reports the rejection as unhandled when nothing catches it", async () => {
+    using dir = tempDir("fetch-file-url-unhandled", {});
+    const missing = join(String(dir), "missing.txt");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `fetch(${JSON.stringify(pathToFileURL(missing).href)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ENOENT");
+    expect(stderr).toContain(reportedPath(missing));
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {

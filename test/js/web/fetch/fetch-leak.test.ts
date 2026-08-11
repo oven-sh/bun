@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug, tempDir } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -526,28 +526,36 @@ test.concurrent(
   async () => {
     // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
     // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
-    // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
-    // every platform and url_string is actually assigned, with enough iterations
-    // for the small per-call leak to show in RSS.
+    // Linux, ~98 KiB on Windows. Use a ~850-byte path so decode_into succeeds on
+    // every platform, with enough iterations for the small per-call leak to
+    // show in RSS. The file has to exist: fetch() rejects for a path that does
+    // not stat before url_string is ever created.
+    using dir = tempDir("fetch-file-url-leak", {});
     const script = /* js */ `
-    const pad = Buffer.alloc(900, "a").toString();
-    // Windows strips the leading "/" then asserts is_absolute_windows() in
-    // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
-    const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
+    import { mkdirSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { pathToFileURL } from "node:url";
+
+    const component = Buffer.alloc(200, "a").toString();
+    const parent = join(process.cwd(), component, component, component, component);
+    mkdirSync(parent, { recursive: true });
+    const file = join(parent, "file.txt");
+    writeFileSync(file, "hello");
+    const url = pathToFileURL(file).href;
+
     const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
-    async function hit(i) {
-      // Fresh path per iteration so each leaked ref pins a distinct impl.
-      // The file does not exist; the Response is created (with url_string set)
-      // and the lazy Blob body is never read, so no fs I/O happens.
-      await fetch(prefix + i + pad);
+    async function hit() {
+      // Every call builds a fresh url_string impl for the Response. The lazy
+      // Blob body is never read, so the Response is the only thing created.
+      await fetch(url);
     }
-    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
+    for (let i = 0; i < 200; i++) await hit();
     Bun.gc(true);
     const baseline = rss();
 
     const ITERS = 20000;
     for (let i = 0; i < ITERS; i++) {
-      try { await hit(i); } catch {}
+      await hit();
       if ((i & 1023) === 0) Bun.gc(true);
     }
     Bun.gc(true);
@@ -559,8 +567,8 @@ test.concurrent(
       finalMB: (final / 1024 / 1024) | 0,
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
-    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
+    // ~0.85 KiB × 20000 ≈ 17 MiB raw leak (measured ~26 MiB on debug+ASAN)
+    // when the extra ref is dropped on the floor; ~11 MiB noise with the fix.
     if (deltaMB > 20) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
@@ -568,6 +576,7 @@ test.concurrent(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", script],
+      cwd: String(dir),
       env: {
         ...bunEnv,
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),

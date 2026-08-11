@@ -412,18 +412,15 @@ describe("web worker", () => {
       const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
         (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
-      let received = 0;
-      w.onmessage = () => received++;
       // Booting the worker is not the property under test (on a debug build it takes
       // far longer than the timer turns below): start once the flood has reached the parent.
       await once(w, "message");
       // Three timer turns while the flood is running is the property; not the timing.
-      // A message landing after each turn shows the flood was still running during it.
+      // Pinned inside one drain, the parent never gets to the timer; the message awaited
+      // after each turn shows the flood was still running while the turn was taken.
       for (let i = 0; i < 3; i++) {
-        const before = received;
         await new Promise<void>(r => setTimeout(r, 10));
         await once(w, "message");
-        expect(received).toBeGreaterThan(before);
       }
       w.terminate();
       await once(w, "close");

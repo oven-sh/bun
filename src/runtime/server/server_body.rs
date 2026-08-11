@@ -2652,6 +2652,9 @@ where
         let config_port = match &self.config.address {
             server_config::Address::Unix(_) => return JSValue::UNDEFINED,
             server_config::Address::Tcp { port, .. } => *port,
+            // The bound port belongs to whoever created the fd; the live
+            // listener below is the only source for it.
+            server_config::Address::Fd(_) => 0,
         };
 
         if let Some(listener) = self.listener {
@@ -2696,8 +2699,13 @@ where
                 let value = scopeguard::guard(value, |v| v.deref());
                 value.to_js(global)
             }
-            server_config::Address::Tcp { port: tcp_port, .. } => {
-                let mut port: u16 = *tcp_port;
+            server_config::Address::Tcp { .. } | server_config::Address::Fd(_) => {
+                // An adopted fd carries no configured port; the listener below
+                // reports the one it was already bound to.
+                let mut port: u16 = match &self.config.address {
+                    server_config::Address::Tcp { port, .. } => *port,
+                    _ => 0,
+                };
 
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
@@ -2758,7 +2766,7 @@ where
     pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
-            server_config::Address::Tcp { .. } => {}
+            server_config::Address::Tcp { .. } | server_config::Address::Fd(_) => {}
         }
         {
             if let Some(listener) = self.listener {
@@ -2784,6 +2792,11 @@ where
                         } else {
                             return BunString::static_(b"localhost").to_js(global);
                         }
+                    }
+                    // An adopted fd has no configured hostname; the listener
+                    // lookup above is what resolves it.
+                    server_config::Address::Fd(_) => {
+                        return BunString::static_(b"localhost").to_js(global);
                     }
                     server_config::Address::Unix(_) => unreachable!(),
                 }

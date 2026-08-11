@@ -1070,6 +1070,18 @@ public:
 
         return socket;
     }
+
+    /* Serve on an fd that is already bound and listening (socket activation) */
+    us_listen_socket_t *listen_from_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        int error = 0;
+        auto* socket = us_socket_group_listen_from_fd(&group, socketKind(), sslCtx, fd, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+            us_socket_unref(&socket->s);
+        }
+
+        return socket;
+    }
 };
 
 }

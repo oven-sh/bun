@@ -472,20 +472,16 @@ impl Listener {
                     &mut errno,
                 )
             }),
-            UnixOrHost::Fd(fd) => {
-                let err = jsc::SystemError {
-                    errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_core::String::static_("EINVAL").into(),
-                    message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
-                    )
-                    .into(),
-                    syscall: bun_core::String::static_("listen").into(),
-                    fd: fd.uv(),
-                    ..Default::default()
-                };
-                return Err(global.throw_value(err.to_error_instance(global)));
-            }
+            UnixOrHost::Fd(fd) => this_ref.group.with_mut(|g| {
+                g.listen_from_fd(
+                    kind,
+                    secure_ctx_ptr,
+                    fd.native(),
+                    socket_flags,
+                    size_of::<*mut c_void>() as c_int,
+                    &mut errno,
+                )
+            }),
         };
         if listen_socket.is_null() {
             // Note: reshaped for borrowck — extract hostname bytes for error formatting

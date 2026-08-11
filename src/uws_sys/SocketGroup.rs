@@ -285,6 +285,31 @@ impl SocketGroup {
         }
     }
 
+    /// Adopt an already-bound-and-listening fd (systemd `LISTEN_FDS`, inetd, a
+    /// privilege-dropping supervisor). Takes ownership only on success.
+    pub fn listen_from_fd(
+        &mut self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
+        socket_ext_size: c_int,
+        error: &mut c_int,
+    ) -> *mut ListenSocket {
+        // SAFETY: forwarding to C; `error` is a valid out-param.
+        unsafe {
+            us_socket_group_listen_from_fd(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                fd,
+                options,
+                socket_ext_size,
+                error,
+            )
+        }
+    }
+
     pub fn pair(
         &mut self,
         kind: SocketKind,
@@ -325,6 +350,15 @@ unsafe extern "C" {
         ssl_ctx: *mut SslCtx,
         path: *const u8,
         pathlen: usize,
+        options: c_int,
+        socket_ext_size: c_int,
+        err: *mut c_int,
+    ) -> *mut ListenSocket;
+    fn us_socket_group_listen_from_fd(
+        group: *mut SocketGroup,
+        kind: u8,
+        ssl_ctx: *mut SslCtx,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,

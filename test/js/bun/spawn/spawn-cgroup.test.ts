@@ -165,9 +165,11 @@ describe.skipIf(!cg)("spawn({ cgroup })", () => {
       env: bunEnv,
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const halves = stdout.trim().split("\n");
-    expect(halves.length).toBeGreaterThanOrEqual(2);
-    for (const chunk of [halves.slice(0, halves.length / 2), halves.slice(halves.length / 2)]) {
+    // /proc/self/cgroup has one line per hierarchy; both cats print the same count.
+    const perProcess = readFileSync("/proc/self/cgroup", "utf8").trim().split("\n").length;
+    const lines = stdout.trim().split("\n");
+    expect(lines.length).toBe(perProcess * 2);
+    for (const chunk of [lines.slice(0, perProcess), lines.slice(perProcess)]) {
       expect(memoryCgroupOf(chunk.join("\n"))).toBe(cg!.relative);
     }
     expect(exitCode).toBe(0);
@@ -283,17 +285,21 @@ describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () =>
 
     reset();
     {
-      const { promise, resolve } = Promise.withResolvers<unknown>();
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      const closed = Promise.withResolvers<unknown>();
       const child = fork(join(String(dir), "child.js"), [], {
         cgroup: String(dir),
         execPath: bunExe(),
         env: bunEnv,
       } as any);
       child.on("message", resolve);
+      child.on("error", reject);
+      child.on("close", (code, signal) => {
+        reject(new Error(`child exited before sending a message: ${code ?? signal}`));
+        closed.resolve(code);
+      });
       expect(await promise).toBe("hi");
-      const closed = Promise.withResolvers<unknown>();
-      child.on("close", closed.resolve);
-      await closed.promise;
+      expect(await closed.promise).toBe(0);
       expect(readFileSync(procs, "utf8")).toBe("0");
     }
   });

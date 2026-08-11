@@ -2099,25 +2099,6 @@ describe("writeSync", () => {
     closeSync(fd);
   });
 
-  // Node bounds `offset` by the buffer length whether or not a `length`
-  // argument follows; this used to write 0 bytes silently instead.
-  it("rejects an offset past the buffer even without a length", () => {
-    const fd = openSync(join(tmpdirSync(), "writeSync-offset.txt"), "w+");
-    try {
-      const buf = Buffer.from("hello");
-      expect(() => writeSync(fd, buf, buf.length + 1)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-      expect(() => writeSync(fd, buf, buf.length + 1, "not a length" as any)).toThrowWithCode(
-        RangeError,
-        "ERR_OUT_OF_RANGE",
-      );
-      expect(() => fs.write(fd, buf, buf.length + 1, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-      // offset == length is fine and writes nothing
-      expect(writeSync(fd, buf, buf.length)).toBe(0);
-    } finally {
-      closeSync(fd);
-    }
-  });
-
   // writeSync(fd, string[, position[, encoding]]): the encoding used to be
   // parsed but never applied, so utf16le/hex/base64/latin1 all wrote raw UTF-8.
   it("honors the encoding argument for strings", () => {

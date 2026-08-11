@@ -120,5 +120,34 @@ describe("bundler", () => {
         }
       }
     }
+
+    // A split chunk gets its own bytecode + module record. Re-exports of
+    // externals in it are printed as `export * from`, or as imports plus the
+    // chunk's `export { ... }` tail; the record has to describe all of them in
+    // addition to the cross-chunk imports, or reading `fs` off the namespace
+    // throws a TDZ ReferenceError.
+    for (const minify of [false, true]) {
+      itBundled(`compile/splitting/ReExportExternalFromSplitChunk${minify ? "+minify" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+        files: {
+          "/entry.ts": /* js */ `
+            const mod = await import("./reexports.ts");
+            console.log(typeof mod.fs.readFileSync, typeof mod.join, typeof mod.rfs);
+          `,
+          "/reexports.ts": /* js */ `
+            export * from "node:path";
+            export * as fs from "node:fs";
+            export { readFileSync as rfs } from "node:fs";
+          `,
+        },
+        run: {
+          stdout: "function function function",
+        },
+      });
+    }
   });
 });

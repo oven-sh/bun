@@ -679,8 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        // Mutate m_stackTrace only through setStackFrames: its cellLock pairs with
-        // concurrent readers (JSDOMException::visitChildren on the GC marker thread).
+        // setStackFrames takes the cellLock that JSDOMException::visitChildren reads under.
         WTF::Vector<JSC::StackFrame> combined;
         combined.appendVector(*destination->stackTrace());
         combined.appendVector(*source->stackTrace());
@@ -735,8 +734,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        // Copy, don't move: stealing the live buffer out of m_stackTrace outside the
-        // cellLock races with a concurrent visitChildren iterating it (JSDOMException).
+        // Copy: a move here races JSDOMException::visitChildren reading under the cellLock.
         auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace);
         JSC::MarkedArgumentBuffer protectedFrameCells;
         protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);

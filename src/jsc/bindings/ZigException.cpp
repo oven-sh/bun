@@ -461,8 +461,7 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool found = obj->getNonIndexPropertySlot(global, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    // Only plain data properties: accessors AND native custom getters
-    // (e.g. DOMException.prototype.code) are observable and must not run here.
+    // isValue() also rejects custom getters (DOMException.prototype.code), which isAccessor() does not.
     if (!found || !slot.isValue())
         return {};
     JSValue value = slot.getValue(global, propertyName);

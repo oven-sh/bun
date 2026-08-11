@@ -30,8 +30,7 @@
 
 namespace WebCore {
 
-// JSDOMException inherits from ErrorInstance so that, per WebIDL, DOMException
-// objects carry [[ErrorData]] (Error.isError returns true) and a captured stack.
+// An ErrorInstance so DOMException has [[ErrorData]] and a stack, as WebIDL requires.
 class JSDOMException : public JSC::ErrorInstance {
 public:
     using Base = JSC::ErrorInstance;

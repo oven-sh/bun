@@ -242,14 +242,12 @@ JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalOb
 
 void JSDOMException::finishCreation(VM& vm)
 {
-    // Capture a stack trace like a native Error. Pass a null message/cause so
-    // they stay as prototype accessors reading from the wrapped DOMException.
+    // Null message/cause: those stay prototype accessors over the wrapped impl.
     Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
 
-    // ErrorInstance never materializes `stack` from an empty trace, which can
-    // happen for native entries like AbortSignal.timeout. Give `.stack` the
-    // `name: message` header so DOMException matches other engines.
+    // ErrorInstance leaves .stack unset for an empty trace (e.g. a native timer
+    // firing with no JS frames); other engines still give the name: message header.
     auto* trace = stackTrace();
     if (!trace || trace->isEmpty()) {
         auto& impl = wrapped();
@@ -268,9 +266,8 @@ void JSDOMException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    // ErrorInstance drops dead stack frames via finalizeUnconditionally over
-    // vm.errorInstanceSpace(); our own subspace isn't swept there, so keep the
-    // frames alive explicitly until the stack is materialized.
+    // Heap only sweeps dead frames out of vm.errorInstanceSpace(); this class
+    // lives in its own subspace, so it must keep its frames alive itself.
     Locker locker { thisObject->cellLock() };
     if (auto* stackTrace = thisObject->stackTrace()) {
         for (auto& frame : *stackTrace)

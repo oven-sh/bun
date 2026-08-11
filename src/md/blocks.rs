@@ -696,20 +696,18 @@ impl Parser<'_> {
         // Opening code fence: start block but don't include fence line as content
         if line.r#type == LineType::Fencedcode && line.enforce_new_block {
             self.end_current_block()?;
-            self.start_new_block(line);
             self.fence_indent = line.indent;
 
             // Extract info string position and store in block data
-            if let Some(hdr) = &mut self.current_block {
-                let fence_count = line.data >> 8;
-                let mut info_beg: OFF = line.beg + fence_count;
-                // Skip whitespace before info string
-                while info_beg < line.end && helpers::is_blank(self.text[info_beg as usize]) {
-                    info_beg += 1;
-                }
-                hdr.data = info_beg;
-                hdr.flags |= types::BLOCK_FENCED_CODE;
+            let fence_count = line.data >> 8;
+            let mut info_beg: OFF = line.beg + fence_count;
+            // Skip whitespace before info string
+            while info_beg < line.end && helpers::is_blank(self.text[info_beg as usize]) {
+                info_beg += 1;
             }
+            let hdr = self.start_new_block(line);
+            hdr.data = info_beg;
+            hdr.flags |= types::BLOCK_FENCED_CODE;
             *pivot_line = *line;
             return Ok(());
         }
@@ -811,7 +809,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub(crate) fn start_new_block(&mut self, line: &Line) {
+    pub(crate) fn start_new_block(&mut self, line: &Line) -> &mut BlockHeader {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -821,13 +819,13 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
-        self.current_block = Some(BlockHeader {
+        self.current_block_lines.clear();
+        self.current_block.insert(BlockHeader {
             block_type,
             flags: 0,
             data: line.data,
             n_lines: 0,
-        });
-        self.current_block_lines.clear();
+        })
     }
 
     pub(crate) fn add_line_to_current_block(

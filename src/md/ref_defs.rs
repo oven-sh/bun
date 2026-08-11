@@ -1,7 +1,7 @@
 use bun_alloc::AllocError;
 
 use crate::helpers;
-use crate::parser::Parser;
+use crate::parser::{BlockList, Parser};
 use crate::types;
 use crate::unicode;
 
@@ -340,7 +340,12 @@ impl Parser<'_> {
     pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
         // Taken out so the loop can call `&mut self` methods while holding a block borrow.
         let mut blocks = core::mem::take(&mut self.blocks);
+        let result = self.consume_ref_defs(&mut blocks);
+        self.blocks = blocks;
+        result
+    }
 
+    fn consume_ref_defs(&mut self, blocks: &mut BlockList) -> Result<(), AllocError> {
         for (hdr, block_lines) in blocks.iter_mut() {
             // Only process paragraph blocks (not container openers/closers)
             if hdr.block_type != types::BlockType::P
@@ -416,7 +421,7 @@ impl Parser<'_> {
             // Restore buffer for reuse on next iteration.
             self.buffer = merged;
 
-            // Update the block: mark consumed lines
+            // Invalidated in place, never removed: `BlockList.lines` is shared by all blocks and split by `n_lines`.
             if lines_consumed > 0 {
                 if lines_consumed as usize >= block_lines.len() {
                     // Entire paragraph is ref defs — flag to skip during rendering
@@ -430,8 +435,6 @@ impl Parser<'_> {
                 }
             }
         }
-
-        self.blocks = blocks;
         Ok(())
     }
 }

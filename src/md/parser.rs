@@ -168,11 +168,12 @@ pub(crate) struct BlockList {
 }
 
 impl BlockList {
-    /// The only way a block is added, so the block-metadata cap cannot be
-    /// forgotten by a new caller.
+    /// The only way a block is added: it enforces the block-metadata cap and
+    /// sets `n_lines` from `lines`, so the header/line pairing `iter` relies on
+    /// cannot drift from what a caller counted.
     pub(crate) fn push(
         &mut self,
-        header: BlockHeader,
+        mut header: BlockHeader,
         lines: &[VerbatimLine],
     ) -> Result<(), ParserError> {
         debug_assert_eq!(header.n_lines as usize, lines.len());
@@ -181,6 +182,7 @@ impl BlockList {
         if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
             return Err(ParserError::TooManyBlocks);
         }
+        header.n_lines = u32::try_from(lines.len()).expect("int cast");
         self.headers.push(header);
         self.lines.extend_from_slice(lines);
         Ok(())

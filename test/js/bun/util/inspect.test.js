@@ -468,8 +468,9 @@ describe("crash testing", () => {
 });
 
 describe("exceptions thrown while walking properties", () => {
-  // Each case crashed the process before the walk cleared the exception, so
-  // they run in a subprocess.
+  // Before the walk cleared these exceptions the process crashed (or, in the
+  // second case, a debug build asserted), and the second case replaces a
+  // global, so each case runs in a subprocess.
   async function run(fixture) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -522,20 +523,24 @@ describe("exceptions thrown while walking properties", () => {
   });
 
   it.concurrent("a throwing lazy property initializer skips only that property", async () => {
-    // The builtin behind Bun.$ calls the global Symbol, so clobbering it makes
-    // that lazy property throw when it is first reified.
+    // The builtin behind Bun.$ calls the global Symbol("cwd"), so making that
+    // one call throw makes Bun.$ (and nothing else on Bun) fail to reify while
+    // Bun is formatted. The properties listed after it must still be printed.
     const { stdout, stderr, exitCode } = await run(`
-      globalThis.Symbol = NaN;
-      let threw = false;
-      try {
-        Bun.$;
-      } catch {
-        threw = true;
-      }
+      globalThis.Symbol = new Proxy(Symbol, {
+        apply(target, thisArg, args) {
+          if (args[0] === "cwd") throw new Error("boom");
+          return Reflect.apply(target, thisArg, args);
+        },
+      });
       const inspected = Bun.inspect(Bun);
-      console.log(threw, inspected.includes("Archive:"), inspected.includes("version:"));
+      console.log(
+        inspected.includes("\\n  $: "),
+        inspected.includes("\\n  Archive: "),
+        inspected.includes("\\n  version: "),
+      );
     `);
-    expect(stdout).toBe("true true true\n");
+    expect(stdout).toBe("false true true\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

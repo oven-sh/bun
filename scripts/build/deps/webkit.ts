@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "447082ab6897278727b44e1ba3c326ae6e1504c3";
+export const WEBKIT_VERSION = "autobuild-preview-pr-397-4c0ca85e"; // oven-sh/WebKit#397 (snapshot support, on current main) — swap for the merge sha before landing
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -331,6 +331,7 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
+      ...(cfg.windows || cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }), // as every other mimalloc routing: not under ASAN
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",

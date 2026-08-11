@@ -1432,7 +1432,7 @@ macro_rules! bss_singleton {
             fn slow() -> *mut $ty {
                 let p = $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr();
                 // Race: two threads may both reach here. The mmap'd region is
-                // process-lifetime and never freed, so the loser is leaked
+                // process-lifetime and never freed, so the loser is leaked (its arena bytes too: first touch is single-threaded, so unlike the arena mapping this need not be claim-first)
                 // (≤ one per declare site, which in practice is single-threaded
                 // — `FileSystem::init` runs once on the main thread). The CAS
                 // is the publication barrier.
@@ -1533,26 +1533,32 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
     // Resolve the arena base. Fast path is one Acquire load; the cold path
-    // maps the 4 MiB region once and publishes via CAS. A losing racer's
-    // mapping is leaked (≤ one per process; `MAP_NORESERVE` so it costs no
-    // committed memory) — same race policy as `bss_singleton!`.
+    // maps the 4 MiB region exactly once: a racer claims the right to map before mapping, and the others wait for the
+    // result. (Map-then-race would let a loser consume a placement hint too, and the arena's address has to be the same in
+    // every process that may build or restore a snapshot.)
     let mut base = BASE.load(Ordering::Acquire);
     if base.is_null() {
+        static CLAIMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
         #[cold]
         #[inline(never)]
-        fn map_arena() -> *mut u8 {
-            bss_mmap_noreserve(BSS_ARENA_SIZE)
+        fn map_arena_once() -> *mut u8 {
+            if CLAIMED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let fresh = bss_mmap_noreserve(BSS_ARENA_SIZE);
+                BASE.store(fresh, Ordering::Release);
+                return fresh;
+            }
+            loop {
+                let b = BASE.load(Ordering::Acquire);
+                if !b.is_null() {
+                    return b;
+                }
+                core::hint::spin_loop();
+            }
         }
-        let fresh = map_arena();
-        base = match BASE.compare_exchange(
-            core::ptr::null_mut(),
-            fresh,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => fresh,
-            Err(winner) => winner, // leak `fresh` (untouched MAP_NORESERVE)
-        };
+        base = map_arena_once();
     }
 
     // Bump the cursor: round up to `align`, reserve `size`. CAS loop because
@@ -1579,6 +1585,37 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     }
 }
 
+/// Where a snapshot may be built or mapped (the targets deps/mimalloc.ts builds the hint machinery for), this reservation
+/// has to land at the same address in every process; the allocator decides that once and hands out the same kind of bump
+/// hint it uses for its own reservations. Null = no preference.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+fn snapshot_reserve_hint(len: usize) -> *mut libc::c_void {
+    // Bottom of the address window StartupSnapshot.cpp captures as ours (0x1f0'0000'0000..); mimalloc's own hinted arenas start above it.
+    const SNAPSHOT_RESERVE_BASE: usize = 0x1f0_0000_0000;
+    const SNAPSHOT_RESERVE_ALIGN: usize = 4 << 20;
+    static SNAPSHOT_HINT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    let mut hint: *mut libc::c_void = core::ptr::null_mut();
+    if mimalloc::mi_startup_snapshot_hints_enabled() {
+        let _ = SNAPSHOT_HINT.compare_exchange(
+            0,
+            SNAPSHOT_RESERVE_BASE,
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+        );
+        let aligned = (len + SNAPSHOT_RESERVE_ALIGN - 1) & !(SNAPSHOT_RESERVE_ALIGN - 1);
+        hint = SNAPSHOT_HINT.fetch_add(aligned, core::sync::atomic::Ordering::AcqRel)
+            as *mut libc::c_void;
+    }
+    hint
+}
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+))]
+fn snapshot_reserve_hint(_len: usize) -> *mut libc::c_void {
+    core::ptr::null_mut()
+}
+
 /// One `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` of `len` RW bytes.
 /// Aborts on `MAP_FAILED`. Returned pointer is page-aligned and the region
 /// reads as all-zeros until written.
@@ -1595,11 +1632,12 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+    let hint = snapshot_reserve_hint(len);
     // SAFETY: anonymous private mapping — fd/offset ignored, `len` is non-zero
-    // (callers pass `size_of` of a non-ZST); failure handled below.
+    // (callers pass `size_of` of a non-ZST); the hint is advisory; failure handled below.
     let p = unsafe {
         libc::mmap(
-            core::ptr::null_mut(),
+            hint,
             len,
             libc::PROT_READ | libc::PROT_WRITE,
             MAP_FLAGS,

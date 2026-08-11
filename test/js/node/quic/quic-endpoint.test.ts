@@ -1,12 +1,14 @@
 // lsquic fixes HTTP/3-vs-raw framing per client *engine*, set by the first
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { BlockList } from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";
 
@@ -308,5 +310,154 @@ describe("endpoint.close() while a session is live", () => {
     held.close();
     await server.closed;
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
+  });
+});
+
+// quic.ts validated udpReceiveBufferSize / udpSendBufferSize / udpTTL /
+// ipv6Only / reusePort and passed them to the native endpoint, which never read
+// them: the socket was created with flags 0 and nothing was set on it
+// afterwards. Node applies all five in Endpoint::UDP::Bind. The buffer sizes and
+// TTL are only observable through getsockopt(2) on the endpoint's own socket,
+// found here by its bound port among the process's datagram sockets.
+describe.skipIf(isWindows)("endpoint UDP socket options", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const tp = { maxIdleTimeout: 1 };
+  const onSession = async (s: any) => {
+    await s.closed.catch(() => {});
+  };
+
+  const SOL_SOCKET = isMacOS ? 0xffff : 1;
+  const SO_TYPE = isMacOS ? 0x1008 : 3;
+  const SO_SNDBUF = isMacOS ? 0x1001 : 7;
+  const SO_RCVBUF = isMacOS ? 0x1002 : 8;
+  const SOCK_DGRAM = 2;
+  const IPPROTO_IP = 0;
+  const IP_TTL = isMacOS ? 4 : 2;
+  const IPPROTO_IPV6 = 41;
+  const IPV6_V6ONLY = isMacOS ? 27 : 26;
+  const AF_INET = 2;
+  const AF_INET6 = isMacOS ? 30 : 10;
+
+  let libc: ReturnType<typeof dlopen> | undefined;
+  function symbols() {
+    libc ??= dlopen(libcPathForDlopen(), {
+      getsockopt: {
+        args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.int,
+      },
+      getsockname: { args: [FFIType.int, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
+    });
+    return libc.symbols;
+  }
+
+  function getsockopt(fd: number, level: number, option: number) {
+    const value = new Int32Array(1);
+    const length = new Uint32Array([4]);
+    return symbols().getsockopt(fd, level, option, ptr(value), ptr(length)) === 0 ? value[0] : null;
+  }
+
+  // The descriptor of the inet datagram socket bound to `port`. The sockaddr
+  // starts with a native-endian u16 family on Linux and u8 len + u8 family on
+  // macOS; sin_port / sin6_port both follow at offset 2 in network byte order.
+  function udpSocketFd(port: number) {
+    for (const name of readdirSync("/dev/fd")) {
+      const fd = Number(name);
+      if (getsockopt(fd, SOL_SOCKET, SO_TYPE) !== SOCK_DGRAM) continue;
+      const addr = new Uint8Array(128);
+      const length = new Uint32Array([addr.length]);
+      if (symbols().getsockname(fd, ptr(addr), ptr(length)) !== 0) continue;
+      const family = isMacOS ? addr[1] : addr[0] | (addr[1] << 8);
+      if (family !== AF_INET && family !== AF_INET6) continue;
+      if (((addr[2] << 8) | addr[3]) === port) return fd;
+    }
+    throw new Error(`no UDP socket bound to port ${port} in this process`);
+  }
+
+  const readBack = (port: number) => {
+    const fd = udpSocketFd(port);
+    return {
+      rcvbuf: getsockopt(fd, SOL_SOCKET, SO_RCVBUF),
+      sndbuf: getsockopt(fd, SOL_SOCKET, SO_SNDBUF),
+      ttl: getsockopt(fd, IPPROTO_IP, IP_TTL),
+    };
+  };
+
+  // socket(7): Linux clamps the request to net.core.{r,w}mem_max and stores
+  // (and reports) twice the clamped value; macOS reports the request as-is.
+  const kernelView = (requested: number, max: "rmem_max" | "wmem_max") =>
+    isLinux ? 2 * Math.min(requested, Number(readFileSync(`/proc/sys/net/core/${max}`, "utf8"))) : requested;
+
+  test("udpReceiveBufferSize, udpSendBufferSize and udpTTL are set on the socket", async () => {
+    // Well below any default so the read-back cannot be the default by accident,
+    // and distinct from each other so a swapped option would show.
+    const options = { udpReceiveBufferSize: 65536, udpSendBufferSize: 98304, udpTTL: 7 };
+    const expected = {
+      rcvbuf: kernelView(options.udpReceiveBufferSize, "rmem_max"),
+      sndbuf: kernelView(options.udpSendBufferSize, "wmem_max"),
+      ttl: options.udpTTL,
+    };
+
+    // listen() and connect() are the two paths that bind an endpoint.
+    await using server = await listen(onSession, {
+      sni: sniOpt,
+      transportParams: tp,
+      endpoint: { address: "127.0.0.1:0", ...options },
+    });
+    const viaListen = readBack(server.address.port);
+
+    await using endpoint = new QuicEndpoint({ address: "127.0.0.1:0", ...options });
+    const client = await connect(server.address, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    const viaConnect = readBack(endpoint.address.port);
+    client.close();
+
+    expect({ viaListen, viaConnect }).toEqual({ viaListen: expected, viaConnect: expected });
+  });
+
+  // Binding `::` needs the IPv6 stack, not routable IPv6 (which is what the
+  // harness's isIPv6() asks about): any interface carrying an IPv6 address
+  // means the kernel will hand out AF_INET6 sockets.
+  const hasIPv6Stack = Object.values(networkInterfaces()).some(addrs => addrs?.some(a => a.family === "IPv6"));
+  test.skipIf(!hasIPv6Stack)("ipv6Only turns off dual-stack on an IPv6 endpoint", async () => {
+    const address = { address: "::", family: "ipv6" as const };
+    await using dualStack = await listen(onSession, { sni: sniOpt, transportParams: tp, endpoint: { address } });
+    await using v6Only = await listen(onSession, {
+      sni: sniOpt,
+      transportParams: tp,
+      endpoint: { address, ipv6Only: true },
+    });
+    expect({
+      dualStack: getsockopt(udpSocketFd(dualStack.address.port), IPPROTO_IPV6, IPV6_V6ONLY),
+      v6Only: getsockopt(udpSocketFd(v6Only.address.port), IPPROTO_IPV6, IPV6_V6ONLY),
+    }).toEqual({ dualStack: 0, v6Only: 1 });
+  });
+
+  test("reusePort lets a second endpoint bind the same port", async () => {
+    await using first = await listen(onSession, {
+      sni: sniOpt,
+      transportParams: tp,
+      endpoint: { address: "127.0.0.1:0", reusePort: true },
+    });
+    const { port } = first.address;
+    // Without SO_REUSEPORT on both sockets this bind fails with EADDRINUSE. A
+    // failed bind does not throw: listen() returns the endpoint already
+    // destroyed and `closed` rejects (test-quic-endpoint-bind-failure.mjs).
+    const second = await listen(onSession, {
+      sni: sniOpt,
+      transportParams: tp,
+      endpoint: { address: `127.0.0.1:${port}`, reusePort: true },
+    });
+    const outcome = second.destroyed
+      ? await second.closed.then(
+          () => "closed",
+          (e: Error) => e.message,
+        )
+      : { port: second.address.port };
+    if (!second.destroyed) await second.close();
+    expect(outcome).toEqual({ port });
   });
 });

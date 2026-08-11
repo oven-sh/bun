@@ -98,9 +98,8 @@ pub enum ParseError {
     InvalidTarget,
 }
 
-/// What downloading a target's executable takes from the env loader, copied out
-/// by [`CompileTarget::download_options`] on the thread that owns the loader so
-/// the download itself can run on another one.
+/// Copied out of the env loader by [`CompileTarget::download_options`]; owns its data
+/// because the download may run on another thread.
 pub struct DownloadOptions {
     pub reject_unauthorized: bool,
     /// Proxy for the registry URL, with `NO_PROXY` already applied.

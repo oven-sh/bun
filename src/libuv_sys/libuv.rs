@@ -56,8 +56,8 @@ pub use crate::__uv_log as log;
 // `bun_sys`, and the runtime without cross-crate mismatch.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_windows_sys::{
-    BOOL, COORD, CRITICAL_SECTION, DWORD, HANDLE, HMODULE, INPUT_RECORD, INVALID_HANDLE_VALUE,
-    LARGE_INTEGER, LONG, OVERLAPPED, SHORT, ULONG, ULONG_PTR, WCHAR, WIN32_FIND_DATAW, WORD,
+    BOOL, COORD, CRITICAL_SECTION, DWORD, HANDLE, INPUT_RECORD, INVALID_HANDLE_VALUE,
+    LARGE_INTEGER, LONG, OVERLAPPED, SHORT, ULONG, ULONG_PTR, WCHAR, WORD,
 };
 // Kept local — NOT re-exported from `bun_windows_sys`:
 // • CHAR: libuv wants u8, `bun_windows_sys::CHAR` is c_char (i8 on MSVC).
@@ -3102,7 +3102,6 @@ const _: () = {
     assert_size!(OVERLAPPED, 32);
     assert_size!(CRITICAL_SECTION, 40);
     assert_size!(INPUT_RECORD, 20);
-    assert_size!(WIN32_FIND_DATAW, 592);
     assert_size!(sockaddr_storage, 128);
     assert_size!(sockaddr_in, 16);
     assert_size!(sockaddr_in6, 28);

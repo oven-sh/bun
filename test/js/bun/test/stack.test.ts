@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, gcTick, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 import vm from "node:vm";
 
@@ -199,6 +199,36 @@ describe("SyntaxError .stack", () => {
     // Math.max is not on the stack, so every frame is dropped.
     Error.captureStackTrace(err, Math.max);
     expect(err.stack).toBe("SyntaxError: no frames");
+  });
+
+  // An instance can also carry a location copied from frames it no longer has: structured
+  // clone copies one, and the GC finalizer writes one back when it formats the stack of an
+  // error whose frames died. Re-capturing from a different file than that location must not
+  // turn it into a <parse> frame. The error is constructed in a function attributed to
+  // another file; a fresh function each time so the GC case has something to collect.
+  const constructElsewhere = () =>
+    (new Function('return new SyntaxError("made elsewhere");\n//# sourceURL=elsewhere.js') as () => SyntaxError)();
+
+  const recaptured = (err: SyntaxError) => {
+    Error.captureStackTrace(err);
+    return { stack: normalizeBunSnapshot(err.stack!), sourceURL: (err as any).sourceURL };
+  };
+
+  test("a structuredClone()d SyntaxError re-captured from another file has no <parse> frame", () => {
+    expect(recaptured(structuredClone(constructElsewhere()))).toEqual({
+      stack: "SyntaxError: made elsewhere\n    at recaptured (file:NN:NN)\n    at <anonymous> (file:NN:NN)",
+      sourceURL: expect.stringContaining("stack.test.ts"),
+    });
+  });
+
+  test("a SyntaxError whose frames were collected, re-captured from another file, has no <parse> frame", async () => {
+    const err = constructElsewhere();
+    await gcTick();
+    await gcTick();
+    expect(recaptured(err)).toEqual({
+      stack: "SyntaxError: made elsewhere\n    at recaptured (file:NN:NN)\n    at <anonymous> (file:NN:NN)",
+      sourceURL: expect.stringContaining("stack.test.ts"),
+    });
   });
 
   test("Bun.inspect() of a SyntaxError whose .stack was already read shows the real frame", () => {

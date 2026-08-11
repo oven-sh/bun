@@ -652,6 +652,18 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     return result;
 }
 
+void clearStaleErrorLocation(JSC::ErrorInstance* instance)
+{
+    // A parser error's recorded location is the parse failure (rendered as the <parse> frame).
+    // Any other recorded location came from frames the instance used to have (written back by
+    // the GC finalizer, or copied by structured clone) and is superseded by the new frames.
+    if (instance->isParseError())
+        return;
+    instance->setSourceURL(String());
+    instance->setLine(0);
+    instance->setColumn(0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -667,6 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (!destination->stackTrace()) {
+        clearStaleErrorLocation(destination);
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
@@ -777,6 +790,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
+        clearStaleErrorLocation(instance);
         if (instance->hasMaterializedErrorInfo()) {
             // Error info was already materialized (e.g. .stack was previously accessed).
             // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with

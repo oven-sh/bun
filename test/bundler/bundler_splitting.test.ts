@@ -402,4 +402,55 @@ describe("bundler", () => {
     }
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
+
+  // https://github.com/oven-sh/bun/issues/37576
+  // m12 and m13 are shared by different entry-point pairs, so they become two
+  // separate chunks that compile to identical content and collide on the same
+  // `[hash]` output path. The collision must deduplicate into one emitted file
+  // (like esbuild) instead of failing with "Multiple files share the same
+  // output path". The on-disk variant of this shape is covered by
+  // naming/ChunkIdenticalContentSharesOutputPath.
+  const identicalSharedChunkFiles = {
+    "/entry.js": `
+      const [m1, m2, m3] = await Promise.all([import("./d1.js"), import("./d2.js"), import("./d3.js")]);
+      console.log(m1.d1, m2.d2, m3.d3);
+    `,
+    "/core.js": `globalThis.core = (globalThis.core ?? 0) + 1;`,
+    "/m12.js": `import "./core.js";`,
+    "/m13.js": `import "./core.js";`,
+    "/d1.js": `
+      import "./m12.js";
+      import "./m13.js";
+      export const d1 = 1;
+    `,
+    "/d2.js": `
+      import "./m12.js";
+      export const d2 = 2;
+    `,
+    "/d3.js": `
+      import "./m13.js";
+      export const d3 = 3;
+    `,
+  };
+
+  test.concurrent("identical shared chunks are deduplicated in in-memory builds", async () => {
+    using dir = tempDir(
+      "splitting-dedupe",
+      Object.fromEntries(Object.entries(identicalSharedChunkFiles).map(([name, contents]) => [name.slice(1), contents])),
+    );
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      splitting: true,
+      throw: false,
+    });
+    expect(result.logs).toBeEmpty();
+    expect(result.success).toBe(true);
+
+    const paths = result.outputs.map(output => output.path);
+    expect(new Set(paths).size).toBe(paths.length);
+    const contents = await Promise.all(result.outputs.map(output => output.text()));
+    expect(new Set(contents).size).toBe(contents.length);
+  });
 });

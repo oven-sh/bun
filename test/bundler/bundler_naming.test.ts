@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -215,6 +216,50 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "<bun>": ['Multiple files share the same output path: "same-filename.txt"'],
+    },
+  });
+  // Two different shared chunks whose output is byte-identical (m12.js and
+  // m13.js are identical side-effect-only stubs shared by different entry
+  // pairs) hash to the same [hash] and thus the same output path. That must
+  // dedupe into one file instead of erroring; different-content collisions
+  // (see naming/EntryNamingCollission) must still error.
+  itBundled("naming/ChunkIdenticalContentSharesOutputPath", {
+    files: {
+      "/entry.js": /* js */ `
+        const [m1, m2, m3] = await Promise.all([import('./d1.js'), import('./d2.js'), import('./d3.js')]);
+        console.log(m1.d1, m2.d2, m3.d3, globalThis.core);
+      `,
+      "/d1.js": /* js */ `
+        import "./m12.js";
+        import "./m13.js";
+        export const d1 = 1;
+      `,
+      "/d2.js": /* js */ `
+        import "./m12.js";
+        export const d2 = 2;
+      `,
+      "/d3.js": /* js */ `
+        import "./m13.js";
+        export const d3 = 3;
+      `,
+      "/m12.js": `import "./core.js";`,
+      "/m13.js": `import "./core.js";`,
+      "/core.js": `globalThis.core = (globalThis.core ?? 0) + 1;`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "bun",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "1 2 3 1",
+    },
+    onAfterBundle(api) {
+      // entry + d1 + d2 + d3 + core chunk + the __require helper chunk +
+      // ONE deduped shared stub (8 would mean the stubs stopped colliding
+      // and this test no longer exercises the dedupe path)
+      expect(readdirSync(api.outdir)).toHaveLength(7);
     },
   });
   itBundled("naming/AssetFileLoaderPath1", {

@@ -2220,9 +2220,10 @@ impl CgroupTarget {
 
     fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         if value.is_number() {
+            // `validate_integer_range` maps NaN to the default; there is no default fd.
             let fd = global.validate_integer_range::<i32>(
                 value,
-                0,
+                -1,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
                     max: i128::from(i32::MAX),
@@ -2230,6 +2231,16 @@ impl CgroupTarget {
                     ..Default::default()
                 },
             )?;
+            if fd < 0 {
+                return Err(global.throw_range_error(
+                    value.as_number(),
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"cgroup",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
             return Ok(Self::DirFd(Fd::from_native(fd)));
         }
         if value.is_string() {

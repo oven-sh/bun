@@ -624,13 +624,8 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
-/// Opens a `PosixStdio::Path` in the parent and has the child dup2 it onto
-/// `fileno`. As a child-side open action it would run under vfork (Linux) or
-/// inside the posix_spawn syscall (macOS), so an open(2) that blocks (a FIFO
-/// with no peer, a hung mount) would park this thread with it, and a failure
-/// would be reported as a posix_spawn error against argv[0]. O_NONBLOCK only
-/// covers the open itself; it is cleared before the child inherits the
-/// description.
+/// Not an open file action: that runs in the vfork child (inside posix_spawn on
+/// Darwin), so an open(2) that blocks, e.g. a FIFO with no peer, blocks the spawn.
 #[cfg(unix)]
 fn open_stdio_path(
     actions: &mut PosixSpawnActions,
@@ -662,9 +657,7 @@ fn open_stdio_path(
     Ok(Ok(()))
 }
 
-/// Opening a directory read-only succeeds (only writing is refused), and a
-/// child handed one as stdin would just get EISDIR from every read(). Fail
-/// the spawn with that error instead.
+/// A read-only open of a directory succeeds; the child could only ever get EISDIR from it.
 pub fn reject_directory_stdio(fd: Fd, path: &[u8]) -> bun_sys::Result<()> {
     let stat = bun_sys::fstat(fd).map_err(|err| err.with_path(path))?;
     if bun_sys::S::ISDIR(stat.st_mode as _) {

@@ -7,11 +7,9 @@ import { join } from "node:path";
 const versionCmd = JSON.stringify([bunExe(), "--version"]);
 
 describe.skipIf(isWindows)("Bun.file() as stdio is opened without blocking the parent", () => {
-  // A bun that opens the path in its pre-exec child sits in Bun.spawn() until
-  // the fifo's other end is opened, so those calls run in a child bun and a
-  // regression is a timed-out test rather than a frozen runner. Killing that
-  // bun afterwards and opening each fifo's peer end once releases the pre-exec
-  // grandchild it left parked in open(2).
+  // On a regressed bun these spawns block, so they run in a child bun (a timed-out test, not a
+  // frozen runner). Afterwards it is killed and each fifo's peer end is opened once to release
+  // the pre-exec grandchild it leaves parked in open(2).
   const childBuns: Bun.Subprocess[] = [];
   const fifos: string[] = [];
   afterAll(() => {

@@ -545,6 +545,10 @@ static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int
         return -1;
     }
 
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SETSOCKOPT, fd, injected, unused)) return (int) injected;
+    (void)injected; (void)unused;
+
     return setsockopt_6_or_4(fd, ipv4, ipv6, &ttl, sizeof(ttl));
 }
 
@@ -683,6 +687,9 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out) {
     int option = is_recv ? SO_RCVBUF : SO_SNDBUF;
     if (size != 0) {
+        ssize_t injected = 0; int unused = 0;
+        if (US_FAULT_CHECK(US_FAULT_SETSOCKOPT, fd, injected, unused)) return (int) injected;
+        (void)injected; (void)unused;
 #ifdef _WIN32
         int err = setsockopt(fd, SOL_SOCKET, option, (const char *) &size, sizeof(size));
 #else

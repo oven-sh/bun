@@ -423,6 +423,8 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
+    /// The setsockopt(2) in `bsd_socket_buffer_size` and `bsd_socket_ttl_*`.
+    pub const SETSOCKOPT: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

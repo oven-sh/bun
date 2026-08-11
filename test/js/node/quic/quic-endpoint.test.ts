@@ -2,6 +2,7 @@
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
@@ -489,16 +490,25 @@ describe("endpoint UDP socket options", () => {
 
   // The options set after the socket exists can fail too; node reports that as
   // a bind failure, and the socket that was already created has to go away
-  // with the endpoint. Linux cannot drive this branch (it clamps oversized
-  // buffer requests instead of rejecting them), but XNU fails any request
-  // above kern.ipc.maxsockbuf with ENOBUFS. 2 ** 40 also has to be clamped to
-  // fit setsockopt's int on the way there; truncating it would ask for 0.
-  test.skipIf(!isMacOS)("a socket option the kernel rejects is reported as a bind failure", async () => {
+  // with the endpoint. Neither Linux nor current macOS rejects an oversized
+  // buffer request (and the TTL is range-checked before the call), so the
+  // setsockopt is failed by injection.
+  test.skipIf(isWindows || !fault.available())("a rejected socket option is reported as a bind failure", async () => {
+    const options = { address: "127.0.0.1:0", udpReceiveBufferSize: 65536 };
     const before = udpSockets().length;
-    const outcome = await listenOutcome({ address: "127.0.0.1:0", udpReceiveBufferSize: 2 ** 40 });
-    expect({ outcome, leakedSockets: udpSockets().length - before }).toEqual({
+    fault.set({ syscall: "setsockopt", action: "errno", errno: "ENOBUFS" });
+    let outcome;
+    try {
+      outcome = await listenOutcome(options);
+    } finally {
+      fault.clear();
+    }
+    // The rule was one-shot, so the same options bind once it has fired.
+    const afterwards = await listenOutcome(options);
+    expect({ outcome, leakedSockets: udpSockets().length - before, afterwards }).toEqual({
       outcome: bindFailure(constants.errno.ENOBUFS),
       leakedSockets: 0,
+      afterwards: { bound: true, port: expect.any(Number) },
     });
   });
 });

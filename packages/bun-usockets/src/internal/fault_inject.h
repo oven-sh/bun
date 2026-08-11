@@ -54,6 +54,12 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* The setsockopt(2) behind bsd_socket_buffer_size and bsd_socket_ttl_*
+     * (node:dgram's setters, node:quic's endpoint options). Linux and current
+     * macOS accept oversized buffer requests instead of failing them, and the
+     * TTL range is checked before the call, so the failure path is unreachable
+     * without injection. Only US_FAULT_ERRNO applies. */
+    US_FAULT_SETSOCKOPT,
     US_FAULT_COUNT
 };
 

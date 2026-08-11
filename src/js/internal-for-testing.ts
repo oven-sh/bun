@@ -609,7 +609,8 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "setsockopt";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

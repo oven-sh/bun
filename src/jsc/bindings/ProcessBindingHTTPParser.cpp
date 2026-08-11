@@ -1,16 +1,33 @@
 #include "ProcessBindingHTTPParser.h"
 #include "ZigGlobalObject.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "llhttp/llhttp.h"
 
 namespace Bun {
 
 using namespace JSC;
 
+// Lazy property builder: exceptions must not propagate into
+// reifyStaticProperty, which performs no exception check.
+static JSArray* constructMethodsArray(VM& vm, JSGlobalObject* globalObject, unsigned length)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSArray* methods = constructEmptyArray(globalObject, nullptr, length);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return nullptr;
+    }
+    return methods;
+}
+
 static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
 
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, 35);
+    JSArray* methods = constructMethodsArray(vm, globalObject, 35);
+    if (!methods) [[unlikely]]
+        return jsUndefined();
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \
@@ -25,7 +42,9 @@ static JSValue ProcessBindingHTTPParser_allMethods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
 
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, 47);
+    JSArray* methods = constructMethodsArray(vm, globalObject, 47);
+    if (!methods) [[unlikely]]
+        return jsUndefined();
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \

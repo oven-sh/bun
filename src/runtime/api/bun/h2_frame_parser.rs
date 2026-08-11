@@ -8271,9 +8271,7 @@ impl H2FrameParser {
         Ok(JSValue::js_number(result as f64))
     }
 
-    /// Lowest id of this side's parity (RFC 9113 §5.1.1: even for a server, odd for a client)
-    /// above `last_stream_id`. Every path that stores into `last_stream_id` bounds it by
-    /// `MAX_STREAM_ID` (31-bit wire ids, `set_next_stream_id` below), so the step cannot overflow.
+    /// First id of this side's parity above `last_stream_id`, which never exceeds `MAX_STREAM_ID`.
     fn get_next_stream_id(&self) -> u32 {
         let stream_id = self.last_stream_id.get();
         if self.is_server.get() {
@@ -8289,12 +8287,7 @@ impl H2FrameParser {
         }
     }
 
-    /// Node hands `setNextStreamID(id)` to `nghttp2_session_set_next_stream_id`, which ignores an
-    /// id of the peer's parity, one that does not fit in 31 bits (node passes an int32) and one
-    /// below the current next id (the JS wrapper already threw on non-numbers and on ids outside
-    /// 1..=2^32-1). Match that instead of rounding the id to this side's parity or moving the
-    /// counter back over ids already used on the wire. An id equal to the current next id changes
-    /// nothing in either implementation.
+    /// Node's setNextStreamID is `nghttp2_session_set_next_stream_id`: invalid ids are ignored.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_next_stream_id(
         this: &Self,
@@ -8313,8 +8306,7 @@ impl H2FrameParser {
         {
             return Ok(JSValue::UNDEFINED);
         }
-        // Same parity as, and above, the current next id: at least last_stream_id + 2, and
-        // get_next_stream_id() steps from it to exactly next_stream_id.
+        // Above the next id with this side's parity, so this still moves `last_stream_id` forward.
         this.last_stream_id.set(next_stream_id - 2);
         Ok(JSValue::UNDEFINED)
     }

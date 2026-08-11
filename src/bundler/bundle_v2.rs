@@ -6838,9 +6838,7 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                // Only records `resolve_import_records` queued a module for carry a
-                // loader; the rest (internal, external, unresolved, plugin-resolved)
-                // get their source index elsewhere.
+                // Set by `resolve_import_records` on every record it queued a module for.
                 let Some(loader) = record.loader else {
                     continue;
                 };

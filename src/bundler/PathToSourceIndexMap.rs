@@ -22,22 +22,15 @@ impl PathLike for bun_paths::fs::Path<'_> {
 
 pub(crate) type GetOrPutResult<'a, V> = bun_collections::hash_map::GetOrPutResult<'a, V>;
 
-/// A module is identified by its resolved path plus the loader the import asked
-/// for: `import a from "./x.json" with { type: "text" }` and `import b from
-/// "./x.json"` are two different modules. Nearly every path is only ever
-/// requested with one loader, so that first registration lives in `by_path`;
-/// further loaders for the same path go in `by_loader`, allocated the first time
-/// a build needs it.
-///
-/// `V` is a source index in the module graph (`PathToSourceIndexMap`), or the
-/// pending `ParseTask` while one file's imports are being resolved
-/// (`bundle_v2::ResolveQueue`).
+/// Keyed by resolved path plus the loader the import asked for, so `./x.json`
+/// imported `with { type: "text" }` and imported plainly are two modules.
 #[derive(Default)]
 pub struct ModuleMap<V> {
+    /// The first loader registered for each path. Nearly every path only ever has one.
     by_path: StringHashMap<FirstRegistered<V>>,
+    /// Further loaders for paths already in `by_path`.
     by_loader: Option<Box<EnumMap<Loader, StringHashMap<V>>>>,
-    /// The dev server's IncrementalGraph identifies files by path alone, so it
-    /// keeps one module per path no matter which loader each import asked for.
+    /// The dev server's IncrementalGraph is keyed by path alone.
     pub(crate) one_module_per_path: bool,
 }
 
@@ -50,9 +43,7 @@ struct FirstRegistered<V> {
 pub type PathToSourceIndexMap = ModuleMap<IndexInt>;
 
 impl<V: Copy + Default> ModuleMap<V> {
-    /// The first module registered for `text`, whatever loader requested it.
-    /// For callers that identify a module by path alone (entry points, the dev
-    /// server, dual-package `secondary_path` lookups).
+    /// The first module registered for `text`, whatever loader it was registered with.
     pub(crate) fn get(&self, text: &[u8]) -> Option<V> {
         self.by_path.get(text).map(|first| first.value)
     }
@@ -75,8 +66,6 @@ impl<V: Copy + Default> ModuleMap<V> {
         loader: Loader,
     ) -> Result<GetOrPutResult<'_, V>, bun_alloc::AllocError> {
         let one_module_per_path = self.one_module_per_path;
-        // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so the key is
-        // duped on insert. Revisit once StringHashMap gains a borrowed-key variant.
         let first = self.by_path.get_or_put(text)?;
         if !first.found_existing {
             first.value_ptr.loader = loader;
@@ -100,8 +89,7 @@ impl<V: Copy + Default> ModuleMap<V> {
         Ok(())
     }
 
-    /// Forgets every module registered for `text`. `by_loader` entries are only
-    /// reachable through the path's `by_path` entry, so they go too.
+    /// Forgets every module registered for `text`, under any loader.
     pub fn remove(&mut self, text: &[u8]) -> bool {
         let mut removed = self.by_path.remove(text).is_some();
         if let Some(by_loader) = &mut self.by_loader {
@@ -121,9 +109,7 @@ impl<V: Copy + Default> ModuleMap<V> {
         self.by_loader = None;
     }
 
-    /// `(path, value)` for every registered module. The first module registered
-    /// for each path comes before any registered for the same path under another
-    /// loader.
+    /// `(path, value)` for every registered module, `by_path` entries first.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], V)> {
         let first = self
             .by_path

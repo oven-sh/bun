@@ -1,7 +1,5 @@
-import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
-
-setDefaultTimeout(30_000);
 
 let registry: VerdaccioRegistry;
 

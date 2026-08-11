@@ -409,16 +409,32 @@ describe("web worker", () => {
     });
 
     // A worker posting faster than the parent can deserialize must not pin the
-    // parent inside one drain: its timers and I/O still get their turn.
+    // parent inside one drain: a drain task delivers a bounded batch and posts the
+    // rest to the next loop iteration, so timers and I/O get their turn in between.
     test("a message flood from a worker does not starve the parent's event loop", async () => {
-      const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
-        (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
+      const total = 1500; // more than one drain task's budget (drainBatchLimit in WorkerMessagingProxy.cpp)
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const src = `onmessage = ({ data: flag }) => {
+        for (let i = 0; i < ${total}; i++) postMessage(i);
+        Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
+      }`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
-      w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
-      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      const delivered = Promise.withResolvers<void>();
+      w.onmessage = () => {
+        if (++received === total) delivered.resolve();
+      };
+      w.postMessage(flag);
+      // Block until the whole flood sits in the parent's inbox, so the first drain task
+      // starts out with more than its budget no matter how fast either thread is.
+      Atomics.wait(flag, 0, 0, 30_000);
+      expect(Atomics.load(flag, 0)).toBe(1);
+      // Resumes inside the first drain task. An immediate armed there runs as soon as
+      // that task ends, before the continuation it posted delivers the next batch.
+      await once(w, "message");
+      await new Promise<void>(r => setImmediate(r));
+      expect(received).toBeLessThan(total);
+      await delivered.promise;
       w.terminate();
       await once(w, "close");
     });

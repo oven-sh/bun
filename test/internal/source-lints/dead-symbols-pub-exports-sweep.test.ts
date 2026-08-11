@@ -108,6 +108,9 @@ test("orphaned files stay deleted", () => {
     "src/fixtures_example.com.html",
     "src/logo.svg",
     "src/favicon.png",
+    // zlib_sys declares only `shared`; these were re-exports nothing imported
+    "src/zlib_sys/posix.rs",
+    "src/zlib_sys/win32.rs",
   ];
   const tree = headTree();
   const resurrected = gone.filter(p => tree.has(p));

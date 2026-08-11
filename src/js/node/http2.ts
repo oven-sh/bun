@@ -2082,6 +2082,16 @@ class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback] = setImmediate;
+  // Defined on the base class like node's, so a server session has it too (there it picks the
+  // id of the next pushed stream):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1423
+  setNextStreamID(id) {
+    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
+
+    validateNumber(id, "id");
+    if (id <= 0 || id > kMaxStreams) throw $ERR_OUT_OF_RANGE("id", `> 0 and <= ${kMaxStreams}`, id);
+    this[bunHTTP2Native]?.setNextStreamID(id);
+  }
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
       case "stream": {
@@ -5675,13 +5685,6 @@ class ClientHttp2Session extends Http2Session {
   ref() {
     const socket = this[bunHTTP2Socket];
     if (typeof socket?.ref === "function") return socket.ref();
-  }
-  setNextStreamID(id) {
-    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-
-    validateNumber(id, "id");
-    if (id <= 0 || id > kMaxStreams) throw $ERR_OUT_OF_RANGE("id", `> 0 and <= ${kMaxStreams}`, id);
-    this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
     // node's setStreamTimeout: the session owns its own unref'd idle timer under kTimeout

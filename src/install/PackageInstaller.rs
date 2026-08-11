@@ -1740,25 +1740,20 @@ impl<'a> PackageInstaller<'a> {
             // into cache, then install into node_modules
             if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
                 if installer.patched_package_missing_from_cache(self.manager_mut(), package_id) {
-                    let task: *mut PatchTask = PatchTask::new_apply_patch_hash(
+                    let mut task = PatchTask::new_apply_patch_hash(
                         self.manager_mut(),
                         package_id,
                         patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // we hold the only pointer until `enqueue_patch_task` takes ownership.
-                    if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback }
-                    {
+                    if let patch_install::Callback::Apply(apply) = &mut task.callback {
                         apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,
                             tree_id: self.current_tree_id,
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
-                    // ownership transfers to the patch-task fifo here.
-                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
+                    package_manager::enqueue_patch_task(self.manager_mut(), task);
                     return;
                 }
             }

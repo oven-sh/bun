@@ -1025,6 +1025,32 @@ impl<'a> PackageInstall<'a> {
             == self.package_name.slice(&self.lockfile.buffers.string_bytes)
     }
 
+    /// Whether the source is a `file:` folder that contains the destination
+    /// `node_modules` (e.g. `"pkg": "file:../"`). Walking such a source must
+    /// skip `node_modules`: it would mirror installed packages into the
+    /// destination and race the async deletion of the renamed previous install.
+    fn source_folder_contains_destination(&self, destination_dir: &Dir) -> bool {
+        // Only `file:` folder sources resolve relative to the cwd.
+        if self.cache_dir != Fd::cwd() {
+            return false;
+        }
+        // Compare fd-derived paths: the destination can sit behind a workspace
+        // symlink (node_modules/a -> packages/a), which lexical paths miss.
+        let Ok(source_dir) = open_dir(self.cache_dir, self.cache_dir_subpath) else {
+            return false;
+        };
+        let mut source_buf = bun_paths::path_buffer_pool::get();
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
+        let (Ok(source), Ok(node_modules_dir)) = (
+            source_dir.get_fd_path(&mut source_buf),
+            destination_dir.get_fd_path(&mut dest_buf),
+        ) else {
+            return false;
+        };
+        path::resolve_path::is_parent_or_equal(source, node_modules_dir)
+            != path::resolve_path::ParentEqual::Unrelated
+    }
+
     // ───────────────────────────── install backends ─────────────────────────────
 
     #[cfg(target_os = "macos")]
@@ -1036,10 +1062,16 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
+        let skip_dirs: &[&OSPathSlice] = if self.source_folder_contains_destination(destination_dir)
+        {
+            &[bun_paths::os_path_literal!("node_modules")]
+        } else {
+            &[]
+        };
         let mut walker_ = match walker_skippable::walk(
             cached_package_dir.fd(),
             &[] as &[&OSPathSlice],
-            &[] as &[&OSPathSlice],
+            skip_dirs,
         ) {
             Ok(w) => w,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
@@ -1105,6 +1137,8 @@ impl<'a> PackageInstall<'a> {
         };
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
+            // `install()` falls back to copyfile only on `Err(NotSupported)`.
+            Err(crate::Error::NotSupported) => return Err(crate::Error::NotSupported),
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         };
 
@@ -1114,6 +1148,12 @@ impl<'a> PackageInstall<'a> {
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
+        if self.source_folder_contains_destination(destination_dir) {
+            // A whole-directory clone cannot skip `node_modules`; the
+            // per-directory walk can.
+            return self.install_with_clonefile_each_dir(destination_dir);
+        }
+
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
                 let slash = slash as usize;
@@ -1179,29 +1219,12 @@ impl<'a> PackageInstall<'a> {
             Err(err) => return InstallResult::fail(err, Step::OpeningCacheDir, None),
         };
 
-        // `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
-        #[cfg(windows)]
-        const NODE_MODULES_LIT: &OSPathSlice = &[
-            b'n' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'e' as u16,
-            b'_' as u16,
-            b'm' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'u' as u16,
-            b'l' as u16,
-            b'e' as u16,
-            b's' as u16,
-        ];
-        #[cfg(not(windows))]
-        const NODE_MODULES_LIT: &OSPathSlice = b"node_modules";
-        let skip_dirs: &[&OSPathSlice] = if method == Method::Symlink
+        let skip_dirs: &[&OSPathSlice] = if (method == Method::Symlink
             && self.cache_dir_subpath.len() == 1
-            && self.cache_dir_subpath.as_bytes()[0] == b'.'
+            && self.cache_dir_subpath.as_bytes()[0] == b'.')
+            || self.source_folder_contains_destination(destination_dir)
         {
-            &[NODE_MODULES_LIT]
+            &[bun_paths::os_path_literal!("node_modules")]
         } else {
             &[]
         };

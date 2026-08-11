@@ -3693,47 +3693,42 @@ pub mod args {
                 ..Default::default()
             };
             arguments.eat();
-            'parse: {
-                let Some(mut current) = arguments.next() else {
-                    break 'parse;
-                };
-                match &args.buffer {
-                    // fs.write(fd, buffer[, offset[, length[, position]]], callback)
-                    StringOrBuffer::Buffer(_) => {
-                        if current.is_undefined_or_null() || current.is_function() {
-                            break 'parse;
-                        }
+            match &args.buffer {
+                // fs.write(fd, buffer[, offset[, length[, position]]], callback)
+                //
+                // The slots are positional: one holding `undefined`, `null` or a
+                // non-number takes its default and the following slots are still
+                // read, as in Node's `fs.writeSync`:
+                // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L893-L900
+                StringOrBuffer::Buffer(buffer) => {
+                    let buf_len = buffer.slice().len() as u64;
+                    let offset = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+                    if !offset.is_undefined_or_null() {
                         args.offset = u64::try_from(validators::validate_integer(
                             ctx,
-                            current,
+                            offset,
                             "offset",
                             Some(0),
-                            Some(9007199254740991),
+                            Some(bun_jsc::MAX_SAFE_INTEGER),
                         )?)
                         .expect("infallible: validated range");
-                        arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
-                        }
-                        let length = current.to_int64();
-                        let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
-                        let max_offset = buf_len as i64;
-                        if args.offset as i64 > max_offset {
-                            return Err(ctx.throw_range_error(
-                                args.offset as f64,
-                                bun_jsc::RangeErrorOptions {
-                                    field_name: b"offset",
-                                    max: max_offset,
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
+                    }
+                    if args.offset > buf_len {
+                        return Err(ctx.throw_range_error(
+                            args.offset as f64,
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"offset",
+                                max: buf_len as i64,
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    // `args.length` defaults to the rest of the buffer.
+                    let length = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+                    if length.is_number() {
+                        let length = length.to_int64();
+                        let max_len = (buf_len - args.offset).min(i32::MAX as u64) as i64;
+                        if length < 0 || length > max_len {
                             return Err(ctx.throw_range_error(
                                 length as f64,
                                 bun_jsc::RangeErrorOptions {
@@ -3744,45 +3739,34 @@ pub mod args {
                                 },
                             ));
                         }
-                        args.length = u64::try_from(length).expect("int cast");
-                        arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
-                        }
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
-                            args.position = Some(position);
-                        }
-                        arguments.eat();
+                        args.length = length as u64;
                     }
-                    // fs.write(fd, string[, position[, encoding]], callback)
-                    _ => {
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
-                            args.position = Some(position);
-                        }
-                        // Node consumes the position slot whatever its type
-                        // (null, undefined, a non-number); the encoding is
-                        // strictly the next argument.
-                        arguments.eat();
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if current.is_string() {
-                            args.encoding = Encoding::assert(current, ctx, args.encoding)?;
-                            arguments.eat();
-                            // `bv` was converted to UTF-8 before the encoding
-                            // argument was parsed; re-encode it now. Node
-                            // treats the "buffer" encoding name as UTF-8 here.
-                            if !matches!(args.encoding, Encoding::Utf8 | Encoding::Buffer) {
-                                if let Some(encoded) =
-                                    StringOrBuffer::from_js_with_encoding(ctx, bv, args.encoding)?
-                                {
-                                    args.buffer = encoded;
-                                }
+                    if let Some(position @ 0..) = arguments.next_eat().and_then(i52::offset_from_js)
+                    {
+                        args.position = Some(position);
+                    }
+                }
+                // fs.write(fd, string[, position[, encoding]], callback)
+                //
+                // Node consumes the position slot whatever its type (null,
+                // undefined, a non-number); the encoding is strictly the next
+                // argument.
+                _ => {
+                    if let Some(position @ 0..) = arguments.next_eat().and_then(i52::offset_from_js)
+                    {
+                        args.position = Some(position);
+                    }
+                    let encoding = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+                    if encoding.is_string() {
+                        args.encoding = Encoding::assert(encoding, ctx, args.encoding)?;
+                        // `bv` was converted to UTF-8 before the encoding
+                        // argument was parsed; re-encode it now. Node
+                        // treats the "buffer" encoding name as UTF-8 here.
+                        if !matches!(args.encoding, Encoding::Utf8 | Encoding::Buffer) {
+                            if let Some(encoded) =
+                                StringOrBuffer::from_js_with_encoding(ctx, bv, args.encoding)?
+                            {
+                                args.buffer = encoded;
                             }
                         }
                     }

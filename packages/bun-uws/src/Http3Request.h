@@ -131,7 +131,9 @@ private:
         for (unsigned char c : token) {
             if (!isLowercaseTokenByte(c)) return true;
         }
-        if (value.find_first_of(std::string_view{"\0\r\n", 3}) != std::string_view::npos) return true;
+        for (unsigned char c : value) {
+            if (c == '\0' || c == '\r' || c == '\n') return true;
+        }
         /* Connection-specific fields have no meaning outside HTTP/1 (§4.2). */
         return name == "connection" || name == "keep-alive" || name == "proxy-connection"
             || name == "transfer-encoding" || name == "upgrade";

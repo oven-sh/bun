@@ -1,5 +1,7 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 let server;
 let requestCount = 0;
@@ -136,6 +138,127 @@ describe("fetch() rejects instead of throwing synchronously when option conversi
         } as any),
       `${name}-BOOM`,
     );
+  });
+});
+
+// Every early exit in fetch() (bad arguments, unsupported scheme, unresolvable
+// blob:, pre-aborted signal, unreadable Bun.file() body, ...) returns an already
+// rejected promise. Those promises used to be created without notifying the VM,
+// so when nothing handled them the process printed nothing and exited 0.
+describe.concurrent("fetch() early rejections are reported when unhandled", () => {
+  async function runUnhandled(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const cases: [name: string, code: string, expectedStderr: string][] = [
+    ["no arguments", `fetch()`, "fetch() expects a string but received no arguments"],
+    ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
+    ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
+    ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],
+    [
+      "revoked blob: url",
+      `const url = URL.createObjectURL(new Blob(["x"])); URL.revokeObjectURL(url); fetch(url);`,
+      "Failed to resolve blob:",
+    ],
+    ["data: url without a comma", `fetch("data:text/plain")`, "failed to fetch the data URL"],
+    ["data: url with invalid base64", `fetch("data:text/plain;base64,@@@")`, "failed to fetch the data URL"],
+    ["url toString() throws", `fetch({ toString() { throw new Error("UBOOM"); } })`, "UBOOM"],
+    [
+      "GET with a body",
+      `fetch("http://127.0.0.1:1/", { body: "x" })`,
+      "fetch() request with GET/HEAD method cannot have body",
+    ],
+    [
+      "proxy combined with unix",
+      `fetch("http://127.0.0.1:1/", { proxy: "http://127.0.0.1:1/", unix: "/tmp/fetch-args.sock" })`,
+      "fetch() cannot use a proxy with a unix socket",
+    ],
+    ["invalid proxy url", `fetch("http://127.0.0.1:1/", { proxy: "not a url" })`, "fetch() proxy URL is invalid"],
+    [
+      "invalid proxy.url",
+      `fetch("http://127.0.0.1:1/", { proxy: { url: "not a url" } })`,
+      "fetch() proxy URL is invalid",
+    ],
+    [
+      "init.signal is not an AbortSignal",
+      `fetch("http://127.0.0.1:1/", { signal: 1 })`,
+      "signal is not of type AbortSignal",
+    ],
+    [
+      "input.signal is not an AbortSignal",
+      `fetch({ url: "http://127.0.0.1:1/", signal: 1 })`,
+      "signal is not of type AbortSignal",
+    ],
+    [
+      "already aborted signal",
+      `fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort() })`,
+      "The operation was aborted",
+    ],
+    [
+      "s3: request signing fails",
+      `fetch("s3://bucket/key", { method: "PATCH", s3: { accessKeyId: "a", secretAccessKey: "b" } })`,
+      "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+    ],
+    [
+      "s3: ReadableStream body with a non-upload method",
+      `fetch("s3://bucket/key", { method: "DELETE", body: new ReadableStream() })`,
+      "Only POST and PUT do support body when using S3",
+    ],
+  ];
+
+  test.each(cases)("%s", async (_name, code, expectedStderr) => {
+    const { stderr, exitCode } = await runUnhandled(code);
+    expect(stderr).toContain(expectedStderr);
+    expect(exitCode).toBe(1);
+  });
+
+  test("Bun.file() body that does not exist", async () => {
+    using dir = tempDir("fetch-unhandled-body", {});
+    const missing = JSON.stringify(join(String(dir), "missing.bin"));
+    const { stderr, exitCode } = await runUnhandled(
+      `fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(${missing}) })`,
+    );
+    expect(stderr).toContain("ENOENT");
+    expect(exitCode).toBe(1);
+  });
+
+  test("Bun.file() body that is a directory", async () => {
+    using dir = tempDir("fetch-unhandled-body", {});
+    const directory = JSON.stringify(String(dir));
+    const { stderr, exitCode } = await runUnhandled(
+      `fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(${directory}) })`,
+    );
+    expect(stderr).toContain("EISDIR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("the rejection is delivered to process.on('unhandledRejection')", async () => {
+    const { stdout, stderr, exitCode } = await runUnhandled(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(promise === returned, reason.code, reason.message);
+      });
+      const returned = fetch("gopher://example.com/");
+    `);
+    expect(stdout).toBe("true ERR_INVALID_ARG_VALUE protocol must be http:, https: or s3:\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a rejection that is handled is not reported", async () => {
+    const { stdout, stderr, exitCode } = await runUnhandled(`
+      process.on("unhandledRejection", () => console.log("unhandledRejection fired"));
+      fetch("gopher://example.com/").catch(err => console.log("caught:", err.message));
+    `);
+    expect(stdout).toBe("caught: protocol must be http:, https: or s3:\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -22,13 +22,14 @@ use core::ptr::NonNull;
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
 use crate::postgres::AuthenticationState;
 use crate::postgres::PostgresSQLQuery;
-use crate::postgres::PostgresSQLStatement;
 use crate::postgres::data_cell as DataCell;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
-use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
+use crate::postgres::postgres_sql_statement::{
+    Error as StatementError, StatementRef, Status as StatementStatus,
+};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
@@ -53,7 +54,8 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-type PreparedStatementsMap = StringHashMap<*mut PostgresSQLStatement>;
+// `None`: slot reserved by `get_or_put` in `PostgresSQLQuery::do_run`, statement not stored yet.
+type PreparedStatementsMap = StringHashMap<Option<StatementRef>>;
 
 pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
@@ -1410,10 +1412,6 @@ impl PostgresSQLConnection {
         unsafe {
             (*this).disconnect();
             (*this).stop_timers();
-            for stmt_ptr in (*this).statements.get().values() {
-                // statements map owns a ref to each statement.
-                PostgresSQLStatement::deref(*stmt_ptr);
-            }
             // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
 
             // `free_sensitive` is the C-string variant; here we
@@ -2975,15 +2973,10 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        if self
+                        // Releases the map's ref; the request still holds its own.
+                        let _ = self
                             .statements
-                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
-                            .is_some()
-                        {
-                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
-                            // request still holds its own ref so this cannot drop to 0.
-                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
-                        }
+                            .with_mut(|m| m.remove(&stmt.signature.name[..]));
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

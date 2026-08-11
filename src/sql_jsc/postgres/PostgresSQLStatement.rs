@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -7,6 +8,7 @@ use crate::postgres::signature::Signature;
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
+use bun_ptr::CellRefCounted;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types::int4;
@@ -19,8 +21,7 @@ bun_core::declare_scope!(Postgres, visible);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,
-    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
-    // [`Self::init_exact_refs`] at construction time.
+    // Private: every ref counted here is held by a `StatementRef`.
     ref_count: Cell<u32>,
     pub(crate) fields: Vec<protocol::FieldDescription>,
     pub(crate) parameters: Box<[int4]>,
@@ -49,6 +50,41 @@ impl Default for PostgresSQLStatement {
     }
 }
 
+/// One owned ref on a heap-allocated [`PostgresSQLStatement`]: `Clone` takes
+/// another ref, `Drop` releases it (freeing the statement with the last one).
+#[repr(transparent)]
+pub(crate) struct StatementRef(NonNull<PostgresSQLStatement>);
+
+impl StatementRef {
+    /// Adopts the ref that [`PostgresSQLStatement::default`] starts the count with.
+    #[inline]
+    pub(crate) fn new(statement: PostgresSQLStatement) -> Self {
+        debug_assert_eq!(statement.ref_count.get(), 1);
+        Self(bun_core::heap::alloc_nn(statement))
+    }
+
+    /// Live for as long as any `StatementRef` to this statement exists.
+    #[inline]
+    pub(crate) fn as_ptr(&self) -> *mut PostgresSQLStatement {
+        self.0.as_ptr()
+    }
+}
+
+impl Clone for StatementRef {
+    #[inline]
+    fn clone(&self) -> Self {
+        PostgresSQLStatement::ref_nn(self.0);
+        Self(self.0)
+    }
+}
+
+impl Drop for StatementRef {
+    #[inline]
+    fn drop(&mut self) {
+        PostgresSQLStatement::deref_nn(self.0);
+    }
+}
+
 pub enum Error {
     Protocol(protocol::ErrorResponse),
     PostgresError(AnyPostgresError),
@@ -72,17 +108,6 @@ impl Error {
 pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
-    /// Set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
-    #[inline]
-    pub(crate) fn init_exact_refs(&mut self, n: u32) {
-        debug_assert!(n > 0);
-        self.ref_count.set(n);
-    }
-
     pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

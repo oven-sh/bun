@@ -303,8 +303,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         ret
     }
 
-    /// `true` when no slot is claimed. Heap-spilled items of a
-    /// [`Fallback`] are not slots, so they do not count.
+    /// No slot is claimed (a [`Fallback`]'s heap-spilled items are not slots).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.used.find_first_set().is_none()
@@ -584,9 +583,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
     /// for `MaybeUninit`).
     ///
-    /// The returned allocation is leaked by this function; the per-thread
-    /// owner reclaims it into a `Box` (`Box<ManuallyDrop<Self>>` where the
-    /// slots must not be dropped along with it) and decides when it is freed.
+    /// The returned allocation is leaked; the caller reclaims it into a `Box`
+    /// and owns it from there.
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();

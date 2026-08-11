@@ -280,9 +280,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
-    /// BACKREF to this thread's pool for this server type (see
-    /// [`RequestPools`]); owned by the VM's `RuntimeState`, which outlives
-    /// every server on the thread.
+    /// BACKREF to the VM's pool for this server type ([`RequestPools`]).
     pub(crate) request_pool:
         *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
@@ -3408,16 +3406,10 @@ mod trampoline {
 
 // ─── per-monomorphization request pools ──────────────────────────────────────
 // One `RequestContext` pool per concrete (SSL, DEBUG, H3) server type, shared
-// by every server of that type on the thread. Rust generics cannot own
-// per-instantiation storage, so the pools are the fields of [`RequestPools`]
-// and the trait maps each server type to its field.
-//
-// THREAD-SAFETY: the pools MUST be per-thread, not process-global:
-// `hive_array::Fallback::{claim,put}` have no internal synchronization and
-// every Worker thread may host servers. The per-thread owner is the VM's
-// `RuntimeState` rather than a `thread_local!` so that a Worker's pools are
-// freed with its VM (see `impl Drop for RequestPools`) instead of being
-// stranded each time a worker thread that served HTTP exits.
+// by the servers of that type on the thread; the trait maps a server type to
+// its [`RequestPools`] field. The pools must be per-thread (`claim`/`put` are
+// unsynchronized and Workers host servers too); they belong to the VM rather
+// than a `thread_local!` so a Worker's do not outlive it.
 pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
     fn request_pool()
     -> *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
@@ -3431,10 +3423,8 @@ type RequestPool<const SSL: bool, const DEBUG: bool, const H3: bool> =
 type RequestPoolSlot<const SSL: bool, const DEBUG: bool, const H3: bool> =
     core::cell::OnceCell<Box<RequestPool<SSL, DEBUG, H3>>>;
 
-/// This thread's request pools; a field of `RuntimeState`, so they live
-/// exactly as long as the VM. Each ~816 KB pool is allocated the first time a
-/// server of its type is created on the thread (the H3 pools once an H3
-/// listener comes up).
+/// The VM's pools (`RuntimeState::request_pools`), each ~816 KB and allocated
+/// by the first server of its type (H3: the first H3 listener).
 #[derive(Default)]
 pub(crate) struct RequestPools {
     http: RequestPoolSlot<false, false, false>,
@@ -3460,27 +3450,17 @@ impl RequestPools {
             // reclaims that exact allocation.
             unsafe { bun_core::heap::take(pool.as_ptr()) }
         });
-        // `claim`/`put` take `&self`, so servers only need a shared pointer.
-        // It stays valid for as long as anything can still hold a context
-        // from the pool (see `Drop` below).
+        // `claim`/`put` take `&self`; valid until `Drop` below.
         &raw const **pool
     }
 }
 
-/// Runs when the VM is destroyed (`deinit_runtime_state`, after teardown has
-/// stopped every server and destroyed the JSC VM, so no context can be claimed
-/// or released any more).
-///
-/// A pool whose slots have all been released is freed: the normal case, and
-/// the one a Worker that served HTTP used to strand. A slot still claimed at
-/// this point is a context that was never released (a leak of its own: a
-/// request whose handler never settled, for instance), and its pool is kept
-/// instead, as the `thread_local!` that used to own the pools kept it: the
-/// context's drop glue must not run against the dead VM, and freeing the
-/// array under it would only turn everything the context owns into leaks
-/// reported against unrelated allocation sites, and a late release into a
-/// use-after-free. The pointer is parked in the thread's [`KEPT_POOLS`] so
-/// that LeakSanitizer still sees those contexts the way it did before.
+/// Runs with the VM's teardown, after every server was stopped and the JSC VM
+/// destroyed. A slot still claimed here is a context nothing released (its own
+/// leak); such a pool is kept, as the old `thread_local!` kept it, since the
+/// context's drop glue cannot run against the dead VM and freeing the array
+/// under it would only re-attribute what it owns in LeakSanitizer reports.
+/// [`KEPT_POOLS`] keeps those contexts reachable for LSan exactly as before.
 impl Drop for RequestPools {
     fn drop(&mut self) {
         fn release<const SSL: bool, const DEBUG: bool, const H3: bool>(
@@ -3508,10 +3488,7 @@ impl Drop for RequestPools {
 }
 
 thread_local! {
-    /// One entry per [`RequestPools`] field, written by its `Drop` for a pool
-    /// that is kept because contexts in it were never released. Only ever
-    /// read by LeakSanitizer; a thread hosts one VM, so each entry is written
-    /// at most once.
+    /// One entry per [`RequestPools`] field; only LeakSanitizer reads them.
     static KEPT_POOLS: [core::cell::Cell<*const ()>; 8] =
         const { [const { core::cell::Cell::new(core::ptr::null()) }; 8] };
 }

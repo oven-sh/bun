@@ -1,10 +1,10 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -1754,6 +1754,253 @@ test("tarball URL with query string resolves at runtime", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("1.0.0\n");
   expect(exitCode).toBe(0);
+});
+
+describe("long store entry names", () => {
+  // A store entry is named `<name>@<resolution>`. For tarball, folder and git
+  // packages the resolution is the user's path or URL, so the name can grow
+  // past NAME_MAX (255 bytes) and creating the entry fails with ENAMETOOLONG.
+  // Names longer than 200 bytes are therefore cut to 183 bytes and suffixed
+  // with `+` and the 16 hex digit wyhash (seed 0, `Bun.hash`) of the full
+  // name. The remaining 55 bytes are reserved for the peer-set suffix and the
+  // global store's `-<hash>` and `.tmp-<hash>` suffixes.
+  const maxVerbatimLength = 200;
+
+  function cutEntryName(fullName: string): string {
+    expect(Buffer.byteLength(fullName)).toBeGreaterThan(maxVerbatimLength);
+    return `${fullName.slice(0, 183)}+${Bun.hash(fullName).toString(16).padStart(16, "0")}`;
+  }
+
+  function entryPattern(entry: string, suffix: string): RegExp {
+    return new RegExp(`^${entry.replaceAll(/[.+]/g, "\\$&")}${suffix}$`);
+  }
+
+  test("local tarball and folder dependencies in a deep directory", async () => {
+    // Every path component is short; only the entry name, which embeds the
+    // whole relative path (257 bytes here), would exceed NAME_MAX.
+    const segment = Buffer.alloc(85, "d").toString();
+    const deep = `${segment}/${segment}/${segment}`;
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${deep}/bar-0.0.2.tgz`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
+        [`${deep}/pkg/package.json`]: JSON.stringify({ name: "folder-pkg", version: "1.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "long-specs",
+        dependencies: {
+          "bar": `file:./${deep}/bar-0.0.2.tgz`,
+          "folder-pkg": `file:./${deep}/pkg`,
+        },
+      }),
+    );
+
+    const tarballEntry = cutEntryName(`bar@.+${deep.replaceAll("/", "+")}+bar-0.0.2.tgz`);
+    const folderEntry = cutEntryName(`folder-pkg@file+${deep.replaceAll("/", "+")}+pkg`);
+    const expectedEntries = [tarballEntry, folderEntry, "node_modules"].sort();
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(await readdirSorted(bunDir)).toEqual(expectedEntries);
+    expect(
+      await Promise.all([
+        readlink(join(packageDir, "node_modules", "bar")),
+        readlink(join(packageDir, "node_modules", "folder-pkg")),
+        readlink(join(bunDir, "node_modules", "bar")),
+        file(join(packageDir, "node_modules", "bar", "package.json")).json(),
+        file(join(packageDir, "node_modules", "folder-pkg", "package.json")).json(),
+      ]),
+    ).toEqual([
+      join(".bun", tarballEntry, "node_modules", "bar"),
+      join(".bun", folderEntry, "node_modules", "folder-pkg"),
+      join("..", tarballEntry, "node_modules", "bar"),
+      { name: "bar", version: "0.0.2" },
+      { name: "folder-pkg", version: "1.0.0" },
+    ]);
+
+    // The name is derived from the `<name>@<resolution>` text alone, so a
+    // second install finds the same entries instead of creating new ones.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await readdirSorted(bunDir)).toEqual(expectedEntries);
+  });
+
+  test("remote tarball with a long URL in the global store", async () => {
+    const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+    const urlPath = `/${Buffer.alloc(220, "u").toString()}/no-deps.tgz`;
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== urlPath) {
+          return new Response("Not found", { status: 404 });
+        }
+        return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+      },
+    });
+    const url = `http://localhost:${server.port}${urlPath}`;
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: { "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);` },
+    });
+    await write(packageJson, JSON.stringify({ name: "long-tarball-url", dependencies: { "no-deps": url } }));
+
+    const entry = cutEntryName(`no-deps@${url.replaceAll(/[:/]/g, "+")}`);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(await readdirSorted(bunDir)).toEqual([entry, "node_modules"]);
+    // The project entry links into `<cache>/links/`, where the directory is
+    // the same cut name plus the entry hash (plus the staging suffix while it
+    // was being built).
+    expect(lstatSync(join(bunDir, entry)).isSymbolicLink()).toBe(true);
+    expect(basename(readlinkSync(join(bunDir, entry)))).toMatch(entryPattern(entry, "-[0-9a-f]{16}"));
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", entry, "node_modules", "no-deps"),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("names up to the limit are kept verbatim", async () => {
+    const name = Buffer.alloc(189, "n").toString();
+    // `<name>@file+pkg-a` is exactly 200 bytes, `<name>@file+pkg-bb` is 201.
+    const verbatimEntry = `${name}@file+pkg-a`;
+    expect(Buffer.byteLength(verbatimEntry)).toBe(maxVerbatimLength);
+    const cutEntry = cutEntryName(`${name}@file+pkg-bb`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "pkg-a/package.json": JSON.stringify({ name, version: "1.0.0" }),
+        "pkg-bb/package.json": JSON.stringify({ name, version: "2.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "entry-name-limit",
+        dependencies: { "dep-a": "file:./pkg-a", "dep-b": "file:./pkg-bb" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // (Folder packages are not linked into the `.bun/node_modules` fallback
+    // directory, so the store holds just the two entries.)
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual([verbatimEntry, cutEntry].sort());
+    expect(
+      await Promise.all([
+        readlink(join(packageDir, "node_modules", "dep-a")),
+        readlink(join(packageDir, "node_modules", "dep-b")),
+        file(join(packageDir, "node_modules", "dep-a", "package.json")).json(),
+        file(join(packageDir, "node_modules", "dep-b", "package.json")).json(),
+      ]),
+    ).toEqual([
+      join(".bun", verbatimEntry, "node_modules", name),
+      join(".bun", cutEntry, "node_modules", name),
+      { name, version: "1.0.0" },
+      { name, version: "2.0.0" },
+    ]);
+  });
+
+  test("names that only differ after the cut get separate entries", async () => {
+    const name = Buffer.alloc(200, "s").toString();
+    const entryOne = cutEntryName(`${name}@file+one`);
+    const entryTwo = cutEntryName(`${name}@file+two`);
+    expect(entryOne.slice(0, 183)).toBe(entryTwo.slice(0, 183));
+    expect(entryOne).not.toBe(entryTwo);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "one/package.json": JSON.stringify({ name, version: "1.0.0" }),
+        "two/package.json": JSON.stringify({ name, version: "2.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "same-cut-prefix",
+        dependencies: { "dep-one": "file:./one", "dep-two": "file:./two" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual([entryOne, entryTwo].sort());
+    expect(
+      await Promise.all([
+        readlink(join(packageDir, "node_modules", "dep-one")),
+        readlink(join(packageDir, "node_modules", "dep-two")),
+        file(join(packageDir, "node_modules", "dep-one", "package.json")).json(),
+        file(join(packageDir, "node_modules", "dep-two", "package.json")).json(),
+      ]),
+    ).toEqual([
+      join(".bun", entryOne, "node_modules", name),
+      join(".bun", entryTwo, "node_modules", name),
+      { name, version: "1.0.0" },
+      { name, version: "2.0.0" },
+    ]);
+  });
+
+  test("the peer-set suffix follows the cut name", async () => {
+    const name = Buffer.alloc(200, "p").toString();
+    const entry = cutEntryName(`${name}@file+with-peer`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "with-peer/package.json": JSON.stringify({
+          name,
+          version: "1.0.0",
+          peerDependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "cut-name-with-peer",
+        dependencies: { "with-peer": "file:./with-peer", "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = await readdirSorted(bunDir);
+    expect(entries).toEqual([
+      "no-deps@1.0.0",
+      "node_modules",
+      expect.stringMatching(entryPattern(entry, "\\+[0-9a-f]{16}")),
+    ]);
+    const entryWithPeer = entries[2];
+    expect(
+      await Promise.all([
+        readlink(join(bunDir, entryWithPeer, "node_modules", "no-deps")),
+        readlink(join(packageDir, "node_modules", "with-peer")),
+      ]),
+    ).toEqual([
+      join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
+      join(".bun", entryWithPeer, "node_modules", name),
+    ]);
+  });
 });
 
 describe("global virtual store", () => {

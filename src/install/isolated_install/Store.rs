@@ -344,6 +344,66 @@ pub mod entry {
         }
     }
 
+    /// Longest file name every supported filesystem accepts: 255 bytes on
+    /// Linux and macOS, 255 UTF-16 units on NTFS (never more than the UTF-8
+    /// byte count).
+    const NAME_MAX: usize = 255;
+    /// `+<16 hex>` appended by `StorePathFormatter` when the entry has peers.
+    const PEER_SUFFIX_LEN: usize = 1 + 16;
+    /// `-<16 hex>` appended by `GlobalStorePathFormatter`, plus the
+    /// `.tmp-<u64 hex>` / `.old-<u64 hex>` the installer appends to that
+    /// while publishing a global store entry.
+    const GLOBAL_STORE_SUFFIX_LEN: usize = (1 + 16) + (".tmp-".len() + 16);
+    /// A `<name>@<resolution>` longer than this is cut to `CUT_NAME_LEN` bytes
+    /// followed by `+<16 hex wyhash of the full text>`, so that a tarball URL,
+    /// folder path or git URL of any length yields an entry whose directory
+    /// name fits in NAME_MAX together with every suffix above.
+    const MAX_VERBATIM_NAME_LEN: usize = NAME_MAX - PEER_SUFFIX_LEN - GLOBAL_STORE_SUFFIX_LEN;
+    const CUT_NAME_LEN: usize = MAX_VERBATIM_NAME_LEN - (1 + 16);
+
+    /// `fmt::Write` sink for the `<name>@<resolution>` text: keeps the first
+    /// `MAX_VERBATIM_NAME_LEN` bytes, and the length and hash of all of it.
+    struct NameSink {
+        buf: [u8; MAX_VERBATIM_NAME_LEN],
+        len: usize,
+        hasher: bun_wyhash::Wyhash,
+    }
+
+    impl NameSink {
+        fn new() -> Self {
+            Self {
+                buf: [0; MAX_VERBATIM_NAME_LEN],
+                len: 0,
+                hasher: bun_wyhash::Wyhash::init(0),
+            }
+        }
+
+        fn write_to(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            if self.len <= MAX_VERBATIM_NAME_LEN {
+                return f.write_str(bun_core::str_utf8(&self.buf[..self.len]).ok_or(fmt::Error)?);
+            }
+            let mut cut = CUT_NAME_LEN;
+            while !bun_core::strings::is_on_char_boundary(&self.buf, cut) {
+                cut -= 1;
+            }
+            f.write_str(bun_core::str_utf8(&self.buf[..cut]).ok_or(fmt::Error)?)?;
+            write!(f, "+{:016x}", self.hasher.final_())
+        }
+    }
+
+    impl fmt::Write for NameSink {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if let Some(room) = self.buf.get_mut(self.len..) {
+                let n = bytes.len().min(room.len());
+                room[..n].copy_from_slice(&bytes[..n]);
+            }
+            self.len += bytes.len();
+            self.hasher.update(bytes);
+            Ok(())
+        }
+    }
+
     pub struct StorePathFormatter<'a> {
         pub(crate) entry_id: Id,
         pub(crate) store: &'a Store,
@@ -352,15 +412,25 @@ pub mod entry {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut name = NameSink::new();
+            self.write_name(&mut name)?;
+            name.write_to(f)?;
+
+            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
+            if peer_hash != PeerHash::NONE {
+                write!(f, "+{:016x}", peer_hash.cast())?;
+            }
+
+            Ok(())
+        }
+    }
+
+    impl<'a> StorePathFormatter<'a> {
+        /// Writes the untruncated `<name>@<resolution>` text.
+        fn write_name(&self, f: &mut impl fmt::Write) -> fmt::Result {
             use super::node::NodeColumns as _;
             let store = self.store;
-            let entries = store.entries.slice();
-            // derive(MultiArrayElement)-generated SliceExt accessors: `.items_peer_hash()`, `.items_node_id()`.
-            let entry_peer_hashes = entries.items_peer_hash();
-            let entry_node_ids = entries.items_node_id();
-
-            let peer_hash = entry_peer_hashes[self.entry_id.get() as usize];
-            let node_id = entry_node_ids[self.entry_id.get() as usize];
+            let node_id = store.entries.items_node_id()[self.entry_id.get() as usize];
             let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
 
             let string_buf = self.lockfile.buffers.string_bytes.as_slice();
@@ -405,10 +475,6 @@ pub mod entry {
                         pkg_res.fmt_store_path(string_buf),
                     )?;
                 }
-            }
-
-            if peer_hash != PeerHash::NONE {
-                write!(f, "+{:016x}", peer_hash.cast())?;
             }
 
             Ok(())

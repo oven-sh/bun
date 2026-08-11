@@ -45,8 +45,9 @@ const stubs = {
 
 const version = "1.0.0";
 const tagName = `bun-v${version}`;
-// Without a "publish" action the script only builds the packages for the machine it runs on.
+// Without a "publish" action the script builds the root package and the packages for the machine it runs on.
 const host = platforms.filter(({ os, arch }) => os === process.platform && arch === process.arch);
+const names = ["bun", ...host.map(({ bin }) => `@oven/${bin}`)];
 
 function serveAssets() {
   return Bun.serve({
@@ -74,12 +75,13 @@ async function uploadNpm(cwd: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), path.join(cwd, "scripts", "upload-npm.ts"), version],
     cwd,
-    env: bunEnv,
-    stdout: "ignore",
+    // src/console.ts adds debug output to stdout under any of these.
+    env: { ...bunEnv, GITHUB_ACTION: undefined, DEBUG: undefined, LOG_LEVEL: undefined, RUNNER_DEBUG: undefined },
+    stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  return { stderr, exitCode };
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 }
 
 function readPackageJson(cwd: string, name: string) {
@@ -92,9 +94,12 @@ test("the root package and every platform package link to the project's homepage
   using dir = releaseDir("links", assetsOn(server, bins));
   const cwd = String(dir);
 
-  const { stderr, exitCode } = await uploadNpm(cwd);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  expect(host).not.toBeEmpty();
+  expect(await uploadNpm(cwd)).toEqual({
+    stdout: names.map(name => `Building: ${name}@${version}\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 
   // npm shows these on the package pages and `npm bugs bun` / `npm repo bun` open them,
   // so `bun` and every `@oven/bun-*` package must carry the same URLs, and they must exist.
@@ -104,8 +109,6 @@ test("the root package and every platform package link to the project's homepage
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
   };
-  const names = ["bun", ...host.map(({ bin }) => `@oven/${bin}`)];
-  expect(names.length).toBeGreaterThan(1);
   const built = Object.fromEntries(
     names.map(name => {
       const { homepage, bugs, license, repository } = readPackageJson(cwd, name);

@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, gc } from "harness";
+import { bunEnv, bunExe, clearProxyEnv, gc, proxyFreeEnv, restoreProxyEnv } from "harness";
 import path from "path";
-import { clearProxyEnv, proxyFreeEnv, restoreProxyEnv } from "./proxy-stress-helpers";
 
 // Forwards an absolute-form request to its target and marks the response so
 // tests can tell it went through the proxy.
@@ -20,10 +19,9 @@ async function forward(request) {
 }
 
 let proxy, auth_proxy, server;
-// The in-process tests fetch localhost through an explicit `proxy:`, and
-// NO_PROXY applies to explicit proxies too; the proxies' upstream fetch()
-// would likewise honor an ambient HTTP_PROXY. `bunEnv` was captured before
-// this runs, so the subprocess tests spread `proxyFreeEnv` on top of it.
+// Cleared for the in-process fetches through the proxies below and for the
+// proxies' own upstream fetch(), which would otherwise follow an ambient
+// HTTP_PROXY. The subprocess tests spread `proxyFreeEnv` themselves.
 let savedProxyEnv;
 beforeAll(() => {
   savedProxyEnv = clearProxyEnv();

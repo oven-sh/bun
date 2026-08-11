@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
-import { tls as tlsCerts } from "harness";
+import { clearProxyEnv, proxyFreeEnv, restoreProxyEnv, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
@@ -17,16 +17,6 @@ const bunExe = harness.bunExe;
 const bunEnv = harness.bunEnv;
 const isDockerEnabled = harness.isDockerEnabled;
 
-// The in-process WebSocket tests below pass an explicit `proxy:` option targeting
-// 127.0.0.1 and expect the proxy to be hit. NO_PROXY applies to explicit proxies
-// too, so an ambient NO_PROXY=localhost,127.0.0.1,... would bypass the proxy and
-// break those assertions. The NO_PROXY test block further down spawns subprocesses
-// with an explicit env, so clearing the runner's value here doesn't affect it.
-const prevNoProxy = process.env.NO_PROXY;
-const prevNoProxyLower = process.env.no_proxy;
-process.env.NO_PROXY = "";
-process.env.no_proxy = "";
-
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
 let authProxy: net.Server;
@@ -36,8 +26,14 @@ let proxyPort: number;
 let authProxyPort: number;
 let wsPort: number;
 let wssPort: number;
+// The in-process tests connect to 127.0.0.1 through an explicit proxy and
+// assert on the proxy's response; an ambient NO_PROXY would bypass it. The
+// NO_PROXY block further down spawns subprocesses and sets up its own env.
+let savedProxyEnv: ReturnType<typeof clearProxyEnv>;
 
 beforeAll(async () => {
+  savedProxyEnv = clearProxyEnv();
+
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
   proxyPort = await startProxy(proxy);
@@ -98,8 +94,7 @@ afterAll(() => {
   authProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
-  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
-  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
+  restoreProxyEnv(savedProxyEnv);
 });
 
 describe("WebSocket proxy API", () => {
@@ -774,7 +769,7 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
          ws.onopen = () => { ws.close(); process.exit(0); };
          ws.onerror = () => { process.exit(1); };`,
       ],
-      env: { ...bunEnv, NO_PROXY: "127.0.0.1" },
+      env: { ...bunEnv, ...proxyFreeEnv, NO_PROXY: "127.0.0.1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -793,7 +788,7 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
          ws.onopen = () => { ws.close(); process.exit(0); };
          ws.onerror = () => { process.exit(1); };`,
       ],
-      env: { ...bunEnv, NO_PROXY: `127.0.0.1:${wsPort}` },
+      env: { ...bunEnv, ...proxyFreeEnv, NO_PROXY: `127.0.0.1:${wsPort}` },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -814,7 +809,7 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
          ws.onopen = () => { process.exit(1); };
          ws.onerror = () => { process.exit(0); };`,
       ],
-      env: { ...bunEnv, NO_PROXY: "other.host.com" },
+      env: { ...bunEnv, ...proxyFreeEnv, NO_PROXY: "other.host.com" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -833,7 +828,7 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
          ws.onopen = () => { ws.close(); process.exit(0); };
          ws.onerror = () => { process.exit(1); };`,
       ],
-      env: { ...bunEnv, NO_PROXY: "*" },
+      env: { ...bunEnv, ...proxyFreeEnv, NO_PROXY: "*" },
       stdout: "pipe",
       stderr: "pipe",
     });

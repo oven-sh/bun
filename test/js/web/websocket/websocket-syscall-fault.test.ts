@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows, proxyFreeEnv } from "harness";
 import crypto from "node:crypto";
 import tls from "node:tls";
 import { createConnectProxy, startProxy } from "./proxy-test-utils";
@@ -27,7 +27,9 @@ async function runWSClient(
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", NODE_TLS_REJECT_UNAUTHORIZED: "0", CA: certs.cert },
+    // proxyFreeEnv: the CONNECT proxy test below must not be bypassed by an
+    // ambient NO_PROXY covering 127.0.0.1.
+    env: { ...bunEnv, ...proxyFreeEnv, BUN_DEBUG_QUIET_LOGS: "1", NODE_TLS_REJECT_UNAUTHORIZED: "0", CA: certs.cert },
     stderr: "pipe",
     stdout: "pipe",
   });

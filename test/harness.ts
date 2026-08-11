@@ -128,6 +128,64 @@ export function bunExe() {
   return process.execPath;
 }
 
+/**
+ * The environment variables the HTTP client, WebSocket and S3 read to pick a
+ * proxy or bypass one. `bunEnv` keeps whatever the host has set in them (the
+ * harness itself needs them to reach the network on proxied machines), so a
+ * test that runs its own proxy against localhost has to clear them: NO_PROXY
+ * applies to an explicit `proxy:` option too, and a proxied host typically
+ * lists localhost in it.
+ */
+export const PROXY_ENV_KEYS = [
+  "NO_PROXY",
+  "no_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "HTTPS_PROXY",
+  "https_proxy",
+] as const;
+
+/**
+ * Clears {@link PROXY_ENV_KEYS} in this process for in-process fetch /
+ * WebSocket / S3 calls. Call it from `beforeAll` and pass the result to
+ * {@link restoreProxyEnv} in `afterAll`; subprocesses are unaffected (`bunEnv`
+ * was captured at import), spread {@link proxyFreeEnv} into their env instead.
+ */
+export function clearProxyEnv(): Record<string, string | undefined> {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of PROXY_ENV_KEYS) {
+    saved[key] = process.env[key];
+    // Assign rather than delete: only an assignment reaches the native env
+    // loader the HTTP client reads from. An empty value disables the
+    // proxy/bypass.
+    process.env[key] = "";
+  }
+  return saved;
+}
+
+export function restoreProxyEnv(saved: Record<string, string | undefined>) {
+  for (const key of PROXY_ENV_KEYS) {
+    process.env[key] = saved[key] ?? "";
+  }
+}
+
+/**
+ * Spread after `bunEnv` in a child's env to start it without any proxy
+ * configuration: `{ ...bunEnv, ...proxyFreeEnv, NO_PROXY: "localhost" }`.
+ * `Bun.spawn` drops `undefined` entries, so the variables are absent in the
+ * child rather than blank; that matters on Windows, where environment names
+ * are case-insensitive and a blank `HTTP_PROXY` would collide with the
+ * `http_proxy` a test sets next to it.
+ */
+export const proxyFreeEnv = {
+  NO_PROXY: undefined,
+  no_proxy: undefined,
+  HTTP_PROXY: undefined,
+  http_proxy: undefined,
+  HTTPS_PROXY: undefined,
+  https_proxy: undefined,
+} as const;
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }

@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, clearProxyEnv, isASAN, PROXY_ENV_KEYS, restoreProxyEnv, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -139,24 +139,13 @@ let httpsServer: Server;
 let httpProxyServer: { server: net.Server; url: string; log: string[] };
 let httpsProxyServer: { server: net.Server; url: string; log: string[] };
 
-// Tests in this file that call fetch() in-process expect the explicit `proxy`
-// option to be honored against localhost targets. An ambient NO_PROXY /
-// HTTP_PROXY / HTTPS_PROXY in the environment (as some CI/dev containers set)
-// would make those localhost fetches bypass the proxy and the assertions fail.
-// Clear them for the duration of this file; subprocess-based tests below pass
-// their own explicit `env` and are unaffected.
-//
-// Assign "" rather than `delete`: the HTTP client reads these via getenv, and
-// (matching Node semantics) only an assignment propagates to it — a `delete`
-// leaves the native value stale. An empty value disables the proxy/bypass.
-const savedProxyEnv: Record<string, string | undefined> = {};
-const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+// The in-process fetches below expect the explicit `proxy` option to be
+// honored against localhost targets; subprocess-based tests pass their own
+// proxy-free `env`.
+let savedProxyEnv: ReturnType<typeof clearProxyEnv>;
 
 beforeAll(async () => {
-  for (const key of PROXY_ENV_KEYS) {
-    savedProxyEnv[key] = process.env[key];
-    process.env[key] = "";
-  }
+  savedProxyEnv = clearProxyEnv();
 
   httpServer = Bun.serve({
     port: 0,
@@ -190,11 +179,7 @@ afterAll(() => {
   httpsServer.stop();
   httpProxyServer.server.close();
   httpsProxyServer.server.close();
-
-  for (const key of PROXY_ENV_KEYS) {
-    // Restore the prior value; an absent var maps back to "" (see note above).
-    process.env[key] = savedProxyEnv[key] ?? "";
-  }
+  restoreProxyEnv(savedProxyEnv);
 });
 
 for (const proxy_tls of [false, true]) {
@@ -1244,7 +1229,7 @@ for (const scheme of ["http", "https"] as const) {
         ...bunEnv,
         // The explicit per-request proxy must not be bypassed or rerouted
         // by ambient proxy configuration on CI hosts; clear them in the
-        // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
+        // spawn env so the child starts clean.
         NO_PROXY: undefined,
         no_proxy: undefined,
         HTTP_PROXY: undefined,

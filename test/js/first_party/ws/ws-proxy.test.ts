@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { gc, tls as tlsCerts } from "harness";
+import { clearProxyEnv, gc, restoreProxyEnv, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
@@ -10,15 +10,6 @@ import { createConnectProxy, createTLSConnectProxy, startProxy } from "../../web
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
 };
-
-// The tunneling tests connect to 127.0.0.1 through an explicit proxy and
-// expect the proxy to be hit. NO_PROXY applies to explicit proxies too, so an
-// ambient NO_PROXY covering loopback would make them bypass the proxy (same
-// as in ../../web/websocket/websocket-proxy.test.ts).
-const prevNoProxy = process.env.NO_PROXY;
-const prevNoProxyLower = process.env.no_proxy;
-process.env.NO_PROXY = "";
-process.env.no_proxy = "";
 
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
@@ -31,8 +22,13 @@ let authProxyPort: number;
 let httpsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
+// The tunneling tests connect to 127.0.0.1 through an explicit proxy and
+// assert on the proxy's response; an ambient NO_PROXY would bypass it.
+let savedProxyEnv: ReturnType<typeof clearProxyEnv>;
 
 beforeAll(async () => {
+  savedProxyEnv = clearProxyEnv();
+
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
   proxyPort = await startProxy(proxy);
@@ -98,8 +94,7 @@ afterAll(() => {
   httpsProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
-  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
-  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
+  restoreProxyEnv(savedProxyEnv);
 });
 
 describe("ws package proxy API", () => {

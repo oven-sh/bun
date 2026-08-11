@@ -5678,6 +5678,7 @@ pub(crate) fn jsdom_file_construct(
         blob.content_type_was_set.set(false);
     }
 
+    blob.calculate_estimated_byte_size();
     let blob_ = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new.
     unsafe { (*blob_).is_jsdom_file.set(true) };

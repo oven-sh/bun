@@ -32,6 +32,77 @@ describe("Native types report their size correctly", () => {
     delete globalThis.formData;
   });
 
+  it("File", () => {
+    const payload = Buffer.alloc(1024 * 1024, "abc");
+    const name = "file.bin";
+    const blobSize = estimateShallowMemoryUsageOf(new Blob([payload]));
+    expect(blobSize).toBeGreaterThanOrEqual(payload.byteLength);
+
+    // A File is a Blob plus a name, so it reports at least what the same Blob does.
+    const file = new File([payload], name);
+    expect(estimateShallowMemoryUsageOf(file)).toBeGreaterThanOrEqual(blobSize + name.length);
+
+    const type = "application/x-custom-type";
+    const typedBlobSize = estimateShallowMemoryUsageOf(new Blob([payload], { type }));
+    expect(estimateShallowMemoryUsageOf(new File([payload], name, { type }))).toBeGreaterThanOrEqual(
+      typedBlobSize + name.length,
+    );
+
+    // No bytes, only a name.
+    const longName = Buffer.alloc(64 * 1024, "n").toString();
+    expect(estimateShallowMemoryUsageOf(new File([], longName))).toBeGreaterThanOrEqual(longName.length);
+
+    // A single Blob part shares the source's store instead of copying it; the
+    // new File still has to report it.
+    expect(estimateShallowMemoryUsageOf(new File([file], name))).toBeGreaterThanOrEqual(payload.byteLength);
+
+    class MyFile extends File {}
+    const subclassed = new MyFile([payload], name);
+    expect(subclassed).toBeInstanceOf(MyFile);
+    expect(estimateShallowMemoryUsageOf(subclassed)).toBeGreaterThanOrEqual(payload.byteLength);
+
+    // FormData entries carry the File's reported size, like the Blob entries above.
+    const formData = new FormData();
+    const emptyFormDataSize = estimateShallowMemoryUsageOf(formData);
+    formData.append("file", file);
+    expect(estimateShallowMemoryUsageOf(formData)).toBeGreaterThanOrEqual(emptyFormDataSize + payload.byteLength);
+    expect(estimateShallowMemoryUsageOf(formData.get("file") as File)).toBeGreaterThanOrEqual(payload.byteLength);
+  });
+
+  it("File reports its bytes to the GC when constructed", async () => {
+    // Every File below is garbage as soon as it is constructed. Only the
+    // reported payload makes JSC collect during the loop; the cells alone
+    // (a few dozen bytes per 1 MiB payload) never reach a collection threshold.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { heapStats } = require("bun:jsc");
+          const payload = Buffer.alloc(1024 * 1024, "abc");
+          const created = 256;
+          for (let i = 0; i < created; i++) {
+            new File([payload], "file.bin");
+          }
+          console.log(JSON.stringify({ created, alive: heapStats().objectTypeCounts.Blob ?? 0 }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderrLines = stderr
+      .split("\n")
+      .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderrLines).toBe("");
+    const { created, alive } = JSON.parse(stdout);
+    // Seen: 6-23 alive (release through loaded debug+ASAN) once the payload is reported,
+    // and created + 1 when it is not, since nothing else ever triggers a collection.
+    expect(alive).toBeLessThan(created / 2);
+    expect(exitCode).toBe(0);
+  });
+
   it("Request", () => {
     var request = new Request("https://example.com", {
       body: Buffer.alloc(1024 * 1024 * 2, "yoo"),

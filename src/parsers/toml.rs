@@ -168,6 +168,7 @@ impl TOML {
             bump,
             stack_check: StackCheck::init(),
             meta: HashMap::default(),
+            keys: HashMap::default(),
             block: 0,
         };
         match parser.parse_root() {
@@ -1443,6 +1444,14 @@ struct Parser<'a, 'log> {
     stack_check: StackCheck,
     /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
     meta: HashMap<usize, Meta>,
+    /// `(table address, key text)` → the key's value, for every key
+    /// `insert_key` has added. Duplicate checks and dotted/header navigation
+    /// look up here rather than scanning the table's property list, which
+    /// made a table with n keys cost O(n²). Key text is always valid UTF-8
+    /// (the document is validated up front and escapes decode to UTF-8), so
+    /// byte equality is key equality whether the stored key EString ended up
+    /// 8-bit or UTF-16.
+    keys: HashMap<(usize, &'a [u8]), Expr>,
     /// Current definition block: bumped per table header and per inline table.
     block: u32,
 }
@@ -1516,11 +1525,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         let mut cur: *mut E::Object = root;
         for (i, seg) in path.iter().enumerate() {
             let last = i + 1 == path.len();
-            // SAFETY: `cur` always points at an E::Object inside the AST store,
-            // created earlier in this parse; the store lives in `self.bump`.
-            let cur_obj: &mut E::Object = unsafe { &mut *cur };
-            let existing = cur_obj.as_property(seg.text).map(|q| q.expr);
-            match existing {
+            match self.get_key(cur, seg.text) {
                 None => {
                     if last && is_aot {
                         let array = self.new_array(seg.pos, Kind::AotArray);
@@ -1667,9 +1672,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     ) -> PResult<()> {
         let mut cur = table;
         for seg in &path[..path.len() - 1] {
-            // SAFETY: `cur` points at a live E::Object in the AST store.
-            let cur_obj: &mut E::Object = unsafe { &mut *cur };
-            match cur_obj.as_property(seg.text).map(|q| q.expr) {
+            match self.get_key(cur, seg.text) {
                 None => {
                     let (expr, ptr) = self.new_table(seg.pos, Kind::Dotted);
                     self.insert_key(cur, *seg, expr)?;
@@ -1842,23 +1845,28 @@ impl<'a, 'log> Parser<'a, 'log> {
         Ok(ptr)
     }
 
+    /// The value stored under `key` in `table`, if any.
+    fn get_key(&self, table: *mut E::Object, key: &'a [u8]) -> Option<Expr> {
+        self.keys.get(&(table as usize, key)).copied()
+    }
+
     fn insert_key(&mut self, obj: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> PResult<()> {
-        // SAFETY: `obj` points at a live E::Object in the AST store.
-        let obj: &mut E::Object = unsafe { &mut *obj };
-        // The duplicate check must use the UTF-8 key bytes: `as_property`
-        // compares correctly against both 8-bit and UTF-16 stored keys.
-        if obj.as_property(seg.text).is_some() {
+        let slot = self.keys.get_or_put((obj as usize, seg.text))?;
+        if slot.found_existing {
             return Err(self
                 .scanner
                 .err_keyed(seg.pos, "Cannot redefine key", seg.text, ""));
         }
+        *slot.value_ptr = value;
+
         let key_loc = loc_of(seg.pos);
         let key_expr = if seg.text.is_ascii() {
             Expr::init(E::String::init(seg.text), key_loc)
         } else {
             Expr::init(E::String::init_re_encode_utf8(seg.text, self.bump), key_loc)
         };
-        obj.append_property(key_expr, value);
+        // SAFETY: `obj` points at a live E::Object in the AST store.
+        unsafe { (*obj).append_property(key_expr, value) };
         Ok(())
     }
 }

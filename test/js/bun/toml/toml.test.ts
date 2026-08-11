@@ -1,5 +1,6 @@
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Hand-written coverage beyond the official conformance suite
 // (toml-test-suite.test.ts): the JS-facing API surface, JS value mapping,
@@ -144,6 +145,15 @@ describe("JS value mapping", () => {
     expect(o[composed]).toBe(1);
     expect(o[decomposed]).toBe(2);
     expect(Object.keys(o)).toHaveLength(2);
+  });
+
+  test("non-ASCII keys are the same key whether spelled literally or escaped", () => {
+    expect(syntaxError('"é" = 1\n"\\u00E9" = 2').message).toBe("TOML Parse error: Cannot redefine key 'é'");
+    expect(syntaxError('[tbl]\n"日本" = 1\n"\\u65E5\\u672C" = 2').message).toBe(
+      "TOML Parse error: Cannot redefine key '日本'",
+    );
+    // The same spelling in different tables is not a duplicate.
+    expect(TOML.parse('[a]\n"é" = 1\n[b]\n"\\u00E9" = 2')).toEqual({ a: { é: 1 }, b: { é: 2 } });
   });
 
   test("non-ASCII and astral-plane content round-trips", () => {
@@ -454,7 +464,7 @@ describe("robustness", () => {
     expect((TOML.parse(`a = "${long}"`) as any).a).toBe(long);
   });
 
-  test("a table with many keys preserves every entry", () => {
+  test("a table with many keys preserves every entry and still rejects duplicates", () => {
     const n = 1000;
     let doc = "";
     for (let i = 0; i < n; i++) doc += `key_${i} = ${i}\n`;
@@ -462,7 +472,47 @@ describe("robustness", () => {
     expect(Object.keys(o)).toHaveLength(n);
     expect(o.key_0).toBe(0);
     expect(o[`key_${n - 1}`]).toBe(n - 1);
+
+    expect(syntaxError(doc + "key_0 = 1").message).toBe("TOML Parse error: Cannot redefine key 'key_0'");
+    expect(syntaxError(doc + `key_${n - 1} = 1`).message).toBe(`TOML Parse error: Cannot redefine key 'key_${n - 1}'`);
+    expect(syntaxError(doc + "[key_0]").message).toBe("TOML Parse error: Cannot redefine key 'key_0' as a table");
+    expect(syntaxError(doc + "key_0.x = 1").message).toBe("TOML Parse error: Cannot redefine key 'key_0'");
   });
+
+  // Inserting a key used to scan the whole table for a duplicate, and dotted
+  // keys and headers rescanned it to find their parent, so a table with n
+  // keys cost O(n^2): this document took 150s in a release build. n is sized
+  // so that cannot finish inside the spawn timeout, while the indexed parser
+  // needs ~12s even under debug+ASAN. The document is built with spread+join
+  // because per-line JS work is slower than the parse itself on debug builds.
+  test("a table with many keys parses in linear time", async () => {
+    const n = 200_000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const n = ${n};
+         const doc = "k" + [...Array(n).keys()].join(" = 1\\nk") + " = 1\\n";
+         const o = Bun.TOML.parse(doc);
+         console.log(JSON.stringify({ keys: Object.keys(o).length, first: o.k0, last: o["k" + (n - 1)] }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Debug builds may log benign noise on stderr; only real failures count.
+    const failures = /error|panic|assert|abort/i.test(stderr) ? stderr : "";
+    expect({ stdout: stdout.trim(), stderr: failures, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ keys: n, first: 1, last: 1 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 90_000);
 
   test("values survive garbage collection", () => {
     const doc = 'a = "héllo wörld 🌍"\nb = [1, 2.5, true, "x"]\n[t]\nc = 1979-05-27\n';

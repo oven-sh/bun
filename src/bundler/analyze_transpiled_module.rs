@@ -306,14 +306,16 @@ impl ModuleInfoDeserialized {
     }
 }
 
-/// Maximum element alignment appearing in the serialized format
+/// The widest element type appearing in the serialized format
 /// (`u32` / `StringID` / `FetchParameters`). The writer pads every multi-byte
-/// field to this boundary, and [`AlignedDup::new`] allocates the backing buffer
-/// at this alignment, so every typed sub-slice is properly aligned.
-const MODULE_INFO_ALIGN: usize = core::mem::align_of::<u32>();
+/// field to its alignment, and [`AlignedDup`] stores the record as a slice of
+/// these words, so every typed sub-slice is properly aligned.
+type AlignWord = u32;
+
+const MODULE_INFO_ALIGN: usize = core::mem::align_of::<AlignWord>();
 
 // Compile-time guard: if a wider element type is ever added to the format,
-// bump `MODULE_INFO_ALIGN` accordingly.
+// widen `AlignWord` accordingly.
 const _: () = {
     assert!(core::mem::align_of::<StringID>() <= MODULE_INFO_ALIGN);
     assert!(core::mem::align_of::<FetchParameters>() <= MODULE_INFO_ALIGN);
@@ -321,30 +323,27 @@ const _: () = {
 };
 
 /// Owned, immutable, [`MODULE_INFO_ALIGN`]-aligned heap copy of a serialized
-/// record; freed on drop.
-struct AlignedDup(NonNull<[u8]>);
+/// record. The `Box<[AlignWord]>` is what provides the alignment; `len` is the
+/// record's byte length, since the final word may be only partially used.
+struct AlignedDup {
+    words: Box<[AlignWord]>,
+    len: usize,
+}
 
 impl AlignedDup {
     fn new(source: &[u8]) -> Self {
-        if source.is_empty() {
-            // Non-null and well-aligned, so `&*self` is valid; `drop` skips
-            // the dealloc for len 0.
-            let dangling = const {
-                NonNull::new(core::ptr::without_provenance_mut(MODULE_INFO_ALIGN)).unwrap()
-            };
-            return AlignedDup(NonNull::slice_from_raw_parts(dangling, 0));
+        let (full, rest) = source.as_chunks::<{ size_of::<AlignWord>() }>();
+        let mut words = Vec::with_capacity(full.len() + usize::from(!rest.is_empty()));
+        words.extend(full.iter().map(|word| AlignWord::from_ne_bytes(*word)));
+        if !rest.is_empty() {
+            let mut last = [0u8; size_of::<AlignWord>()];
+            last[..rest.len()].copy_from_slice(rest);
+            words.push(AlignWord::from_ne_bytes(last));
         }
-        let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
-            .expect("module-info buffer too large");
-        // SAFETY: layout has non-zero size (checked above).
-        let ptr = unsafe { std::alloc::alloc(layout) };
-        let Some(ptr) = NonNull::new(ptr) else {
-            std::alloc::handle_alloc_error(layout)
-        };
-        // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
-        // valid readable slice; the regions cannot overlap.
-        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr.as_ptr(), source.len()) };
-        AlignedDup(NonNull::slice_from_raw_parts(ptr, source.len()))
+        AlignedDup {
+            words: words.into_boxed_slice(),
+            len: source.len(),
+        }
     }
 }
 
@@ -353,27 +352,7 @@ impl core::ops::Deref for AlignedDup {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        // SAFETY: `new` produced either `len` initialized bytes or a non-null,
-        // aligned, len-0 pointer; nothing writes through it afterwards and it
-        // is freed only by `drop`, which cannot run while `&self` is borrowed.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl Drop for AlignedDup {
-    fn drop(&mut self) {
-        let len = self.0.len();
-        if len == 0 {
-            return;
-        }
-        // SAFETY: `new` allocated every non-empty dup with exactly this layout,
-        // and `self` is its sole owner.
-        unsafe {
-            std::alloc::dealloc(
-                self.0.as_ptr().cast::<u8>(),
-                std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
-            );
-        }
+        &bytemuck::cast_slice::<AlignWord, u8>(&self.words)[..self.len]
     }
 }
 

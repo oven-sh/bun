@@ -119,11 +119,9 @@ pub struct WebSocketProxyTunnel {
     connected_websocket: *mut WebSocketClient,
     /// SSL wrapper for TLS inside tunnel
     wrapper: Option<SslWrapperType>,
-    /// The proxy connection. Owned by the upgrade client, which stays alive
-    /// after the upgrade purely to pump this socket into the tunnel; it takes
-    /// the handle back (`None`) in [`Self::detach_upgrade_client`] when it
-    /// tears down. Until then the connected WebSocket closes the connection
-    /// through [`Self::close_socket`], since its own `tcp` is detached.
+    /// The proxy connection. Owned by the upgrade client, which takes the
+    /// handle back in [`Self::detach_upgrade_client`]; the connected WebSocket
+    /// (whose own `tcp` is detached) closes it through [`Self::close_socket`].
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
@@ -312,9 +310,8 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Snapshot backref pointers via short raw-ptr reads; the dispatch below may
-        // re-enter `tunnel.write/shutdown/clear_connected_web_socket/close_socket/
-        // detach_upgrade_client`, so no `&Self`/`&mut Self` may be live across it.
+        // Snapshot the backrefs: the dispatch below may re-enter any of the
+        // `*mut Self` methods, so no `&Self`/`&mut Self` may be live across it.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
             unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
@@ -440,10 +437,8 @@ impl WebSocketProxyTunnel {
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
-    /// do not re-enter the upgrade client's terminate/clearData path. The
-    /// upgrade client owns `socket` and is closing it (or reacting to its
-    /// close), so the handle goes with it: a later [`Self::close_socket`] from
-    /// the connected WebSocket must not touch a socket that is already gone.
+    /// do not re-enter the upgrade client's terminate/clearData path. Its socket
+    /// goes with it, making a later [`Self::close_socket`] a no-op.
     ///
     /// # Safety
     /// Same contract as [`Self::clear_connected_web_socket`].
@@ -455,28 +450,17 @@ impl WebSocketProxyTunnel {
         }
     }
 
-    /// Close the proxy connection: the tunnel-mode counterpart of the connected
-    /// WebSocket closing its `tcp` when it drops the connection itself
-    /// (`terminate()`, a protocol failure, finalization). The upgrade client
-    /// that owns the socket only closes it when the peer does, so without this
-    /// a client-side teardown leaves the connection, and the upgrade client
-    /// whose keep-alive holds the event loop, open until the proxy gives up.
-    ///
-    /// The close dispatches the upgrade client's `handle_close`, which drops
-    /// its ref on this tunnel and frees the upgrade client; the caller must
-    /// hold its own ref on `this` across the call. A TLS hop to the proxy still
-    /// gets a close_notify but is not kept open for the peer's reply the way
-    /// `Normal` would: `handle_close` is the only thing that releases the
-    /// upgrade client. A plain hop is reset, like `tcp.close()` on a plain
-    /// socket. No-op once the upgrade client has detached, i.e. the socket is
-    /// already closed or closing.
+    /// The connected WebSocket's counterpart of closing its (detached) `tcp`:
+    /// the upgrade client that owns this socket otherwise only closes it when
+    /// the peer does, and its keep-alive holds the event loop until then. The
+    /// close runs the upgrade client's `handle_close` synchronously, which
+    /// drops its ref on this tunnel; a TLS hop is therefore not left waiting
+    /// for the peer's close_notify the way `Normal` would.
     ///
     /// # Safety
-    /// `this` must point to a live tunnel that `WebSocket::clear_data` has
-    /// already detached from its WebSocket: the upgrade client's teardown
-    /// shuts the tunnel down again, which must not reach back into a WebSocket
-    /// that is mid-teardown. Takes `*mut Self` because of that re-entry; the
-    /// socket handle is moved out first so no borrow of `*this` spans the close.
+    /// `this` must be live (the caller holds its own ref) and already detached
+    /// from its WebSocket by `WebSocket::clear_data`, since the upgrade
+    /// client's teardown shuts this tunnel down again.
     pub(crate) unsafe fn close_socket(this: *mut Self) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "closeSocket");
         // SAFETY: caller contract: `this` is live; field-scoped raw take.
@@ -612,10 +596,8 @@ impl WebSocketProxyTunnel {
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
     pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
-        // A write error fires `on_close(ctx)` → `WebSocket::fail` → `cancel`,
-        // which releases the WebSocket's ref and, via `close_socket`, the
-        // upgrade client's: without this ref the allocation `w` lives in
-        // would be freed while `write_data()` is still running.
+        // A write error fires `on_close` → `WebSocket::fail`, which can drop
+        // every other ref on `this` (via `close_socket`) while `w` is in use.
         // SAFETY: caller contract: `this` is live.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
         // SAFETY: `this` is live; projection covers only `wrapper`.

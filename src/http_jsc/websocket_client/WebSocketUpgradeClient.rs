@@ -905,16 +905,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
         if this.state == State::Done {
-            // The WebSocket client may fail the connection while processing
-            // this data (`WebSocketProxyTunnel::close_socket`), which closes
-            // our socket and releases the socket ref that is all that keeps
-            // `this` alive in this state; the tunnel ref below likewise
-            // outlives `proxy` being dropped by that `handle_close`.
+            // Failing the connection in there closes our socket, and in this
+            // state the socket ref is the only thing keeping `this` alive.
             let _guard = this.ref_guard();
             // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
             if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
                     let tp = tunnel.as_ptr();
+                    // Ref the tunnel to keep it alive during this call
+                    // (in case the WebSocket client closes during processing)
                     // SAFETY: `p` holds a live ref on `tunnel`.
                     let _g = unsafe { bun_ptr::ScopedRef::new(tp) };
                     // SAFETY: ref guard above keeps the tunnel live.
@@ -1733,11 +1732,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Forward to proxy tunnel if active
         if let Some(tunnel) = this.proxy.as_ref().and_then(WebSocketProxy::get_tunnel) {
-            // Draining the tunnel can fail the connection: before the upgrade
-            // completes via `terminate`, afterwards via the WebSocket client
-            // closing our socket (`WebSocketProxyTunnel::close_socket`). Either
-            // way `handle_close` runs inside `on_writable`, dropping `proxy`
-            // (our tunnel ref) and the socket ref on `this`, so hold both.
+            // Draining can fail the connection, which runs `handle_close`
+            // (dropping `proxy`, i.e. our tunnel ref, and the socket ref on
+            // `this`) before `on_writable` returns.
             let _guard = this.ref_guard();
             let tunnel = tunnel.as_ptr();
             // SAFETY: `proxy` holds a live ref on `tunnel`.
@@ -1745,9 +1742,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: ref guard above keeps the tunnel live.
             unsafe { WebSocketProxyTunnel::on_writable(tunnel) };
 
-            // In .done state (after WebSocket upgrade), just handle tunnel writes.
-            // Flush any unwritten upgrade request bytes through the tunnel;
-            // a failure above cleared them (`clear_data` → `clear_input`).
+            // Past the upgrade there is nothing of ours to flush; before it,
+            // flush the rest of the request (a failure above zeroed it).
             if this.state == State::Done || this.to_send_len == 0 {
                 return;
             }

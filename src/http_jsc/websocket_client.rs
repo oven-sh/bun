@@ -200,12 +200,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// For the paths that drop the connection from this side (`cancel`,
-    /// `finalize`, `drop_connection_without_callback`): in tunnel mode `tcp`
-    /// is detached and closing it is a no-op; the connection is the proxy
-    /// socket behind the tunnel, which has to be closed explicitly once
-    /// `clear_data()` has torn the tunnel down. `clear_data()` also releases
-    /// this struct's tunnel ref, so the tunnel is retained here first.
+    /// In tunnel mode `tcp` is detached: dropping the connection from this side
+    /// means closing the tunnel's socket after `clear_data()`, which releases
+    /// this struct's tunnel ref, so take one that outlives it first.
     fn retain_tunnel(&self) -> Option<RetainedTunnel> {
         self.proxy_tunnel.get().map(|tunnel| RetainedTunnel {
             tunnel,
@@ -234,14 +231,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         match tunnel {
             Some(tunnel) => {
                 tunnel.close_socket();
-                // That closed the upgrade client's socket, not one adopted by
-                // this struct, so handle_close() never fires here. Mirror what
-                // it does for the non-tunnel path: drop the C++ ref (if still
-                // held) via dispatch_abrupt_close. ws.terminate() calls cancel()
-                // and then sets m_connectedWebSocketKind = None, bypassing the
-                // destructor's finalize(), so nothing else would release that
-                // ref. When reached via fail(), outgoing_websocket is already
-                // None and this is a no-op.
+                // That was the upgrade client's socket, so this struct's
+                // handle_close() never runs; release the C++ ref the way it
+                // would (a no-op when reached via fail()).
                 this.dispatch_abrupt_close(ErrorCode::Ended);
             }
             None => {
@@ -1841,19 +1833,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 }
 
-/// See [`WebSocket::retain_tunnel`]. Dropping it releases the ref.
+/// See [`WebSocket::retain_tunnel`].
 struct RetainedTunnel {
     tunnel: NonNull<WebSocketProxyTunnel>,
     _ref: bun_ptr::ScopedRef<WebSocketProxyTunnel>,
 }
 
 impl RetainedTunnel {
-    /// Close the proxy connection. Only valid after `clear_data()` has run:
-    /// it clears the tunnel's backref to the WebSocket, which the upgrade
-    /// client's teardown triggered by this close must not find.
+    /// Callers run this after `clear_data()` has detached the tunnel from the
+    /// WebSocket, as [`WebSocketProxyTunnel::close_socket`] requires.
     fn close_socket(&self) {
-        // SAFETY: `_ref` keeps the tunnel live across the re-entrant close;
-        // callers run this after `clear_data()` (see above).
+        // SAFETY: `_ref` keeps the tunnel live across the re-entrant close.
         unsafe { WebSocketProxyTunnel::close_socket(self.tunnel.as_ptr()) };
     }
 }

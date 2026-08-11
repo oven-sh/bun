@@ -1384,10 +1384,7 @@ impl Subprocess<'_> {
             ),
             Status::Err(err) => {
                 let js_err = err.to_js(global_this);
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    js_err,
-                )
+                JSPromise::rejected_promise(global_this, js_err).to_js()
             }
             _ => {
                 let promise = JSPromise::create(global_this).to_js();

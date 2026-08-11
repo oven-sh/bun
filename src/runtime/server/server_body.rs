@@ -2426,24 +2426,22 @@ where
         jsc::mark_binding!();
 
         if self.config.on_request.is_empty() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ZigString::init(b"fetch() requires the server to have a fetch handler")
-                        .to_error_instance(ctx),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ZigString::init(b"fetch() requires the server to have a fetch handler")
+                    .to_error_instance(ctx),
+            )
+            .to_js());
         }
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+            )
+            .to_js());
         }
 
         let mut headers: Option<HeadersRef> = None;
@@ -2462,12 +2460,11 @@ where
 
             if temp_url_str.is_empty() {
                 let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise(
+                    ctx,
+                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                )
+                .to_js());
             }
 
             let mut url = URL::parse(temp_url_str);
@@ -2516,11 +2513,11 @@ where
                 if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
                     match Blob::get::<true, false>(ctx, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
-                        Err(_) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                ctx,
-                                ZigString::init(b"fetch() received invalid body").to_error_instance(ctx),
-                            ));
+                        Err(err) => {
+                            return Ok(JSPromise::rejected_promise_with_caught_exception(
+                                ctx, err,
+                            )?
+                            .to_js());
                         }
                     }
                 }
@@ -2545,9 +2542,7 @@ where
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
-            );
+            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         };
 
         // `Request::to_js` stores `self as *mut
@@ -2565,25 +2560,21 @@ where
         let response_value =
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
-                Err(err) => global_this.take_exception(err),
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
+                }
             };
 
-        if response_value.is_any_error() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    response_value,
-                ),
-            );
+        if let Some(err) = response_value.to_error() {
+            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         }
 
         if response_value.is_empty_or_undefined_or_null() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
+            )
+            .to_js());
         }
 
         if response_value.as_any_promise().is_some() {

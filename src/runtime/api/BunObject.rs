@@ -1219,51 +1219,12 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let value = match do_resolve(global_object, callframe.arguments()) {
         Ok(v) => v,
         Err(e) => {
-            let err = global_object.take_error(e);
             return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_object,
-                    err,
-                ),
+                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
             );
         }
     };
     Ok(JSPromise::resolved_promise_value(global_object, value))
-}
-
-// HOST_EXPORT(Bun__resolve, c)
-pub fn bun_resolve(
-    global: &JSGlobalObject,
-    specifier: JSValue,
-    source: JSValue,
-    is_esm: bool,
-) -> JSValue {
-    let Ok(specifier_str) = specifier.to_bun_string(global) else {
-        return JSValue::ZERO;
-    };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
-
-    let Ok(source_str) = source.to_bun_string(global) else {
-        return JSValue::ZERO;
-    };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
-
-    let value = match do_resolve_with_args::<true>(
-        global,
-        *specifier_str,
-        *source_str,
-        ResolveMode::from_ffi_bools(is_esm, false),
-    ) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = global.try_take_exception().unwrap();
-            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global, err,
-            );
-        }
-    };
-
-    JSPromise::resolved_promise_value(global, value)
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)

@@ -906,6 +906,32 @@ impl Request {
             })
     }
 
+    /// Eagerly sets `request.url` from a request line: `{scheme}://{Host}{path}` when the
+    /// client's Host can form a URL authority, otherwise the bare target. This is the same
+    /// policy `ensure_url` applies lazily for HTTP/1 (Host byte-set check, absolute-form
+    /// target reduced to its path, WHATWG canonicalization), for transports that must
+    /// populate the URL before the underlying request goes away.
+    pub(crate) fn set_url_from_target(&self, host: Option<&[u8]>, target: &[u8], https: bool) {
+        let path = Self::request_target_path(target);
+        let host = host.filter(|h| Self::is_valid_host_header(h));
+        let raw = match host {
+            Some(host) if !path.is_empty() && path[0] == b'/' => {
+                let protocol: &[u8] = if https { b"https://" } else { b"http://" };
+                let mut url = Vec::with_capacity(protocol.len() + host.len() + path.len());
+                url.extend_from_slice(protocol);
+                url.extend_from_slice(host);
+                url.extend_from_slice(&path);
+                BunString::clone_utf8(&url)
+            }
+            _ => BunString::clone_utf8(&path),
+        };
+        self.url.set(raw);
+        let href = bun_url::href_from_string(&self.url.get());
+        if !href.is_empty() {
+            self.url.set(href);
+        }
+    }
+
     pub(crate) fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());

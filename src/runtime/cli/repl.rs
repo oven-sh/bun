@@ -2627,13 +2627,17 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 if j > 0 && code[j - 1] == b'/' {
                     true
                 } else if j > 0 && is_word_char(code[j - 1]) {
-                    // A tag/type name (dots/hyphens/colons ok) follows `<` or `/`; `a >` does not.
+                    // Walk a tag/type-argument run (`a.b`, `my-el`, `K, V`) back to its opener.
                     while j > 0
-                        && (is_word_char(code[j - 1]) || matches!(code[j - 1], b'.' | b'-' | b':'))
+                        && (is_word_char(code[j - 1])
+                            || matches!(code[j - 1], b'.' | b'-' | b':' | b',' | b' ' | b'\t'))
                     {
                         j -= 1;
                     }
-                    j > 0 && matches!(code[j - 1], b'<' | b'/')
+                    // `</tag>` closes a tag; `Map<K, V>` (word before `<`) closes a generic.
+                    // `a < b, c >` (no word before `<`) stays a comparison, so regex follows.
+                    (j > 1 && code[j - 1] == b'/' && code[j - 2] == b'<')
+                        || (j > 1 && code[j - 1] == b'<' && is_word_char(code[j - 2]))
                 } else {
                     false
                 }

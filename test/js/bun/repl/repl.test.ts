@@ -860,11 +860,21 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("division after a nested generic cast", async () => {
-      const { stdout, exitCode } = await runRepl(["q = (84 as unknown as Array<Array<number>> / 2); q", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("42");
-      expect(output).not.toContain("SyntaxError");
-      expect(exitCode).toBe(0);
+      const nested = await runRepl(["q = (84 as unknown as Array<Array<number>> / 2); q", ".exit"]);
+      expect(stripAnsi(nested.stdout)).toContain("42");
+      expect(stripAnsi(nested.stdout)).not.toContain("SyntaxError");
+      expect(nested.exitCode).toBe(0);
+
+      const multiArg = await runRepl(["q = (86 as unknown as Map<string, number> / 2); q", ".exit"]);
+      expect(stripAnsi(multiArg.stdout)).toContain("43");
+      expect(stripAnsi(multiArg.stdout)).not.toContain("SyntaxError");
+      expect(multiArg.exitCode).toBe(0);
+
+      // A comma-separated comparison is not a generic, so the `/` starts a regex.
+      const comparison = await runRepl(["q = (1 < 2, 3 > /\"/.test('\"')); q", ".exit"]);
+      expect(stripAnsi(comparison.stdout)).toContain("true");
+      expect(stripAnsi(comparison.stdout)).not.toContain("SyntaxError");
+      expect(comparison.exitCode).toBe(0);
     });
 
     test("division after a cast to an inline type literal", async () => {

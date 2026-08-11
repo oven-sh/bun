@@ -815,22 +815,28 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
     }
   }
 
-  // BoringSSL issues more than one TLS 1.3 ticket per connection, each of
-  // which is its own 'session' event; only the relative order matters here.
-  const distinct = (events: string[]) => [...new Set(events)];
+  // BoringSSL issues more than one TLS 1.3 ticket per connection and each is
+  // its own 'session' event, so the expected sequence is "every session, then
+  // the data" for however many tickets arrived. Nothing may follow the data:
+  // the handler destroyed the socket.
+  function expectSessionsThenData(events: string[]) {
+    const sessions = events.filter(event => event === "session").length;
+    expect(sessions).toBeGreaterThan(0);
+    expect(events).toEqual(["secureConnect", ...Array(sessions).fill("session"), "data"]);
+  }
 
   it("response written after the request", async () => {
     const events = await eventOrder({}, socket => {
       socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
     });
-    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+    expectSessionsThenData(events);
   });
 
   it("response and close_notify in the same flight", async () => {
     const events = await eventOrder({}, socket => {
       socket.on("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
     });
-    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+    expectSessionsThenData(events);
   });
 
   it("response larger than the engine's 64 KiB read buffer, delivered in one pass", async () => {
@@ -843,7 +849,7 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
       },
       { holdResponse: true },
     );
-    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+    expectSessionsThenData(events);
   });
 
   it("TLS 1.2 session established by the same flight as a server banner", async () => {
@@ -857,7 +863,7 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
       },
       { request: false },
     );
-    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+    expectSessionsThenData(events);
   });
 });
 

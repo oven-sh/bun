@@ -1899,12 +1899,6 @@
     "musl": 30,
     "windows": 40
   },
-  "js/bun/compile/standalone-madvise-tla.test.ts": {
-    "default": 30,
-    "asan": 100,
-    "musl": 30,
-    "windows": 30
-  },
   "js/bun/console/bun-inspect-table.test.ts": {
     "default": 0,
     "asan": 10,

@@ -37,7 +37,7 @@ impl<'a> Writable<'a> {
     /// i.e. the owner-outlives-holder `BackRef` invariant holds (single JS
     /// thread).
     #[inline]
-    pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
+    pub(in crate::api) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
         bun_ptr::BackRef::from(pipe)
     }
 
@@ -169,7 +169,7 @@ impl<'a> Writable<'a> {
     pub(crate) fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
-        subprocess: &mut Subprocess<'a>,
+        subprocess: &Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> crate::Result<Writable<'a>> {
@@ -253,7 +253,7 @@ impl<'a> Writable<'a> {
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        subprocess.as_ctx_ptr(),
                         result,
                         super::source_from_blob(blob),
                     )));
@@ -261,7 +261,7 @@ impl<'a> Writable<'a> {
                 Stdio::ArrayBuffer(array_buffer) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        subprocess.as_ctx_ptr(),
                         result,
                         super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
@@ -358,14 +358,14 @@ impl<'a> Writable<'a> {
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(
                     evtloop,
-                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                    subprocess.as_ctx_ptr(),
                     result,
                     super::source_from_blob(blob),
                 )))
             }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 evtloop,
-                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                subprocess.as_ctx_ptr(),
                 result,
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),

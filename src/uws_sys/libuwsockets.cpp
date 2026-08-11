@@ -1354,7 +1354,7 @@ extern "C"
    * sendfile path): closes the socket when the connection is marked to close
    * (Connection: close, peer FIN, close-when-idle), the response is complete,
    * and every outgoing byte has been flushed. Corked responses are left to the
-   * cork() wrapper's own post-uncork gate. */
+   * gate HttpResponse::cork() runs after its handler. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
     /* A callback upstream of this gate may already have closed the socket;
@@ -1423,9 +1423,9 @@ extern "C"
       /* No close gate here: callers (FileResponseStream::finish,
        * DevServer/HTMLBundle error paths) keep using the response after this
        * returns, so closing inside this call would destruct the ext under
-       * them. Corked callers get the cork() wrapper's post-uncork gate;
-       * uncorked ones run uws_res_close_if_done_and_marked themselves once
-       * they are done with the response. */
+       * them. Corked callers get the gate HttpResponse::cork() runs after its
+       * handler; uncorked ones run uws_res_close_if_done_and_marked themselves
+       * once they are done with the response. */
     }
     else
     {

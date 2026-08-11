@@ -1,12 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isDebug } from "harness";
 import { join } from "path";
+
+// worker_thread_check.ts runs RUN_COUNT rounds of CONCURRENCY Workers, terminating each as it comes
+// online. On a debug build a worker_threads Worker takes ~1.7s just to come online (~30ms on release),
+// so every round costs ~2s regardless of its size and the full 5 x 10 takes ~30s per case, well past
+// the 5s default timeout. Debug builds run one round of a few workers (~3s), which still takes each
+// teardown path with several workers terminating at once; release builds, which is all CI runs (ASAN
+// lanes included), keep the full count.
+const RUN_COUNT = isDebug ? 1 : 5;
+const CONCURRENCY = isDebug ? 3 : 10;
 
 describe("Worker destruction", () => {
   const method = ["Bun.connect", "Bun.listen", "fetch"];
   describe.each(method)("bun when %s is used in a Worker that is terminating", method => {
     test.concurrent("exits cleanly", async () => {
-      expect(await bunRun([join(import.meta.dir, "worker_thread_check.ts"), method])).toSpawn();
+      const result = await bunRun([join(import.meta.dir, "worker_thread_check.ts"), method], {
+        RUN_COUNT: String(RUN_COUNT),
+        CONCURRENCY: String(CONCURRENCY),
+      });
+      expect(result).toSpawn();
+      // One line per completed round, so a misread count cannot turn this into a no-op run.
+      expect(result.stdout.split("\n").map(line => line.replace(/ RSS \d+ MB$/, ""))).toEqual(
+        Array(RUN_COUNT).fill(`Spawned ${CONCURRENCY} workers`),
+      );
     });
   });
 

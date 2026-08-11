@@ -553,9 +553,36 @@ unsafe fn init_runtime_state(
     if opts.worker_ptr.is_null() {
         // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
         unsafe { configure_debugger(vm, &opts.debugger) };
+        // SAFETY: `vm` is unique here; `debugger` was just written above.
+        unsafe { configure_sigusr1_handler(vm, opts) };
     }
 
     Ok(state.cast())
+}
+
+/// Runs after [`configure_debugger`] so that `--inspect*` is visible in `vm.debugger`. `vm.jsc_vm` does not
+/// exist yet (see the `ParentDeathWatchdog` note above); `VirtualMachine::init` finishes the job with
+/// `runtime_inspector::on_main_vm_ready`.
+///
+/// # Safety
+/// `vm` is the freshly-boxed unique VM on this thread.
+unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions) {
+    use bun_jsc::runtime_inspector::{self, Sigusr1};
+    // SAFETY: per fn contract.
+    let (is_main_thread, has_debugger) =
+        unsafe { ((*vm).is_main_thread, (*vm).debugger.is_some()) };
+    if !is_main_thread {
+        return;
+    }
+    // SAFETY: per fn contract.
+    unsafe { (*vm).inspect_port = opts.inspect_port };
+    runtime_inspector::configure(if opts.disable_sigusr1 {
+        Sigusr1::Default
+    } else if has_debugger {
+        Sigusr1::Ignore
+    } else {
+        Sigusr1::StartInspector
+    });
 }
 
 /// Translate the CLI flag /

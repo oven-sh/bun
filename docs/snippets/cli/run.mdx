@@ -138,6 +138,15 @@ bun run <file or script>
   Activate Bun's debugger, set breakpoint on first line of code and wait
 </ParamField>
 
+<ParamField path="--inspect-port" type="string">
+  `[host:]port` for a debugger started later by `SIGUSR1` or `process._debugProcess()` (default `6499`, `0` for a free
+  port)
+</ParamField>
+
+<ParamField path="--disable-sigusr1" type="boolean">
+  Do not start the debugger on `SIGUSR1`; leave the signal at its default action
+</ParamField>
+
 ### Dependency &amp; Module Resolution
 
 <ParamField path="--preload" type="string">

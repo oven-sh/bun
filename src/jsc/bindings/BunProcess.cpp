@@ -1534,6 +1534,7 @@ extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObj
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
+extern "C" void Bun__Sigusr1Handler__reinstall();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
@@ -1648,6 +1649,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         };
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
+                        // For SIGUSR1 this displaces the runtime-inspector handler; removal below hands it back.
                         installForwardSignalHandler(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
@@ -1671,6 +1673,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
                                 // Don't uninstall the old handler if it's not the one we installed.
                                 signal(signalNumber, oldHandler);
+                            } else if (signalNumber == SIGUSR1) {
+                                Bun__Sigusr1Handler__reinstall();
                             }
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
@@ -4676,6 +4680,103 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
+    if (callFrame->argumentCount() < 1) {
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, "The \"pid\" argument must be specified"_s);
+    }
+
+    // Same `pid != (pid | 0)` check as Process_functionKill; rejects fractions and values that toInt32 would wrap.
+    auto pidValue = callFrame->argument(0);
+    int pid = pidValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isInt32 = JSC::JSValue::equal(globalObject, pidValue, jsNumber(pid));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isInt32) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "pid"_s, "number"_s, pidValue);
+    }
+    if (pid <= 0) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "pid"_s, pidValue, "must be a positive integer"_s);
+    }
+
+#if !OS(WINDOWS)
+    int result = kill(pid, SIGUSR1);
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+        return {};
+    }
+#else
+    // Node throws a plain Error carrying the FormatMessageW text, with no .code or .syscall (winapi_strerror in node.cc).
+    auto throwWinapiError = [&](DWORD err) {
+        LPWSTR buf = nullptr;
+        DWORD n = FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+            NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&buf, 0, NULL);
+        WTF::String message;
+        if (buf && n > 0) {
+            while (n > 0 && (buf[n - 1] == L'\r' || buf[n - 1] == L'\n' || buf[n - 1] == L' '))
+                n--;
+            message = WTF::String({ buf, n });
+        } else {
+            message = makeString("Unknown error "_s, static_cast<unsigned>(err));
+        }
+        if (buf)
+            LocalFree(buf);
+        throwVMError(globalObject, scope, message);
+    };
+
+    wchar_t mappingName[64];
+    swprintf(mappingName, 64, L"bun-debug-handler-%d", pid);
+
+    HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
+    if (!hMapping) {
+        throwWinapiError(GetLastError());
+        return {};
+    }
+
+    void* pFunc = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, sizeof(void*));
+    if (!pFunc) {
+        DWORD err = GetLastError();
+        CloseHandle(hMapping);
+        throwWinapiError(err);
+        return {};
+    }
+
+    LPTHREAD_START_ROUTINE threadProc = *reinterpret_cast<LPTHREAD_START_ROUTINE*>(pFunc);
+    UnmapViewOfFile(pFunc);
+    CloseHandle(hMapping);
+
+    // Zero means we raced the target between creating the mapping and writing the pointer; report it like a missing mapping.
+    if (!threadProc) {
+        throwWinapiError(ERROR_FILE_NOT_FOUND);
+        return {};
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        throwWinapiError(GetLastError());
+        return {};
+    }
+
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, threadProc, NULL, 0, NULL);
+    if (!hThread) {
+        DWORD err = GetLastError();
+        CloseHandle(hProcess);
+        throwWinapiError(err);
+        return {};
+    }
+
+    // Like Node, return once the injected thread has delivered the request (Node waits unbounded).
+    WaitForSingleObject(hThread, 1000);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+#endif
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4828,7 +4929,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_functionDebugProcess                        Function 1
   _eval                            processGetEval                                      CustomAccessor
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0

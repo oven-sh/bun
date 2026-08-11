@@ -577,21 +577,13 @@ impl Debugger {
 /// thread, or when the debugger thread could not be started.
 // HOST_EXPORT(Debugger__startNodeInspectorServer, c)
 pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool) -> bool {
-    // Short-lived borrows only — `Debugger::create` re-enters JS and forms its
-    // own `&mut VirtualMachine` (see the aliasing note on
-    // `wait_for_debugger_if_necessary`).
-    let this: &VirtualMachine = VirtualMachine::get();
-    if !this.is_main_thread {
+    if !can_start_at_runtime() {
         return false;
     }
-    if this.debugger.is_some() || HAS_CREATED_DEBUGGER.load(Ordering::Relaxed) {
-        return false;
-    }
-
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
     let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
-    this.as_mut().debugger = Some(Box::new(Debugger {
+    start_at_runtime(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {
             Wait::Forever
@@ -600,7 +592,21 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         },
         protocol: Protocol::NodeInspector,
         ..Default::default()
-    }));
+    })
+}
+
+/// False off the main thread or once any inspector exists (CLI flags, env, `inspector.open()`, runtime activation).
+pub(crate) fn can_start_at_runtime() -> bool {
+    let this: &VirtualMachine = VirtualMachine::get();
+    this.is_main_thread && this.debugger.is_none() && !HAS_CREATED_DEBUGGER.load(Ordering::Relaxed)
+}
+
+/// Shared by `inspector.open()` and SIGUSR1 / `process._debugProcess`; the caller has checked [`can_start_at_runtime`].
+pub(crate) fn start_at_runtime(config: Debugger) -> bool {
+    // `&` only: `Debugger::create` re-enters JS and forms its own `&mut VirtualMachine` (see `wait_for_debugger_if_necessary`).
+    let this: &VirtualMachine = VirtualMachine::get();
+    debug_assert!(can_start_at_runtime());
+    this.as_mut().debugger = Some(Box::new(config));
 
     // Frontends need positions that map back to the original source, so stop
     // minifying and caching transpiled output for code loaded from now on.

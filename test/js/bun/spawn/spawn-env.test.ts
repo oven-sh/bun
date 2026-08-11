@@ -1,8 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("spawn env", async () => {
   const env = {};
@@ -63,10 +64,11 @@ function variableViaSpawnSync(name: string, env: Env) {
   return JSON.parse(stdout.toString());
 }
 
-function variableViaChildProcess(name: string, env: Env) {
-  const { stdout, stderr, status } = nodeSpawnSync(bunExe(), ["-e", printVariable(name)], { env, encoding: "utf8" });
+// node:child_process applies node's own de-duplication in JS before reaching
+// Bun.spawn, so this is the reference the Bun.spawn columns are compared to.
+async function variableViaChildProcess(name: string, env: Env) {
+  const { stdout, stderr } = await promisify(execFile)(bunExe(), ["-e", printVariable(name)], { env });
   expect(stderr).toBe("");
-  expect(status).toBe(0);
   return JSON.parse(stdout);
 }
 
@@ -121,11 +123,16 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
   ];
 
   test.concurrent.each(cases)("%s", async (_name, env, variable, expected) => {
-    expect({
-      spawn: await variableViaSpawn(variable, env),
-      spawnSync: variableViaSpawnSync(variable, env),
-      childProcess: variableViaChildProcess(variable, env),
-    }).toEqual({ spawn: expected, spawnSync: expected, childProcess: expected });
+    const [viaSpawn, viaChildProcess] = await Promise.all([
+      variableViaSpawn(variable, env),
+      variableViaChildProcess(variable, env),
+    ]);
+    expect({ spawn: viaSpawn, childProcess: viaChildProcess }).toEqual({ spawn: expected, childProcess: expected });
+  });
+
+  test.concurrent("Bun.spawnSync applies the same rule", () => {
+    const [, env, variable, expected] = cases[0];
+    expect(variableViaSpawnSync(variable, env)).toEqual(expected);
   });
 
   // The PATH entry that wins is also the one the executable is looked up in.
@@ -161,9 +168,13 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
 test.skipIf(isWindows)("env names that differ only in case are distinct variables on POSIX", async () => {
   const env = { ...bunEnv, Path: "C:\\from-parent", PATH: "C:\\override" };
   const expected = { Path: "C:\\from-parent", PATH: "C:\\override" };
-  expect({
-    spawn: await variableViaSpawn("PATH", env),
-    spawnSync: variableViaSpawnSync("PATH", env),
-    childProcess: variableViaChildProcess("PATH", env),
-  }).toEqual({ spawn: expected, spawnSync: expected, childProcess: expected });
+  const [viaSpawn, viaChildProcess] = await Promise.all([
+    variableViaSpawn("PATH", env),
+    variableViaChildProcess("PATH", env),
+  ]);
+  expect({ spawn: viaSpawn, spawnSync: variableViaSpawnSync("PATH", env), childProcess: viaChildProcess }).toEqual({
+    spawn: expected,
+    spawnSync: expected,
+    childProcess: expected,
+  });
 });

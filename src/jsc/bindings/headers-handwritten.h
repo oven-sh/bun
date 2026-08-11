@@ -3,6 +3,8 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -472,6 +474,44 @@ ALWAYS_INLINE void BunString::deref()
         this->impl.wtf->deref();
     }
 }
+
+namespace Bun {
+
+// Frames built on the C++ side for Bun__remapStackFramePositions. Each frame
+// owns a ref on its strings; the remap derefs the source_url it was given and
+// stores a freshly allocated one when a source map renames the file, so the
+// strings left in the frames are released here once the caller is done reading
+// them. Frames behind ZigStackTrace::frames_ptr are released by the Rust side,
+// which is why this is not a destructor on ZigStackFrame itself.
+class OwnedZigStackFrames {
+    WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
+
+public:
+    explicit OwnedZigStackFrames(size_t count)
+        : m_frames(count)
+    {
+    }
+
+    ~OwnedZigStackFrames()
+    {
+        for (ZigStackFrame& frame : m_frames) {
+            frame.function_name.deref();
+            frame.source_url.deref();
+        }
+    }
+
+    ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+
+    void remap(void* bunVM)
+    {
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+    }
+
+private:
+    WTF::Vector<ZigStackFrame, 8> m_frames;
+};
+
+} // namespace Bun
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 

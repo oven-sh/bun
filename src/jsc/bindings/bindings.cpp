@@ -6507,8 +6507,6 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     JSC::LineColumn lineColumn;
     String sourceURL;
 
-    ZigStackFrame remappedFrame = {};
-
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
@@ -6529,11 +6527,13 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
         OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
+        Bun::OwnedZigStackFrames remappedFrames(1);
+        ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
+        remappedFrames.remap(Bun::vm(globalObject));
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
@@ -6675,12 +6675,13 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     });
 
     if (!sourceURL.isEmpty() && lineColumn.line > 0) {
-        ZigStackFrame remappedFrame = {};
+        Bun::OwnedZigStackFrames remappedFrames(1);
+        ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = lineColumn.line - 1;
         remappedFrame.position.column_zero_based = lineColumn.column;
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
+        remappedFrames.remap(Bun::vm(globalObject));
 
         return remappedFrame.position.line_zero_based + 1;
     }

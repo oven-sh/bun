@@ -168,8 +168,6 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
     JSC::SourceID sourceID = 0;
     String sourceURL;
 
-    ZigStackFrame remappedFrame = {};
-
     auto* globalObject = &m_globalObject;
     auto& vm = JSC::getVM(globalObject);
 
@@ -210,11 +208,13 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
         OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
+        Bun::OwnedZigStackFrames remappedFrames(1);
+        ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
+        remappedFrames.remap(Bun::vm(globalObject));
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

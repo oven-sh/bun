@@ -184,8 +184,8 @@ WTF::String formatStackTrace(
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                ZigStackFrame remappedFrame = {};
-                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
+                OwnedZigStackFrames remappedFrames(1);
+                ZigStackFrame& remappedFrame = remappedFrames[0];
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
@@ -197,8 +197,7 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
+                        remappedFrames.remap(getBunVM());
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -241,11 +240,9 @@ WTF::String formatStackTrace(
     // Pass 1: collect (line, col, source_url) for frames that should be
     // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    OwnedZigStackFrames remappedFrames(framesCount);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
-    remappedFrames.grow(framesCount);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
@@ -255,7 +252,7 @@ WTF::String formatStackTrace(
         ZigStackFrame& remappedFrame = remappedFrames[i];
         // Match `ZigStackFramePosition::INVALID` exactly so the Rust batch loop's
         // `position.isInvalid()` skips frames we never populate (vm-context
-        // frames, frames without line/col info). memset alone leaves
+        // frames, frames without line/col info). A zero-initialized frame has
         // `line_start_byte = 0` which fails that byte-compare.
         remappedFrame.position.line_zero_based = -1;
         remappedFrame.position.column_zero_based = -1;
@@ -289,7 +286,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        Bun__remapStackFramePositions(getBunVM(), remappedFrames.begin(), framesCount);
+        remappedFrames.remap(getBunVM());
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -443,11 +440,9 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     // We need to sourcemap it if it's a GlobalObject.
 
     const int n = stackTrace.size();
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    OwnedZigStackFrames remappedFrames(n);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<bool, 8> didRemap;
-    remappedFrames.grow(n);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * n);
     sourceURLs.grow(n);
     didRemap.grow(n);
     bool anyRemap = false;
@@ -492,7 +487,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        Bun__remapStackFramePositions(globalObject->bunVM(), remappedFrames.begin(), n);
+        remappedFrames.remap(globalObject->bunVM());
     }
 
     for (int i = 0; i < n; i++) {
@@ -623,12 +618,13 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-    ZigStackFrame frame = {};
+    OwnedZigStackFrames frames(1);
+    ZigStackFrame& frame = frames[0];
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
-    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
+    frames.remap(Bun::vm(vm));
 
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();

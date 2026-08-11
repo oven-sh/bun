@@ -928,3 +928,27 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("a lazily initialized property whose initializer throws is skipped without hiding the rest", async () => {
+  // Bun.$ (the first entry of Bun's static property table) and the Bun.sql
+  // entries are initialized by JS that uses the global Symbol, so with Symbol
+  // clobbered those entries throw when the walk first looks them up. The
+  // exception used to stay pending while the walk moved on, so every entry
+  // after a throwing one was reported as missing (and assertion builds aborted).
+  const fixture = `
+    const RealSymbol = Symbol;
+    globalThis.Symbol = NaN;
+    const out = Bun.inspect(Bun);
+    globalThis.Symbol = RealSymbol;
+    const keys = ["$", "Archive", "sql", "postgres", "SQL", "zstdDecompress"];
+    console.log(keys.filter(key => out.includes("\\n  " + key + ": ")).join(","));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Archive,zstdDecompress\n", stderr: "", exitCode: 0 });
+});

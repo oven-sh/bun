@@ -281,29 +281,10 @@ impl CompileTarget {
                 _found_baseline = true;
                 continue;
             } else if strings::has_prefix(token, b"v1.") || strings::has_prefix(token, b"v0.") {
-                let version_text = &token[1..];
-                let parsed = Version::parse(SlicedString::init(version_text, version_text));
-                let (Some(major), Some(minor), Some(patch)) = (
-                    parsed.version.major,
-                    parsed.version.minor,
-                    parsed.version.patch,
-                ) else {
+                let Some(version) = parse_exact_version(&token[1..]) else {
                     return Err(ParseError::InvalidVersion);
                 };
-                // `Version::parse` is lenient (a fourth component, trailing text and an
-                // overflowing component all still yield a version); the token has to spell
-                // out exactly the version that will be downloaded.
-                if format!("{major}.{minor}.{patch}").as_bytes() != version_text {
-                    return Err(ParseError::InvalidVersion);
-                }
-
-                this.version = Version {
-                    major,
-                    minor,
-                    patch,
-                    tag: Default::default(),
-                    _tag_padding: Default::default(),
-                };
+                this.version = version;
                 _found_version = true;
                 continue;
             } else if token == b"musl" {
@@ -445,6 +426,24 @@ impl CompileTarget {
             const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
         [platform, arch, VERSION]
     }
+}
+
+/// The version `text` names if it is spelled exactly `X.Y.Z`, which is what the download URL is
+/// built from. `Version::parse` by itself also accepts tags, extra components and overflowing
+/// numbers.
+fn parse_exact_version(text: &[u8]) -> Option<Version> {
+    let parsed = Version::parse(SlicedString::init(text, text)).version;
+    let (major, minor, patch) = (parsed.major?, parsed.minor?, parsed.patch?);
+    if format!("{major}.{minor}.{patch}").as_bytes() != text {
+        return None;
+    }
+    Some(Version {
+        major,
+        minor,
+        patch,
+        tag: Default::default(),
+        _tag_padding: Default::default(),
+    })
 }
 
 impl fmt::Display for CompileTarget {

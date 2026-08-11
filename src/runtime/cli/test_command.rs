@@ -3043,7 +3043,7 @@ impl TestCommand {
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
-        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.

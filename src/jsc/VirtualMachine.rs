@@ -178,7 +178,7 @@ pub struct VirtualMachine {
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
-    /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
+    /// `KeepAlive::unref_on_next_tick` increments it from OTHER
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
@@ -2198,7 +2198,7 @@ bun_io::link_impl_EventLoopCtx! {
             let rare = vm_from_owner(this.cast()).rare_data();
             &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
-        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
+        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
         // would alias the JS thread's `&mut`. Atomic RMW through a shared ref.
         increment_pending_unref_counter() => {

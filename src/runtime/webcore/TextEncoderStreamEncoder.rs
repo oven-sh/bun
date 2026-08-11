@@ -323,7 +323,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     wrote
 }
 
-/// Native-sink flush step; see `__encodeIntoSink` for the return contract.
+/// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(

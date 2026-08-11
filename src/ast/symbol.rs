@@ -624,7 +624,7 @@ impl Map {
         // writers of `Symbol::link` are (a) the default `Ref::NONE`
         // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
+        // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},

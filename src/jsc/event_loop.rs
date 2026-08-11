@@ -1067,7 +1067,9 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `swap_global_for_test_isolation`), so
+        // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
+        // `swap_global_for_test_isolation`, `__bun_spawn_sync_*`, bake
+        // `production.rs`), so
         // read it directly instead of the vm→global dependent-load chain.
         // `'static` so callers can hold it across `&mut self` (see
         // `drain_microtasks`), matching `vm_ref()`.

@@ -1472,9 +1472,8 @@ impl Run<'_> {
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op unless the arena type
-            // changes. Semantically a memory-usage hint, not correctness.
+            // `bun_alloc::Arena` has no per-heap collect to run alongside this
+            // GC; it would only be a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }

@@ -918,7 +918,7 @@ impl NetworkTask {
 
     /// Release any streaming-extraction resources that were never used because
     /// the request errored before a drain was scheduled. Called on the main
-    /// thread from `runTasks` when falling back to the buffered path.
+    /// thread from `run_tasks` when falling back to the buffered path.
     pub(crate) fn discard_unused_streaming_state(&mut self, manager: &mut PackageManager) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.take() {

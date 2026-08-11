@@ -6,8 +6,19 @@
 // the install reports success, and a file that cannot be installed has to fail
 // the package (as it does with the hardlink backend) rather than exit bun.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
-import { closeSync, existsSync, mkdirSync, openSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // PathBuffer is PATH_MAX bytes on POSIX (4096 on Linux, 1024 on macOS); the
@@ -103,11 +114,31 @@ function fanOfLeaves(center: number, spread: number, contents: string | null) {
   return { leaves, dirsLen: center - 1 - shortestName - spread };
 }
 
-async function install(projectDir: string, backend?: string) {
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+// Root ignores directory permissions. When the tests run as root on Linux the
+// install that depends on them runs as `nobody` instead (like
+// test/cli/run/env.test.ts does); the test is skipped as root elsewhere.
+const canRunAsNobody = (() => {
+  if (!isLinux || !Bun.which("runuser")) return false;
+  try {
+    return /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+  } catch {
+    return false;
+  }
+})();
+const canInstallWithoutPrivileges = !isRoot || canRunAsNobody;
+
+async function install(projectDir: string, backend?: string, { unprivileged = false } = {}) {
+  const bun = [bunExe(), "install", "--linker=hoisted", ...(backend ? [`--backend=${backend}`] : [])];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--linker=hoisted", ...(backend ? [`--backend=${backend}`] : [])],
+    cmd: unprivileged && isRoot ? ["runuser", "-u", "nobody", "--", ...bun] : bun,
     cwd: projectDir,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache") },
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache"),
+      ...(unprivileged ? { HOME: projectDir } : {}),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -144,7 +175,7 @@ function projectWithSiblingPackage(name: string) {
   return { dir, projectDir: join(String(dir), "project"), packageDir: join(String(dir), "pkg") };
 }
 
-describe.skipIf(isWindows)("install backends and paths near PATH_MAX", () => {
+describe.skipIf(isWindows)("install backends on POSIX", () => {
   // The copyfile backend only materializes files (parents are created on
   // demand), the others also create the package's directories.
   const directoryBackends = ["hardlink", "symlink", ...(isMacOS ? ["clonefile_each_dir"] : [])];
@@ -231,6 +262,40 @@ describe.skipIf(isWindows)("install backends and paths near PATH_MAX", () => {
       INSTALL_TIMEOUT,
     );
   }
+
+  // When the previous install cannot be renamed away (node_modules itself is
+  // read-only here), the symlink backend replaces each existing file. The
+  // replacement used to point at the file's own basename, i.e. at itself.
+  test.concurrent.skipIf(!canInstallWithoutPrivileges)(
+    "symlink backend replaces an existing file with a link to the source",
+    async () => {
+      const { dir, projectDir, packageDir } = projectWithLocalPackage("replace-symlink");
+      using _ = dir;
+      const installed = join(projectDir, "node_modules", "pkg");
+      mkdirSync(installed, { recursive: true });
+      writeFileSync(join(installed, "index.js"), "stale");
+      writeFileSync(join(installed, "not-in-the-package"), "");
+      // Readable (and, where bun writes, writable) for `nobody` too.
+      chmodSync(projectDir, 0o777);
+      chmodSync(packageDir, 0o755);
+      for (const file of Object.keys(packageFiles)) chmodSync(join(packageDir, file), 0o644);
+      chmodSync(installed, 0o777);
+      chmodSync(join(projectDir, "node_modules"), 0o555);
+      try {
+        const { stdout, stderr, exitCode } = await install(projectDir, "symlink", { unprivileged: true });
+        expect(stderr).not.toContain("error");
+        expect(stdout).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+      } finally {
+        chmodSync(join(projectDir, "node_modules"), 0o755);
+      }
+      // The old directory was indeed installed into rather than replaced.
+      expect(existsSync(join(installed, "not-in-the-package"))).toBe(true);
+      expect(readlinkSync(join(installed, "index.js"))).toBe(join(realpathSync.native(packageDir), "index.js"));
+      expect(readFileSync(join(installed, "index.js"), "utf8")).toBe(packageFiles["index.js"]);
+    },
+    INSTALL_TIMEOUT,
+  );
 });
 
 describe.skipIf(!isWindows)("install backends on Windows", () => {

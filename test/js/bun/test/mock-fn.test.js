@@ -917,6 +917,18 @@ describe("mock()", () => {
         expect(typeof instance).toBe("object");
         spy.mockRestore();
       });
+
+      test("instances records `this` for every invocation, in call order", () => {
+        const fn = jest.fn();
+        const obj = { fn };
+        fn();
+        obj.fn();
+        const instance = new fn();
+        expect(fn.mock.instances).toHaveLength(fn.mock.calls.length);
+        expect(fn.mock.instances[0]).toBeUndefined();
+        expect(fn.mock.instances[1]).toBe(obj);
+        expect(fn.mock.instances[2]).toBe(instance);
+      });
     }
   });
 });

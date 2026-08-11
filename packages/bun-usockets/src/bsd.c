@@ -943,6 +943,68 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
         return ret;
     }
 }
+
+ssize_t bsd_recv_ipc(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags, LIBUS_SOCKET_DESCRIPTOR *received_fd) {
+    /* The protocol attaches one descriptor per message, but take room for more
+     * (64, like libuv): a descriptor the control buffer has no room for is
+     * dropped by Linux, while macOS still installs it in this process and then
+     * truncates the control message, so it leaks. */
+    char control[CMSG_SPACE(64 * sizeof(int))];
+    struct iovec iov;
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    iov.iov_base = buf;
+    iov.iov_len = length;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+#if defined(MSG_CMSG_CLOEXEC)
+    flags |= MSG_CMSG_CLOEXEC;
+#endif
+
+    *received_fd = LIBUS_SOCKET_ERROR;
+    ssize_t ret = bsd_recvmsg(fd, &msg, flags);
+    /* Descriptors only ever ride along with data. A 0 may also be a fault
+     * injected by bsd_recvmsg, which leaves msg (and control) uninitialized. */
+    if (ret <= 0) {
+        return ret;
+    }
+
+    /* On MSG_CTRUNC a cmsg_len still describes the untruncated message, so the
+     * walk is bounded by what the kernel actually copied out. */
+    const unsigned char *control_end = (const unsigned char *) msg.msg_control + msg.msg_controllen;
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        /* Darwin's CMSG_NXTHDR returns the same header again for cmsg_len 0. */
+        if (cmsg->cmsg_len < CMSG_LEN(0)) {
+            break;
+        }
+        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
+            continue;
+        }
+        const unsigned char *data = CMSG_DATA(cmsg);
+        const unsigned char *end = (const unsigned char *) cmsg + cmsg->cmsg_len;
+        if (end > control_end) {
+            end = control_end;
+        }
+        for (; end - data >= (ptrdiff_t) sizeof(int); data += sizeof(int)) {
+            int passed_fd;
+            memcpy(&passed_fd, data, sizeof(int));
+            if (*received_fd == LIBUS_SOCKET_ERROR) {
+                *received_fd = passed_fd;
+            } else {
+                close(passed_fd);
+            }
+        }
+    }
+
+#if !defined(MSG_CMSG_CLOEXEC)
+    if (*received_fd != LIBUS_SOCKET_ERROR) {
+        fcntl(*received_fd, F_SETFD, fcntl(*received_fd, F_GETFD) | FD_CLOEXEC);
+    }
+#endif
+    return ret;
+}
 #endif
 
 #if !defined(_WIN32)

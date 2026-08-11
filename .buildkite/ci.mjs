@@ -186,11 +186,9 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // The macOS test agents are offline; darwin still builds (cross-compiled on
-  // Linux) but isn't tested until they're back.
-  // { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
-  // { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
-  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
@@ -777,8 +775,7 @@ function getVerifyBaselineStep(platform, options) {
  * traces itself; `packageAndUpload()` is its sole publisher.
  */
 const traceOrderTargets = [
-  // Runs on the macOS test agents, which are offline (see testPlatforms).
-  // { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
+  { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
 ];
 

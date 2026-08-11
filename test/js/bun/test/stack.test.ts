@@ -77,7 +77,7 @@ test("err.line and err.column are set", async () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 18,
+        originalColumn: 22,
       },
       null,
       2,
@@ -148,4 +148,48 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// Modules are strict mode code, and in strict mode JSC turns `return f()` into a proper tail
+// call: the returning function's frame is gone by the time `f` captures the stack. `new f()` is
+// never a tail call, so the transpiler must not rewrite `new Error()` into `Error()` to save bytes.
+test("a function returning `new Error()` is in the error's stack", () => {
+  const factories: Record<string, () => Error> = {
+    error() {
+      return new Error("error");
+    },
+    typeError() {
+      return new TypeError("typeError");
+    },
+    syntaxError() {
+      return new SyntaxError("syntaxError");
+    },
+    rangeError() {
+      return new RangeError("rangeError");
+    },
+    referenceError() {
+      return new ReferenceError("referenceError");
+    },
+    evalError() {
+      return new EvalError("evalError");
+    },
+    uriError() {
+      return new URIError("uriError");
+    },
+    aggregateError() {
+      return new AggregateError([], "aggregateError");
+    },
+    viaConst() {
+      // the single-use binding gets inlined into the return statement
+      const e = new Error("viaConst");
+      return e;
+    },
+    arrow: () => new Error("arrow"),
+  };
+
+  const missingOwnFrame = Object.keys(factories).filter(
+    name => !factories[name]().stack!.includes(`\n    at ${name} (`),
+  );
+
+  expect(missingOwnFrame).toEqual([]);
 });

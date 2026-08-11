@@ -819,7 +819,10 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("minify/ErrorConstructorOptimization", {
+  // `Error(...)` creates the same object as `new Error(...)`, but in strict mode JSC compiles
+  // `return Error(...)` to a tail call, which removes the creating function from the stack trace.
+  // `new` is never a tail call, so it has to stay.
+  itBundled("minify/ErrorConstructorKeepsNew", {
     files: {
       "/entry.js": /* js */ `
         // Test all Error constructors
@@ -862,31 +865,52 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "Error()",
-      'Error("message")',
-      'Error("message", { cause: "cause" })',
-      "TypeError()",
-      'TypeError("type error")',
-      "SyntaxError()",
-      'SyntaxError("syntax error")',
-      "RangeError()",
-      'RangeError("range error")',
-      "ReferenceError()",
-      'ReferenceError("ref error")',
-      "EvalError()",
-      'EvalError("eval error")',
-      "URIError()",
-      'URIError("uri error")',
-      'AggregateError([], "aggregate error")',
-      'AggregateError([Error("e1")], "multiple")',
-      "Error(msg)",
-      "TypeError(getErrorMessage())",
+      "new Error",
+      'new Error("message")',
+      'new Error("message", { cause: "cause" })',
+      "new TypeError",
+      'new TypeError("type error")',
+      "new SyntaxError",
+      'new SyntaxError("syntax error")',
+      "new RangeError",
+      'new RangeError("range error")',
+      "new ReferenceError",
+      'new ReferenceError("ref error")',
+      "new EvalError",
+      'new EvalError("eval error")',
+      "new URIError",
+      'new URIError("uri error")',
+      'new AggregateError([], "aggregate error")',
+      'new AggregateError([new Error("e1")], "multiple")',
+      "new Error(msg)",
+      "new TypeError(getErrorMessage())",
       "/* @__PURE__ */ new Date",
       "/* @__PURE__ */ new Map",
       "/* @__PURE__ */ new Set",
     ],
     minifySyntax: true,
     target: "bun",
+  });
+
+  itBundled("minify/ErrorReturnedFromFunctionKeepsItsFrame", {
+    files: {
+      "/entry.js": /* js */ `
+        function makeError() {
+          return new Error("made");
+        }
+        function makeTypeError() {
+          const err = new TypeError("made");
+          return err;
+        }
+        const frames = [makeError, makeTypeError].map(make => make().stack.includes("at " + make.name + " "));
+        console.log(JSON.stringify(frames));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "[true,true]",
+    },
   });
 
   itBundled("minify/ErrorConstructorWithVariables", {

@@ -103,7 +103,6 @@ impl KnownGlobal {
         let constructor = lookup(original_name)?;
 
         match constructor {
-            // Error constructors can be called without 'new' with identical behavior
             KnownGlobal::Error
             | KnownGlobal::TypeError
             | KnownGlobal::SyntaxError
@@ -112,8 +111,11 @@ impl KnownGlobal {
             | KnownGlobal::EvalError
             | KnownGlobal::URIError
             | KnownGlobal::AggregateError => {
-                // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
+                // `Error(...)` builds the same object as `new Error(...)`, but not the
+                // same `.stack`: in strict mode JSC turns `return Error(...)` into a
+                // proper tail call, so the function creating the error is already gone
+                // when the stack is captured. `new` is never a tail call. Keep it.
+                None
             }
 
             KnownGlobal::Object => {

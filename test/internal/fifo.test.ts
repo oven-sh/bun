@@ -41,10 +41,6 @@ class DequeueList<T> {
   toArray(fullCopy: boolean): T[] {
     return fullCopy ? this._list.slice() : this._list;
   }
-
-  clear(): void {
-    this._list = [];
-  }
 }
 
 describe("Given an empty queue", () => {

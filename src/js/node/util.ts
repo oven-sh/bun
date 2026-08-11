@@ -1,6 +1,5 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-/** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
 const {

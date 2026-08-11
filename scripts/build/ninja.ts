@@ -384,7 +384,9 @@ export class Ninja {
           ]
         : [];
 
-    return [...header, ...poolLines, ...this.declarations, ...prioritizedLines, ...this.lines, ...defaultLines].join("\n");
+    return [...header, ...poolLines, ...this.declarations, ...prioritizedLines, ...this.lines, ...defaultLines].join(
+      "\n",
+    );
   }
 
   /**

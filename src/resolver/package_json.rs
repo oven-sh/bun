@@ -294,12 +294,16 @@ impl SideEffects {
 /// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
 /// call-sites that only need a transient borrow.
 trait FileSystemPackageJsonExt {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8];
+    /// Joins into the thread-local join buffer, or into `spill` when the
+    /// result does not fit it. Valid until the next join on this thread.
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
     fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
+        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Loose>(
+            spill, parts,
+        )
     }
     fn normalize(&self, str: &[u8]) -> Box<[u8]> {
         // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
@@ -718,6 +722,9 @@ impl PackageJSON {
                     }
                 }
 
+                // Heap fallback for joined patterns that do not fit the thread-local join buffer.
+                let mut spill: Vec<u8> = Vec::new();
+
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -737,7 +744,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -771,7 +778,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -787,8 +794,8 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let _ =
-                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
+                            let pattern = r_fs.join(&mut spill, &joined);
+                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);

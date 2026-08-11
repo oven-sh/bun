@@ -752,6 +752,40 @@ describe("package.json exports targets longer than the maximum path length", () 
   );
 });
 
+describe("package.json sideEffects entries longer than the maximum path length", () => {
+  // Parsing a package.json joins every "sideEffects" entry onto the package
+  // directory. An entry that did not fit the path buffer aborted the process
+  // as soon as the package was required, at runtime as well as in `bun build`.
+  const longSegment = Buffer.alloc(100_000, "s").toString();
+
+  it.concurrent.each([
+    ["exact", [`./${longSegment}.js`]],
+    ["glob", [`./${longSegment}/*.js`]],
+    ["mixed", ["./index.js", `./${longSegment}.js`, `./${longSegment}/*.js`]],
+  ])("requires a package whose sideEffects array has an oversized %s entry", async (_kind, sideEffects) => {
+    using dir = tempDir("resolver-side-effects-long-entry", {
+      "node_modules/long-side-effects/package.json": JSON.stringify({
+        name: "long-side-effects",
+        main: "index.js",
+        sideEffects,
+      }),
+      "node_modules/long-side-effects/index.js": "module.exports = 3;\n",
+      "index.js": `console.log(require("long-side-effects"));\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like

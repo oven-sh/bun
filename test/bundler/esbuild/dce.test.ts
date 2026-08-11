@@ -9,6 +9,11 @@ import { dedent, itBundled } from "../expectBundled";
 
 // To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
+// Longer than the largest path buffer on any platform (Windows: 32767 * 3 + 1 bytes).
+const longSideEffectsSegment = Buffer.alloc(100_000, "x").toString();
+// A Buffer skips expectBundled's dedent(), which takes seconds per 100 KB line in a debug build.
+const packageJsonWithSideEffects = (sideEffects: string[]) => Buffer.from(JSON.stringify({ sideEffects }));
+
 describe("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
     files: {
@@ -748,6 +753,72 @@ describe("bundler", () => {
     dce: true,
     run: {
       stdout: "specific side effect\nglob1 side effect\nglob2 side effect\nused",
+    },
+  });
+  // Every "sideEffects" entry is joined onto the package directory when the
+  // package.json is parsed. A joined entry longer than the fixed path buffer
+  // used to abort the process, so these run `bun build` as a subprocess.
+  itBundled("dce/PackageJsonSideEffectsExactEntryLongerThanPathBuffer", {
+    backend: "cli",
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/effects/effect.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/effects/effect.js": `console.log("effect side effect");`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("other side effect - should be tree shaken");`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": packageJsonWithSideEffects([
+        "./effects/effect.js",
+        `./${longSideEffectsSegment}.js`,
+      ]),
+    },
+    dce: true,
+    run: {
+      stdout: "effect side effect\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobEntryLongerThanPathBuffer", {
+    backend: "cli",
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/effects/effect.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/effects/effect.js": `console.log("effect side effect");`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("other side effect - should be tree shaken");`,
+      // Only the long pattern marks effect.js, so the pattern itself has to survive and match.
+      "/Users/user/project/node_modules/demo-pkg/package.json": packageJsonWithSideEffects([
+        `./{effects,${longSideEffectsSegment}}/*.js`,
+      ]),
+    },
+    dce: true,
+    run: {
+      stdout: "effect side effect\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsMixedEntriesLongerThanPathBuffer", {
+    backend: "cli",
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/lib/specific.js";
+        import "demo-pkg/effects/effect.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/specific.js": `console.log("specific side effect");`,
+      "/Users/user/project/node_modules/demo-pkg/effects/effect.js": `console.log("effect side effect");`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("other side effect - should be tree shaken");`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": packageJsonWithSideEffects([
+        "./lib/specific.js",
+        `./${longSideEffectsSegment}.js`,
+        `./{effects,${longSideEffectsSegment}}/*.js`,
+      ]),
+    },
+    dce: true,
+    run: {
+      stdout: "specific side effect\neffect side effect\ndone",
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobDeepPattern", {

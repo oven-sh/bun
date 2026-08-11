@@ -733,7 +733,7 @@ impl StandaloneModuleGraph {
         // name, so bound it by what was actually inserted rather than by the
         // record count in the section.
         if offsets.entry_point_id as usize >= modules.count() {
-            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDOutOfRange);
         }
 
         modules.lock_pointers(); // make the pointers stable forever

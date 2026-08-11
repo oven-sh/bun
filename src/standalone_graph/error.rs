@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("Corrupted module graph: entry point ID is greater than module list count")]
-    CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount,
+    #[error("Corrupted module graph: entry point ID is out of range for the module list")]
+    CorruptedModuleGraphEntryPointIDOutOfRange,
     #[error("TargetNotFound")]
     TargetNotFound,
     #[error("NetworkError")]
@@ -36,8 +36,8 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount => {
-                "Corrupted module graph: entry point ID is greater than module list count"
+            Self::CorruptedModuleGraphEntryPointIDOutOfRange => {
+                "Corrupted module graph: entry point ID is out of range for the module list"
             }
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",

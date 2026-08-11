@@ -178,11 +178,11 @@ describe("compiled binary validity", () => {
 
     await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr: stderr.includes("Corrupted module graph"), exitCode }).toEqual({
-      stdout: "",
-      stderr: true,
-      exitCode: 1,
-    });
+    expect({
+      stdout,
+      stderr: stderr.includes("Corrupted module graph: entry point ID is out of range for the module list"),
+      exitCode,
+    }).toEqual({ stdout: "", stderr: true, exitCode: 1 });
   });
 
   test("compiled binary runs and produces expected output", async () => {

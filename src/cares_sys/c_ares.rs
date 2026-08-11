@@ -768,6 +768,12 @@ impl Channel {
             // res_send, which matters because (unlike Node) our default
             // dns.lookup backend on Linux is c-ares (#37377). If every server
             // fails, the rcode still surfaces as the final error.
+            //
+            // flags must stay explicit (ARES_OPT_FLAGS in the optmask): when the
+            // mask bit is absent, ares_init defaults flags to ARES_FLAG_EDNS,
+            // adding an OPT RR to every query — a wire-level change Node
+            // doesn't make.
+            flags: 0,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
             // callback derefs as shared (`&*const`) and the implementor mutates via
@@ -778,7 +784,8 @@ impl Channel {
             ..Default::default()
         };
 
-        let optmask: c_int = ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+        let optmask: c_int =
+            ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -1931,6 +1938,7 @@ impl Error {
     }
 }
 
+pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;

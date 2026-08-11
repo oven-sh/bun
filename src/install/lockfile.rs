@@ -1020,6 +1020,7 @@ impl Lockfile {
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
+            optional_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1292,6 +1293,9 @@ impl Lockfile {
 
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
+    /// Optional-peer slots, bound in `flush` once every package reachable
+    /// through a non-peer edge has been cloned.
+    pub(crate) optional_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1316,6 +1320,19 @@ impl<'a> Cloner<'a> {
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
+        }
+
+        // An optional peer stays bound to its target if the target survived the
+        // clean. Loading a lockfile binds these slots before hoisting, so the
+        // `resolve` below has to see them bound as well, or it builds a
+        // different tree than the one `--frozen-lockfile` compares against and
+        // a re-save moves packages around. A target only reachable through
+        // peer slots was never cloned and the slots stay unresolved.
+        for pending in self.optional_peers.drain(..) {
+            let mapping = self.mapping[pending.old_resolution as usize];
+            if (mapping as usize) < max_package_id {
+                self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
+            }
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -1345,8 +1362,22 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// Builds the tree that is saved to disk.
+    ///
+    /// The resolver leaves optional peers unresolved; hoisting binds each one
+    /// to the same-named package that ends up next to it. When that package is
+    /// placed by an edge processed after the peer's dependent, its subtree is
+    /// queued from that later edge. A lockfile loaded from disk has the binding
+    /// up front and queues the subtree from the dependent instead, which can
+    /// hoist the subtree's dependencies differently. Hoist again in that case
+    /// so the tree is the one a reload builds; otherwise `--frozen-lockfile`
+    /// rejects the lockfile we are about to save. The second pass starts with
+    /// every binding the first one made and cannot bind anything late.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
+        if self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {
+            self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn filter(
@@ -1357,16 +1388,21 @@ impl Lockfile {
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
     ) -> Result<(), tree::SubtreeError> {
+        // Runs after `resolve` bound the optional peers, so there is nothing
+        // left to bind late here.
         self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-        )
+        )?;
+        Ok(())
     }
 
-    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
+    /// Sets `buffers.trees` and `buffers.hoisted_dependencies`. Returns whether
+    /// an optional peer was bound after its dependent had been placed
+    /// (`tree::Builder::late_bound_optional_peer`).
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1376,7 +1412,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
+    ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
@@ -1398,6 +1434,7 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             pending_optional_peers: Default::default(),
+            late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1416,9 +1453,10 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
+        let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(())
+        Ok(late_bound_optional_peer)
     }
 }
 

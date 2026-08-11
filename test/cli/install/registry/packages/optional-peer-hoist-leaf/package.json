@@ -1,0 +1,29 @@
+{
+  "_id": "optional-peer-hoist-leaf",
+  "name": "optional-peer-hoist-leaf",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-leaf",
+      "version": "1.0.0",
+      "_id": "optional-peer-hoist-leaf@1.0.0",
+      "dist": {
+        "integrity": "sha512-fqljP59V2vz45cC0Zan3B9MFl9YqzOkr3yIwFVF8RnI9A/dtx3f8MeLMw75pd18KBY/1aIYCIGN5cvaxwjMiMw==",
+        "shasum": "d34a5ad0681194b5ea936a7db014a9fad1ea8e3d",
+        "tarball": "http://localhost:4873/optional-peer-hoist-leaf/-/optional-peer-hoist-leaf-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "optional-peer-hoist-leaf",
+      "version": "2.0.0",
+      "_id": "optional-peer-hoist-leaf@2.0.0",
+      "dist": {
+        "integrity": "sha512-yfqEs/442yivAG4zTY4u1DFAf8W/ZjIZTI1elABJFvqfaVQiDxmwo+yoDrIXNiJVz7vVrNKIDjhOeU0vToAZNg==",
+        "shasum": "d7f6cf082fcfb677ee9217b58d25c53b2edee85c",
+        "tarball": "http://localhost:4873/optional-peer-hoist-leaf/-/optional-peer-hoist-leaf-2.0.0.tgz"
+      }
+    }
+  }
+}

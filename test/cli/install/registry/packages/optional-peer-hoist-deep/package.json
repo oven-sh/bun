@@ -1,0 +1,22 @@
+{
+  "_id": "optional-peer-hoist-deep",
+  "name": "optional-peer-hoist-deep",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-deep",
+      "version": "1.0.0",
+      "dependencies": {
+        "optional-peer-hoist-deep-child": "1.0.0"
+      },
+      "_id": "optional-peer-hoist-deep@1.0.0",
+      "dist": {
+        "integrity": "sha512-ytgvRJWhHiAPJbQhFw3iuAZgyxEr/jPJK8AeKzXZxQGcbHHZApeWtULf8t1KSF1fUKYC9pl19rlyC9axWiAVDw==",
+        "shasum": "88938b872ea61cd2fa96da6ed9b9f43db3b01745",
+        "tarball": "http://localhost:4873/optional-peer-hoist-deep/-/optional-peer-hoist-deep-1.0.0.tgz"
+      }
+    }
+  }
+}

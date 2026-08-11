@@ -144,8 +144,6 @@ const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
-// Set on a TLSSocket constructed over an existing socket (`new tls.TLSSocket(socket)`
-// rather than tls.connect()); see onClientHandshakeComplete.
 const kStandaloneWrap = Symbol("kStandaloneWrap");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -302,12 +300,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node installs onConnectSecure from tls.connect() only: a TLSSocket
-  // constructed over an existing socket gets _finishInit alone, so it neither
-  // checks the certificate against a connect() host it does not have nor emits
-  // 'secureConnect'. It still applies the chain verdict (authorized /
-  // rejectUnauthorized), like the standalone server wrap in ServerHandlers.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1108
+  // Only tls.connect() installs the onConnectSecure half; a constructor wrap gets _finishInit alone.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
   const connectSecure = !self[kStandaloneWrap];
   // Node has no try/catch around these emits; a listener throw reaches
@@ -332,9 +325,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
         if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1686-L1688
-          // A wrap reports the rejection once, through the destroy: its
-          // 'secure' listeners read ssl.verifyError(), which is gone after
-          // destroy (the mysql driver's STARTTLS does exactly this).
+          // A wrap's 'secure' listeners read ssl.verifyError(), which is null once destroyed.
           if (connectSecure) self.emit("secure", self);
           return;
         }
@@ -2031,9 +2022,7 @@ Socket.prototype.connect = function connect(...args) {
               throw new Error("Invalid socket");
             }
           } else {
-            // Until the upgrade takes the connection over, destroying this
-            // socket destroys it too, as closing Node's wrap does; afterwards the
-            // upgrade's own teardown (kCloseRawConnection / the shared fd) owns it.
+            // Destroying a not-yet-upgraded wrap destroys the stream under it, like Node's JSStreamSocket.doClose.
             // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L242-L253
             const destroyConnection = () => connection.destroy();
             this.once("close", destroyConnection);
@@ -2289,14 +2278,7 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
-// Wires the stream-level TLS engine to the stream it runs over. The engine only
-// listens for traffic; the stream's 'error' is ours to take, as Node routes it
-// to the TLS socket (JSStreamSocket re-emits it, _init forwards it) and tears
-// the wrap down on the stream's close. Left unhandled it would be thrown out of
-// the stream's destroy, and the 'close' that tears the TLS socket down would
-// never be emitted.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L740
+// The stream's 'error' becomes the TLS socket's (as in Node); unhandled, it would also swallow the 'close' below.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function listenToUpgradedDuplex(self, connection, events) {
   connection.on("data", events[0]);
@@ -2449,13 +2431,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   });
 };
 
-// Client-side counterpart, for `new tls.TLSSocket(socket)` (a STARTTLS client
-// wrapping the connection it already holds): the same upgrade as
-// tls.connect({ socket }), so the handshake starts here and _handle is the TLS
-// handle that _write/_read/_destroy expect. Node likewise wraps the handle in
-// the constructor; only the onConnectSecure half of tls.connect() is left out
-// (see onClientHandshakeComplete).
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L608
+// Client-side counterpart for `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade minus onConnectSecure.
 Socket.prototype[kUpgradeClientTLS] = function (connection) {
   this[kStandaloneWrap] = true;
   Socket.prototype.connect.$call(this, { socket: connection });

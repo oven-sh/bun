@@ -798,19 +798,13 @@ function TLSSocket(socket?, options?) {
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   this[ksession] = options.session || null;
 
-  // `new tls.TLSSocket(socket, ...)`: drive the handshake over the provided
-  // socket via net.ts's native upgrade paths (they reach the module-private
-  // kupgraded state and handler tables). Both leave _handle unset until the
-  // upgrade hands back the TLS handle, so nothing ever treats the wrapped
-  // net.Socket itself as a handle.
+  // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
     if (isServer) {
       this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
     } else {
       this[kUpgradeClientTLS](socket);
-      // http2-wrapper derives its JSStreamSocket from
-      // `new TLSSocket(new PassThrough())._handle._parentWrap.constructor`;
-      // here that is the TLSSocket itself.
+      // http2-wrapper reads `new TLSSocket(new PassThrough())._handle._parentWrap.constructor` as its JSStreamSocket.
       const handle = this._handle;
       if (handle) handle._parentWrap = this;
     }
@@ -872,10 +866,7 @@ TLSSocket.prototype._destroySSL = function _destroySSL() {
 };
 
 TLSSocket.prototype._start = function _start() {
-  // In Node this sends the ClientHello of a socket wrapped by the constructor
-  // (the mysql driver's STARTTLS calls it right after `new TLSSocket(socket)`).
-  // Here the constructor's upgrade and connect() both start the handshake
-  // natively, so there is nothing left to kick off.
+  // Node sends a constructor wrap's ClientHello here (the mysql driver calls it); ours went out in the constructor.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
 };
 

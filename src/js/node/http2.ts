@@ -3425,8 +3425,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
-    // node throws these synchronously from pushStream() (buildNgHeaderString), before a stream id
-    // is reserved; same rule respond() applies.
+    // Thrown synchronously like node, before a promised stream id is reserved.
     if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     const sensitives = headers[sensitiveHeaders];
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips

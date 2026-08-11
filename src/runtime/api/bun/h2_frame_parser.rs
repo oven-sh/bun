@@ -8486,7 +8486,6 @@ impl H2FrameParser {
                     }
                     Ok(None)
                 };
-                // Like request() and send_trailers(): an array value is one field per element.
                 if js_value.js_type().is_array() {
                     let mut value_iter = js_value.array_iterator(global_object)?;
                     if let Some(idx) = this.single_value_index_checked(validated_name) {

@@ -1368,8 +1368,7 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
 
-/// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
-/// into `spill` (grown as needed). `spill` is untouched in the common case.
+/// [`join_abs_string`], but joins into `spill` when the result may not fit the thread-local buffer.
 pub fn join_abs_string_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     spill: &'a mut Vec<u8>,
@@ -1589,8 +1588,7 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Buffer size that always holds `_join_abs_string_buf`'s output (and its
-/// unnormalized scratch) for `parts` joined onto a `cwd_len`-byte cwd.
+/// Buffer size that always holds `_join_abs_string_buf`'s scratch and output for these inputs.
 #[inline]
 fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2

@@ -412,8 +412,7 @@ impl Lookup {
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             let mut buf = bun_paths::path_buffer_pool::get();
-            // `name` is unbounded source map data; a path that does not fit
-            // cannot be opened anyway.
+            // `name` is unbounded source map data; a path too long to fit is too long to open.
             let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf[..], &[name])?;

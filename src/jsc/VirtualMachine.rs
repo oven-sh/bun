@@ -2421,17 +2421,14 @@ impl VirtualMachine {
         }
     }
 
-    /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
-    /// returned promise settles.
-    pub fn load_entry_point(
-        &mut self,
-        entry_path: &[u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(entry_path)?;
-
+    /// Shared wait body of [`load_entry_point`](Self::load_entry_point) /
+    /// [`load_entry_point_for_test_runner`](Self::load_entry_point_for_test_runner):
+    /// spin the event loop until the entry-point promise settles. Returns
+    /// `true` when `promise` was already rejected before waiting — callers
+    /// return it as-is, skipping their trailing tick/unwrap.
+    fn wait_for_entry_point_promise(&mut self, promise: *mut JSInternalPromise) -> bool {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
@@ -2453,12 +2450,24 @@ impl VirtualMachine {
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
-                return Ok(promise);
+                return true;
             }
             self.event_loop_mut().perform_gc();
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
+        false
+    }
 
+    /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
+    /// returned promise settles.
+    pub fn load_entry_point(
+        &mut self,
+        entry_path: &[u8],
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        let promise = self.reload_entry_point(entry_path)?;
+        if self.wait_for_entry_point_promise(promise) {
+            return Ok(promise);
+        }
         Ok(self.pending_internal_promise.unwrap_or(promise))
     }
 
@@ -4616,36 +4625,9 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
-
-        // pending_internal_promise can change if hot module reloading is enabled
-        if self.is_watcher_enabled() {
-            self.event_loop_mut().perform_gc();
-            loop {
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
-                    break;
-                }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
-            }
-        } else {
-            // SAFETY: `promise` is a live JSC heap cell.
-            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
-                return Ok(promise);
-            }
-            self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        if self.wait_for_entry_point_promise(promise) {
+            return Ok(promise);
         }
-
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())
     }

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { isASAN } from "harness";
-import { devTest } from "../bake-harness";
+import path from "node:path";
+import { Dev, devTest, minimalFramework } from "../bake-harness";
 
 devTest("server-side source maps show correct error lines", {
   files: {
@@ -105,6 +106,11 @@ export async function getStaticPaths() {
 
     expect(hasCorrectThrowLine).toBe(true);
     expect(hasCorrectCallLine).toBe(true);
+    // react-server-dom was loaded by the initial bundle and is not part of the
+    // update, so its frame still has to remap through the initial bundle's map.
+    expect(cleanLines).toMatch(
+      /at react-stack-bottom-frame \(.*react-server-dom-webpack-server\.node\.unbundled\.development\.js:\d+:\d+\)/,
+    );
   },
 });
 
@@ -149,12 +155,12 @@ function helperFunction() {
   },
 });
 
-// Each round re-registers the file's source provider over the previous one
-// and re-materializes the parsed map from it, so stack remapping must stay
-// correct through repeated provider replacement, not just the first install.
+// Each round evaluates a new server patch, which registers its own source
+// provider next to the ones of the earlier rounds, so the frame must be
+// remapped through the map of the round that actually loaded the code.
 // `filler` comment lines shift the throwing function down one line per round,
-// so a stale map from an earlier round would remap the frame to the wrong
-// line and fail that round's assertion.
+// so remapping through any earlier round's map would report the wrong line
+// and fail that round's assertion.
 function churnPage(name: string, filler: number) {
   const fillerLines = Array.from({ length: filler }, (_, n) => `// filler ${n}\n`).join("");
   return `export default function ChurnPage() {
@@ -200,6 +206,70 @@ devTest("server-side source maps stay correct across repeated reloads", {
     }
   },
   timeoutMultiplier: 2,
+});
+
+function withFillerLines(source: string, count: number) {
+  return Array.from({ length: count }, (_, n) => `// filler ${n}\n`).join("") + source;
+}
+
+const throwingLib = `export function boom() {
+  throw new Error("boom");
+}`;
+
+const throwingRoute = `import { boom } from "../lib/boom";
+export default function (req, meta) {
+  boom();
+  return new Response("unreachable");
+}`;
+
+// Requests "/" and returns the three synchronous user frames of its error
+// (lib/boom.ts, routes/index.ts, the framework's minimal.server.ts) from the
+// JSON payload of the dev error page, reduced to the file (last two path
+// segments) and line. A frame that did not remap keeps its raw `bake://` URL.
+async function fetchErrorFrames(dev: Dev): Promise<{ file: string; line: number }[]> {
+  const response = await dev.fetch("/");
+  expect(response.status).toBe(500);
+  const html = await response.text();
+  const payload = JSON.parse(/<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(html)![1]);
+  const { message, stack } = payload.problems.exceptions[0];
+  expect(message).toBe("boom");
+  return stack.frames.slice(0, 3).map(({ file, position }: any) => ({
+    file: path.isAbsolute(file) ? file.split(/[\\/]/).slice(-2).join("/") : file,
+    line: position.line,
+  }));
+}
+
+// Each server hot update is evaluated as one patch whose source map only covers
+// the files in that update. Files that are not part of an update keep running
+// the code of the patch that loaded them, so their frames must still remap
+// through that patch's map once newer patches have been loaded. Lines are
+// compared relative to the first round: prepending filler lines to a file
+// moves its frame by exactly that many lines, but only when the frame is
+// remapped through the map of the patch that loaded the file's current code.
+devTest("server-side source maps keep working for modules loaded by an earlier patch", {
+  framework: minimalFramework,
+  files: {
+    "lib/boom.ts": throwingLib,
+    "routes/index.ts": throwingRoute,
+  },
+  async test(dev) {
+    const [lib, route, framework] = await fetchErrorFrames(dev);
+    expect([lib.file, route.file, framework.file]).toEqual([
+      "lib/boom.ts",
+      "routes/index.ts",
+      "bake/minimal.server.ts",
+    ]);
+
+    // Re-bundles only the route; lib/boom.ts and minimal.server.ts stay in the
+    // initial patch.
+    await dev.write("routes/index.ts", withFillerLines(throwingRoute, 3));
+    const routeAfterUpdate = { file: route.file, line: route.line + 3 };
+    expect(await fetchErrorFrames(dev)).toEqual([lib, routeAfterUpdate, framework]);
+
+    // Re-bundles only the lib; the route keeps running the previous patch.
+    await dev.write("lib/boom.ts", withFillerLines(throwingLib, 2));
+    expect(await fetchErrorFrames(dev)).toEqual([{ file: lib.file, line: lib.line + 2 }, routeAfterUpdate, framework]);
+  },
 });
 
 // ~DevServerSourceProvider ran after the Zig::GlobalObject cell was swept.

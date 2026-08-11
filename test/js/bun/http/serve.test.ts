@@ -2330,6 +2330,28 @@ it("#5859 arrayBuffer", async () => {
   expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
+it("a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try {
+        const server = Bun.serve({ hostname: "[" + "a".repeat(1100) + "]", port: 0, fetch: () => new Response("x") });
+        server.stop(true);
+        console.log("listening");
+      } catch (e) {
+        console.log("threw");
+      }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("threw");
+  expect(exitCode).toBe(0);
+});
+
 describe("server.requestIP", () => {
   it.if(isIPv4())("v4", async () => {
     using server = Bun.serve({

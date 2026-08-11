@@ -345,6 +345,14 @@ Bytecode compilation moves parsing overhead for large input files from runtime t
 
 <Note>Bytecode compilation supports both `cjs` and `esm` formats when used with `--compile`.</Note>
 
+### Startup snapshots (experimental)
+
+`--snapshot` goes one step further than bytecode: after producing the executable, `bun build` runs it once and embeds a snapshot of its started-up state — modules evaluated, startup objects built, JIT code included — so later launches resume from that point instead of booting. See [Startup Snapshots](/bundler/startup-snapshots).
+
+```bash icon="terminal" terminal
+bun build --compile --bytecode --snapshot ./app.ts --outfile myapp
+```
+
 ### What do these flags do?
 
 The `--minify` argument reduces the size of the transpiled output code. For a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.

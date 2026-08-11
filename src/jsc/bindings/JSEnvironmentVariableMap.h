@@ -1,3 +1,4 @@
+#pragma once
 #include "root.h"
 #include "SharedEnvStore.h"
 
@@ -77,5 +78,13 @@ bool isProcessEnvClassInfo(const JSC::ClassInfo*);
 // else a fresh one seeded from its `process.env` (then swapped to a write-through view).
 // Returns null if seeding threw.
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject);
+// Snapshots (see the definitions): refill the store-backed process.env in place after a restore; report build-time reads.
+bool refillSharedEnvAfterSnapshotRestore(Zig::GlobalObject*, JSC::JSObject* freshEnvObject);
+void printEnvReadsBeforeSnapshot(Zig::GlobalObject*, const Vector<WTF::String>& excludedNames);
 
+}
+
+namespace Bun {
+// The JS frames (up to 4) currently on the stack, one per line, for the reports the snapshot build prints.
+WTF::String snapshotReportCallSite(JSC::JSGlobalObject*);
 }

@@ -93,7 +93,9 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
 use crate::api::csrf_jsc;
-use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, XMLObject, YAMLObject};
+use crate::api::{
+    HashObject, JSON5Object, StartupSnapshotObject, TOMLObject, UnsafeObject, XMLObject, YAMLObject,
+};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -356,6 +358,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_origin => super::get_origin,
         BunObject_lazyPropCb_semver => super::get_semver,
         BunObject_lazyPropCb_unsafe => super::get_unsafe,
+        BunObject_lazyPropCb_startupSnapshot => super::get_startup_snapshot,
         BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
         BunObject_lazyPropCb_s3 => super::get_s3_default_client,
         BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
@@ -2038,6 +2041,10 @@ fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     UnsafeObject::create(global_this)
+}
+
+fn get_startup_snapshot(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    StartupSnapshotObject::create(global_this)
 }
 
 /// EnvironmentVariables is runtime defined.

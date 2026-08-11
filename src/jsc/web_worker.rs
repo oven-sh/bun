@@ -190,6 +190,26 @@ impl Drop for WebWorker {
     }
 }
 
+/// Worker threads currently running (from the start of a worker's thread until its shutdown). A snapshot cannot contain a
+/// thread, so the freeze reports any as a blocker.
+static LIVE_WORKERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// One unit of `LIVE_WORKERS`, held from before a worker thread is spawned until the last statement of that thread has run.
+struct LiveWorker;
+impl LiveWorker {
+    fn begin() -> Self {
+        LIVE_WORKERS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+impl Drop for LiveWorker {
+    fn drop(&mut self) {
+        LIVE_WORKERS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+pub fn live_worker_count() -> usize {
+    LIVE_WORKERS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 impl WebWorker {
     pub(crate) fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
@@ -379,9 +399,11 @@ impl WebWorker {
         // SAFETY: heap-allocated, refcounted; the new thread holds the ref taken above.
         unsafe impl Send for SendPtr {}
         let send = SendPtr(worker);
+        let live = LiveWorker::begin(); // counted before the thread exists, so a freeze cannot slip in between
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
+                let _live = live; // released when this closure returns: after teardown and after the thread's ref is dropped
                 let send = send;
                 // SAFETY: `send.0` is live (the thread's ref); `&WebWorker`, never `&mut`.
                 unsafe { (*send.0).thread_main() };

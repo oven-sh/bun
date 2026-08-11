@@ -264,6 +264,8 @@ pub mod parent_death_watchdog {
 
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
+    #[inline]
+    pub fn reinstall_after_snapshot_restore(_handle: EventLoopCtx) {}
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;
 
@@ -444,6 +446,8 @@ impl EventLoopCtx {
 }
 #[cfg(not(windows))]
 pub use posix_event_loop::Store;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+pub use posix_event_loop::dispatch_snapshot_hangups;
 #[cfg(windows)]
 pub use windows_event_loop::Store;
 
@@ -785,6 +789,16 @@ static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 #[cfg(not(windows))]
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Snapshot freeze: the "IO Watcher" thread has no stop protocol, so a snapshot is refused while it exists.
+#[cfg(not(windows))]
+pub fn io_watcher_snapshot_blocker() -> Option<&'static str> {
+    ONCE.get().map(|_| "the file I/O watcher thread is running (Bun.file()/Bun.write() on a pipe or terminal started it) — a snapshot cannot contain a thread")
+}
+#[cfg(windows)]
+pub fn io_watcher_snapshot_blocker() -> Option<&'static str> {
+    None
+}
 
 impl IoRequestLoop {
     #[cfg(not(windows))]

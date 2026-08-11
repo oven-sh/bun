@@ -146,6 +146,20 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
+    /// Snapshot: stop and join the workers (if the pool was ever started).
+    pub fn stop_all_threads_for_snapshot() {
+        if let Some(pool) = POOL.get() {
+            pool.stop_all_threads_for_snapshot();
+        }
+    }
+
+    /// Called once right after a snapshot restore, before any task is scheduled.
+    pub fn did_restore_from_snapshot() {
+        if let Some(pool) = POOL.get() {
+            pool.forget_threads_after_snapshot_restore();
+        }
+    }
+
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
     }

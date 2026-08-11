@@ -1233,9 +1233,8 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    use std::sync::Once;
-
-    static INIT_ONCE: Once = Once::new();
+    static INIT_ONCE: bun_core::startup_snapshot::SnapshotOnce =
+        bun_core::startup_snapshot::SnapshotOnce::new();
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
@@ -1249,7 +1248,7 @@ mod _event_loop_draft {
         std::sync::OnceLock::new();
 
     pub(super) fn init(opts: &InitOpts) {
-        INIT_ONCE.call_once(|| init_once(opts));
+        INIT_ONCE.call(|| init_once(opts));
     }
 
     fn init_once(opts: &InitOpts) {
@@ -1416,6 +1415,13 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),
 );
+
+/// After the freeze-time shutdown: the snapshot must not carry "shutting down", or the thread `init` starts again in a
+/// restored process (its `SnapshotOnce` re-runs there) would exit at once; and that process's own exit must still drain.
+pub fn reset_shutdown_state_for_snapshot() {
+    SHUTDOWN_REQUESTED.store(false, Ordering::Release);
+    *SHUTDOWN_DONE.0.lock() = false;
+}
 
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight

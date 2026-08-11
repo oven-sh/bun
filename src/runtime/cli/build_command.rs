@@ -9,7 +9,7 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-use bun_options_types::context::MacroOptions;
+use bun_options_types::context::{CompileStartupSnapshot, CompileStartupSnapshotIo, MacroOptions};
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sys::{self, Fd, FdExt as _};
@@ -138,6 +138,56 @@ impl BuildCommand {
             // resolver.opts is a distinct subset type; entry_points / IMRE live
             // only on the bundler-side options struct (resolver never reads them).
             this_transpiler.options.ignore_module_resolution_errors = true;
+        }
+
+        if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off
+            && ctx.args.entry_points.is_empty()
+        {
+            // The snapshot step by itself, on an executable built earlier (possibly cross-compiled elsewhere).
+            let exe: &[u8] = &ctx.bundler_options.outfile;
+            if exe.is_empty() {
+                Output::print_errorln(format_args!(
+                    "--snapshot without entrypoints takes the snapshot of an existing executable: pass it as --outfile"
+                ));
+                Global::exit(1);
+            }
+            let env_ptr = this_transpiler.env;
+            let exe_dir = match bun_core::dirname(exe) {
+                Some(parent) if !parent.is_empty() && parent != b"." => {
+                    match bun_sys::Dir::cwd().open_dir(parent, Default::default()) {
+                        // the executable already exists there; a typo must not create directories
+                        Ok(d) => d,
+                        Err(err) => {
+                            Output::err(err, "could not open {}", (bun_fmt::quote(parent),));
+                            Global::exit(1);
+                        }
+                    }
+                }
+                _ => bun_sys::Dir::cwd(),
+            };
+            match run_startup_snapshot_step(
+                exe_dir.fd,
+                exe,
+                ctx.bundler_options.compile_startup_snapshot,
+                ctx.bundler_options.compile_startup_snapshot_io,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *env_ptr },
+            ) {
+                Ok(bytes) => report_startup_snapshot_step(bytes),
+                Err(message) => {
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
+                    Global::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off
+            && !ctx.bundler_options.compile
+        {
+            Output::print_errorln(format_args!(
+                "--snapshot needs --compile (or no entrypoints, to take the snapshot of an existing --outfile)"
+            ));
+            Global::exit(1);
         }
 
         // Note: clone the first entry point so `outfile` can borrow owned
@@ -284,6 +334,12 @@ impl BuildCommand {
                 if !ctx.bundler_options.compile_assets.is_empty() {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> cannot use --compile --target browser with --asset"
+                    );
+                    Global::exit(1);
+                }
+                if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --snapshot: a standalone HTML file is not a process to snapshot"
                     );
                     Global::exit(1);
                 }
@@ -882,6 +938,23 @@ impl BuildCommand {
                     }
                 }
 
+                let compile_flags = {
+                    use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                    let mut flags = Flags::default();
+                    if !ctx.bundler_options.compile_autoload_dotenv {
+                        flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                    }
+                    if !ctx.bundler_options.compile_autoload_bunfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_tsconfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_package_json {
+                        flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    flags
+                };
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -897,23 +970,8 @@ impl BuildCommand {
                         .as_deref()
                         .unwrap_or(b""),
                     ctx.bundler_options.compile_executable_path.as_deref(),
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
-                        if !ctx.bundler_options.compile_autoload_dotenv {
-                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                        }
-                        if !ctx.bundler_options.compile_autoload_bunfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_tsconfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_package_json {
-                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                        }
-                        flags
-                    },
+                    compile_flags,
+                    None,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -930,6 +988,29 @@ impl BuildCommand {
                 {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
                     Global::exit(1);
+                }
+
+                if ctx.bundler_options.compile_startup_snapshot != CompileStartupSnapshot::Off {
+                    if is_cross_compile {
+                        Output::print_errorln(format_args!(
+                            "--snapshot has to run the executable, which a cross-compiled one can't do here. Build without it, then run `bun build --snapshot --outfile <exe>` on the target platform."
+                        ));
+                        Global::exit(1);
+                    }
+                    match run_startup_snapshot_step(
+                        root_dir.fd,
+                        outfile,
+                        ctx.bundler_options.compile_startup_snapshot,
+                        ctx.bundler_options.compile_startup_snapshot_io,
+                        // SAFETY: `env` is a process-lifetime singleton.
+                        unsafe { &mut *env_ptr },
+                    ) {
+                        Ok(bytes) => report_startup_snapshot_step(bytes),
+                        Err(message) => {
+                            Output::print_errorln(format_args!("{}", bstr::BStr::new(&message)));
+                            Global::exit(1);
+                        }
+                    }
                 }
 
                 // Write external sourcemap files next to the compiled executable.
@@ -1419,4 +1500,149 @@ pub(crate) fn collect_compile_assets(
         }
     }
     Ok(())
+}
+
+/// The snapshot step: run `exe` (in `dir`) once so it writes its snapshot, then embed that in place; re-running replaces the previous snapshot.
+pub(crate) fn run_startup_snapshot_step(
+    dir: bun_sys::Fd,
+    exe: &[u8],
+    mode: CompileStartupSnapshot,
+    io: CompileStartupSnapshotIo,
+    env: &mut bun_dotenv::Loader,
+) -> Result<usize, Vec<u8>> {
+    if !Bun__startupSnapshotSupported() {
+        return Err(b"startup snapshots are not available in this build of bun (macOS with mimalloc as the process allocator, and glibc Linux)".to_vec());
+    }
+    use bun_standalone_module_graph::StandaloneModuleGraph::{
+        CompileResult, Flags, embed_startup_snapshot_into_executable,
+        set_startup_snapshot_build_flags,
+    };
+    // `dir` is the executable's directory (as for `to_executable`); only the file name of `exe` matters here.
+    let name = bun_paths::basename(exe);
+    let exe_abs: Vec<u8> = {
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut p = match bun_sys::get_fd_path(dir, &mut buf) {
+            Ok(p) => p.to_vec(),
+            Err(_) if dir == bun_sys::Fd::cwd() => b".".to_vec(), // AT_FDCWD has no path; "./name" is right
+            Err(err) => {
+                return Err(format!(
+                    "could not resolve the output directory to run the executable from: {err}"
+                )
+                .into_bytes());
+            }
+        };
+        p.push(b'/');
+        p.extend_from_slice(name);
+        p
+    };
+    let failed = |result: bun_standalone_module_graph::Result<CompileResult>,
+                  what: &str|
+     -> Option<Vec<u8>> {
+        match result {
+            Ok(CompileResult::Err(err)) => Some(err.slice().to_vec()),
+            Err(err) => Some(format!("{what}: {}", err.name()).into_bytes()),
+            Ok(_) => None,
+        }
+    };
+    // The executable learns that (and how) it should take its snapshot from a marking in its payload; its env and argv belong to the app.
+    let mut marking = Flags::TAKE_STARTUP_SNAPSHOT;
+    if mode == CompileStartupSnapshot::Manual {
+        marking |= Flags::STARTUP_SNAPSHOT_MANUAL;
+    }
+    match io {
+        CompileStartupSnapshotIo::Strict => {}
+        CompileStartupSnapshotIo::Local => marking |= Flags::STARTUP_SNAPSHOT_IO_LOCAL,
+        CompileStartupSnapshotIo::Network => marking |= Flags::STARTUP_SNAPSHOT_IO_NETWORK,
+    }
+    if let Some(message) = failed(
+        set_startup_snapshot_build_flags(&exe_abs, marking, dir, name, env),
+        "could not prepare the executable",
+    ) {
+        return Err(message);
+    }
+    bun_core::prettyln!(
+        "<d>[snapshot]</r> running {} once to take its snapshot",
+        bstr::BStr::new(&exe_abs)
+    );
+    Output::flush();
+    let mut snapshot_path = exe_abs.clone();
+    snapshot_path.extend_from_slice(b".snapshot");
+    let snapshot_z = bun_core::ZBox::from_vec_with_nul(snapshot_path.clone());
+    let _ = bun_sys::unlink(&snapshot_z); // a sidecar left by an earlier run must not pass for this run's
+    let status = bun_core::util::spawn_sync_inherit(&[exe_abs.as_slice()]);
+    let written = bun_sys::stat(&snapshot_z).is_ok();
+    let ran_ok = matches!(&status, Ok(st) if st.is_ok());
+    if !ran_ok || !written {
+        // Whatever happened, what is left on disk must be an ordinary executable again.
+        let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        let _ = bun_sys::unlink(&snapshot_z);
+        // 70 = the runtime gave up waiting for the app to become quiet (it printed why); anything else non-zero is the app failing. Either way there is no snapshot, so the build fails.
+        const NOT_QUIET: i32 = 70;
+        return Err(match status {
+            Err(e) => format!("could not run {}: {:?}", bstr::BStr::new(&exe_abs), e),
+            Ok(st) if st.code() == NOT_QUIET => format!(
+                "{} did not become quiet, so no snapshot was taken (see above for what kept it busy; --snapshot=manual lets the app call Bun.startupSnapshot.take() at a moment of its choosing)",
+                bstr::BStr::new(&exe_abs)
+            ),
+            Ok(st) if st.code() == -1 => format!(
+                "{} was killed by a signal while its snapshot was being taken (see its output above)",
+                bstr::BStr::new(&exe_abs)
+            ),
+            Ok(st) if !st.is_ok() => format!(
+                "{} exited with status {} while its snapshot was being taken (see its output above)",
+                bstr::BStr::new(&exe_abs),
+                st.code()
+            ),
+            Ok(_) if mode == CompileStartupSnapshot::Manual => format!(
+                "{} exited without taking a snapshot: with --snapshot=manual the app has to call Bun.startupSnapshot.take() before it exits",
+                bstr::BStr::new(&exe_abs)
+            ),
+            Ok(_) => format!(
+                "{} exited before its startup work drained, so no snapshot was taken: an app that exits on its own cannot be snapshotted in auto mode (--snapshot=manual lets it call Bun.startupSnapshot.take() at the right moment)",
+                bstr::BStr::new(&exe_abs)
+            ),
+        }
+        .into_bytes());
+    }
+    // The snapshot goes into the executable as it is: a launch maps the executable's own pages; nothing is unpacked anywhere.
+    let snapshot = bun_sys::File::openat(bun_sys::Fd::cwd(), &snapshot_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+        .map_err(|e| {
+            format!("could not read {}: {}", bstr::BStr::new(&snapshot_path), e).into_bytes()
+        });
+    let embedded = snapshot
+        .as_ref()
+        .ok()
+        .map(|snapshot| embed_startup_snapshot_into_executable(&exe_abs, snapshot, dir, name, env));
+    if !bun_core::env_var::BUN_STARTUP_SNAPSHOT_KEEP_SIDECAR
+        .get()
+        .unwrap_or(false)
+    {
+        let _ = bun_sys::unlink(&snapshot_z);
+    }
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env); // never leave it in take-a-snapshot mode
+            return Err(message);
+        }
+    };
+    let embedded = embedded.expect("embed ran when the snapshot was read");
+    if let Some(message) = failed(embedded, "failed to embed the snapshot") {
+        let _ = set_startup_snapshot_build_flags(&exe_abs, Flags::empty(), dir, name, env);
+        return Err(message);
+    }
+    Ok(snapshot.len())
+}
+
+unsafe extern "C" {
+    safe fn Bun__startupSnapshotSupported() -> bool;
+}
+
+pub(crate) fn report_startup_snapshot_step(snapshot_bytes: usize) {
+    bun_core::prettyln!(
+        "<green>[snapshot]</r> embedded a {:.1} MB snapshot into the executable",
+        snapshot_bytes as f64 / 1048576.0
+    );
+    Output::flush();
 }

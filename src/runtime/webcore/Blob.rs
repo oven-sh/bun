@@ -446,6 +446,14 @@ impl BlobExt for Blob {
 
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
+        if let Some(kind) = self.snapshot_io_kind()
+            && let Err(e) = global.throw_disabled_in_snapshot_error_if_needed(kind)
+        {
+            let err = global.take_error(e);
+            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global, err,
+            );
+        }
 
         type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
 
@@ -1171,6 +1179,9 @@ impl BlobExt for Blob {
         Ok(())
     }
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         self.get_stream_with_cache(
             global_this,
             callframe,
@@ -1223,6 +1234,9 @@ impl BlobExt for Blob {
         Ok(stream)
     }
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind @ "Bun.s3") = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?; // file-backed reads are gated (and recorded once) in do_read_file
+        }
         Ok(self.get_text_clone(global_this)?)
     }
 
@@ -1232,6 +1246,9 @@ impl BlobExt for Blob {
     }
 
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind @ "Bun.s3") = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?; // file-backed reads are gated (and recorded once) in do_read_file
+        }
         Ok(self.get_json_share(global_this)?)
     }
 
@@ -1249,6 +1266,9 @@ impl BlobExt for Blob {
     }
 
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind @ "Bun.s3") = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?; // file-backed reads are gated (and recorded once) in do_read_file
+        }
         Ok(self.get_array_buffer_clone(global_this)?)
     }
 
@@ -1258,10 +1278,16 @@ impl BlobExt for Blob {
     }
 
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind @ "Bun.s3") = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?; // file-backed reads are gated (and recorded once) in do_read_file
+        }
         Ok(self.get_bytes_clone(global_this)?)
     }
 
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind @ "Bun.s3") = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?; // file-backed reads are gated (and recorded once) in do_read_file
+        }
         let _store = self.store.get().clone();
         Ok(JSPromise::wrap(global_this, |g| {
             self.to_form_data(g, Lifetime::Temporary)
@@ -1363,6 +1389,9 @@ impl BlobExt for Blob {
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
         let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
@@ -1378,6 +1407,9 @@ impl BlobExt for Blob {
 
     // This mostly means 'can it be read?'
     fn get_exists(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self);
         }
@@ -1689,6 +1721,9 @@ impl BlobExt for Blob {
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         let [arg0] = callframe.arguments_as_array::<1>();
         let has_args = callframe.arguments_count() > 0;
 
@@ -2189,6 +2224,9 @@ impl BlobExt for Blob {
         self.size.get()
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         // TODO: make this async for files
         let tag = match self.store.get() {
             None => return Ok(JSValue::UNDEFINED),
@@ -5327,6 +5365,15 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
     // accept a path or a blob
     // `defer if (.path) path.deinit()` → `Drop for PathLike` (via PathOrBlob).
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
+    let gate_kind = match &path_or_blob {
+        PathOrBlob::Path(_) => Some("Bun.write"),
+        PathOrBlob::Blob(blob) => blob
+            .snapshot_io_kind()
+            .map(|k| if k == "Bun.file" { "Bun.write" } else { k }), // stdio stays writable; an S3 destination is network I/O
+    };
+    if let Some(kind) = gate_kind {
+        global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+    }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if let PathOrBlob::Blob(ref blob) = path_or_blob {
         validate_writable_blob(global_this, blob)?;

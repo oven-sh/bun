@@ -67,6 +67,10 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 }
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// Requests the HTTP thread is currently working on (for the snapshot quiescence gate).
+pub fn active_requests_count() -> usize {
+    ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
+}
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
 // ──────────────────────────────────────────────────────────────────────────

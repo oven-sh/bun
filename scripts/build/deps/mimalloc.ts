@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "1803341d6241d8fa4b3f65fa68cb13a32ad92f04";
+const MIMALLOC_COMMIT = "7aca49e5b5b49ce2e44490a604d93a4be7a39759"; // oven-sh/mimalloc#13 (snapshot support); swap for the merge sha before landing
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -27,14 +27,16 @@ export const mimalloc: Dependency = {
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.
-    //   macOS:   OFF — overriding via zone/interpose breaks NAPI addons and
-    //            system frameworks (SecureTransport etc.).
+    //   macOS:   OFF by default — overriding via zone/interpose breaks NAPI addons
+    //            and system frameworks (SecureTransport etc.); BUN_MIMALLOC_OVERRIDE_DARWIN=1
+    //            opts in (what startup snapshots need there).
     //   Linux:   ON — the main win. All malloc/free routes through mimalloc,
     //            including WebKit's bmalloc when it falls back to system malloc.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time.
-    const override = cfg.linux && !cfg.asan;
+    const override = !cfg.asan && (cfg.linux || (cfg.darwin && process.env.BUN_MIMALLOC_OVERRIDE_DARWIN === "1"));
+    const osxZone = cfg.darwin && !cfg.asan && process.env.BUN_MIMALLOC_OVERRIDE_DARWIN === "1";
 
     const defines: Record<string, string | number | true> = {
       // The .a path; gates symbol visibility in mimalloc/internal.h.
@@ -67,6 +69,13 @@ export const mimalloc: Dependency = {
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
+    if (osxZone) defines.MI_OSX_ZONE = 1;
+
+    // Snapshots (src/jsc/bindings/StartupSnapshot.cpp): executables carrying a snapshot get deterministic address hints from
+    // their first allocation; a process building one (BUN_STARTUP_SNAPSHOT_OUT) keeps its heap at the base that becomes the snapshot.
+    // Only where snapshots exist (Snapshot.h): the hook runs inside mimalloc's own initialization, before anything else.
+    const snapshots = cfg.darwin || cfg.linux;
+    if (snapshots) defines.MI_STARTUP_SNAPSHOT_BUILD_ENV = "BUN_STARTUP_SNAPSHOT_OUT"; // quoted into a C string literal by the builder
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free
@@ -93,6 +102,9 @@ export const mimalloc: Dependency = {
       // Bare token (mi_stringify() pastes it into the banner string), so
       // it can't go through DirectBuild.defines which would quote it.
       `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
+      // Bare token as well: the name of the function (defined in c-bindings.cpp) mimalloc calls to learn whether this
+      // executable carries a snapshot; see the MI_STARTUP_SNAPSHOT_* note above.
+      ...(snapshots ? ["-DMI_STARTUP_SNAPSHOT_HOST_FN=bun_startup_snapshot_placement_wanted"] : []),
     ];
 
     // TLS model: initial-exec for the static link into bun's executable

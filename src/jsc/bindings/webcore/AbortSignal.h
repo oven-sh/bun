@@ -206,6 +206,7 @@ private:
     // Strong-ref cycle leak.
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
+    std::atomic<bool> m_hasAbortAlgorithms { false }; // mirrors m_abortAlgorithms (maintained under the lock) so GC visits can skip without touching the lock word
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;

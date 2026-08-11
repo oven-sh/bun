@@ -568,6 +568,7 @@ impl UDPSocket {
     }
 
     pub(crate) fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("Bun.udpSocket")?; // node:dgram arrives here too
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         let this_ptr = Self::new(Self {

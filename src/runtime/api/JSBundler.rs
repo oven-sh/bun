@@ -221,6 +221,61 @@ pub mod js_bundler {
         }
     }
 
+    /// Top-level `snapshot: true | { mode?: "auto" | "manual", io?: "strict" | "local" | "network" }` (`bun build --snapshot`).
+    fn parse_startup_snapshot_options(
+        global_this: &JSGlobalObject,
+        config: JSValue,
+        this: &mut CompileOptions,
+    ) -> JsResult<()> {
+        use bun_options_types::context::{CompileStartupSnapshot, CompileStartupSnapshotIo};
+        let Some(value) = config.get_own(global_this, &BunString::static_str("snapshot"))? else {
+            return Ok(());
+        };
+        if value.is_boolean() {
+            this.snapshot = CompileStartupSnapshot::Auto;
+            return Ok(());
+        }
+        if !value.is_object() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "snapshot must be true or an object: {{ mode?: \"auto\" | \"manual\", io?: \"strict\" | \"local\" | \"network\" }}"
+            )));
+        }
+        this.snapshot = CompileStartupSnapshot::Auto;
+        if let Some(mode) = value
+            .get_own(global_this, &BunString::static_str("mode"))?
+            .filter(|v| !v.is_undefined())
+        {
+            let mode = mode.to_bun_string(global_this)?;
+            this.snapshot = if mode.eql_comptime("auto") {
+                CompileStartupSnapshot::Auto
+            } else if mode.eql_comptime("manual") {
+                CompileStartupSnapshot::Manual
+            } else {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "snapshot.mode must be \"auto\" or \"manual\""
+                )));
+            };
+        }
+        if let Some(io) = value
+            .get_own(global_this, &BunString::static_str("io"))?
+            .filter(|v| !v.is_undefined())
+        {
+            let io = io.to_bun_string(global_this)?;
+            this.snapshot_io = if io.eql_comptime("strict") {
+                CompileStartupSnapshotIo::Strict
+            } else if io.eql_comptime("local") {
+                CompileStartupSnapshotIo::Local
+            } else if io.eql_comptime("network") {
+                CompileStartupSnapshotIo::Network
+            } else {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "snapshot.io must be \"strict\", \"local\" or \"network\""
+                )));
+            };
+        }
+        Ok(())
+    }
+
     pub struct CompileOptions {
         pub(crate) compile_target: CompileTarget,
         pub(crate) exec_argv: OwnedString,
@@ -238,6 +293,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        pub(crate) snapshot: bun_options_types::context::CompileStartupSnapshot,
+        pub(crate) snapshot_io: bun_options_types::context::CompileStartupSnapshotIo,
     }
 
     impl Default for CompileOptions {
@@ -259,6 +316,8 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                snapshot: bun_options_types::context::CompileStartupSnapshot::Off,
+                snapshot_io: bun_options_types::context::CompileStartupSnapshotIo::Strict,
             }
         }
     }
@@ -276,12 +335,33 @@ pub mod js_bundler {
             // errdefer this.deinit() — Drop handles owned fields
 
             let object = 'brk: {
+                let snapshot_requested = config
+                    .get_own(global_this, &BunString::static_str("snapshot"))?
+                    .is_some_and(|v| !v.is_undefined_or_null() && v != JSValue::FALSE);
                 let Some(compile_value) = config.get_truthy(global_this, "compile")? else {
-                    return Ok(None);
+                    if !snapshot_requested {
+                        return Ok(None);
+                    }
+                    // `target: "bun-<platform>"` enables compilation without a `compile` key; the snapshot options still apply to it.
+                    if compile_target.is_some() {
+                        parse_startup_snapshot_options(global_this, config, &mut this)?;
+                        return Ok(Some(this));
+                    }
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "snapshot requires compile: a snapshot is taken of the compiled executable"
+                    )));
                 };
+                if snapshot_requested {
+                    parse_startup_snapshot_options(global_this, config, &mut this)?;
+                }
 
                 if compile_value.is_boolean() {
                     if compile_value == JSValue::FALSE {
+                        if snapshot_requested {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "snapshot requires compile: a snapshot is taken of the compiled executable"
+                            )));
+                        }
                         return Ok(None);
                     }
                     return Ok(Some(this));
@@ -1301,6 +1381,15 @@ pub mod js_bundler {
                 if has_all_html && this.compile.as_ref().is_some_and(|c| !c.assets.is_empty()) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
+                if has_all_html
+                    && this.compile.as_ref().is_some_and(|c| {
+                        c.snapshot != bun_options_types::context::CompileStartupSnapshot::Off
+                    })
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use snapshot with target 'browser' for standalone HTML: it is not a process to snapshot"
                     )));
                 }
             }

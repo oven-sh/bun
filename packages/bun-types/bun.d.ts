@@ -3222,6 +3222,15 @@ declare module "bun" {
      * ```
      */
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
+    /**
+     * Snapshots (experimental; requires `compile`): after producing the executable, run it once and
+     * embed a snapshot of its started-up state, so later launches resume instead of booting. `true`
+     * takes the snapshot once startup work drains (`bun build --snapshot`); use `mode: "manual"` when
+     * the app calls `Bun.startupSnapshot.take()` itself, and `io` to let the build touch this machine
+     * (`"local"`: files, subprocesses, local sockets; `"network"`: the network too) — every use is
+     * reported when the snapshot is written. Default `io` is `"strict"`.
+     */
+    snapshot?: boolean | { mode?: "auto" | "manual"; io?: "strict" | "local" | "network" };
   }
 
   interface CompileBuildOptions {
@@ -4941,6 +4950,56 @@ declare module "bun" {
      * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
+  }
+
+  /**
+   * Startup snapshots (experimental) — see `bun build --snapshot`. A snapshot of the started-up
+   * process is embedded in a compiled executable, and later launches resume from it instead of
+   * booting; `process.on("restore")` runs first thing in such a launch.
+   */
+  namespace startupSnapshot {
+    /**
+     * The program itself, for tools that start, do a job and exit. Called immediately in a launch
+     * that has no snapshot; stored — not called — in the run that takes the snapshot, so the snapshot
+     * holds the loaded program; called after `"restore"` in a launch that resumes from the snapshot,
+     * with that launch's argv, cwd, environment and stdio. A snapshot taken with a `main()` registered
+     * is used for every invocation, whatever the arguments.
+     */
+    function main(program: () => unknown): void;
+
+    /**
+     * With `--snapshot=manual`, the point in startup at which the snapshot is taken. In the run
+     * `bun build` makes for that purpose this never returns: the process exits once the snapshot is
+     * written (or with a message naming what kept it busy). In every other process it returns at
+     * once, so it can be called unconditionally. With `--snapshot` (auto) the runtime picks the
+     * moment itself and a call only contributes the options.
+     */
+    function take(options?: {
+      /**
+       * Timers still armed when the process goes quiet: `"keep"` lets them survive with their
+       * remaining time preserved across the restore; `"cancel"` drops them. By default armed
+       * timers keep a manual snapshot from being taken; auto mode keeps them.
+       */
+      timers?: "keep" | "cancel";
+      /**
+       * Environment variables the snapshotted startup depended on. A launch whose values for these
+       * differ from the build's boots normally instead of resuming from the snapshot.
+       */
+      envGate?: string[];
+    }): void;
+
+    /** True only in the run `bun build --snapshot` makes to take the snapshot. */
+    function isBuildingSnapshot(): boolean;
+
+    /** 0 in a process that booted normally; otherwise how many times this process has been resumed from a snapshot. */
+    function epoch(): number;
+
+    /**
+     * In a process resumed from a snapshot: hand back to the shared snapshot any page this process
+     * wrote and then restored to its original contents. Cheap; call it once startup work has
+     * settled. A no-op elsewhere.
+     */
+    function reclean(): void;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

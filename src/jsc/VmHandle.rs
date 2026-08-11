@@ -94,7 +94,7 @@ pub struct Shared {
     /// [`VmHandle::embedded_work_scheduled`]); teardown waits for zero.
     embedded: AtomicU32,
     #[cfg(debug_assertions)]
-    js_thread: std::thread::ThreadId,
+    js_thread: std::sync::Mutex<std::thread::ThreadId>,
     /// Test suite only — see [`refusal_gate`].
     #[cfg(debug_assertions)]
     park_posts: core::sync::atomic::AtomicBool,
@@ -149,7 +149,7 @@ impl VmHandle {
             drained: (Mutex::new(), Condvar::new()),
             embedded: AtomicU32::new(0),
             #[cfg(debug_assertions)]
-            js_thread: std::thread::current().id(),
+            js_thread: std::sync::Mutex::new(std::thread::current().id()),
             #[cfg(debug_assertions)]
             park_posts: core::sync::atomic::AtomicBool::new(false),
         }))
@@ -329,11 +329,23 @@ impl VmHandle {
 
     #[cfg(debug_assertions)]
     pub(crate) fn assert_js_thread(&self) {
-        debug_assert_eq!(std::thread::current().id(), self.0.js_thread);
+        debug_assert_eq!(
+            std::thread::current().id(),
+            *self.0.js_thread.lock().unwrap()
+        );
     }
     #[cfg(not(debug_assertions))]
     #[inline(always)]
     pub(crate) fn assert_js_thread(&self) {}
+
+    /// Snapshot restore: the JS thread is now the calling thread, not the builder's.
+    #[cfg(debug_assertions)]
+    pub fn readopt_js_thread(&self) {
+        *self.0.js_thread.lock().unwrap() = std::thread::current().id();
+    }
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    pub fn readopt_js_thread(&self) {}
 
     /// The VM is going away: `Open → Stopping` (idempotent; never reopens or
     /// un-closes). Any thread — a parent's `terminate()` calls it at request
@@ -403,7 +415,7 @@ mod refusal_gate {
 
     pub(super) fn before_post(h: &VmHandle) {
         if !h.posts_parked()
-            || std::thread::current().id() == h.0.js_thread
+            || std::thread::current().id() == *h.0.js_thread.lock().unwrap()
             || h.0.embedded.load(Ordering::SeqCst) != 0
         {
             return;

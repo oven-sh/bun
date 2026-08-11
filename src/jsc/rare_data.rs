@@ -217,7 +217,7 @@ pub struct RareData {
     // This does not handle ShadowRealm correctly!
     pub(crate) cleanup_hooks: Vec<CleanupHook>,
 
-    pub(crate) file_polls: Option<Box<FilePollStore>>,
+    pub file_polls: Option<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -279,6 +279,8 @@ pub struct RareData {
     pub s3_default_client: Strong,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
+    /// `Bun.startupSnapshot.main(fn)` registered while the snapshot was being taken; a launch that resumes from it calls this after `'restore'`.
+    pub startup_snapshot_main: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -332,6 +334,7 @@ impl Default for RareData {
             h2_padded_frame_buffer: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
+            startup_snapshot_main: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
@@ -731,6 +734,21 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// snapshot restore: what the builder drew or derived for itself must not be shared by every restored process — pre-drawn
+    /// random bytes, the default CSRF secret, and the default S3 client built from the builder's credentials.
+    pub fn forget_builder_secrets_for_snapshot_restore(&mut self) {
+        self.entropy_cache = None;
+        self.default_csrf_secret = Box::default();
+        self.s3_default_client.deinit();
+    }
+
+    /// snapshot restore: the isolated spawnSync loop (if the builder ever spawnSync'd) wraps the builder's kqueue/epoll fd; forget it so the next spawnSync makes one here.
+    pub fn forget_spawn_sync_event_loop_for_snapshot_restore(&mut self) {
+        if let Some(stale) = self.spawn_sync_event_loop_.take() {
+            Box::leak(stale); // its fds belong to the process that built the snapshot; Drop here would close unrelated fds of ours
+        }
+    }
+
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
@@ -1106,6 +1124,17 @@ impl Drop for RareData {
 }
 
 impl RareData {
+    /// Snapshot restore: the Bun.stdin/stdout/stderr stores describe the builder's descriptors. They are left to the
+    /// snapshot (JS may still hold Blobs over them); the next use builds stores for this process's descriptors.
+    pub fn forget_stdio_stores_for_snapshot_restore(&mut self) {
+        self.stdin_store = None;
+        self.stdout_store = None;
+        self.stderr_store = None;
+        self.stdin_mode = 0;
+        self.stdout_mode = 0;
+        self.stderr_mode = 0;
+    }
+
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
     /// that loop; `Drop` calls it for every other owner. Idempotent.

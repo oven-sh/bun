@@ -3773,8 +3773,6 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
-            // Nothing is pipelined, so leftover bytes desynchronize the socket
-            // (RFC 9112 section 6.3). Has to stay ahead of do_redirect.
             if !to_read.is_empty() {
                 self.state.flags.allow_keepalive = false;
             }

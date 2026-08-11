@@ -562,13 +562,6 @@ impl RunCommand {
                 }
             };
 
-            #[cfg(bun_debug)]
-            {
-                // Debug-only cleanup; failures are ignored. The EEXIST branch
-                // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
-            }
-
             const NODE_LINK: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
@@ -608,13 +601,20 @@ impl RunCommand {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT, so two
+                            // The dir is keyed only on GIT_SHA_SHORT (and is a
+                            // single fixed name for debug builds), so two
                             // different binaries built at the same commit (e.g.
                             // side-by-side local builds being benchmarked)
                             // collide here. Blindly reusing the existing link
                             // would make every `--bun` child of the SECOND
                             // binary silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
+                            //
+                            // This is also the only cleanup allowed in this dir:
+                            // concurrent buns of the same build share these
+                            // links and the scripts they already spawned exec
+                            // them at any moment, so a link that points at this
+                            // binary must never be removed, not even briefly.
                             let mut buf = bun_paths::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())

@@ -2574,10 +2574,10 @@ it("http2 server session setNextStreamID picks the id of the next pushed stream"
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
   try {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    client.on("error", () => {});
     const { promise: pushed, resolve: onPushed, reject: onClientError } = Promise.withResolvers();
+    client.on("error", onClientError);
     client.on("stream", (pushStream, headers) => {
       pushStream.on("error", onClientError);
       pushStream.setEncoding("utf8");
@@ -2593,12 +2593,13 @@ it("http2 server session setNextStreamID picks the id of the next pushed stream"
     req.on("data", chunk => (responseBody += chunk));
     req.on("end", () => onResponse(responseBody));
 
-    await serverDone;
+    // Promise.all: an error on either side fails the test right away instead of stalling it.
+    const [, pushedStream, body] = await Promise.all([serverDone, pushed, response]);
     expect(serverSide).toEqual({ beforeSet: 2, afterSet: 100, pushedId: 100, afterPush: 102 });
-    expect(await pushed).toEqual({ id: 100, path: "/pushed", body: "pushed" });
-    expect(await response).toBe("ok");
-    client.close();
+    expect(pushedStream).toEqual({ id: 100, path: "/pushed", body: "pushed" });
+    expect(body).toBe("ok");
   } finally {
+    client.destroy();
     server.close();
   }
 });
@@ -2641,7 +2642,7 @@ it("http2 server session setNextStreamID validates its argument like the client"
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  client.on("error", () => {});
+  client.on("error", onUnexpected);
   try {
     const outOfRange = received => ({
       name: "RangeError",

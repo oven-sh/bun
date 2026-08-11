@@ -35,12 +35,10 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
-            /* RFC 9114 §4.3.1: :path is the path and query of the target URI
-             * (origin-form), or "*" for OPTIONS; anything else is malformed
-             * (§4.1.2). HttpParser rejects asterisk-form too for HTTP/1, and
-             * HttpRouter assumes a leading '/', so only origin-form is routed:
-             * it would otherwise route on whatever follows the first byte of an
-             * absolute URL, "*", "xfoo", ... while req.url carried it verbatim. */
+            /* RFC 9114 §4.3.1: :path is the path and query of the target URI, or "*"
+             * for OPTIONS; anything else is malformed (§4.1.2). HttpRouter assumes a
+             * leading '/', and HttpParser rejects asterisk-form for HTTP/1 as well,
+             * so only origin-form is routed. */
             std::string_view fullUrl = req.getFullUrl();
             if (fullUrl.empty() || fullUrl[0] != '/') {
                 res->writeStatus("400 Bad Request")->end();

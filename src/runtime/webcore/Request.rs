@@ -860,9 +860,7 @@ impl Request {
         }
     }
 
-    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
-    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the bare
-    /// request target instead of pasting the client bytes into the URL.
+    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set; anything else cannot be a URL authority.
     fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
@@ -891,9 +889,7 @@ impl Request {
             })
     }
 
-    /// The authority `request.url` is synthesized with: the client's `Host` (HTTP/1) or
-    /// `:authority` (HTTP/3) value, but only for an origin-form target and only when the
-    /// value can form a URL authority. `None` means `request.url` is the bare target.
+    /// `Some(host)` when `request.url` gets an authority; `None` leaves it as the bare target.
     fn url_authority<'a>(host: Option<&'a [u8]>, path: &[u8]) -> Option<&'a [u8]> {
         if !path.is_empty() && path[0] == b'/' {
             host.filter(|host| Self::is_valid_host_header(host))
@@ -915,11 +911,8 @@ impl Request {
         Ok(())
     }
 
-    /// Synthesizes `request.url` from the raw request target and the client-supplied
-    /// authority (`Host` for HTTP/1, `:authority` for HTTP/3). HTTP/1 gets here lazily via
-    /// [`Self::ensure_url`]; HTTP/3 eagerly from the server, since its uWS request does not
-    /// outlive the dispatch. Both transports share this so the authority filter and the URL
-    /// normalization cannot drift between them.
+    /// Shared by HTTP/1 (`ensure_url`, lazily) and HTTP/3 (the server, eagerly: its uWS
+    /// request dies with the dispatch) so `request.url` is built by one set of rules.
     pub(crate) fn set_url_from_request_target(&self, host: Option<&[u8]>, target: &[u8]) {
         let req_url = Self::request_target_path(target);
         let Some(host) = Self::url_authority(host, &req_url) else {
@@ -927,10 +920,8 @@ impl Request {
             return;
         };
 
-        // Assemble the URL with straight slice copies instead of going through
-        // `core::fmt::write` (which is not monomorphized and shows up in per-request
-        // profiles). When the WHATWG parser rejects the result (e.g. a port out of
-        // range), the raw concatenation is kept.
+        // Slice copies, not `core::fmt::write` (not monomorphized; shows up in per-request
+        // profiles). An href the URL parser rejects keeps the raw concatenation.
         let protocol = self.get_protocol();
         let url_bytelength = protocol.len() + host.len() + req_url.len();
 

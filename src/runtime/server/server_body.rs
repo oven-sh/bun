@@ -3270,9 +3270,7 @@ where
                     std::ptr::from_mut(req).cast::<c_void>(),
                 ))
             }));
-            // `:authority` surfaces as the `host` header. Same synthesis as the
-            // HTTP/1 lazy path, so a value that cannot form a URL authority is
-            // left out of `req.url` here too.
+            // uWS surfaces `:authority` as the `host` header.
             request_object
                 .set_url_from_request_target(ReqLike::header(req, b"host"), ReqLike::url(req));
             ctx.clear_req();

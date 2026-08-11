@@ -73,10 +73,6 @@ static bool isConstruct(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
-    // Uncomment to debug this:
-    // printf("lc = %u : %u (byte = %u)\n", expr.lineColumn.line, expr.lineColumn.column, expr.divot);
-    // printf("off = %u : %u\n", expr.startOffset, expr.endOffset);
-    // printf("name = %s\n", code->instructionAt(bc)->name());
 
     ZigStackFramePosition pos {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
@@ -98,8 +94,7 @@ ZigStackFramePosition getAdjustedLineColumnForBytecode(JSC::CodeBlock* code, JSC
         return pos;
     }
 
-    // Cached per bytecode index, unlike expressionInfoForBytecodeIndex, which decodes a whole
-    // chapter of expression info on every call.
+    // Cached per bytecode index; expressionInfoForBytecodeIndex decodes a whole chapter every call.
     auto lineColumn = code->lineColumnForBytecodeIndex(bc);
     return ZigStackFramePosition {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),

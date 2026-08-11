@@ -325,14 +325,9 @@ impl JSPromise {
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
 
-    /// Create a new promise rejected with the exception that `err` proves is
-    /// pending on the VM, taking it off the VM (the same conversion as
-    /// [`reject`](Self::reject), so the reason is the thrown value, not the
-    /// `JSC::Exception` wrapping it). A termination is propagated instead of
-    /// becoming a rejection reason.
-    ///
-    /// For host functions that return a promise and therefore must turn an
-    /// exception thrown while processing their arguments into a rejection.
+    /// Create a new promise rejected with the exception `err` proves is pending,
+    /// taking it off the VM. The reason is converted like [`reject`](Self::reject)
+    /// does; a termination is propagated instead of becoming a reason.
     pub fn rejected_promise_with_caught_exception(
         global: &JSGlobalObject,
         err: JsError,

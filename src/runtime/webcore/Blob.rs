@@ -1619,9 +1619,7 @@ impl BlobExt for Blob {
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = assignment_result.as_any_promise() {
-                // `MarkHandled`: a rejection is forwarded to the promise
-                // returned below, so the stream's own promise must not be
-                // reported as unhandled too.
+                // `MarkHandled`: a rejection is forwarded to the promise returned below.
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Pending => {
                         let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {

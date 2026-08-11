@@ -31,10 +31,22 @@ test.skipIf(isWindows || !isDebug)(
     expect(build.stderr.toString()).not.toContain("error:");
     expect(build.exitCode).toBe(0);
 
-    {
+    // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE is read by the compiled
+    // executable at runtime (the binary above was built without it); a falsy
+    // value leaves the hint enabled. With the flag set, the function returns
+    // before logging anything, so the only evidence is the missing line.
+    for (const [flag, hinted] of [
+      [undefined, true],
+      ["0", true],
+      ["1", false],
+    ] as const) {
       await using proc = Bun.spawn({
         cmd: [out],
-        env: { ...bunEnv, BUN_DEBUG_StandaloneModuleGraph: "1" },
+        env: {
+          ...bunEnv,
+          BUN_DEBUG_StandaloneModuleGraph: "1",
+          BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: flag,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -44,40 +56,10 @@ test.skipIf(isWindows || !isDebug)(
       expect(stdout).toContain("after-await");
       // Scoped loggers write to the debug-writer stream (stdout by default).
       // Either the success or failure variant proves the call site is reached.
-      expect(stdout).toContain("hintSourcePagesDontNeed:");
-      expect(stdout).not.toContain("hintSourcePagesDontNeed: skipped");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    }
-
-    // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE is read by the compiled
-    // executable at runtime (the binary above was built without it), and a
-    // falsy value leaves the hint enabled.
-    for (const [value, skipped] of [
-      ["1", true],
-      ["0", false],
-    ] as const) {
-      await using proc = Bun.spawn({
-        cmd: [out],
-        env: {
-          ...bunEnv,
-          BUN_DEBUG_StandaloneModuleGraph: "1",
-          BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: value,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stdout).toContain("before-await");
-      expect(stdout).toContain("after-await");
-      if (skipped) {
-        expect(stdout).toContain("hintSourcePagesDontNeed: skipped (BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE)");
-        expect(stdout).not.toContain("hintSourcePagesDontNeed: MADV_DONTNEED");
-        expect(stdout).not.toContain("hintSourcePagesDontNeed: madvise failed");
-      } else {
+      if (hinted) {
         expect(stdout).toContain("hintSourcePagesDontNeed:");
-        expect(stdout).not.toContain("hintSourcePagesDontNeed: skipped");
+      } else {
+        expect(stdout).not.toContain("hintSourcePagesDontNeed:");
       }
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

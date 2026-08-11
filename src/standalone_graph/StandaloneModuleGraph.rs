@@ -2226,18 +2226,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
-                    return;
-                }
-
-                if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
-                    .get()
-                    .unwrap_or(false)
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
                 {
-                    bun_core::scoped_log!(
-                        StandaloneModuleGraph,
-                        "hintSourcePagesDontNeed: skipped (BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE)"
-                    );
                     return;
                 }
 

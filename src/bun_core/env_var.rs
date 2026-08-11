@@ -252,9 +252,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS, "BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH, "BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING", {});
-    // Keep the embedded source section of a `bun build --compile` binary
-    // resident: skips the post-entrypoint madvise(MADV_DONTNEED) in
-    // bun_standalone_graph::Graph::hint_source_pages_dont_need.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, "BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE", {});
     new_feature_flag!(pub BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW, "BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});

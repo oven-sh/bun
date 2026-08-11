@@ -386,9 +386,9 @@ impl FetchTasklet {
     /// shared with the HTTP thread (mutex-guarded internally).
     #[inline]
     pub(crate) fn stream_buffer_mut<'r>(&self) -> Option<&'r mut ThreadSafeStreamBuffer> {
-        // SAFETY: see doc comment — counted ref keeps pointee live; mutex
-        // inside `ThreadSafeStreamBuffer` serialises cross-thread `buffer`
-        // access, and `callback` is main-thread-only.
+        // SAFETY: see doc comment — counted ref keeps pointee live; the mutex
+        // inside `ThreadSafeStreamBuffer` serialises every cross-thread access
+        // (`buffer` and the drain callback alike).
         self.request_body_streaming_buffer
             .map(|p| unsafe { &mut *p.as_ptr() })
     }
@@ -450,8 +450,10 @@ impl FetchTasklet {
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
-            // this side holds one of the two initial refs. Mutex guards cross-thread access
-            // to `buffer`, and `callback` is only touched on the main thread (here).
+            // this side holds one of the two initial refs. The HTTP thread may still own its
+            // ref and be flushing (`start_request_stream` gets here with the request in
+            // flight); `clear_drain_callback` takes the buffer's mutex, so after it returns
+            // the HTTP thread can no longer call back into this tasklet through the buffer.
             unsafe { (*buffer.as_ptr()).clear_drain_callback() };
             ThreadSafeStreamBuffer::deref(buffer);
         }

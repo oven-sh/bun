@@ -9,9 +9,13 @@ pub struct ThreadSafeStreamBuffer {
     pub(crate) mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
-    /// callback will be called passing the context for the http callback
-    /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
-    pub(crate) callback: Option<Callback>,
+    /// Invoked by the HTTP thread (`report_drain`) once everything buffered
+    /// has been written out and the end chunk has not been sent yet.
+    ///
+    /// Guarded by `mutex`, like `buffer`: `report_drain` reads it under the
+    /// lock on the HTTP thread while the JS thread may be clearing it in
+    /// `clear_drain_callback` for a request that is still in flight.
+    callback: Option<Callback>,
 }
 
 pub struct Callback {
@@ -102,13 +106,20 @@ impl ThreadSafeStreamBuffer {
         self.callback = Some(Callback::init(callback, context));
     }
 
+    /// Main thread. The HTTP thread may still be flushing this buffer (and
+    /// about to `report_drain`) when the JS side tears the request down, so
+    /// the callback can only be cleared under the same lock that
+    /// `report_drain` reads it under; once this returns it can no longer fire.
     pub fn clear_drain_callback(&mut self) {
+        let _guard = self.mutex.lock_guard();
         self.callback = None;
     }
 
     /// This is exclusively called from the http thread.
-    /// Buffer should be acquired before calling this.
+    /// The caller must hold the lock (`acquire`/`lock`); it is what keeps
+    /// `callback` from being cleared out from under this read.
     pub(crate) fn report_drain(&self) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
         if self.buffer.is_empty() {
             if let Some(callback) = &self.callback {
                 callback.call();

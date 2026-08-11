@@ -990,6 +990,8 @@ unsafe extern "C" {
     /// In the event that sufficient random data can not be obtained, `abort`
     /// is called. See `rand_bytes` for the safe wrapper.
     pub(crate) fn RAND_bytes(buf: *mut u8, len: usize) -> c_int;
+    /// Bun addition (patches/boringssl/fork-detect-startup-snapshot.patch): redo fork detection's per-process setup.
+    pub(crate) fn CRYPTO_fork_detect_reinit_for_startup_snapshot();
 
     // ── ERR ──────────────────────────────────────────────────────────────
     // Thread-local error queue — no pointer args, no preconditions.

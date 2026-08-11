@@ -1110,6 +1110,52 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 #endif // OS(DARWIN) / __linux__
 
+// Whether this executable carries a payload at all; StartupSnapshot.cpp gates on it. (The allocator asks the narrower question below.)
+extern "C" __attribute__((visibility("default"), used)) int bun_is_compiled_executable(void)
+{
+    return BUN_COMPILED.size != 0;
+}
+
+#if OS(DARWIN) || defined(__linux__) // the only builds whose allocator is given this hook (deps/mimalloc.ts)
+// Layout of the trailer the standalone graph writes at the end of its payload (StandaloneModuleGraph.rs `Offsets`; the runtime
+// that adds the snapshot fields to it also const-asserts these three numbers, so the two cannot drift apart): ... | Offsets (kOffsetsSize bytes) | 16-byte trailer magic. Only the two fields that
+// say "marked to take a snapshot" and "carries one" are read here, because this runs before main, from the allocator.
+static constexpr size_t kOffsetsSize = 40;
+static constexpr size_t kOffsetsFlagsOffset = 28;
+static constexpr size_t kOffsetsSnapshotLengthOffset = 36;
+static constexpr uint32_t kTakeStartupSnapshotFlag = 1u << 4;
+static constexpr char kPayloadTrailer[16] = { '\n', '-', '-', '-', '-', ' ', 'B', 'u', 'n', '!', ' ', '-', '-', '-', '-', '\n' };
+
+// Asked by the pinned mimalloc during its own initialization (MI_STARTUP_SNAPSHOT_HOST_FN): deterministic placement is only
+// wanted by an executable that is marked to take a snapshot or carries one, so an ordinary compiled executable pays nothing.
+extern "C" __attribute__((visibility("default"), used)) int bun_startup_snapshot_placement_wanted(void)
+{
+    const uint8_t* base;
+    uint64_t len;
+#if OS(DARWIN)
+    base = BUN_COMPILED.data;
+    len = BUN_COMPILED.size;
+#else
+    if (!BUN_COMPILED.size)
+        return 0;
+    // BUN_COMPILED.size holds the injected payload's address: a BlobHeader-shaped [u64 length][bytes...], but only page-aligned
+    // (4K on x86-64), so it must not be read through the 16K-aligned type.
+    const uint8_t* header = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(BUN_COMPILED.size));
+    memcpy(&len, header, sizeof len);
+    base = header + sizeof(uint64_t);
+#endif
+    if (len < kOffsetsSize + sizeof kPayloadTrailer)
+        return 0;
+    if (memcmp(base + len - sizeof kPayloadTrailer, kPayloadTrailer, sizeof kPayloadTrailer) != 0)
+        return 0;
+    const uint8_t* offsets = base + len - sizeof kPayloadTrailer - kOffsetsSize;
+    uint32_t flags, snapshotLength;
+    memcpy(&flags, offsets + kOffsetsFlagsOffset, sizeof flags);
+    memcpy(&snapshotLength, offsets + kOffsetsSnapshotLengthOffset, sizeof snapshotLength);
+    return (flags & kTakeStartupSnapshotFlag) != 0 || snapshotLength != 0;
+}
+#endif
+
 #elif defined(_WIN32)
 // Windows PE section handling
 #include <windows.h>
@@ -1159,6 +1205,13 @@ extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData()
 {
     if (!initializePESection()) return nullptr;
     return pe_section_data;
+}
+
+// Called by StartupSnapshot.cpp's unsupported-platform stubs (Bun__isCompiledExecutable); the PE payload is loaded later by the
+// Rust side, and nothing here needs to know about it before then.
+extern "C" int bun_is_compiled_executable(void)
+{
+    return 0;
 }
 
 #endif

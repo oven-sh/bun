@@ -131,6 +131,11 @@ describe("compile target libc segments", () => {
   // Tests that actually compile copy and rewrite the whole bun binary (~1GB under debug+ASAN), which
   // blows the 5s default; the parse-only tests below stay on the default.
   const compileTimeout = 60_000;
+  // `bun build --compile` prints one timed line per stage; only the timings vary. A cross-compile
+  // additionally appends the resolved target to the compile line, so these summaries also assert
+  // that the target was the running binary.
+  const stages = (stdout: string) => stdout.replace(/^\s*\[[\d.]+m?s\] +/gm, "");
+  const bundledAndCompiled = "bundle  1 modules\ncompile  app\n";
 
   test.skipIf(!isGlibc)(
     "Bun.build accepts a bun-linux-<arch>-glibc target",
@@ -166,24 +171,27 @@ describe("compile target libc segments", () => {
       using dir = tempDir("build-compile-glibc-cli", {
         "app.js": `console.log("glibc-target-ok");`,
       });
-      const outfile = join(String(dir), "app");
 
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${arch}-glibc`, "app.js", "--outfile", outfile],
+        cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${arch}-glibc`, "app.js", "--outfile", "app"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExitCode] = await Promise.all([
+      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
         build.stdout.text(),
         build.stderr.text(),
         build.exited,
       ]);
-      expect({ stderr: buildStderr, exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stdout: stages(buildStdout), stderr: buildStderr, exitCode: buildExitCode }).toEqual({
+        stdout: bundledAndCompiled,
+        stderr: "",
+        exitCode: 0,
+      });
 
       await using proc = Bun.spawn({
-        cmd: [outfile],
+        cmd: [join(String(dir), "app")],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -289,20 +297,26 @@ describe("compile target libc segments", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      return { stderr, exitCode, fetches };
+      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      return { stdout: stages(stdout), stderr, exitCode, fetches };
     }
 
     test(
       "a Linux target without a libc segment is the running bun's libc",
       async () => {
-        expect(await compileFor(`bun-linux-${arch}`)).toEqual({ stderr: "", exitCode: 0, fetches: 0 });
+        expect(await compileFor(`bun-linux-${arch}`)).toEqual({
+          stdout: bundledAndCompiled,
+          stderr: "",
+          exitCode: 0,
+          fetches: 0,
+        });
       },
       compileTimeout,
     );
 
     test("a libc segment for the other libc selects that build instead of the running bun", async () => {
       expect(await compileFor(`bun-linux-${arch}-${otherLibc}`)).toEqual({
+        stdout: "bundle  1 modules\n",
         stderr:
           `Target platform 'bun-linux-${npmArch}${otherSuffix}-v${version}' is not available for download. ` +
           "Check if this version of Bun supports this target.\n",

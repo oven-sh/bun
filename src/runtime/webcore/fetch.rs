@@ -228,17 +228,13 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // file: URLs
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The `Response` for a `file:` URL wraps a blob that opens the file lazily, so
-/// `fetch()` itself has to check the path; otherwise a path that cannot be read
-/// still gets a 200 and the error only surfaces from the body reader. Returns
-/// the error for `fetch()` to reject with: the system error as a `TypeError`,
-/// the shape every other `fetch()` rejection has (see `ValueError::SystemTypeError`).
+/// The body blob opens the file lazily, so this is where `fetch("file:...")`
+/// learns that the path cannot be read. Returns the rejection value, a
+/// `TypeError` like every other `fetch()` failure (`ValueError::SystemTypeError`).
 ///
-/// Only conditions under which the read is certain to fail are checked (the
-/// path does not stat, or is a directory). `stat` rather than an eager `open`:
-/// opening a FIFO or a device has side effects, and nothing here needs the fd.
-/// Files embedded in a standalone executable come back as byte-backed blobs,
-/// which have nothing on disk to check.
+/// `stat`, not `open`: opening a FIFO or a device has side effects and the fd
+/// is not needed. Non-file stores (files embedded in a standalone executable)
+/// have nothing on disk to check.
 fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> Option<JSValue> {
     let store = file_blob.store()?;
     let blob::store::Data::File(file) = &store.data else {
@@ -256,8 +252,7 @@ fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> 
         Ok(_) => return None,
         Err(err) => err,
     };
-    // `stat` attached the scratch copy of the path (`\\?\`-prefixed on
-    // Windows); report the path as the blob holds it.
+    // Report the blob's path, not the `\\?\`-prefixed scratch copy `stat` attached.
     let system_error: jsc::SystemError = err.with_path(path.slice()).to_system_error().into();
     Some(system_error.to_type_error_instance(global_this))
 }
@@ -1606,8 +1601,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 return Ok(JSPromise::rejected_promise(global_this, err).to_js());
             }
 
-            // A bare +1 ref that only `Response::init` below releases, so it is
-            // created after the early return above.
+            // +1 ref released only by `Response::init`: must stay after the early return.
             url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
 
             break 'blob file_blob;

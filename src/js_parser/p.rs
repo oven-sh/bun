@@ -2718,6 +2718,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Substitution::Failure(expr)
     }
 
+    /// `export` or top-level `await`: the file is ESM however it uses `module`/`exports`.
+    #[inline]
+    pub(crate) fn is_esm_by_syntax(&self) -> bool {
+        self.esm_export_keyword.len > 0 || self.top_level_await_keyword.len > 0
+    }
+
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // The wrapper stores only the arena and a non-capturing
@@ -2755,9 +2761,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
-        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
-            || !self.esm_export_keyword.is_empty()
-            || self.options.module_type == options::ModuleType::Esm;
+        self.is_file_considered_to_have_esm_exports =
+            self.is_esm_by_syntax() || self.options.module_type == options::ModuleType::Esm;
 
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
@@ -2847,11 +2852,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
 
-        // `export` or top-level `await` makes the file ESM regardless of `module`/
-        // `exports` usage (see `exports_kind` in `parse_entry`; `module_type` alone
-        // does not), so those are not bindings there: user references stay free
-        // identifiers. The linker and `export =` still use the symbols by ref.
-        if self.esm_export_keyword.len > 0 || self.top_level_await_keyword.len > 0 {
+        // ESM has no `exports`/`module` bindings; the symbols are only used by ref.
+        if self.is_esm_by_syntax() {
             self.exports_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"exports");
             self.module_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"module");
         } else {

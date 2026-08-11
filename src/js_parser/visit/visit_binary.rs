@@ -89,8 +89,7 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     }
 }
 
-/// `require.main === module` (any equality operator) becomes `import.meta.main`.
-/// `ERequireMain` was reordered to the right, so the `module` identifier is `e_.left`.
+/// Replaces `require.main === module` (any equality operator) with `import.meta.main`.
 fn fold_require_main_and_module<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     e_: &E::Binary,
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
@@ -98,8 +97,10 @@ fn fold_require_main_and_module<'a, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     loc: bun_ast::Loc,
 ) -> Expr {
     p.ignore_usage_of_runtime_require();
-    if let ExprData::EIdentifier(id) = e_.left.data {
-        p.ignore_usage(id.ref_);
+    for operand in [e_.left, e_.right] {
+        if let ExprData::EIdentifier(id) = operand.data {
+            p.ignore_usage(id.ref_);
+        }
     }
     p.value_for_import_meta_main(inverted, loc)
 }

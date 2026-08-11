@@ -8678,7 +8678,7 @@ pub mod elf {
 
     /// Walk loaded ELF objects
     /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
-    /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
+    /// `address`. Shared by `bun_crash_handler::StackLine::from_frame` and
     /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {

@@ -23,6 +23,16 @@ pub(crate) mod js_bindings {
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
+            (
+                "faultAtFunctionEntry",
+                __jsc_host_js_fault_at_function_entry,
+            ),
+            #[cfg(unix)]
+            ("trapAtFunctionEntry", __jsc_host_js_trap_at_function_entry),
+            (
+                "functionEntryAsReturnAddress",
+                __jsc_host_js_function_entry_as_return_address,
+            ),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -124,6 +134,91 @@ pub(crate) mod js_bindings {
         }
         #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Faults on its very first instruction, so a crash report's frame 0 is
+    /// exactly this function's entry address. Symbolized as the fault pc it is,
+    /// frame 0 names this function; stepped back one byte the way a return
+    /// address is, it names whatever the linker placed before it.
+    #[cfg(target_arch = "x86_64")]
+    #[unsafe(naked)]
+    extern "C" fn fault_at_function_entry() -> ! {
+        core::arch::naked_asm!("ud2")
+    }
+    #[cfg(target_arch = "aarch64")]
+    #[unsafe(naked)]
+    extern "C" fn fault_at_function_entry() -> ! {
+        core::arch::naked_asm!("udf #0")
+    }
+
+    /// Trap-class counterpart of `fault_at_function_entry`: the kernel reports
+    /// x86_64 `int3` with pc already past it and aarch64 `brk` with pc on it,
+    /// and the report has to resolve frame 0 to this function either way.
+    #[cfg(all(unix, target_arch = "x86_64"))]
+    #[unsafe(naked)]
+    extern "C" fn trap_at_function_entry() -> ! {
+        core::arch::naked_asm!("int3", "ud2")
+    }
+    #[cfg(all(unix, target_arch = "aarch64"))]
+    #[unsafe(naked)]
+    extern "C" fn trap_at_function_entry() -> ! {
+        core::arch::naked_asm!("brk #0")
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_fault_at_function_entry(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(unix)]
+        if Environment::ENABLE_ASAN {
+            // No fault handlers are installed under ASAN (see `js_segfault`), so
+            // hand the handler what SIGILL would have delivered: pc on the
+            // instruction itself.
+            let pc = fault_at_function_entry as *const () as usize;
+            crash_handler::crash_handler(
+                crash_handler::CrashReason::IllegalInstruction(pc),
+                crash_handler::TraceSeed::Fault {
+                    pc,
+                    fp: 0,
+                    exact_pc: true,
+                },
+            );
+        }
+        fault_at_function_entry()
+    }
+
+    /// Only meaningful with the real signal handler installed: under ASAN the
+    /// trap simply kills the process.
+    #[cfg(unix)]
+    #[bun_jsc::host_fn]
+    fn js_trap_at_function_entry(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        trap_at_function_entry()
+    }
+
+    /// Control for the two hooks above: the same entry address reported as an
+    /// ordinary return-address frame, which the report steps back one byte.
+    #[bun_jsc::host_fn]
+    fn js_function_entry_as_return_address(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        let frames = [fault_at_function_entry as *const () as usize];
+        let trace = bun_core::StackTrace {
+            index: frames.len(),
+            instruction_addresses: &frames,
+            first_frame_is_exact_pc: false,
+        };
+        crash_handler::crash_handler(
+            crash_handler::CrashReason::IllegalInstruction(frames[0]),
+            crash_handler::TraceSeed::ErrorReturn(&trace),
+        )
     }
 
     #[bun_jsc::host_fn]

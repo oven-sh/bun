@@ -66,6 +66,28 @@ pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_v
 pub struct StackTrace<'a> {
     pub index: usize,
     pub instruction_addresses: &'a [usize],
+    /// `instruction_addresses[0]` is the faulting instruction itself (the pc a
+    /// fault handler was given) rather than a return address. See
+    /// [`Self::symbol_address`].
+    pub first_frame_is_exact_pc: bool,
+}
+
+impl StackTrace<'_> {
+    /// The address to symbolize for frame `i`.
+    ///
+    /// A return address points one past its call instruction, so it is stepped
+    /// back into the call; looked up as is, a call that ends a line (or a
+    /// function) is attributed to whatever follows it. A fault pc already is the
+    /// instruction to blame and must not be stepped back, or a fault on the first
+    /// instruction of a function is attributed to the function before it.
+    pub fn symbol_address(&self, i: usize) -> usize {
+        let addr = self.instruction_addresses[i];
+        if i == 0 && self.first_frame_is_exact_pc {
+            addr
+        } else {
+            addr.saturating_sub(1)
+        }
+    }
 }
 
 /// Fixed 31-frame stack-trace buffer.
@@ -85,6 +107,7 @@ impl StoredTrace {
         StackTrace {
             index: self.index,
             instruction_addresses: &self.data,
+            first_frame_is_exact_pc: false,
         }
     }
 

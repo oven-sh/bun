@@ -147,6 +147,44 @@ describe("compiled binary validity", () => {
     }
   });
 
+  // A damaged trailer must surface as an error, not an out-of-bounds panic in
+  // `entry_point()`. macOS is skipped: the patched Mach-O would need re-signing
+  // with Bun's own ad-hoc signer, and `from_bytes` is shared across platforms.
+  test.skipIf(isMacOS)("corrupted entry_point_id is reported instead of crashing", async () => {
+    using dir = tempDir("build-compile-corrupt-entry", {
+      "app.js": `console.log("should not run");`,
+    });
+    const outfile = join(dir + "", isWindows ? "app-corrupt.exe" : "app-corrupt");
+    const result = await Bun.build({ entrypoints: [join(dir + "", "app.js")], compile: { outfile } });
+    expect(result.success).toBe(true);
+
+    // Layout before the trailer is `Offsets` (repr(C)): byte_count: usize,
+    // modules_ptr: {u32,u32}, entry_point_id: u32, ... so entry_point_id sits
+    // 16 bytes before the trailer's start minus the 32-byte struct = trailer - 16.
+    const bytes = new Uint8Array(await Bun.file(result.outputs[0].path).arrayBuffer());
+    const trailer = new TextEncoder().encode("\n---- Bun! ----\n");
+    let at = -1;
+    outer: for (let i = bytes.length - trailer.length; i >= 0; i--) {
+      for (let j = 0; j < trailer.length; j++) if (bytes[i + j] !== trailer[j]) continue outer;
+      at = i;
+      break;
+    }
+    expect(at).toBeGreaterThan(32);
+    const view = new DataView(bytes.buffer);
+    expect(view.getUint32(at - 16, true)).toBe(0); // the single module is the entry point
+    view.setUint32(at - 16, 1, true); // == module count: one past the end
+    await Bun.write(outfile, bytes);
+    chmodSync(outfile, 0o755);
+
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.includes("Corrupted module graph"), exitCode }).toEqual({
+      stdout: "",
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+
   test("compiled binary runs and produces expected output", async () => {
     using dir = tempDir("build-compile-runs", {
       "app.js": `console.log("compile-test-output");`,

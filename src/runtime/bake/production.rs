@@ -107,8 +107,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
-        is_main_thread: true,
+        // Not `is_main_thread`: that takes the process's one initial script execution context id,
+        // and a production build creates further globals in this process, so this VM has to draw a
+        // generated id like the rest. `is_main_thread` is set on the VM below instead; the flag is
+        // therefore passed explicitly, since init() only derives it for main-thread options.
         use_system_ca: crate::cli::Arguments::main_use_system_ca(),
+        use_system_ca_flag: crate::cli::Arguments::main_use_system_ca(),
         ..Default::default()
     })?;
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
@@ -196,6 +200,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
+    vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
     // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;

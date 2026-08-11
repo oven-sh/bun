@@ -232,12 +232,9 @@ pub mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
-        /// `compile.outfile`, or the default name `Config::from_js` fills in.
-        /// Either way it is resolved by `JSBundleCompletionTask::do_compilation`:
-        /// against `outdir`, or the working directory when there is none.
+        /// Resolved against `outdir`, else the working directory, in `do_compilation`.
         pub(crate) outfile: OwnedString,
-        /// `DefaultOutfile::is_dir_name` of a filled-in default; false for an
-        /// explicit `compile.outfile`.
+        /// `DefaultOutfile::is_dir_name`; false for an explicit `compile.outfile`.
         pub(crate) outfile_is_entry_dir_name: bool,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,

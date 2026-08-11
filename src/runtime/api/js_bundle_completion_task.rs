@@ -191,8 +191,7 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
-/// Absolute path of the executable: `outfile` is relative to `outdir`, or to
-/// the working directory when there is no `outdir`.
+/// `outfile` is relative to `outdir`, or to the working directory without one.
 fn resolve_outfile<'a>(
     top_level_dir: &'a [u8],
     outdir: &'a [u8],
@@ -330,9 +329,7 @@ impl JSBundleCompletionTask {
         let outdir: &[u8] = &self.config.outdir.list;
         let mut outfile: &[u8] = &compile_options.outfile.list;
 
-        // A default name taken from the entry point's directory (`src/index.ts`
-        // -> `src`) resolves to that directory itself whenever the build runs
-        // from its parent; fall back to `index` like `bun build --compile` does.
+        // Same fallback as the CLI when the name is the directory it would overwrite;
         // Windows targets get `.exe` appended, so they cannot collide.
         if compile_options.outfile_is_entry_dir_name
             && compile_options.compile_target.os != OperatingSystem::Windows

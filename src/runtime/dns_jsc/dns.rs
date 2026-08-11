@@ -389,9 +389,43 @@ pub trait CAresRecordType: Sized {
         global: &JSGlobalObject,
         type_name: &'static str,
     ) -> JsResult<JSValue>;
-    /// Free a c-ares-allocated reply struct (`ares_free_data` / `ares_free_hostent`).
-    /// SAFETY: `this` must be the pointer c-ares handed to the callback; not aliased.
+    /// Free a reply; called once per reply, by `OwnedReply<Self>`'s `Drop`.
+    /// SAFETY: `this` must be the pointer an `OwnedReply<Self>` adopted; not aliased.
     unsafe fn destroy(this: *mut Self);
+}
+
+/// The parsed reply of one query, freed by `T::destroy` when dropped.
+#[repr(transparent)]
+pub(crate) struct OwnedReply<T: CAresRecordType>(NonNull<T>);
+
+impl<T: CAresRecordType> OwnedReply<T> {
+    /// SAFETY: `reply` must be a live reply that `T::destroy` frees, and the
+    /// caller must give up every other use of it.
+    unsafe fn adopt(reply: NonNull<T>) -> Self {
+        Self(reply)
+    }
+}
+
+impl<T: CAresRecordType> core::ops::Deref for OwnedReply<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: `adopt` took the only handle to a live reply; only `drop` frees it.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: CAresRecordType> core::ops::DerefMut for OwnedReply<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: as in `deref`; `&mut self` rules out any other live borrow.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl<T: CAresRecordType> Drop for OwnedReply<T> {
+    fn drop(&mut self) {
+        // SAFETY: `adopt`'s contract; no borrow handed out by `deref` outlives `self`.
+        unsafe { T::destroy(self.0.as_ptr()) }
+    }
 }
 
 pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
@@ -482,7 +516,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
-        result: Option<*mut T>,
+        result: Option<OwnedReply<T>>,
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
@@ -1634,20 +1668,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
-        result: Option<*mut T>,
+        result: Option<OwnedReply<T>>,
     ) {
         // syscall = "query" + ucfirst(TYPE_NAME); each `CAresRecordType` impl
         // carries the precomputed literal.
         let syscall = T::SYSCALL; // e.g. "querySrv"
-        // This path is reached when the pending cache is full (`.disabled`),
-        // so we own the c-ares result here. The cached path frees it in
-        // `drainPendingCares`; callers from there always pass `null`.
-        let _free = scopeguard::guard(result, |r| {
-            if let Some(r) = r {
-                // SAFETY: r is the c-ares-allocated reply; we own it on this path.
-                unsafe { T::destroy(r) };
-            }
-        });
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -1663,7 +1688,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                 Self::destroy(this);
                 return;
             }
-            let Some(node) = result else {
+            let Some(mut node) = result else {
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     syscall.as_bytes(),
@@ -1675,11 +1700,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                 return;
             };
 
-            // node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
-            let array = Outcome::of(
-                global_this,
-                (*node).to_js_response(global_this, T::TYPE_NAME),
-            );
+            let array = Outcome::of(global_this, node.to_js_response(global_this, T::TYPE_NAME));
             Self::on_complete(this, array);
         }
     }
@@ -3333,11 +3354,9 @@ macro_rules! impl_cares_record_type {
                 timeouts: i32,
                 results: *mut $ty,
             ) {
-                let result = if results.is_null() {
-                    None
-                } else {
-                    Some(results)
-                };
+                // SAFETY: `ares_reply_callback` hands over the `ares_parse_*_reply`
+                // allocation, which `destroy` frees.
+                let result = NonNull::new(results).map(|reply| unsafe { OwnedReply::adopt(reply) });
                 Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
             }
         }
@@ -3394,8 +3413,8 @@ impl_cares_record_type!(
 );
 
 // `any` — handler receives `Option<Box<struct_any_reply>>` (parser allocates the
-// aggregate); convert via `heap::alloc` so the rest of the pipeline sees a
-// uniform `*mut T` and `CAresRecordType::destroy` reclaims it with `heap::take`.
+// aggregate); release it via `heap::into_raw_nn` so the rest of the pipeline sees a
+// uniform `OwnedReply<T>` and `CAresRecordType::destroy` reclaims it with `heap::take`.
 impl CAresRecordType for c_ares::struct_any_reply {
     const TYPE_NAME: &'static str = "any";
     const SYSCALL: &'static str = "queryAny";
@@ -3411,7 +3430,8 @@ impl CAresRecordType for c_ares::struct_any_reply {
         super::cares_jsc::any_reply_to_js_response(self, global, type_name.as_bytes())
     }
     unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` was `heap::alloc`'d in `on_any` below; Drop frees inner replies.
+        // SAFETY: `this` was released by `heap::into_raw_nn` in `on_any` below; Drop
+        // frees inner replies.
         unsafe { drop(bun_core::heap::take(this)) }
     }
 }
@@ -3422,12 +3442,10 @@ impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
         timeouts: i32,
         results: Option<Box<c_ares::struct_any_reply>>,
     ) {
-        Self::on_cares_complete(
-            std::ptr::from_mut::<Self>(self),
-            status,
-            timeouts,
-            results.map(bun_core::heap::into_raw),
-        );
+        // SAFETY: `destroy` re-boxes the allocation released here.
+        let result =
+            results.map(|reply| unsafe { OwnedReply::adopt(bun_core::heap::into_raw_nn(reply)) });
+        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
     }
 }
 
@@ -3462,12 +3480,12 @@ macro_rules! hostent_newtype {
                 timeouts: i32,
                 results: *mut c_ares::struct_hostent,
             ) {
-                // SAFETY: `#[repr(transparent)]` — `*mut struct_hostent` casts to `*mut $name`.
-                let result = if results.is_null() {
-                    None
-                } else {
-                    Some(results.cast::<$name>())
-                };
+                let hostent = NonNull::new(results.cast::<$name>());
+                // SAFETY: `RAW_CALLBACK` is an `ares_parse_*_reply` wrapper, so this hostent
+                // is handed over for `destroy` to free (unlike the one `ares_gethostbyaddr`
+                // lends to `GetHostByAddrInfoRequest`); `#[repr(transparent)]` makes the
+                // cast sound.
+                let result = hostent.map(|reply| unsafe { OwnedReply::adopt(reply) });
                 Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
             }
         }
@@ -3498,8 +3516,8 @@ macro_rules! hostent_ttls_newtype {
                 )
             }
             unsafe fn destroy(this: *mut Self) {
-                // SAFETY: `#[repr(transparent)]`; allocated via `heap::alloc` in
-                // `on_hostent_with_ttls` below — Drop calls `ares_free_hostent`.
+                // SAFETY: `#[repr(transparent)]`; released by `heap::into_raw_nn` in
+                // `on_hostent_with_ttls` below. Drop calls `ares_free_hostent`.
                 unsafe {
                     drop(bun_core::heap::take(
                         this.cast::<c_ares::hostent_with_ttls>(),
@@ -3516,8 +3534,11 @@ macro_rules! hostent_ttls_newtype {
                 timeouts: i32,
                 results: Option<Box<c_ares::hostent_with_ttls>>,
             ) {
-                // SAFETY: `#[repr(transparent)]` — `*mut hostent_with_ttls` casts to `*mut $name`.
-                let result = results.map(|b| bun_core::heap::into_raw(b).cast::<$name>());
+                // SAFETY: `destroy` casts back and re-boxes the allocation released here;
+                // `#[repr(transparent)]` makes the cast sound.
+                let result = results.map(|reply| unsafe {
+                    OwnedReply::adopt(bun_core::heap::into_raw_nn(reply).cast::<$name>())
+                });
                 Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
             }
         }
@@ -4269,7 +4290,7 @@ impl Resolver {
         index: u8,
         err: Option<c_ares::Error>,
         timeout: i32,
-        result: Option<*mut T>,
+        result: Option<OwnedReply<T>>,
     ) {
         // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
@@ -4283,7 +4304,7 @@ impl Resolver {
                 .into_inner()
         };
 
-        let Some(addr) = result else {
+        let Some(mut addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
             // pending-cache slot; consumed via `heap::take` below.
             unsafe {
@@ -4304,17 +4325,13 @@ impl Resolver {
             return;
         };
 
-        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
-        // slot; `addr` is the c-ares-allocated reply freed by `_free_addr` below.
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the
+        // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = Outcome::of(
-                prev_global,
-                (*addr).to_js_response(prev_global, T::TYPE_NAME),
-            );
-            // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
-            let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
+            let mut array =
+                Outcome::of(prev_global, addr.to_js_response(prev_global, T::TYPE_NAME));
             keep_alive(&array);
             CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
@@ -4324,8 +4341,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array =
-                        Outcome::of(new_global, (*addr).to_js_response(new_global, T::TYPE_NAME));
+                    array = Outcome::of(new_global, addr.to_js_response(new_global, T::TYPE_NAME));
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;

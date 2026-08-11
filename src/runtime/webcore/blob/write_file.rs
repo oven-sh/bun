@@ -6,18 +6,20 @@ use core::sync::atomic::Ordering;
 
 use crate::Error;
 use bun_core::ZigString;
-use bun_io::{self as io, IntrusiveIoRequest as _};
+use bun_io as io;
+#[cfg(not(windows))]
+use bun_io::IntrusiveIoRequest as _;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-#[cfg(not(windows))]
-use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::{
-    self, Blob, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
+    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
 };
+#[cfg(not(windows))]
+use crate::webcore::blob::{ClosingState, FileCloser};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -171,72 +173,7 @@ impl MkdirpTarget for WriteFile {
     }
 }
 
-impl FileCloser for WriteFile {
-    const IO_TAG: io::Tag = io::Tag::WriteFile;
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
-    }
-    fn close_after_io(&self) -> bool {
-        self.close_after_io
-    }
-    fn state(&self) -> &AtomicU8 {
-        &self.state
-    }
-    fn io_request(&mut self) -> Option<&mut io::Request> {
-        Some(&mut self.io_request)
-    }
-    fn io_poll(&mut self) -> &mut io::Poll {
-        &mut self.io_poll
-    }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
-        &mut self.task
-    }
-    fn update(&mut self) {
-        WriteFile::update(self)
-    }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!()
-    }
-
-    fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        fn on_done(ctx: *mut ()) {
-            // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
-            <WriteFile as FileCloser>::on_io_request_closed(this);
-        }
-        // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the live
-        // parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
-        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
-        io::Action::Close(io::CloseAction {
-            fd,
-            poll,
-            ctx: this.cast::<()>(),
-            tag: <Self as FileCloser>::IO_TAG,
-            on_done,
-        })
-    }
-
-    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-    // the trait method cannot be marked `unsafe fn`, so the lint is
-    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-    // in `on_io_request_closed` and is guaranteed live.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_io_request_closed`; recover parent.
-        let this = unsafe { WriteFile::from_task_ptr(task) };
-        // SAFETY: `this` is the live parent (see above); scoped access.
-        unsafe { (*this).close_after_io = false };
-        // SAFETY: as above; exclusive borrow scoped to the call.
-        WriteFile::update(unsafe { &mut *this });
-    }
-}
+crate::webcore::blob::impl_file_closer!(WriteFile);
 
 impl WriteFile {
     #[cfg(not(windows))]

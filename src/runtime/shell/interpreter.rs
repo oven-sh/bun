@@ -2317,7 +2317,6 @@ pub enum ParseFlagResult {
     Done,
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
-    ShowUsage,
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
@@ -2352,7 +2351,6 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
             ParseFlagResult::ContinueParsing => {}
             ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
             ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
         }
         idx += 1;
     }

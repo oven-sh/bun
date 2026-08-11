@@ -266,6 +266,8 @@ function translateLookupOptions(options) {
     all,
     order,
     verbatim,
+    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not c-ares.
+    backend: "system",
   };
 }
 

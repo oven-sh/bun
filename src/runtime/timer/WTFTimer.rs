@@ -57,16 +57,6 @@ pub(crate) struct WTFTimer {
 
 bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 
-/// # Safety
-/// `vm` must be the live `VirtualMachine` for the current thread.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
-    // SAFETY: per fn contract.
-    let el = unsafe { (*vm).event_loop() };
-    // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
-    unsafe { (*el).run_imminent_gc_timer() };
-}
-
 impl WTFTimer {
     /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.

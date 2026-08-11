@@ -750,9 +750,9 @@ impl AsyncModule {
         });
     }
 
-    // write! into Vec<u8>
-    // is infallible here; `.ok()` collapses the `fmt::Result`, so this never
-    // actually returns Err — the wide Result is kept for call-site uniformity.
+    // Never returns Err: the `write!`s below go into a `Vec<u8>` and their
+    // results are discarded with `let _ =`. The `Result` return type is kept
+    // for call-site uniformity with `download_error`.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,
@@ -768,60 +768,53 @@ impl AsyncModule {
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
         if e == "PackageManifestHTTP400" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP401" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP402" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP403" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP404" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP4xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP5xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if matches!(e, "DistTagNotFound" | "NoMatchingVersion") {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
@@ -835,23 +828,21 @@ impl AsyncModule {
                     b"No match found"
                 };
 
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} '{}' for package '{}' (but package exists)",
                 bstr::BStr::new(prefix),
                 bstr::BStr::new(vm.package_manager().lockfile.str(&result.version.literal)),
                 bstr::BStr::new(result.name)
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} resolving package '{}' at '{}'",
                 e,
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         }
         // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
@@ -986,71 +977,63 @@ impl AsyncModule {
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
         if e == "TarballHTTP400" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP401" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP402" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP403" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP404" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP4xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP5xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballFailedToExtract" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} downloading package '{}@{}'",
                 e,
@@ -1063,8 +1046,7 @@ impl AsyncModule {
                         .as_slice(),
                     bun_core::fmt::PathSep::Any,
                 )
-            )
-            .ok();
+            );
         }
         // msg dropped at scope exit.
 

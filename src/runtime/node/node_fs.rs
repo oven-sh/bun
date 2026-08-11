@@ -1398,7 +1398,7 @@ mod _async_tasks {
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
     /// When clonefile cannot be used, this task is started once per file.
-    pub struct CpSingleTask<const IS_SHELL: bool> {
+    pub(crate) struct CpSingleTask<const IS_SHELL: bool> {
         /// BACKREF — the parent `NewAsyncCpTask` is `Box::leak`'d and outlives every
         /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
@@ -2249,7 +2249,7 @@ mod _async_tasks {
         }
     }
 
-    pub enum ResultListEntryValue {
+    pub(crate) enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
         Buffers(Vec<Buffer>),
         Files(Vec<BunString>),
@@ -2283,7 +2283,7 @@ mod _async_tasks {
         }
     }
 
-    pub struct ResultListEntry {
+    pub(crate) struct ResultListEntry {
         pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
         pub value: ResultListEntryValue,
     }
@@ -2577,7 +2577,7 @@ mod _async_tasks {
     ///
     /// Rust can't switch on a generic `T` inside `write_results`, so the
     /// per-type `ResultListEntryValue` wrapping lives on this trait.
-    pub trait IntoResultListEntry: Sized {
+    pub(crate) trait IntoResultListEntry: Sized {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue;
     }
     impl IntoResultListEntry for Dirent {
@@ -2618,9 +2618,8 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub use _async_tasks::{
-    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest, async_,
+    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, NewAsyncCpTask,
+    ShellAsyncCpTask, UVFSRequest, async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

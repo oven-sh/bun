@@ -69,39 +69,6 @@ size_t PerformanceResourceTiming::memoryCost() const
     return size;
 }
 
-static double entryStartTime(MonotonicTime timeOrigin, const ResourceTiming& resourceTiming)
-{
-    if (resourceTiming.networkLoadMetrics().failsTAOCheck
-        || !resourceTiming.networkLoadMetrics().redirectCount)
-        return fetchStart(timeOrigin, resourceTiming);
-
-    if (resourceTiming.networkLoadMetrics().redirectStart)
-        return networkLoadTimeToDOMHighResTimeStamp(timeOrigin, resourceTiming.networkLoadMetrics().redirectStart);
-
-    return networkLoadTimeToDOMHighResTimeStamp(timeOrigin, resourceTiming.resourceLoadTiming().startTime());
-}
-
-static double entryEndTime(MonotonicTime timeOrigin, const ResourceTiming& resourceTiming)
-{
-    if (resourceTiming.networkLoadMetrics().responseEnd)
-        return networkLoadTimeToDOMHighResTimeStamp(timeOrigin, resourceTiming.networkLoadMetrics().responseEnd);
-
-    return networkLoadTimeToDOMHighResTimeStamp(timeOrigin, resourceTiming.resourceLoadTiming().endTime());
-}
-
-Ref<PerformanceResourceTiming> PerformanceResourceTiming::create(MonotonicTime timeOrigin, ResourceTiming&& resourceTiming)
-{
-    return adoptRef(*new PerformanceResourceTiming(timeOrigin, WTF::move(resourceTiming)));
-}
-
-PerformanceResourceTiming::PerformanceResourceTiming(MonotonicTime timeOrigin, ResourceTiming&& resourceTiming)
-    : PerformanceEntry(resourceTiming.url().string(), entryStartTime(timeOrigin, resourceTiming), entryEndTime(timeOrigin, resourceTiming))
-    , m_timeOrigin(timeOrigin)
-    , m_resourceTiming(WTF::move(resourceTiming))
-    , m_serverTiming(m_resourceTiming.populateServerTiming())
-{
-}
-
 PerformanceResourceTiming::~PerformanceResourceTiming() = default;
 
 const String& PerformanceResourceTiming::nextHopProtocol() const

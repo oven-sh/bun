@@ -50,7 +50,6 @@ public:
     const ResourceLoadTiming& resourceLoadTiming() const { return m_resourceLoadTiming; }
     const NetworkLoadMetrics& networkLoadMetrics() const { return m_networkLoadMetrics; }
     NetworkLoadMetrics& networkLoadMetrics() { return m_networkLoadMetrics; }
-    Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
 
     void overrideInitiatorType(const String& type) { m_initiatorType = type; }

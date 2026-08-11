@@ -526,7 +526,6 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
 
 const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
 const struct sockaddr *us_nq_spec_local(const struct lsquic_out_spec *s) { return s->local_sa; }
-void *us_nq_spec_peer_ctx(const struct lsquic_out_spec *s) { return s->peer_ctx; }
 const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
     *n = s->iovlen;
     return s->iov;

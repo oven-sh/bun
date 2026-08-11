@@ -617,40 +617,6 @@ LLHTTP_EXPORT
 void llhttp_init(llhttp_t* parser, llhttp_type_t type,
     const llhttp_settings_t* settings);
 
-LLHTTP_EXPORT
-llhttp_t* llhttp_alloc(llhttp_type_t type);
-
-LLHTTP_EXPORT
-void llhttp_free(llhttp_t* parser);
-
-LLHTTP_EXPORT
-uint8_t llhttp_get_type(llhttp_t* parser);
-
-LLHTTP_EXPORT
-uint8_t llhttp_get_http_major(llhttp_t* parser);
-
-LLHTTP_EXPORT
-uint8_t llhttp_get_http_minor(llhttp_t* parser);
-
-LLHTTP_EXPORT
-uint8_t llhttp_get_method(llhttp_t* parser);
-
-LLHTTP_EXPORT
-int llhttp_get_status_code(llhttp_t* parser);
-
-LLHTTP_EXPORT
-uint8_t llhttp_get_upgrade(llhttp_t* parser);
-
-/* Reset an already initialized parser back to the start state, preserving the
- * existing parser type, callback settings, user data, and lenient flags.
- */
-LLHTTP_EXPORT
-void llhttp_reset(llhttp_t* parser);
-
-/* Initialize the settings object */
-LLHTTP_EXPORT
-void llhttp_settings_init(llhttp_settings_t* settings);
-
 /* Parse full or partial request/response, invoking user callbacks along the
  * way.
  *
@@ -718,10 +684,6 @@ void llhttp_resume(llhttp_t* parser);
 LLHTTP_EXPORT
 void llhttp_resume_after_upgrade(llhttp_t* parser);
 
-/* Returns the latest return error */
-LLHTTP_EXPORT
-llhttp_errno_t llhttp_get_errno(const llhttp_t* parser);
-
 /* Returns the verbal explanation of the latest returned error.
  *
  * Note: User callback should set error reason when returning the error. See
@@ -749,14 +711,6 @@ const char* llhttp_get_error_pos(const llhttp_t* parser);
 /* Returns textual name of error code */
 LLHTTP_EXPORT
 const char* llhttp_errno_name(llhttp_errno_t err);
-
-/* Returns textual name of HTTP method */
-LLHTTP_EXPORT
-const char* llhttp_method_name(llhttp_method_t method);
-
-/* Returns textual name of HTTP status */
-LLHTTP_EXPORT
-const char* llhttp_status_name(llhttp_status_t status);
 
 /* Enables/disables lenient header value parsing (disabled by default).
  *

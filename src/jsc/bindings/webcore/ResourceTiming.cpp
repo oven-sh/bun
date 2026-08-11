@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ResourceTiming.h"
 
-#include "PerformanceServerTiming.h"
 #include "ResourceLoadTiming.h"
 
 #include "NetworkLoadMetrics.h"
@@ -44,17 +43,6 @@ ResourceTiming::ResourceTiming(const URL& url, const String& initiatorType, cons
     , m_isLoadedFromServiceWorker(false)
     , m_isSameOriginRequest(true)
 {
-}
-
-Vector<Ref<PerformanceServerTiming>> ResourceTiming::populateServerTiming() const
-{
-    // To increase privacy, this additional check was proposed at https://github.com/w3c/resource-timing/issues/342 .
-    if (!m_isSameOriginRequest)
-        return {};
-
-    return WTF::map(m_serverTiming, [](auto& entry) {
-        return PerformanceServerTiming::create(String(entry.name), entry.duration, String(entry.description));
-    });
 }
 
 } // namespace WebCore

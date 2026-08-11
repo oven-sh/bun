@@ -196,9 +196,6 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
  * 0 otherwise. Backed by MSG_TRUNC in msg_hdr.msg_flags on POSIX. */
 int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index);
 
-/* Copies out local (received destination) ip (4 or 16 bytes) of received packet */
-int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip);
-
 /* Get the bound port in host byte order */
 int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 
@@ -357,10 +354,8 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
-unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
-struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_fn_decl;
 
 /* Move an open socket between groups / kinds, optionally resizing its ext.
  * Replaces us_socket_context_adopt_socket + us_create_child_socket_context.
@@ -403,8 +398,6 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
@@ -467,7 +460,6 @@ int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_
  * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) nonnull_fn_decl;
 unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnull_fn_decl;
 
@@ -594,9 +586,6 @@ void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
 /* Hook up timers in existing loop */
 void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
 
-/* Returns the loop iteration number */
-long long us_loop_iteration_number(us_loop_r loop) nonnull_fn_decl;
-
 /* Public interfaces for polls */
 
 /* A fallthrough poll does not keep the loop running, it falls through */
@@ -617,9 +606,6 @@ void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */
 int us_poll_events(us_poll_r p) nonnull_fn_decl;
-
-/* Returns the user data extension of this poll */
-void *us_poll_ext(us_poll_r p) nonnull_fn_decl;
 
 /* Get associated socket descriptor from a poll */
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(us_poll_r p) nonnull_fn_decl;
@@ -674,7 +660,6 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
-int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
@@ -690,12 +675,8 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
-void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
-LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
-int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
  * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
@@ -705,10 +686,8 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
-struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t **out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);

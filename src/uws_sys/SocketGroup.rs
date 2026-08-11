@@ -284,16 +284,6 @@ impl SocketGroup {
             )
         }
     }
-
-    pub fn pair(
-        &mut self,
-        kind: SocketKind,
-        ext_size: c_int,
-        fds: &mut [LIBUS_SOCKET_DESCRIPTOR; 2],
-    ) -> *mut us_socket_t {
-        // SAFETY: forwarding to C; `fds` is a valid 2-element array.
-        unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
-    }
 }
 
 unsafe extern "C" {
@@ -360,11 +350,5 @@ unsafe extern "C" {
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
         ipc: c_int,
-    ) -> *mut us_socket_t;
-    fn us_socket_pair(
-        group: *mut SocketGroup,
-        kind: u8,
-        ext_size: c_int,
-        fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }

@@ -44,8 +44,6 @@ class ResourceTiming;
 
 class PerformanceResourceTiming : public PerformanceEntry {
 public:
-    static Ref<PerformanceResourceTiming> create(MonotonicTime timeOrigin, ResourceTiming&&);
-
     const String& initiatorType() const { return m_resourceTiming.initiatorType(); }
     const String& nextHopProtocol() const;
 
@@ -73,7 +71,6 @@ public:
     ASCIILiteral entryType() const override { return "resource"_s; }
 
 protected:
-    PerformanceResourceTiming(MonotonicTime timeOrigin, ResourceTiming&&);
     ~PerformanceResourceTiming();
 
     bool isLoadedFromServiceWorker() const { return m_resourceTiming.isLoadedFromServiceWorker(); }

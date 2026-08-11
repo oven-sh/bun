@@ -106,7 +106,6 @@ public:
     }
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
-    WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
 
@@ -182,7 +181,5 @@ public:
     bool m_inScriptExecutionContextDestructor = false;
 #endif
 };
-
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
 
 }

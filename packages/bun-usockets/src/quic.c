@@ -78,7 +78,6 @@ struct us_quic_socket_context_s {
      * the peer until idle timeout). */
     struct us_quic_socket_s *conns;
 
-    void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
     void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
@@ -522,7 +521,6 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
-    if (ctx->on_open) ctx->on_open(qs);
     return (lsquic_conn_ctx_t *) qs;
 }
 
@@ -922,7 +920,6 @@ int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, 
 
 #define DEF_CB(name, sig) \
     void us_quic_socket_context_##name(us_quic_socket_context_t *ctx, sig) { ctx->name = cb; }
-DEF_CB(on_open, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_hsk_done, void (*cb)(us_quic_socket_t *, int))
 DEF_CB(on_goaway, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_close, void (*cb)(us_quic_socket_t *))
@@ -1022,15 +1019,6 @@ void us_quic_stream_shutdown(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_shutdown(s->stream, 1);
 }
 
-/* lsquic_stream_write buffers until a full packet or shutdown; force the
- * partial buffer into a packet so the peer sees streamed bytes promptly. */
-void us_quic_stream_flush(us_quic_stream_t *s) {
-    if (s->stream) {
-        lsquic_stream_flush(s->stream);
-        s->ctx->pending_write_bytes++;
-    }
-}
-
 void us_quic_stream_shutdown_read(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_shutdown(s->stream, 0);
 }
@@ -1053,10 +1041,6 @@ void us_quic_stream_reset(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
 }
 
-int us_quic_stream_has_unacked(us_quic_stream_t *s) {
-    return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
-}
-
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }
 
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {
@@ -1076,7 +1060,6 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
 }
 
 void *us_quic_socket_ext(us_quic_socket_t *s) { return s + 1; }
-us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s) { return s->ctx; }
 
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6) {
     const struct sockaddr *local, *peer;
@@ -1096,8 +1079,6 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
         *len = 4; memcpy(buf, &a->sin_addr, 4);
     }
 }
-
-void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }
 
 /* ───── client ─────
  *
@@ -1378,10 +1359,6 @@ int us_quic_socket_context_connect(
     pc->user = user;
     *out_pending = pc;
     return 0;
-}
-
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc) {
-    return pc->user;
 }
 
 struct addrinfo_request *us_quic_pending_connect_addrinfo(

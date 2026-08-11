@@ -276,18 +276,6 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     return true;
 }
 
-bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
-{
-    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
-
-    if (!context) {
-        return false;
-    }
-
-    context->postTaskConcurrently(WTF::move(task));
-    return true;
-}
-
 ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
 {
     Locker locker { allScriptExecutionContextsMapLock };
@@ -342,13 +330,6 @@ void ScriptExecutionContext::markTerminating()
     // handle deals with it (queued and released unrun by the teardown, or refused and
     // deleted once the handle is closed).
     m_isTerminating.store(true, std::memory_order_release);
-}
-
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
-{
-    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
-        return nullptr;
-    return uncheckedDowncast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext();
 }
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)

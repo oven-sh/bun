@@ -89,10 +89,6 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
-    return s->ssl != NULL;
-}
-
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) {
     return c->group;
 }
@@ -354,59 +350,6 @@ __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_soc
         return us_internal_ssl_close(s, code, reason);
     }
     return us_internal_socket_close_raw(s, code, reason);
-}
-
-// This function is the same as us_socket_close but:
-// - does not emit on_close event
-// - does not close
-struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
-    if (!us_socket_is_closed(s)) {
-        struct us_loop_t *loop = s->group->loop;
-
-        if (s->flags.low_prio_state == 1) {
-            /* Unlink this socket from the low-priority queue */
-            if (!s->prev) loop->data.low_prio_head = s->next;
-            else s->prev->next = s->next;
-
-            if (s->next) s->next->prev = s->prev;
-
-            s->prev = 0;
-            s->next = 0;
-            s->flags.low_prio_state = 0;
-            s->group->low_prio_count--;
-            /* Mirror the else branch: if this was the last thing keeping the
-             * group linked, drop it from the loop now rather than waiting for
-             * the next link/unlink to notice. */
-            us_internal_group_maybe_unlink(s->group);
-        } else {
-            us_internal_socket_group_unlink_socket(s->group, s);
-        }
-        us_poll_stop((struct us_poll_t *) s, loop);
-
-        us_internal_ssl_detach(s);
-
-        /* Link this socket to the close-list and let it be deleted after this iteration */
-        s->next = loop->data.closed_head;
-        loop->data.closed_head = s;
-
-        /* Mark the socket as closed */
-        s->flags.is_closed = 1;
-
-        return s;
-    }
-    return s;
-}
-
-struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
-        return 0;
-    }
-
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
-#endif
 }
 
 /* Re-arm writable for a backpressured write without resuming the read side of
@@ -756,13 +699,6 @@ int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
 }
 
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {
-    if (s->ssl) {
-        return us_internal_ssl_on_open(s, is_client, ip, ip_length);
-    }
-    return us_dispatch_open(s, is_client, ip, ip_length);
-}
-
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
     // This function is manual inlining + modification of
@@ -853,10 +789,6 @@ void us_socket_unref(struct us_socket_t *s) {
     uv_unref((uv_handle_t *) s->p.uv_p);
 #endif
     // do nothing if not using libuv
-}
-
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
-    return c->loop;
 }
 
 void us_socket_pause(struct us_socket_t *s) {

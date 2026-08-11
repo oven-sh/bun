@@ -128,7 +128,6 @@ enum {
 /* SNI tree leaf — stored as the void* user in sni_tree.cpp. */
 struct sni_node_t {
   SSL_CTX *ctx;
-  void *user;
 };
 
 static _Atomic long ssl_ctx_live = 0;
@@ -2957,7 +2956,6 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
-  node->user = user;
   SSL_CTX_up_ref(ctx);
   /* Stash userdata on the SSL_CTX too so per-socket lookup via
    * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
@@ -2978,13 +2976,6 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
   if (!ls->sni) return;
   struct sni_node_t *node = (struct sni_node_t *)sni_remove(ls->sni, hostname_pattern);
   sni_node_destructor(node);
-}
-
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-                                                 const char *hostname_pattern) {
-  if (!ls->sni) return NULL;
-  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
-  return node ? node->user : NULL;
 }
 
 /* Returns the SSL_CTX registered for `hostname_pattern` via

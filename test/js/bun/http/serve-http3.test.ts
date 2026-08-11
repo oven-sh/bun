@@ -1305,32 +1305,50 @@ describe("Bun.serve HTTP/3 production", () => {
 // Both QUIC engines (Bun.serve's and the fetch client's) are only ticked from
 // an event loop, so every RTT lsquic measures includes whatever that loop ran
 // in between. quic.c pins the congestion controller to Cubic: lsquic's default
-// "adaptive" mode settles on BBRv1 for good as soon as a connection's early RTT
-// samples exceed 1.5 ms, and BBRv1 then models loop latency as the path. Its
-// window target is bandwidth x min RTT, where the "bandwidth" it can observe
-// on a busy loop is one window per loop iteration and the min RTT is whatever
-// the quickest moment of the connection looked like, so once it leaves startup
-// the window shrinks round after round until it sits at the 4-packet minimum.
-// Cubic only reacts to loss, which a slow loop does not produce.
+// "adaptive" mode settles on BBRv1 for good when a connection's handshake RTT
+// is over 1.5 ms, and BBRv1 then models loop latency as the path. Its window
+// target is bandwidth x min RTT, where the only bandwidth it can observe on a
+// busy loop is one window per loop iteration and the min RTT is the quickest
+// round trip the connection ever saw, so as soon as it leaves startup the
+// window drops to the 4-packet minimum and stays there. Cubic only reacts to
+// loss, which a slow loop does not produce.
 //
 // The fixture counts its own event loop iterations and paces them with
-// Bun.sleepSync: 5 ms per iteration while the connection is set up (so the
-// handshake RTTs that adaptive mode decides on are well over 1.5 ms), idle for
-// a moment once the transfer starts (so the controller's min RTT is the real
-// loopback RTT, as it would be for any connection that saw one quick round
-// trip), then 12 ms per iteration for ITERATIONS iterations. Only the second
-// half of those is asserted on, which leaves either controller ample rounds to
-// settle. Over those 60 iterations Cubic moves several MiB (it is bounded by
-// the receiver's UDP buffer: 3.5-7 MiB with Linux's 208 KiB default on a debug
-// build), a collapsed BBRv1 window moves ~7 KiB per iteration, 0.4-0.5 MiB.
+// Bun.sleepSync. It sleeps 5 ms per iteration while the connection is set up,
+// so adaptive mode would choose BBRv1; /quiet then stops the sleeping, and the
+// round trips made while the loop is idle give both engines a genuine loopback
+// RTT sample (any real connection has one from a quiet moment); the transfer
+// itself then runs with BUSY_ITERATION_MS of work per iteration for ITERATIONS
+// iterations. Only the second half of those is asserted on, which leaves
+// either controller ample rounds to settle.
+//
+// What a healthy connection moves per iteration is bounded by the receiver's
+// UDP buffer and by lsquic's pacer, which lets about ten packets plus one
+// millisecond's worth through per engine tick, so the numbers are modest but
+// far apart: over the measured 60 iterations a collapsed BBRv1 window moves
+// 5-6 packets per iteration, ~0.4 MiB in total, while Cubic moves several MiB
+// (4-13 MiB on Linux and Windows debug builds).
 describe("Bun.serve HTTP/3 congestion control", () => {
   const ITERATIONS = 120;
+  // Comfortably longer than the idle round trips even on a debug build, where
+  // they take 1-2 ms: once out of startup, each round multiplies BBRv1's window
+  // by about 2 x minRTT / iteration, so this has it at the minimum within a
+  // few rounds.
+  const BUSY_ITERATION_MS = 12;
   // Larger than any window either controller reaches here, so every tick is
   // limited by the congestion window, not by how much the application had
   // queued. (Application-limited rounds never let BBRv1 leave startup, which
   // is why a response made of small chunks does not show the collapse.)
   const CHUNK_SIZE = 512 * 1024;
   const MIN_SECOND_HALF_BYTES = 1024 * 1024;
+
+  // Two round trips: lsquic takes no bandwidth/RTT sample for a packet sent
+  // before the connection had its first acknowledgment
+  // (lsquic_bw_sampler_packet_acked), so the first one only primes the
+  // sampler and the second is the one the controller measures.
+  async function quietRoundTrips(port: number) {
+    for (let i = 0; i < 2; i++) await fetchH3(port, "/quiet").then(r => r.bytes());
+  }
 
   const script = `
     const tls = ${JSON.stringify(tls)};
@@ -1345,27 +1363,32 @@ describe("Bun.serve HTTP/3 congestion control", () => {
       if (busyMs) Bun.sleepSync(busyMs);
       setImmediate(spin);
     })();
-    function startTransfer() {
-      busyMs = 0;
-      setTimeout(() => { windowStart = iterations; busyMs = 12; }, 20);
+    function openWindow() {
+      windowStart = iterations;
+      busyMs = ${BUSY_ITERATION_MS};
     }
-    // Iterations since the busy window opened; negative before that.
-    const elapsed = () => iterations - windowStart;
-    const inSecondHalf = () => elapsed() >= ITERATIONS / 2;
+    const inSecondHalf = () => iterations - windowStart >= ITERATIONS / 2;
+    const windowClosed = () => iterations - windowStart >= ITERATIONS;
     let download = { chunks: 0, secondHalfChunks: 0 };
     const server = Bun.serve({
       port: 0, tls, http3: true, http1: false,
       async fetch(req) {
         const { pathname } = new URL(req.url);
+        if (pathname === "/quiet") {
+          busyMs = 0;
+          // A few packets' worth so the client acknowledges it right away
+          // instead of waiting out its delayed-ACK timer.
+          return new Response(Buffer.alloc(4096, "quiet"));
+        }
         if (pathname === "/download") {
-          startTransfer();
+          openWindow();
           download = { chunks: 0, secondHalfChunks: 0 };
           return new Response(new ReadableStream({
             // pull() runs once the previous chunk has been handed to lsquic in
             // full, so chunks pulled during the second half of the window are
-            // the chunks the connection actually moved during it (+-1).
+            // the chunks the connection moved during it (+-1).
             pull(ctrl) {
-              if (elapsed() >= ITERATIONS) return ctrl.close();
+              if (windowClosed()) return ctrl.close();
               download.chunks++;
               if (inSecondHalf()) download.secondHalfChunks++;
               ctrl.enqueue(CHUNK);
@@ -1374,10 +1397,10 @@ describe("Bun.serve HTTP/3 congestion control", () => {
         }
         if (pathname === "/download/stats") return Response.json(download);
         if (pathname === "/upload") {
-          startTransfer();
+          openWindow();
           let total = 0, secondHalf = 0;
           for await (const chunk of req.body) {
-            if (elapsed() >= ITERATIONS) break;
+            if (windowClosed()) break;
             total += chunk.length;
             if (inSecondHalf()) secondHalf += chunk.length;
           }
@@ -1393,6 +1416,7 @@ describe("Bun.serve HTTP/3 congestion control", () => {
 
   test("a response body keeps flowing while the server's event loop is busy", async () => {
     await withCustomServer(script, async port => {
+      await quietRoundTrips(port);
       const body = await fetchH3(port, "/download").then(r => r.bytes());
       const { chunks, secondHalfChunks } = (await fetchH3(port, "/download/stats").then(r => r.json())) as {
         chunks: number;
@@ -1407,20 +1431,23 @@ describe("Bun.serve HTTP/3 congestion control", () => {
   // server's loop delays every ACK, so its RTT samples are inflated the same way.
   test("a streamed request body keeps flowing while the server's event loop is busy", async () => {
     await withCustomServer(script, async port => {
+      await quietRoundTrips(port);
       const chunk = Buffer.alloc(CHUNK_SIZE, "cwnd");
       let responded = false;
+      let enqueued = 0;
       const res = await fetchH3(port, "/upload", {
         method: "POST",
         body: new ReadableStream({
           pull(ctrl) {
-            if (responded) ctrl.close();
-            else ctrl.enqueue(chunk);
+            if (responded) return ctrl.close();
+            enqueued++;
+            ctrl.enqueue(chunk);
           },
         }),
       });
       responded = true;
       const { total, secondHalf } = (await res.json()) as { total: number; secondHalf: number };
-      expect(total).toBeGreaterThanOrEqual(secondHalf);
+      expect(total).toBeLessThanOrEqual(enqueued * CHUNK_SIZE);
       expect(secondHalf).toBeGreaterThanOrEqual(MIN_SECOND_HALF_BYTES);
     });
   });

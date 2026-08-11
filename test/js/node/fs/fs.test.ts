@@ -2173,6 +2173,65 @@ describe.each([
   });
 });
 
+// The position used to be truncated to 52 bits on its way to pwrite: 2**52 + k
+// landed at offset k, and [2**51, 2**52) went negative and landed at the
+// current offset. Whether the kernel accepts an offset this large depends on
+// the filesystem (EFBIG on ext4, a sparse file on xfs/btrfs/apfs), so both
+// outcomes are accepted; the existing bytes must be untouched either way.
+describe.each([2 ** 51, 2 ** 52, 2 ** 52 + 3, 2 ** 53 - 1])("fs.write with position=%p is not truncated", position => {
+  function check(head: Buffer, size: number, written: number | string) {
+    expect(head.toString("latin1")).toBe("HEADER--");
+    expect([written, size]).toEqual(typeof written === "number" ? [1, position + 1] : [expect.any(String), 8]);
+  }
+
+  function writeSyncAt(p: string, write: (fd: number) => number) {
+    const fd = openSync(p, "w+");
+    try {
+      writeSync(fd, "HEADER--");
+      let written: number | string;
+      try {
+        written = write(fd);
+      } catch (e: any) {
+        written = e.code;
+      }
+      const head = Buffer.alloc(8);
+      readSync(fd, head, 0, 8, 0);
+      check(head, fstatSync(fd).size, written);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  it("writeSync(fd, buffer, offset, length, position)", () => {
+    using dir = tempDir("fs-write-pos-large-buf", {});
+    writeSyncAt(join(String(dir), "out.bin"), fd => writeSync(fd, Buffer.from("X"), 0, 1, position));
+  });
+
+  it("writeSync(fd, string, position)", () => {
+    using dir = tempDir("fs-write-pos-large-str", {});
+    writeSyncAt(join(String(dir), "out.bin"), fd => writeSync(fd, "X", position));
+  });
+
+  it("FileHandle.write(buffer, offset, length, position)", async () => {
+    using dir = tempDir("fs-fh-write-pos-large", {});
+    const fh = await promises.open(join(String(dir), "out.bin"), "w+");
+    try {
+      await fh.write("HEADER--");
+      let written: number | string;
+      try {
+        written = (await fh.write(Buffer.from("X"), 0, 1, position)).bytesWritten;
+      } catch (e: any) {
+        written = e.code;
+      }
+      const head = Buffer.alloc(8);
+      await fh.read(head, 0, 8, 0);
+      check(head, (await fh.stat()).size, written);
+    } finally {
+      await fh.close();
+    }
+  });
+});
+
 describe("fs.readv/writev with a non-number position uses the current file offset", () => {
   it.each([null, undefined, "3", {}, true] as const)("writevSync position=%p", position => {
     using dir = tempDir("fs-writev-nonnum", {});

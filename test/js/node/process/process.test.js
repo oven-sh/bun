@@ -2321,6 +2321,29 @@ describe("default warning printer survives a failing stderr", () => {
     expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive 0\n$/);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
+
+  // The opposite half-stream: spreading the real stderr keeps its own _writableState but none
+  // of the prototype's listener methods, so the printer must not arm the guard on it either.
+  it.concurrent("process.stderr replaced by a spread copy of the real stream", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr = { ...process.stderr, write(s) { console.log("mock:" + s.trimEnd()); return true; } };
+         console.log(process.stderr._writableState !== undefined, typeof process.stderr.removeListener);
+         process.emitWarning("w");
+         process.on("beforeExit", () => console.log("alive"));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(
+      /^true undefined\nmock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive\n$/,
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
 });
 
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {

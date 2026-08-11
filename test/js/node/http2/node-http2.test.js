@@ -3590,16 +3590,15 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
 // pseudo-headers. Every PUSH_PROMISE precedes the parent's response on the wire, so once the parent
 // response has ended every push has been observed.
 async function pushedHeaderBlocks(onStream, serverOptions) {
+  // Every failure on either side, from listen() onwards, rejects this one promise.
+  const { promise, resolve, reject } = Promise.withResolvers();
   const server = http2.createServer(serverOptions);
+  server.on("error", reject);
+  server.on("sessionError", reject);
   server.on("stream", onStream);
-  await new Promise((listening, failed) => {
-    server.once("error", failed);
-    server.listen(0, "127.0.0.1", listening);
-  });
   let client;
   try {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    server.on("sessionError", reject);
+    await Promise.race([promise, new Promise(listening => server.listen(0, "127.0.0.1", listening))]);
     client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     client.on("error", reject);
     const blocks = [];
@@ -3640,6 +3639,7 @@ it("http2 pushStream sends an array-valued header as one field per element", asy
         "x-number": [1, 2],
         "x-one": ["only"],
         "x-none": [],
+        "content-type": [],
         "x-plain": "p",
       },
       (err, push) => {
@@ -3666,7 +3666,7 @@ it("http2 pushStream sends an array-valued header as one field per element", asy
     ...["x-plain", "p"],
   ]);
   // The object form a receiver builds from those fields: set-cookie stays a list, other repeated
-  // fields are joined with ", ", and an empty array sends nothing at all.
+  // fields are joined with ", ", and an empty array (single-value field or not) sends nothing.
   expect(block.headers).toEqual({
     "set-cookie": ["c1=1", "c2=2"],
     "x-multi": "a, b",

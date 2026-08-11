@@ -7,7 +7,7 @@
 // constructed colliding inputs that broke the old key.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer } from "harness";
 import { constructStdCollision } from "../../cli/install/wyhash-std-collision";
 
 // signature.name = SQL text + ".null" for one null-bound param. The free
@@ -74,60 +74,56 @@ async function assertDistinctStatements(sql: SQL, label: string, placeholder: st
   console.log(`${label}: A="${rA.v.includes("AAAAAAAA") ? "A" : "?"}", B="${rB.v.includes("BBBBBBBB") ? "B" : "?"}"`);
 }
 
-if (isDockerEnabled() || process.env.BUN_TEST_SERVICE_mysql_plain) {
-  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test("MySQL: hash-colliding prepared statements are not confused", async () => {
-      await container.ready;
-      await using sql = new SQL({
-        url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
-        max: 1,
-      });
-      await assertDistinctStatements(sql, "mysql", "?");
+describeWithContainer("mysql", { image: "mysql_plain" }, container => {
+  test("MySQL: hash-colliding prepared statements are not confused", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
     });
+    await assertDistinctStatements(sql, "mysql", "?");
   });
-}
+});
 
-if (isDockerEnabled() || process.env.BUN_TEST_SERVICE_postgres_plain) {
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-    test("Postgres: hash-colliding prepared statements are not confused", async () => {
-      await container.ready;
-      await using sql = new SQL({
-        url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
-        max: 1,
-      });
-      await assertDistinctStatements(sql, "postgres", "$1");
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  test("Postgres: hash-colliding prepared statements are not confused", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
     });
-
-    test("Postgres: a hash-colliding query that fails to parse does not evict or free the cached statement", async () => {
-      await container.ready;
-      await using sql = new SQL({
-        url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
-        max: 1,
-      });
-      // The bad query's 8-byte free word breaks out of the string literal, so
-      // Postgres rejects it at Parse; its name wyhash-collides with the good
-      // query's, which is the input that confused the old hash-keyed cache.
-      const { sqlA: good, sqlB: bad } = collidingQueryPair("$1", "'||qq9z(");
-      const [rGood] = await sql.unsafe(good, [null]);
-      expect(rGood.v).toContain("AAAAAAAA");
-
-      // Before the collision fix this resolved with the good query's row
-      // instead of erroring, because it reused the cached Prepared statement.
-      const err = await sql.unsafe(bad, [null]).then(
-        () => null,
-        (e: unknown) => e,
-      );
-      expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toMatch(/syntax error|unterminated|multiple commands/i);
-
-      Bun.gc(true);
-
-      // The connection must survive the parse failure: the good query still
-      // hits its cached statement and returns its own row, and a fresh query
-      // still works.
-      const [rGood2] = await sql.unsafe(good, [null]);
-      const [rCtl] = await sql.unsafe(`SELECT 'CONTROL' AS v, $1 AS p`, [null]);
-      expect({ good: rGood2.v.includes("AAAAAAAA"), control: rCtl.v }).toEqual({ good: true, control: "CONTROL" });
-    });
+    await assertDistinctStatements(sql, "postgres", "$1");
   });
-}
+
+  test("Postgres: a hash-colliding query that fails to parse does not evict or free the cached statement", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
+    });
+    // The bad query's 8-byte free word breaks out of the string literal, so
+    // Postgres rejects it at Parse; its name wyhash-collides with the good
+    // query's, which is the input that confused the old hash-keyed cache.
+    const { sqlA: good, sqlB: bad } = collidingQueryPair("$1", "'||qq9z(");
+    const [rGood] = await sql.unsafe(good, [null]);
+    expect(rGood.v).toContain("AAAAAAAA");
+
+    // Before the collision fix this resolved with the good query's row
+    // instead of erroring, because it reused the cached Prepared statement.
+    const err = await sql.unsafe(bad, [null]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/syntax error|unterminated|multiple commands/i);
+
+    Bun.gc(true);
+
+    // The connection must survive the parse failure: the good query still
+    // hits its cached statement and returns its own row, and a fresh query
+    // still works.
+    const [rGood2] = await sql.unsafe(good, [null]);
+    const [rCtl] = await sql.unsafe(`SELECT 'CONTROL' AS v, $1 AS p`, [null]);
+    expect({ good: rGood2.v.includes("AAAAAAAA"), control: rCtl.v }).toEqual({ good: true, control: "CONTROL" });
+  });
+});

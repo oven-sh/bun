@@ -764,7 +764,7 @@ mod __macro_smoke {
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
 pub use self::dom_form_data::DOMFormData;
-pub use self::url::URL;
+pub use self::url::{URL, UrlJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
@@ -1241,8 +1241,8 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
     }
 }
 
-// `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
-// dedicated port file); the lib.rs copies were duplicate definitions.
+// `URL` is a re-export of `bun_url::whatwg::URL`; the JS-value entry points
+// (`UrlJsc::from_js` / `UrlJsc::href_from_js`) live in `URL.rs`.
 
 // JSString (real module in JSString.rs).
 #[path = "JSString.rs"]

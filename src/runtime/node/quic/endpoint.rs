@@ -167,15 +167,12 @@ struct ProvisionalSession {
     session: *mut QuicSession,
 }
 
-/// The endpoint options that describe the UDP socket; consumed by
-/// `ensure_bound`.
 struct BindConfig {
     host: Vec<u8>,
     port: u16,
     /// `LIBUS_*` bind flags (`ipv6Only`, `reusePort`).
     flags: c_int,
-    /// `udpReceiveBufferSize` / `udpSendBufferSize` / `udpTTL`. Zero leaves
-    /// the OS default, as node's `Endpoint::UDP::Bind` does.
+    /// Zero leaves the OS default, as node's `Endpoint::UDP::Bind` does.
     receive_buffer_size: i32,
     send_buffer_size: i32,
     ttl: i32,
@@ -195,8 +192,7 @@ impl Default for BindConfig {
 }
 
 impl BindConfig {
-    /// Applies the options that need a bound socket. A failure fails the
-    /// bind (node reports it as a bind failure too); the value is the errno.
+    /// `Err` is the errno; node reports these as bind failures too.
     fn apply_socket_options(&self, socket: &mut uws::udp::Socket) -> Result<(), c_int> {
         let mut out: c_int = 0;
         if self.receive_buffer_size > 0 {
@@ -1281,17 +1277,13 @@ impl QuicEndpoint {
                     }
                 }
             }
-            // Node reads both flags with BooleanValue (quic/defs.h SetOption), so
-            // any truthy value counts. bsd_create_udp_socket only applies
-            // IPV6_ONLY to an AF_INET6 socket, as node's Endpoint::UDP::Bind does.
+            // Truthiness, like node's BooleanValue (quic/defs.h SetOption).
             let mut flags = uws::LIBUS_LISTEN_DEFAULT;
             if options.get_boolean_loose(global, "ipv6Only")? == Some(true) {
                 flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
             }
             if options.get_boolean_loose(global, "reusePort")? == Some(true) {
-                // Same bits as node:dgram's reusePort: where SO_REUSEPORT does
-                // not exist the bind fails, as libuv's UV_UDP_REUSEPORT does,
-                // instead of silently binding exclusively.
+                // node:dgram's bits: no SO_REUSEPORT fails the bind, like UV_UDP_REUSEPORT.
                 flags |=
                     uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
             }

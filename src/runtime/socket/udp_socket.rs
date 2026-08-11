@@ -2483,8 +2483,7 @@ struct Destination {
     address: JSValue,
 }
 
-/// The error behind a failed `us_udp_socket_*` call (`res` is its raw return
-/// value), or `None` when it succeeded.
+/// `None` when `res`, a raw `us_udp_socket_*` return value, means success.
 pub(crate) fn get_us_error<const USE_WSA: bool>(
     res: c_int,
     tag: bun_sys::Tag,

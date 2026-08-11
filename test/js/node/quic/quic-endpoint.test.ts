@@ -310,3 +310,53 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// A readable event on the endpoint's socket used to be read until the socket
+// came up empty, which, with a peer that answers what it is sent, is not until
+// the peer runs out: each batch read here gets acked, the acks let the peer
+// send more, and that has arrived before the next recvmmsg. A process busy
+// with anything else while a multi-MiB body moved saw the whole body go
+// through one readable event, and its timers and immediates waited for it.
+// An event now delivers at most 32 datagrams (the same budget libuv gives a
+// udp handle) and the rest waits for the next turn of the loop.
+//
+// busy-receiver-fixture.ts receives the body with a loop that blocks between
+// turns, so every turn of it starts with a backlog queued; a turn reading more
+// than the budget is what the cap rules out, and the busiest turn reading
+// exactly the budget is what shows the backlog was there to read.
+test("a turn of a busy receiver's event loop reads at most one event's worth of packets", async () => {
+  const port = Promise.withResolvers<number>();
+  const report = Promise.withResolvers<{ packetsPerTurn: number[] }>();
+  await using receiver = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "busy-receiver-fixture.ts")],
+    env: bunEnv,
+    stderr: "pipe",
+    ipc(message: { port: number } | { packetsPerTurn: number[] }) {
+      if ("port" in message) port.resolve(message.port);
+      else report.resolve(message);
+    },
+  });
+  const died = receiver.exited.then(async code => {
+    throw new Error(`fixture exited with code ${code} before reporting:\n${await receiver.stderr.text()}`);
+  });
+  died.catch(() => {});
+
+  const client = await connect(`127.0.0.1:${await Promise.race([port.promise, died])}`, {
+    alpn: "quic-test",
+    verifyPeer: "manual",
+  });
+  client.closed.catch(() => {});
+  await client.opened;
+  // Several times what the fixture's turns read even when one of them reads
+  // everything queued, so the backlog never runs dry while it is sampling.
+  const stream = await client.createBidirectionalStream({ body: Buffer.alloc(4 * 1024 * 1024, "busy") });
+  stream.closed.catch(() => {});
+
+  const { packetsPerTurn } = await Promise.race([report.promise, died]);
+  client.destroy();
+
+  expect({ turns: packetsPerTurn.length, busiestTurn: Math.max(...packetsPerTurn) }).toEqual({
+    turns: 12,
+    busiestTurn: 32,
+  });
+});

@@ -1600,3 +1600,244 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// A lookup that failed must not poison later lookups of the same specifier
+// once the files exist. Node re-walks the filesystem on every miss; Bun caches
+// directory listings and not-found markers, so a miss has to evict the entries
+// it was served from before it is retried. Each script below resolves once
+// (miss), creates the files, and resolves again in the same process.
+describe("files created after a failed lookup resolve on the next lookup", () => {
+  // `attempt` prints the resolved path relative to the script's directory, or
+  // the error code of the miss.
+  const prelude = /* js */ `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const rel = p => path.relative(__dirname, p).split(path.sep).join("/");
+    function attempt(label, fn) {
+      let out;
+      try {
+        out = rel(fn());
+      } catch (e) {
+        out = e.code;
+      }
+      console.log(label + ": " + out);
+    }
+    function writeFiles(files) {
+      for (const [file, contents] of Object.entries(files)) {
+        const abs = path.join(__dirname, file);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, contents);
+      }
+    }
+  `;
+
+  async function runRetryScript(cwd: string, script: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script],
+      cwd,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAsanWarning(stderr)).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout.replaceAll("\r\n", "\n");
+  }
+
+  // node_modules/ exists (empty) in the package fixtures so the first miss is
+  // a plain node_modules walk rather than an auto-install attempt.
+
+  it.concurrent("scoped package subpath via require.resolve()", async () => {
+    using dir = tempDir("resolve-retry-scoped", {
+      node_modules: {},
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("before", () => require.resolve("@later/pkg/bin/tool"));
+        writeFiles({ "node_modules/@later/pkg/bin/tool": "" });
+        attempt("after", () => require.resolve("@later/pkg/bin/tool"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: node_modules/@later/pkg/bin/tool\n",
+    );
+  });
+
+  it.concurrent("bare package via require()", async () => {
+    using dir = tempDir("resolve-retry-bare", {
+      node_modules: {},
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("before", () => require("later-pkg"));
+        writeFiles({ "node_modules/later-pkg/index.js": "module.exports = __filename;" });
+        attempt("after", () => require("later-pkg"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: node_modules/later-pkg/index.js\n",
+    );
+  });
+
+  it.concurrent("package via import()", async () => {
+    using dir = tempDir("resolve-retry-import", {
+      node_modules: {},
+      "main.mjs": /* js */ `
+        import { mkdirSync, writeFileSync } from "node:fs";
+        const load = () => import("later-esm-pkg").then(m => m.default, e => e.code);
+        console.log("before: " + (await load()));
+        mkdirSync("node_modules/later-esm-pkg", { recursive: true });
+        writeFileSync("node_modules/later-esm-pkg/index.js", "export default 'loaded later-esm-pkg';");
+        console.log("after: " + (await load()));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.mjs")).toBe(
+      "before: ERR_MODULE_NOT_FOUND\nafter: loaded later-esm-pkg\n",
+    );
+  });
+
+  it.concurrent("file added to a package that already resolved once", async () => {
+    using dir = tempDir("resolve-retry-existing-pkg", {
+      node_modules: { "existing-pkg": { "index.js": "" } },
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("warm", () => require.resolve("existing-pkg"));
+        attempt("before", () => require.resolve("existing-pkg/generated.js"));
+        writeFiles({ "node_modules/existing-pkg/generated.js": "" });
+        attempt("after", () => require.resolve("existing-pkg/generated.js"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "warm: node_modules/existing-pkg/index.js\n" +
+        "before: MODULE_NOT_FOUND\n" +
+        "after: node_modules/existing-pkg/generated.js\n",
+    );
+  });
+
+  // The shape of the `bun` npm package's postinstall: it runs inside
+  // <project>/node_modules/bun, fails to resolve its platform package,
+  // downloads it into a node_modules/ directory of its own (which did not
+  // exist when the first lookup recorded that this directory has none), and
+  // resolves again.
+  it.concurrent("node_modules/ created in the importing directory", async () => {
+    using dir = tempDir("resolve-retry-new-node-modules", {
+      node_modules: {
+        tool: {
+          "install.cjs": /* js */ `
+            ${prelude}
+            attempt("before", () => require.resolve("@tool-platform/linux-x64/bin/tool"));
+            writeFiles({ "node_modules/@tool-platform/linux-x64/bin/tool": "" });
+            attempt("after", () => require.resolve("@tool-platform/linux-x64/bin/tool"));
+          `,
+        },
+      },
+    });
+    expect(await runRetryScript(join(String(dir), "node_modules", "tool"), "install.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: node_modules/@tool-platform/linux-x64/bin/tool\n",
+    );
+  });
+
+  it.concurrent("node_modules/ created in an ancestor of the importing directory", async () => {
+    using dir = tempDir("resolve-retry-new-ancestor-node-modules", {
+      node_modules: {},
+      packages: {
+        app: {
+          scripts: {
+            "setup.cjs": /* js */ `
+              ${prelude}
+              attempt("before", () => require.resolve("app-dep/lib/entry.js"));
+              writeFiles({ "../node_modules/app-dep/lib/entry.js": "" });
+              attempt("after", () => require.resolve("app-dep/lib/entry.js"));
+            `,
+          },
+        },
+      },
+    });
+    expect(await runRetryScript(join(String(dir), "packages", "app", "scripts"), "setup.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: ../node_modules/app-dep/lib/entry.js\n",
+    );
+  });
+
+  it.skipIf(isWindows).concurrent("symlinked package resolves to its real path, as in Node", async () => {
+    using dir = tempDir("resolve-retry-symlink", {
+      node_modules: {},
+      vendor: { "linked-pkg": { "index.js": "" } },
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("before", () => require.resolve("linked-pkg"));
+        fs.symlinkSync(path.join(__dirname, "vendor/linked-pkg"), path.join(__dirname, "node_modules/linked-pkg"));
+        attempt("after", () => require.resolve("linked-pkg"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: vendor/linked-pkg/index.js\n",
+    );
+  });
+
+  it.concurrent("package created in a NODE_PATH directory", async () => {
+    using dir = tempDir("resolve-retry-node-path", {
+      global: {},
+      app: {
+        node_modules: {},
+        "main.cjs": /* js */ `
+          ${prelude}
+          attempt("before", () => require.resolve("global-pkg"));
+          writeFiles({ "../global/global-pkg/index.js": "" });
+          attempt("after", () => require.resolve("global-pkg"));
+        `,
+      },
+    });
+    expect(await runRetryScript(join(String(dir), "app"), "main.cjs", { NODE_PATH: join(String(dir), "global") })).toBe(
+      "before: MODULE_NOT_FOUND\nafter: ../global/global-pkg/index.js\n",
+    );
+  });
+
+  it.concurrent("package created under a require.resolve() `paths` entry", async () => {
+    using dir = tempDir("resolve-retry-paths-option", {
+      node_modules: {},
+      other: { node_modules: {} },
+      "main.cjs": /* js */ `
+        ${prelude}
+        const opts = { paths: [path.join(__dirname, "other")] };
+        attempt("before", () => require.resolve("other-pkg", opts));
+        writeFiles({ "other/node_modules/other-pkg/index.js": "" });
+        attempt("after", () => require.resolve("other-pkg", opts));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "before: MODULE_NOT_FOUND\nafter: other/node_modules/other-pkg/index.js\n",
+    );
+  });
+
+  it.concurrent("relative specifier naming a directory created later", async () => {
+    using dir = tempDir("resolve-retry-relative-dir", {
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("before", () => require.resolve("./lib"));
+        writeFiles({ "lib/index.js": "" });
+        attempt("after", () => require.resolve("./lib"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe("before: MODULE_NOT_FOUND\nafter: lib/index.js\n");
+  });
+
+  it.concurrent("a package that is still missing keeps failing", async () => {
+    using dir = tempDir("resolve-retry-still-missing", {
+      node_modules: { "other-pkg": { "index.js": "" } },
+      "main.cjs": /* js */ `
+        ${prelude}
+        attempt("bare", () => require.resolve("never-installed"));
+        attempt("bare again", () => require.resolve("never-installed"));
+        attempt("subpath", () => require.resolve("other-pkg/missing.js"));
+        attempt("subpath again", () => require.resolve("other-pkg/missing.js"));
+        attempt("existing", () => require.resolve("other-pkg"));
+      `,
+    });
+    expect(await runRetryScript(String(dir), "main.cjs")).toBe(
+      "bare: MODULE_NOT_FOUND\n" +
+        "bare again: MODULE_NOT_FOUND\n" +
+        "subpath: MODULE_NOT_FOUND\n" +
+        "subpath again: MODULE_NOT_FOUND\n" +
+        "existing: node_modules/other-pkg/index.js\n",
+    );
+  });
+});

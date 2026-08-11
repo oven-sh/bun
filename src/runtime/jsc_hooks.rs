@@ -5246,43 +5246,13 @@ unsafe fn resolve<'a>(
                 }
                 retry_on_not_found = false;
 
-                // Bust the dir cache for the candidate
-                // parent directory and retry once.
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let buster_name: &[u8] = 'name: {
-                    if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_core::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::Error::ModuleNotFound);
-                            }
-                            // Normalized without trailing slash.
-                            break 'name bun_paths::string_paths::normalize_slashes_only(
-                                &mut buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                        }
-                    }
-
-                    // If the specifier is too long to join, it can't name a
-                    // real directory — skip the cache bust and fail.
-                    if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                        return Err(crate::Error::ModuleNotFound);
-                    }
-
-                    let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
-                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(top_level_dir, &mut buf[..], &parts)
-                    .as_bytes();
-                };
-
                 // Only re-query if we previously had something cached.
                 // SAFETY: see above.
                 if unsafe {
-                    (*vm).transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    )
+                    (*vm)
+                        .transpiler
+                        .resolver
+                        .bust_dir_cache_for_not_found(source_to_use, normalized_specifier)
                 } {
                     continue;
                 }

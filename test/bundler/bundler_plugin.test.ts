@@ -570,6 +570,32 @@ describe("bundler", () => {
     },
     run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
   });
+  // Same thing when onResolve itself resolves the specifier to a file on disk:
+  // each importer's attribute still picks that importer's loader.
+  itBundled("plugin/ResolveSuccessSameFileDifferentLoaders", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { asText } from "./as-text";
+          import { asJson } from "./as-json";
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "as-text.ts": /* ts */ `
+          import data from "virtual:data" with { type: "text" };
+          export const asText = data;
+        `,
+        "as-json.ts": /* ts */ `
+          import data from "virtual:data";
+          export const asJson = data;
+        `,
+        "data.json": `{"a":1}`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virtual:data$/ }, () => ({ path: join(root, "data.json") }));
+      },
+      run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+    };
+  });
   itBundled("plugin/ManyFiles", ({ root }) => {
     const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));

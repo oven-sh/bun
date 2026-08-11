@@ -45,6 +45,8 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
+    /// Embedded snapshot (`--snapshot`): pointer into the mapped section + length; `(null, 0)` when absent.
+    pub snapshot: (*const u8, usize),
 }
 
 // We never want to hit the filesystem for these files
@@ -608,18 +610,43 @@ pub(crate) struct Offsets {
     pub entry_point_id: u32,
     pub compile_exec_argv_ptr: StringPointer,
     pub flags: Flags,
+    /// `--snapshot`: a raw, page-aligned snapshot embedded after the modules (`{0,0}` when absent). Restore maps regions straight from the executable.
+    pub snapshot: StringPointer,
 }
+// `bun_startup_snapshot_placement_wanted` in c-bindings.cpp reads `flags` and `snapshot.length` out of this struct before main (the
+// allocator asks it whether to place deterministically); these pin the numbers it uses, so a layout change fails to build here.
+const _: () = {
+    assert!(size_of::<Offsets>() == 40);
+    assert!(core::mem::offset_of!(Offsets, flags) == 28);
+    assert!(
+        core::mem::offset_of!(Offsets, snapshot) + core::mem::offset_of!(StringPointer, length)
+            == 36
+    );
+    assert!(Flags::TAKE_STARTUP_SNAPSHOT.bits() == 1 << 4);
+};
 
 bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u32 {
         const DISABLE_DEFAULT_ENV_FILES     = 1 << 0;
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        // _padding: u28
+        /// Stamped by `bun build --snapshot` into the executable it is about to run: that run writes `<own path>.snapshot` instead of starting the app; embedding clears them.
+        const TAKE_STARTUP_SNAPSHOT                 = 1 << 4;
+        const STARTUP_SNAPSHOT_MANUAL               = 1 << 5;
+        const STARTUP_SNAPSHOT_IO_LOCAL             = 1 << 6;
+        const STARTUP_SNAPSHOT_IO_NETWORK           = 1 << 7;
+        // _padding: u24
     }
+}
+
+impl Flags {
+    pub const STARTUP_SNAPSHOT_BUILD_BITS: Flags = Flags::TAKE_STARTUP_SNAPSHOT
+        .union(Flags::STARTUP_SNAPSHOT_MANUAL)
+        .union(Flags::STARTUP_SNAPSHOT_IO_LOCAL)
+        .union(Flags::STARTUP_SNAPSHOT_IO_NETWORK);
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
@@ -638,6 +665,7 @@ impl StandaloneModuleGraph {
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
+                snapshot: (core::ptr::null(), 0),
             });
         }
 
@@ -762,8 +790,44 @@ impl StandaloneModuleGraph {
             }
             .as_bytes(),
             flags: offsets.flags,
+            snapshot: {
+                let ptr = offsets.snapshot;
+                let (off, len) = (ptr.offset as usize, ptr.length as usize);
+                if len != 0 && off.checked_add(len).is_some_and(|end| end <= raw_len) {
+                    // SAFETY: subrange of the mapped section, verified above; read-only.
+                    (unsafe { raw_const.add(off) }, len)
+                } else {
+                    (core::ptr::null(), 0)
+                }
+            },
         })
     }
+}
+
+/// For the restore path: whether this executable carries an embedded snapshot and where it is mapped (false if not compiled or none embedded).
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneEmbeddedStartupSnapshot(
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> bool {
+    let Some((ptr, len)) = StandaloneModuleGraph::embedded_startup_snapshot_early() else {
+        return false;
+    };
+    // SAFETY: per the function contract.
+    unsafe {
+        *out_ptr = ptr;
+        *out_len = len;
+    }
+    true
+}
+
+/// Bits: 1 = this run takes the snapshot, 2 = manual (the app calls take()), 4 = local I/O allowed, 8 = network allowed.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__standaloneStartupSnapshotBuildFlags() -> u32 {
+    StandaloneModuleGraph::startup_snapshot_build_flags_early().bits() >> 4
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -814,12 +878,16 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// Page alignment for an embedded snapshot inside the section payload (arm64 pages; also a multiple of x86-64's 4 KiB).
+pub const EMBEDDED_SNAPSHOT_ALIGN: usize = 16 * 1024;
+
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
+    snapshot: Option<&[u8]>,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -867,6 +935,9 @@ pub(crate) fn to_bytes(
     string_builder.cap += 16;
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
+    if let Some(img) = snapshot {
+        string_builder.cap += EMBEDDED_SNAPSHOT_ALIGN + img.len(); // padding to a page boundary + the snapshot
+    }
 
     string_builder.allocate()?;
 
@@ -1085,12 +1156,30 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
+    let modules_ptr = string_builder.append_count(modules_as_bytes);
+    let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
+    let snapshot_ptr = match snapshot {
+        Some(img) if !img.is_empty() => {
+            // The section starts EMBEDDED_SNAPSHOT_ALIGN-aligned in the file with an 8-byte `BlobHeader.size` before payload offset 0, so align (8 + offset).
+            const BLOB_HEADER_BYTES: usize = size_of::<u64>();
+            let pad = (EMBEDDED_SNAPSHOT_ALIGN
+                - ((BLOB_HEADER_BYTES + string_builder.len) % EMBEDDED_SNAPSHOT_ALIGN))
+                % EMBEDDED_SNAPSHOT_ALIGN;
+            if pad != 0 {
+                let zeros = [0u8; EMBEDDED_SNAPSHOT_ALIGN];
+                let _ = string_builder.append(&zeros[..pad]);
+            }
+            string_builder.append_count(img)
+        }
+        _ => StringPointer::default(),
+    };
     let offsets = Offsets {
         entry_point_id: entry_point_id.unwrap() as u32,
-        modules_ptr: string_builder.append_count(modules_as_bytes),
-        compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
+        modules_ptr,
+        compile_exec_argv_ptr,
         byte_count: string_builder.len,
         flags,
+        snapshot: snapshot_ptr,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
@@ -1833,6 +1922,7 @@ pub fn to_executable(
         output_format,
         compile_exec_argv,
         flags,
+        None,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -2092,6 +2182,54 @@ pub fn to_executable(
 }
 
 impl StandaloneModuleGraph {
+    /// The trailer `Offsets` of this executable's own payload, readable long before the graph exists (restore runs first thing in main).
+    fn offsets_early() -> Option<(*const u8, usize, Offsets)> {
+        #[cfg(target_os = "macos")]
+        let data = macho::get_data();
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        let data = elf::get_data();
+        #[cfg(windows)]
+        let data = pe::get_data();
+        let (base, len) = data?;
+        if len < size_of::<Offsets>() + TRAILER.len() {
+            return None;
+        }
+        // SAFETY: bounds checked above; read-only views of the mapped section tail.
+        let trailer =
+            unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
+        if trailer != TRAILER {
+            return None;
+        }
+        // SAFETY: `[len - Offsets - TRAILER, ..)` holds an `Offsets` (possibly unaligned).
+        let offsets: Offsets = unsafe {
+            core::ptr::read_unaligned(
+                base.add(len - size_of::<Offsets>() - TRAILER.len())
+                    .cast::<Offsets>(),
+            )
+        };
+        Some((base.cast_const(), len, offsets))
+    }
+
+    pub fn embedded_startup_snapshot_early() -> Option<(*const u8, usize)> {
+        let (base, len, offsets) = Self::offsets_early()?;
+        let (off, ilen) = (
+            offsets.snapshot.offset as usize,
+            offsets.snapshot.length as usize,
+        );
+        if ilen == 0 || off.checked_add(ilen).is_none_or(|end| end > len) {
+            return None;
+        }
+        // SAFETY: subrange of the mapped section.
+        Some((unsafe { base.add(off) }, ilen))
+    }
+
+    /// The `TAKE_STARTUP_SNAPSHOT` family of flags stamped by `bun build --snapshot`, or empty.
+    pub fn startup_snapshot_build_flags_early() -> Flags {
+        Self::offsets_early().map_or(Flags::empty(), |(_, _, offsets)| {
+            offsets.flags & Flags::STARTUP_SNAPSHOT_BUILD_BITS
+        })
+    }
+
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {

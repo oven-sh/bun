@@ -5187,6 +5187,15 @@ void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
         vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
+// Throw the (uncatchable) termination exception on the current JS stack right now, rather than arming a trap for the next check.
+JSC::EncodedJSValue JSC__VM__throwTerminationExceptionNow(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    vm.setHasTerminationRequest();
+    throwException(globalObject, scope, vm.ensureTerminationException());
+    return {};
+}
 // These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {

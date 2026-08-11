@@ -271,6 +271,8 @@ static consteval unsigned getWebKitBytecodeCacheVersion()
 }
 #undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
+extern "C" bool Bun__startupSnapshotMode();
+extern "C" bool Bun__startupSnapshotActive();
 extern "C" unsigned getJSCBytecodeCacheVersion()
 {
     return getWebKitBytecodeCacheVersion();
@@ -302,13 +304,20 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
+            if (const char* a = getenv("BUN_STARTUP_SNAPSHOT_JIT_ADDR"))
+                JSC::Options::jitMemoryReservationAddress() = strtoull(a, nullptr, 0);
+            else if (Bun__startupSnapshotMode())
+                JSC::Options::jitMemoryReservationAddress() = 0x3c0000000ull; // snapshots: JIT pool at a fixed VA
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
-            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+            if (Bun__startupSnapshotMode()) { // compiled executables and snapshot runs: bytecode is in the mmap'd binary there, so cold blocks are cheap to re-decode; plain runs are unchanged
+                JSC::Options::useUnlinkedCodeBlockJettisoning() = true;
+                JSC::Options::useUnlinkedCodeBlockJettisoningForBytecodeCache() = true;
+            }
             // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
@@ -2008,6 +2017,20 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     return true;
 }
 
+// Also re-armed after a snapshot restore: the blobs made in the builder describe its descriptors, so each launch makes its own.
+void GlobalObject::armStdioBlobs()
+{
+    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
+    });
+    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
+    });
+    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
+    });
+}
+
 void GlobalObject::finishCreation(VM& vm)
 {
     // Node.js defaults to 10. Must run before Base::finishCreation() materializes
@@ -2867,15 +2890,7 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     // Initialize LazyProperties for stdin/stderr/stdout
-    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
-    });
-    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
-    });
-    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
-    });
+    armStdioBlobs();
 
     configureNodeVM(vm, this);
 

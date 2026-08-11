@@ -246,6 +246,32 @@ impl ThreadPool {
         }
     }
 
+    /// (busy workers, queue non-empty) — the snapshot gate waits for (0, false).
+    pub fn activity(&self) -> (u16, bool) {
+        let sync = self.sync.load(Ordering::Relaxed);
+        (
+            sync.spawned().saturating_sub(sync.idle()),
+            !self.run_queue.is_empty_approx(),
+        )
+    }
+
+    /// snapshot freeze: no other thread may exist (or hold a lock) when memory is frozen. Stop and join every worker;
+    /// `forget_threads_after_snapshot_restore` resets the state so the pool starts again on the other side.
+    pub fn stop_all_threads_for_snapshot(&self) {
+        self.shutdown();
+        self.join();
+    }
+
+    /// snapshot restore: the worker threads counted in `sync` belonged to the process that built the snapshot. Forget them (queue and
+    /// config stay) so the next `schedule`/`notify` spawns fresh workers here.
+    pub fn forget_threads_after_snapshot_restore(&self) {
+        let sync = Sync::zero(); // pending, nothing spawned/idle/notified — regardless of what the build process left (it may have shut the pool down for the snapshot)
+        self.sync.0.store(sync.0, Ordering::Release);
+        self.threads.store(ptr::null_mut(), Ordering::Release);
+        self.idle_event.reset_after_snapshot_restore();
+        self.notify(false); // if anything is queued, this spawns the first worker here
+    }
+
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
     /// `BUN_THREADPOOL_STATS` is set. Safe to call at any time; intended for
     /// the bundler to call between phases.
@@ -1342,6 +1368,13 @@ impl Default for Event {
 }
 
 impl Event {
+    /// Waiter counts in `state` describe threads of the process that built the snapshot.
+    fn reset_after_snapshot_restore(&self) {
+        self.state.store(Self::EMPTY, Ordering::Release);
+    }
+}
+
+impl Event {
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
     const NOTIFIED: u32 = 2;
@@ -1517,6 +1550,15 @@ pub mod node {
 
         const _ALIGN_CHECK: () =
             assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
+
+        /// Approximate (racy) emptiness: no pointer bits in `stack` and nothing in the consumer cache.
+        pub(super) fn is_empty_approx(&self) -> bool {
+            // Purely from the atomic word: HAS_CACHE mirrors `cache` (only its holder may read the cell itself), and a
+            // consumer mid-run means work is still in flight, which for "is the pool idle?" is not empty either.
+            self.stack.load(Ordering::Acquire)
+                & (Self::PTR_MASK | Self::HAS_CACHE | Self::IS_CONSUMING)
+                == 0
+        }
 
         pub(super) fn push(&self, list: &List) {
             let List { head, tail } = *list;

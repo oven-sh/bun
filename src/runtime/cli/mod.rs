@@ -1357,47 +1357,30 @@ pub mod command {
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.
-            let original_argv_len = bun::argv().len();
-            let bun_options_argc = bun::bun_options_argc();
-            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
-                if !graph.compile_exec_argv.is_empty() {
-                    bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
-                }
-
-                // Store the full argv including user arguments
-                let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
-                let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
-
-                // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
-                let num_parsed_options = num_exec_argv_options + bun_options_argc;
-                offset_for_passthrough = if full_argv.len() > 1 {
-                    1 + num_parsed_options
-                } else {
-                    0
-                };
-
-                // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
-                // This prevents user arguments like --version/--help from being intercepted
-                // by Bun's argument parser (they should be passed through to user code).
+            // The executable's compile-time options are part of argv (spliced after argv[0], like BUN_OPTIONS);
+            // register them before argv is derived, then everything downstream sees one consistent view.
+            // SAFETY: single-threaded startup, before the first `bun::argv()` read below.
+            unsafe { bun_core::set_compile_exec_argv(graph.compile_exec_argv) };
+            let full_argv: &'static [&'static bun_core::ZStr] = bun::argv().as_slice();
+            let num_parsed_options = bun_core::compile_exec_argc() + bun::bun_options_argc();
+            offset_for_passthrough = if full_argv.len() > 1 {
+                1 + num_parsed_options
+            } else {
+                1.min(full_argv.len())
+            };
+            bun_core::set_standalone_passthrough_offset(offset_for_passthrough);
+            if num_parsed_options > 0 {
+                // Parse only executable name + spliced options: user arguments like --version/--help must pass
+                // through to user code, not be intercepted by Bun's argument parser.
                 // SAFETY: single-threaded startup; `full_argv` is process-static.
                 unsafe {
-                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
-
-                // Handle actual options to parse.
+                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())])
+                };
                 let result = init(Tag::AutoCommand, log)?;
-
-                // Restore full argv so passthrough calculation works correctly
                 // SAFETY: single-threaded startup.
                 unsafe { bun::set_argv(full_argv) };
-
                 break 'brk result;
             }
-
-            // If no compile_exec_argv, skip executable name if present
-            offset_for_passthrough = 1.min(bun::argv().len());
-
             break 'brk write_context_no_parse(log);
         };
 

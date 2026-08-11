@@ -210,6 +210,7 @@ void AbortSignal::runAbortSteps()
     {
         Locker locker { m_abortAlgorithmsLock };
         abortAlgorithms = std::exchange(m_abortAlgorithms, {});
+        m_hasAbortAlgorithms.store(false, std::memory_order_relaxed);
     }
     for (auto& pair : abortAlgorithms)
         pair.second->handleEvent(reason);
@@ -317,6 +318,7 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
     auto identifier = ++signal.m_algorithmIdentifier;
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    signal.m_hasAbortAlgorithms.store(true, std::memory_order_relaxed);
     signal.m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
     return identifier;
 }
@@ -326,8 +328,10 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
     Locker locker { signal.m_abortAlgorithmsLock };
     if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;
-        }))
+        })) {
         signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+        signal.m_hasAbortAlgorithms.store(!signal.m_abortAlgorithms.isEmpty(), std::memory_order_relaxed);
+    }
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
@@ -368,6 +372,8 @@ size_t AbortSignal::memoryCost() const
 template<typename Visitor>
 void AbortSignal::visitAbortAlgorithms(Visitor& visitor)
 {
+    if (!m_hasAbortAlgorithms.load(std::memory_order_relaxed))
+        return; // nothing to visit, and no lock-word write on an otherwise clean (possibly snapshot) page
     Locker locker { m_abortAlgorithmsLock };
     for (auto& pair : m_abortAlgorithms)
         pair.second->visitJSFunction(visitor);

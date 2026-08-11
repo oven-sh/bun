@@ -69,9 +69,37 @@ bun_output::define_scoped_log!(log, fs_watch, hidden);
 // `Platform::init` can be retried on a later `get()` without two threads
 // racing to allocate; `OnceLock` provides the Acquire/Release publish so the
 // FSEvents-thread reads in `on_fs_event` need no `unsafe`.
-static DEFAULT_MANAGER: std::sync::OnceLock<&'static PathWatcherManager> =
-    std::sync::OnceLock::new();
+// A manager made by the process that built a startup snapshot owns that process's inotify/kqueue fd and reader thread;
+// after a restore it is left behind (never freed: detached watchers may still point at it) and a new one is made.
+static DEFAULT_MANAGER: core::sync::atomic::AtomicPtr<PathWatcherManager> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static DEFAULT_MANAGER_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
+
+/// Set when the reader thread returns, however it returns; the freeze-time shutdown waits on it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct MarkExited(&'static PathWatcherManager);
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Drop for MarkExited {
+    fn drop(&mut self) {
+        self.0
+            .thread_exited
+            .store(true, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// The manager belonging to this process, if one has been made since the last restore.
+fn current_manager() -> Option<&'static PathWatcherManager> {
+    use core::sync::atomic::Ordering;
+    let m = DEFAULT_MANAGER.load(Ordering::Acquire);
+    if m.is_null()
+        || DEFAULT_MANAGER_EPOCH.load(Ordering::Acquire) != bun_core::startup_snapshot::epoch()
+    {
+        return None;
+    }
+    // SAFETY: only ever set to a leaked `&'static PathWatcherManager`.
+    Some(unsafe { &*m })
+}
 
 // ────────────────────────────────────────────────────────────────────────────────
 // PathWatcherManager
@@ -109,6 +137,8 @@ pub(crate) struct PathWatcherManager {
     /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     running: AtomicBool,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    thread_exited: core::sync::atomic::AtomicBool,
 
     /// Monotonic kevent generation counter (FreeBSD). Bumped under `mutex`.
     /// `Cell` so the bump is a safe `.get()/.set()` instead of a raw deref.
@@ -139,6 +169,8 @@ impl Default for PathWatcherManager {
             platform_fd: Cell::new(Fd::INVALID),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             running: AtomicBool::new(true),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            thread_exited: core::sync::atomic::AtomicBool::new(false),
             #[cfg(target_os = "freebsd")]
             next_gen: Cell::new(1),
         }
@@ -152,15 +184,18 @@ impl PathWatcherManager {
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
         // lock a garbage `m.mutex`). `get()` runs once per `fs.watch()` call; the mutex is
         // uncontended after initialization.
+        use core::sync::atomic::Ordering;
         let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-        if let Some(&m) = DEFAULT_MANAGER.get() {
+        if let Some(m) = current_manager() {
             return Ok(m);
         }
 
         let m = Platform::init()?;
-        // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
-        // above, so this is the first publish; `set` cannot fail.
-        let _ = DEFAULT_MANAGER.set(m);
+        DEFAULT_MANAGER.store(
+            core::ptr::from_ref::<PathWatcherManager>(m).cast_mut(),
+            Ordering::Release,
+        );
+        DEFAULT_MANAGER_EPOCH.store(bun_core::startup_snapshot::epoch(), Ordering::Release);
         Ok(m)
     }
 
@@ -872,6 +907,7 @@ impl Linux {
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
+        let _exited = MarkExited(manager);
         use bun_sys::linux::IN;
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
@@ -1299,7 +1335,7 @@ impl Darwin {
         // watcher already unlinked. Forming a reference here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else {
+        let Some(manager) = current_manager() else {
             return;
         };
         let _g = manager.mutex.lock_guard();
@@ -1321,7 +1357,7 @@ impl Darwin {
     fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        let Some(&manager) = DEFAULT_MANAGER.get() else {
+        let Some(manager) = current_manager() else {
             return;
         };
         let _g = manager.mutex.lock_guard();
@@ -1619,3 +1655,34 @@ impl Kqueue {
 // ────────────────────────────────────────────────────────────────────────────────
 // Windows stub
 // ────────────────────────────────────────────────────────────────────────────────
+
+/// Before a snapshot is frozen: no thread of ours may exist. The inotify reader blocks in `read`; removing a watch makes it
+/// return, `running` makes it leave, and the freeze waits (bounded) for it to be gone. The restored process gets a fresh
+/// manager for its epoch (`current_manager`), so nothing here needs undoing there.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn shutdown_for_snapshot() -> bool {
+    use core::sync::atomic::Ordering;
+    let Some(manager) = current_manager() else {
+        return true;
+    };
+    if manager.thread_exited.load(Ordering::Acquire) {
+        return true;
+    }
+    manager.running.store(false, Ordering::Release);
+    let fd = manager.inotify_fd().native();
+    // SAFETY: plain inotify calls on our own descriptor; "/" always exists. The add/remove pair exists only to produce an event.
+    unsafe {
+        let wd = libc::inotify_add_watch(fd, c"/".as_ptr(), libc::IN_DELETE_SELF as u32);
+        if wd >= 0 {
+            libc::inotify_rm_watch(fd, wd as _); // the descriptor is i32 on glibc/musl and u32 on bionic
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !manager.thread_exited.load(Ordering::Acquire) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::yield_now();
+    }
+    true
+}

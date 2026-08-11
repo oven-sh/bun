@@ -1193,6 +1193,28 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    if bun_core::startup_snapshot::building()
+        && url_type == URLType::Remote
+        && global_this
+            .throw_disabled_in_snapshot_error_if_needed("fetch")
+            .is_err()
+    {
+        // Refused: the gate left its error thrown; a fetch() rejects instead, before any tasklet, body stream or listener
+        // is created. The caller's signal is theirs: a rejected fetch never aborts it.
+        global_this.clear_exception();
+        if let Some(sig) = signal.take() {
+            // SAFETY: `sig` came from `AbortSignal::ref_()` above and is not otherwise retained on this path.
+            unsafe { (*sig).unref() };
+        }
+        let err = global_this.to_type_error(jsc::ErrorCode::INVALID_STATE, format_args!("fetch() to the network is not available while building a snapshot: its result would be frozen into every launch. Do it after restore (process.on('restore'))"));
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     // We do this 2nd to last instead of last so that if it's a FormData
     // object, we can still insert the boundary.
     //

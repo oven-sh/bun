@@ -77,6 +77,8 @@ pub mod native_promise_context;
 pub mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]
 pub mod standalone_graph_jsc;
+#[path = "api/StartupSnapshotObject.rs"]
+pub mod startup_snapshot_object;
 #[path = "api/TOMLObject.rs"]
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]
@@ -188,6 +190,7 @@ pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
+pub use crate::api::startup_snapshot_object as StartupSnapshotObject;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
 pub use crate::api::xml_object as XMLObject;

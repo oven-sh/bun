@@ -169,6 +169,12 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
+    // Every platform: where snapshots are unsupported this is the stub that refuses the environment knobs out loud.
+    unsafe extern "C" {
+        fn Bun__startupSnapshotInit();
+    }
+    // SAFETY: no arguments; called once, on the main thread, before any other thread exists.
+    unsafe { Bun__startupSnapshotInit() };
 
     // Windows-only startup. Must run BEFORE the first libuv
     // call (uv allocator) and before anything reads `Bun.env`/`process.env`
@@ -199,6 +205,15 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // Snapshot: with stdio and Output ready, a process that has a snapshot to map diverges here and never returns.
+    #[cfg(unix)]
+    // SAFETY: single-threaded startup; the callee takes no arguments and either returns or continues the snapshotd process.
+    unsafe {
+        unsafe extern "C" {
+            fn Bun__startupSnapshotMaybeRestore();
+        }
+        Bun__startupSnapshotMaybeRestore();
+    }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();

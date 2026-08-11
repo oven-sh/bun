@@ -1006,6 +1006,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
+    startupSnapshot                                BunObject_lazyPropCb_wrap_startupSnapshot                           ReadOnly|DontDelete|PropertyCallback
     sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
     postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
     SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
@@ -1201,3 +1202,44 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 }
 
 } // namespace Zig
+
+// snapshot restore: launch-derived lazy properties that were already reified into own properties on the Bun object
+// get their value recomputed for this process (same callbacks as first access).
+extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    globalObject->armStdioBlobs(); // whether or not Bun itself was reified: the slots behind Bun.stdin/stdout/stderr hold the builder's blobs
+    if (!globalObject->m_bunObject.isInitialized())
+        return; // never touched during the build: nothing was reified, and making it now would only dirty pages
+    JSObject* bunObject = globalObject->bunObject();
+    struct LaunchDerivedProp {
+        ASCIILiteral name;
+        JSValue (*make)(VM&, JSObject*);
+    };
+    static const LaunchDerivedProp props[] = {
+        { "argv"_s, BunObject_lazyPropCb_wrap_argv },
+        { "cwd"_s, BunObject_lazyPropCb_wrap_cwd },
+        { "enableANSIColors"_s, BunObject_lazyPropCb_wrap_enableANSIColors },
+        // importing anything from "bun" reifies every entry, so these are present in practically every snapshot
+        { "s3"_s, BunObject_lazyPropCb_wrap_s3 },
+        { "stdin"_s, Bun::BunObject_lazyPropCb_wrap_stdin },
+        { "stdout"_s, Bun::BunObject_lazyPropCb_wrap_stdout },
+        { "stderr"_s, Bun::BunObject_lazyPropCb_wrap_stderr },
+        { "redis"_s, BunObject_lazyPropCb_wrap_valkey }, // the default client is built from REDIS_URL, credentials included
+    };
+    for (auto& p : props) {
+        JSC::Identifier id = JSC::Identifier::fromString(vm, p.name);
+        if (bunObject->getDirectOffset(vm, id) == invalidOffset)
+            continue; // never accessed: the static-table callback will run on first access
+        JSValue fresh = p.make(vm, bunObject);
+        if (scope.exception() || !fresh) { // e.g. this launch's REDIS_URL is malformed: say so and leave nothing of the builder's behind; 'restore' must still fire
+            auto* exception = scope.exception();
+            (void)scope.tryClearException(); // before stringifying: toString bails while an exception is pending
+            WTF::String why = exception ? exception->value().toWTFStringForConsole(globalObject) : "no value"_s;
+            fprintf(stderr, "[snapshot] Bun.%s could not be remade for this launch: %s\n", p.name.characters(), why.utf8().data());
+            fresh = JSC::jsUndefined();
+        }
+        bunObject->putDirect(vm, id, fresh, 0);
+    }
+}

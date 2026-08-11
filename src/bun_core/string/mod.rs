@@ -1252,10 +1252,11 @@ impl core::fmt::Display for OwnedString {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Latin-1 and UTF-16 inputs are transcoded, but a `ZigString` tagged
+        // UTF-8 holds whatever bytes its creator passed in (`borrow_utf8` on a
+        // path or argv entry), so the slice still has to be checked.
         let s = self.to_utf8_without_ref();
-        // SAFETY: `to_utf8_without_ref` always yields valid UTF-8 — it
-        // transcodes Latin-1/UTF-16 and borrows already-UTF-8 inputs.
-        f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
+        crate::fmt::write_bytes(f, s.slice())
     }
 }
 

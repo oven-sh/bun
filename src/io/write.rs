@@ -232,22 +232,7 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
 // `?Sized` on this side breaks the cycle without losing any instantiation.
 impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
-        let r = match bun_core::str_utf8(buf) {
-            Some(s) => self.inner.write_str(s),
-            // Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly;
-            // replacement chars are the price of bridging (same output as
-            // from_utf8_lossy, without the allocation).
-            None => buf.utf8_chunks().try_for_each(|chunk| {
-                self.inner.write_str(chunk.valid())?;
-                if chunk.invalid().is_empty() {
-                    Ok(())
-                } else {
-                    self.inner.write_str("\u{FFFD}")
-                }
-            }),
-        };
-        r.map_err(|_| bun_core::Error::FmtError)
+        bun_core::fmt::write_bytes(self.inner, buf).map_err(|_| bun_core::Error::FmtError)
     }
 
     #[inline]

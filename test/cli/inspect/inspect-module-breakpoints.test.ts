@@ -3,7 +3,7 @@
 // pass). JSC's debugger has to treat that tag exactly like Module, otherwise
 // `Debugger.setBreakpoint` on every user module replies "Could not resolve
 // breakpoint" and `Debugger.setBreakpointByUrl` resolves to no locations.
-// Requires the WebKit side of the fix (oven-sh/WebKit#345).
+// Requires the WebKit side of the fix (oven-sh/WebKit#405, merged as 723cea6c).
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

@@ -637,15 +637,11 @@ pub mod analyze_transpiled_module {
             Ok(())
         }
 
-        /// JSC keeps export entries in insertion order and `std::sort`s them when
-        /// it builds the namespace object. Its own analyzer inserts local exports
-        /// in hash-table order; the printer sees them in source order, and on
-        /// inputs like `a0, a1, ..., a9999` introsort falls back to heapsort,
-        /// making `import()` of a wide module measurably slower than JSC's own
-        /// analysis. Hand JSC the sort's best case instead: local exports after
-        /// every other record, already in byte order of their export name. The
-        /// remaining records keep their relative order, so which unresolvable
-        /// indirect export gets reported first is unchanged.
+        /// JSC `std::sort`s the export entries, in insertion order, every time it
+        /// builds a namespace object; source order (`a0, a1, ..., a9999`) drives
+        /// that sort into its heapsort fallback, pre-sorted input is its best
+        /// case. The record order is not observable otherwise: the non-local
+        /// records keep their relative order, so error reporting is unchanged.
         fn move_local_exports_last_in_name_order(&mut self) {
             let is_local = |k: &RecordKind| *k == RecordKind::ExportInfoLocal;
             if self.record_kinds.iter().filter(|k| is_local(k)).count() < 2 {

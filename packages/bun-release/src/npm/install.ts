@@ -69,20 +69,30 @@ function installBun(platform: Platform, dst: string): void {
   const cwd = tmp(__dirname);
   try {
     write(join(cwd, "package.json"), "{}");
-    const { exitCode, stdout, stderr } = spawn(
+    const command = [
       "npm",
-      ["install", "--loglevel=error", "--prefer-offline", "--no-audit", "--progress=false", `${module}@${version}`],
-      {
-        cwd,
-        stdio: "pipe",
-        env: {
-          ...process.env,
-          npm_config_global: undefined,
-        },
+      "install",
+      "--loglevel=error",
+      "--prefer-offline",
+      "--no-audit",
+      "--progress=false",
+      `${module}@${version}`,
+    ];
+    const options = {
+      cwd,
+      env: {
+        ...process.env,
+        npm_config_global: undefined,
       },
-    );
+    };
+    // On Windows npm is npm.cmd, which only a shell can run.
+    const { exitCode, stdout, stderr } =
+      os === "win32"
+        ? spawn(command.join(" "), [], { ...options, shell: true })
+        : spawn(command[0], command.slice(1), options);
     if (exitCode !== 0) {
-      throw new Error(stderr || stdout || `npm exited with code ${exitCode}`);
+      error(stderr || stdout);
+      throw new Error("npm install failed");
     }
     rename(join(cwd, "node_modules", module), dst);
   } finally {

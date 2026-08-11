@@ -64,31 +64,57 @@ function tarball(files: Record<string, Buffer | string>): Buffer {
 const tgz = tarball({ "package.json": JSON.stringify({ name: pkg, version }), [platform.exe]: binary });
 
 // installBun() runs `npm install <pkg>@<version>` in a scratch directory and moves
-// node_modules/<pkg> out of it. These stand in for npm there, as scripts for the runtime under
-// test since PATH holds nothing but them. Windows never runs them (a file without an extension
-// is not executable there), so there every `npm install` fails before running anything, which
-// is also what happens in production: node does not run npm.cmd without a shell.
-function failingNpm(runtime: string): DirectoryTree {
-  return { "fake-bin/npm": `#!${runtime}\nconsole.error("npm ERR! code E404");\nprocess.exit(1);\n` };
+// node_modules/<pkg> out of it. These stand in for npm there: a script for the runtime under
+// test (PATH holds nothing but fake-bin), which on Windows is reached through an npm.cmd, the
+// way the real npm is.
+function fakeNpm(runtime: string, script: (root: string) => string): DirectoryTree {
+  return {
+    "fake-bin/npm": ({ root }) => `#!${runtime}\n${script(root)}`,
+    "fake-bin/npm.cmd": `@"${runtime.replaceAll("/", "\\")}" "%~dp0npm" %*\r\n`,
+  };
 }
+function failingNpm(runtime: string): DirectoryTree {
+  return fakeNpm(runtime, () => `console.error("npm ERR! code E404");\nprocess.exit(1);\n`);
+}
+// Installs <root>/binary as the package and records how it was invoked in <root>/npm-call.json.
 function installingNpm(runtime: string): DirectoryTree {
   const exe = path.posix.join("node_modules", pkg, platform.exe);
   return {
     "binary": binary,
-    "fake-bin/npm": ({ root }) => `#!${runtime}
-const fs = require("fs");
-fs.writeFileSync(${JSON.stringify(path.join(root, "npm-cwd"))}, process.cwd());
+    ...fakeNpm(
+      runtime,
+      root => `const fs = require("fs");
+fs.writeFileSync(
+  ${JSON.stringify(path.join(root, "npm-call.json"))},
+  JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2), global: "npm_config_global" in process.env }),
+);
 fs.mkdirSync(${JSON.stringify(path.posix.dirname(exe))}, { recursive: true });
 fs.copyFileSync(${JSON.stringify(path.join(root, "binary"))}, ${JSON.stringify(exe)});
 fs.chmodSync(${JSON.stringify(exe)}, 0o755);
 `,
+    ),
   };
 }
+const npmInstallArgs = [
+  "install",
+  "--loglevel=error",
+  "--prefer-offline",
+  "--no-audit",
+  "--progress=false",
+  `${pkg}@${version}`,
+];
 
-// The script's PATH is replaced with fake-bin. On Windows process.env spells the variable
-// `Path`, and Bun.spawn gives the child the first of two keys differing only in case, so the
-// inherited key has to go rather than be shadowed by `PATH`.
-const envWithoutPath = Object.fromEntries(Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "PATH"));
+// The script gets PATH pointing at fake-bin only. The inherited PATH has to be removed rather
+// than shadowed: on Windows process.env spells it `Path`, and Bun.spawn gives the child the
+// first of two keys differing only in case. The other variables are the ones console.ts
+// changes the script's output on. npm_config_global is what `npm install -g bun` runs the
+// script with, and what installBun() must not pass on to its own `npm install`.
+const scriptEnv = Object.fromEntries(
+  Object.entries(bunEnv).filter(
+    ([key]) => !["PATH", "DEBUG", "LOG_LEVEL", "RUNNER_DEBUG", "GITHUB_ACTION"].includes(key.toUpperCase()),
+  ),
+);
+scriptEnv.npm_config_global = "true";
 
 async function postinstall(runtime: string, name: string, options: { npm?: DirectoryTree; tarball?: Buffer }) {
   const bunPackage: DirectoryTree = {
@@ -110,12 +136,13 @@ async function postinstall(runtime: string, name: string, options: { npm?: Direc
   await using proc = Bun.spawn({
     cmd: [runtime, "-r", "./fetch.cjs", "install.js"],
     cwd: bunPackageDir,
-    env: { ...envWithoutPath, PATH: path.join(root, "fake-bin") },
+    env: { ...scriptEnv, PATH: path.join(root, "fake-bin") },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const npmCwd = path.join(root, "npm-cwd");
+  const npmCallFile = path.join(root, "npm-call.json");
+  const npmCall = existsSync(npmCallFile) ? JSON.parse(readFileSync(npmCallFile, "utf8")) : undefined;
   return {
     stdout,
     stderr,
@@ -123,28 +150,33 @@ async function postinstall(runtime: string, name: string, options: { npm?: Direc
     bin: readFileSync(path.join(bunPackageDir, "bin", "bun.exe")),
     // Everything the script left in its own directory, so a scratch directory would show up.
     files: readdirSync(bunPackageDir).sort(),
-    // Where installingNpm()'s npm was run, relative to the script's directory.
-    npmCwd: existsSync(npmCwd) ? path.relative(bunPackageDir, readFileSync(npmCwd, "utf8")) : undefined,
+    // installingNpm()'s record, with npm's cwd made relative to the script's directory.
+    npmCall: npmCall && { ...npmCall, cwd: path.relative(bunPackageDir, npmCall.cwd) },
   };
 }
 
 const notFound = `Failed to find package "${pkg}". You may have used the "--no-optional" flag when running "npm install".`;
 const npmFailed = `Failed to install package "${pkg}" using "npm install".`;
+// installBun() prints npm's output (the fake's one line) before requireBun() reports the failure.
+const npmFailedOutput = `${notFound}\nnpm ERR! code E404\n\n${npmFailed}`;
 
-for (const [name, runtime] of [
-  ["node", nodeExe()],
-  ["bun", bunExe()],
-] as const) {
-  describe.skipIf(!runtime).concurrent(`bun npm package postinstall run with ${name}`, () => {
+const runtimes = [
+  // spawnError: how each runtime's spawnSync() describes a missing npm, which installBun()
+  // prints in that case. On Windows it is the shell that reports it instead.
+  { name: "node", exe: nodeExe(), spawnError: "spawnSync npm ENOENT" },
+  { name: "bun", exe: bunExe(), spawnError: 'Executable not found in $PATH: "npm"' },
+];
+
+for (const { name, exe, spawnError } of runtimes) {
+  const runtime = exe!;
+  const npmMissing = isWindows ? "'npm' is not recognized" : spawnError;
+  describe.skipIf(!exe).concurrent(`bun npm package postinstall run with ${name}`, () => {
     test('downloads the tarball from the registry when "npm install" fails', async () => {
-      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-download`, {
-        npm: failingNpm(runtime!),
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime, `${name}-download`, {
+        npm: failingNpm(runtime),
         tarball: tgz,
       });
-      expect(stderr).toContain(notFound);
-      expect(stderr).toContain(npmFailed);
-      // The reported error carries npm's output, except on Windows where npm never ran (see failingNpm).
-      if (!isWindows) expect(stderr).toContain("npm ERR! code E404");
+      expect(stderr).toStartWith(npmFailedOutput);
       expect(stderr).not.toContain("Failed to download");
       expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
       expect(bin.equals(binary)).toBe(true);
@@ -153,8 +185,8 @@ for (const [name, runtime] of [
     });
 
     test("downloads the tarball from the registry when npm is not installed", async () => {
-      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-no-npm`, { tarball: tgz });
-      expect(stderr).toContain(notFound);
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime, `${name}-no-npm`, { tarball: tgz });
+      expect(stderr).toStartWith(`${notFound}\n${npmMissing}`);
       expect(stderr).toContain(npmFailed);
       expect(stderr).not.toContain("Failed to download");
       expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
@@ -164,9 +196,10 @@ for (const [name, runtime] of [
     });
 
     test('fails and reports both attempts when "npm install" and the download fail', async () => {
-      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-neither`, {
-        npm: failingNpm(runtime!),
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime, `${name}-neither`, {
+        npm: failingNpm(runtime),
       });
+      expect(stderr).toStartWith(npmFailedOutput);
       for (const { bin } of supportedPlatforms) {
         expect(stderr).toContain(`Failed to find package "@oven/${bin}".`);
         expect(stderr).toContain(`Failed to install package "@oven/${bin}" using "npm install".`);
@@ -179,18 +212,22 @@ for (const [name, runtime] of [
       expect(exitCode).toBe(1);
     });
 
-    // `npm install` cannot succeed on Windows (see failingNpm).
-    test.skipIf(isWindows)('uses the package "npm install" installed without downloading', async () => {
-      const { stdout, stderr, exitCode, bin, files, npmCwd } = await postinstall(runtime!, `${name}-npm`, {
-        npm: installingNpm(runtime!),
+    test('uses the package "npm install" installed without downloading', async () => {
+      const { stdout, stderr, exitCode, bin, files, npmCall } = await postinstall(runtime, `${name}-npm`, {
+        npm: installingNpm(runtime),
         tarball: tgz,
       });
       expect(stderr).toBe(`${notFound}\n`);
       expect(stdout).toBe("");
       expect(bin.equals(binary)).toBe(true);
-      // npm ran in a scratch directory directly inside the script's own directory (so on the
-      // same file system as the node_modules the package is moved to), since removed.
-      expect(npmCwd).toMatch(/^bun-[^/\\]+$/);
+      expect(npmCall).toEqual({
+        // A scratch directory directly inside the script's own directory, so on the same file
+        // system as the node_modules the package is moved to.
+        cwd: expect.stringMatching(/^bun-[^/\\]+$/),
+        argv: npmInstallArgs,
+        global: false,
+      });
+      // The scratch directory is gone again.
       expect(files).toEqual(["bin", "bun.tgz", "fetch.cjs", "install.js", "node_modules"]);
       expect(exitCode).toBe(0);
     });

@@ -93,15 +93,15 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
       stdout: "pipe",
       stderr: "pipe",
     });
-    const lines = forEachLine(proc.stdout);
-    const { value: url, done } = await lines.next();
-    if (done) throw new Error(`h3 server exited ${await proc.exited}: ${await proc.stderr.text()}`);
+    const stderr = proc.stderr.text();
+    const { value: url, done } = await forEachLine(proc.stdout).next();
+    if (done) throw new Error(`h3 server exited ${await proc.exited}: ${await stderr}`);
     return {
       url,
       sent: () => sent,
       [Symbol.asyncDispose]: async () => {
         proc.kill();
-        await proc.exited;
+        await Promise.all([proc.exited, stderr]);
       },
     };
   }

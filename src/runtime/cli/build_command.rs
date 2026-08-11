@@ -889,7 +889,7 @@ impl BuildCommand {
                     &opt_public_path,
                     outfile,
                     // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    unsafe { &*env_ptr },
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     ctx.bundler_options

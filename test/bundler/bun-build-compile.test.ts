@@ -72,6 +72,92 @@ describe("Bun.build compile", () => {
     },
   );
 
+  test("the event loop keeps running while the executable is being produced", async () => {
+    // Producing the executable (downloading the target binary for a cross target, then
+    // copying and rewriting it) used to happen on the JS thread between bundling and the
+    // promise settling, so nothing else in that process ran meanwhile. Serve the target
+    // download here and withhold the response until the building process has answered an
+    // IPC ping, which a process whose JS thread is inside the compile step cannot do.
+    using dir = tempDir("build-compile-event-loop", {
+      "app.js": `console.log("hi");`,
+      "build.js": `
+        process.on("message", message => process.send(message));
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/app.js"],
+          compile: { target: process.argv[2], outfile: "app" },
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+        process.exit(0);
+      `,
+    });
+    // Any OS other than the host's has to be downloaded; aarch64 never carries a "-baseline" suffix.
+    const target = `bun-${isMacOS ? "linux" : "darwin"}-aarch64`;
+    const [version] = Bun.version.match(/^\d+\.\d+\.\d+/)!;
+
+    type Outcome = "never requested the target" | "answered the ping" | "did not answer the ping";
+    let outcome: Outcome = "never requested the target";
+    const pong = Promise.withResolvers<Outcome>();
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch() {
+        // A process stuck inside the compile step emits nothing, so that state can only be
+        // observed by giving up on the ping. The unblocked process answers within
+        // milliseconds (about 50ms under a debug build).
+        const gaveUp = Promise.withResolvers<Outcome>();
+        const giveUp = setTimeout(gaveUp.resolve, 4_000, "did not answer the ping");
+        proc.send("ping");
+        try {
+          outcome = await Promise.race([
+            pong.promise,
+            gaveUp.promise,
+            proc.exited.then((): Outcome => "did not answer the ping"),
+          ]);
+        } finally {
+          clearTimeout(giveUp);
+        }
+        return new Response("no such tarball", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js", target],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_COMPILE_TARGET_TARBALL_URL: `${server.url}bun.tgz`,
+        // A fresh cache, so the target is never already on disk.
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "install-cache"),
+        // The download honors these; keep it pointed at the server above.
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc(message) {
+        if (message === "ping") pong.resolve("answered the ping");
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is only diagnostic: the download reports progress there once the response
+    // has been outstanding for 500ms, so it is empty or not depending on the ping's speed.
+    expect({ outcome, stdout, exitCode }, `stderr: ${stderr}`).toEqual({
+      outcome: "answered the ping",
+      stdout:
+        JSON.stringify({
+          success: false,
+          logs: [
+            `Target platform '${target}-v${version}' is not available for download. Check if this version of Bun supports this target.`,
+          ],
+        }) + "\n",
+      exitCode: 0,
+    });
+  });
+
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
       "app.js": `

@@ -150,6 +150,11 @@ impl<C: CompletionStruct> BundleThread<C> {
         let ptr = SendPtr(instance);
         let thread = std::thread::Builder::new()
             .name("Bundler".into())
+            // The same stack as bun's other threads rather than Rust's 2 MiB
+            // default: `Bun.build({ compile })` writes its executable on this
+            // thread, and on Windows that path holds well over half a
+            // megabyte of path buffers on the stack.
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`

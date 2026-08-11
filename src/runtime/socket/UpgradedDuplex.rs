@@ -189,14 +189,8 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
-        // Application data written before this point is parked in the owner
-        // (`buffered_data_for_node_net`): `encode_and_write` took none of it
-        // while the engine was missing or `SSL_write` wanted the handshake
-        // first. A real socket gets a synthetic writable event for this from
-        // openssl.c (`ssl_write_wants_read`); a duplex has no fd and only
-        // reports its own backpressure, so the retry has to be driven here.
-        // The handshake callback may have torn the engine down (rejected
-        // certificate, `destroy()`); the close path fails the parked write.
+        // Flush writes parked during the handshake (openssl.c's
+        // `ssl_write_wants_read`); a duplex emits no writable event of its own.
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }
@@ -566,12 +560,8 @@ impl UpgradedDuplex {
         }
     }
 
-    /// `wrapper` is `None` only until the queued `start_tls` task runs
-    /// (`teardown` neuters the engine in place, it never clears the slot), so
-    /// a missing engine is a connection that has not started, not one that is
-    /// over: the owner's write path must park data written in that window
-    /// (like it does for a pre-handshake `SSL_write`) instead of dropping it
-    /// as a write to a shut-down socket. `on_handshake` retries it.
+    /// No engine yet (`start_tls` still queued; teardown never clears the slot)
+    /// is not shut down: writes made then are parked and flushed by `on_handshake`.
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
         self.wrapper_ref().is_some_and(|w| w.is_shutdown())

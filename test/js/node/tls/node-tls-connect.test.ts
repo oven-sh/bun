@@ -975,6 +975,52 @@ describe("application data written over a Duplex transport before the handshake 
       serverReceived: "",
     });
   });
+
+  // Destroying from the handshake event tears the engine down right under the
+  // retry of the pending write: it must be failed, not delivered.
+  it("a pending client write is failed when a 'secureConnect' listener destroys the socket", async () => {
+    const { clientSide, serverSide } = inMemoryPair(synchronously);
+    const received: Buffer[] = [];
+    const writeOutcome = Promise.withResolvers<string>();
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("data", (chunk: Buffer) => received.push(chunk));
+    server.on("error", () => {});
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    client.on("error", () => {});
+    client.write("parked", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
+    client.on("secureConnect", () => client.destroy());
+    const closed = new Promise<void>(resolve => client.on("close", () => resolve()));
+
+    const [outcome] = await Promise.all([writeOutcome.promise, closed]);
+    expect({ outcome, serverReceived: Buffer.concat(received).toString() }).toEqual({
+      outcome: "failed",
+      serverReceived: "",
+    });
+  });
+
+  it("a pending server write is failed when a 'secure' listener destroys the socket", async () => {
+    const { clientSide, serverSide } = inMemoryPair(synchronously);
+    const received: Buffer[] = [];
+    const writeOutcome = Promise.withResolvers<string>();
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("error", () => {});
+    server.write("banner", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
+    server.on("secure", () => server.destroy());
+    const closed = new Promise<void>(resolve => server.on("close", () => resolve()));
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    client.on("error", () => {});
+    client.on("data", (chunk: Buffer) => received.push(chunk));
+
+    const [outcome] = await Promise.all([writeOutcome.promise, closed]);
+    expect({ outcome, clientReceived: Buffer.concat(received).toString() }).toEqual({
+      outcome: "failed",
+      clientReceived: "",
+    });
+  });
 });
 
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {

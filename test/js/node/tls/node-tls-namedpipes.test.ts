@@ -96,6 +96,40 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
         server.close();
       }
     });
+
+    it.if(isWindows)("is failed, not delivered, when a 'secureConnect' listener destroys the socket", async () => {
+      const serverSocketClosed = Promise.withResolvers<void>();
+      const writeOutcome = Promise.withResolvers<string>();
+      const received: Buffer[] = [];
+      let client: ReturnType<typeof connect> | null = null;
+      const server = createServer({ ...tls, minVersion: version, maxVersion: version }, socket => {
+        socket.on("data", (chunk: Buffer) => received.push(chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => serverSocketClosed.resolve());
+      });
+      try {
+        const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+        server.listen(pipeName);
+        await once(server, "listening");
+
+        const socket = connect({ path: pipeName, ca: tls.cert, minVersion: version, maxVersion: version });
+        client = socket;
+        socket.on("error", () => {});
+        socket.write("parked", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
+        socket.on("secureConnect", () => socket.destroy());
+
+        // The server socket closes only after consuming everything the client
+        // sent before destroying itself.
+        const [outcome] = await Promise.all([writeOutcome.promise, serverSocketClosed.promise]);
+        expect({ outcome, serverReceived: Buffer.concat(received).toString() }).toEqual({
+          outcome: "failed",
+          serverReceived: "",
+        });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
   },
 );
 

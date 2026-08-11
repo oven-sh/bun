@@ -398,12 +398,8 @@ impl WindowsNamedPipe {
                 .map(Into::into),
         });
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
-        // Retry data the owner parked while `SSL_write` still wanted the
-        // handshake (same as `UpgradedDuplex::on_handshake`). The writer's own
-        // drain only covers this when completing the handshake happens to
-        // send something (TLS 1.3 client Finished); a TLS 1.2 client completes
-        // on the server's Finished and writes nothing, so nothing else would
-        // ever flush the parked bytes.
+        // Flush writes parked during the handshake; a TLS 1.2 client sends
+        // nothing on completion, so no pipe write completion would do it.
         if handshake_success && !self.is_shutdown() {
             (self.handlers.on_writable)(self.handlers.ctx);
         }

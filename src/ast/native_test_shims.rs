@@ -7,7 +7,7 @@
 //! `<&MimallocArena as Allocator>::{allocate, deallocate}` live, so the link
 //! needs everything those two reach: `mi_free_checked` in `bun_alloc::basic`
 //! frees through `mi_free_size*` under `debug_assertions` and `mi_free`
-//! otherwise, hence both sets (test/internal/rust-windows-sys-link.test.ts
+//! otherwise, hence both sets (test/internal/rust-ast-cargo-test.test.ts
 //! links both profiles). Nothing in the binary references `mi_heap_new` or
 //! `mi_heap_main`, so no test can hold an arena and none of these is ever
 //! called; they abort instead of pretending to allocate.

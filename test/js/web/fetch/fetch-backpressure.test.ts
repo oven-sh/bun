@@ -117,9 +117,9 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
   }
 
   // h1 / h1-chunked / h1-gzip / h1-tls
-  // Stored blocks (level 0) keep the wire the same size as the body, which is
-  // what makes the gzip variant stream like the others; actually compressing
-  // 16 MiB took ~2 s of this busy process's main thread under a debug build.
+  // Stored blocks (level 0) put a body-sized stream on the wire (asserted via
+  // sent() by the drain test) without the ~2 s a debug build spent actually
+  // compressing 16 MiB on this busy main thread.
   const gz = kind === "h1-gzip" ? gzipSync(Buffer.alloc(CHUNK * count, 65), { level: 0 }) : null;
   const handler = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
     res.on("error", () => {});
@@ -269,6 +269,10 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
         await using server = await serve(kind);
         const { peak, total, exitCode } = await spawnClient(server.url, kind, script);
         expect({ peakMB: peak >> 20, total }).toEqual({ peakMB: expect.any(Number), total: TOTAL });
+        // A compressible gzip body would arrive as one small packet and be
+        // decoded without the transport ever pausing; the variant only tests
+        // anything if the wire carried about as many bytes as the body.
+        if (kind === "h1-gzip") expect(server.sent()).toBeGreaterThanOrEqual(TOTAL);
         expect(exitCode).toBe(0);
       });
     }

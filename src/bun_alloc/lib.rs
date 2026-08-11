@@ -2112,8 +2112,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         this: *mut Self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. The guard borrows only `(*this).mutex`, which the `&mut *this`
-        // formed below never touches.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `append_overflow_uninit` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: the inner mutex is held, so this call has exclusive access
         // to `*this` (the receiver is raw precisely so nothing exclusive is
@@ -2292,8 +2292,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. The guard borrows only `(*this).mutex`, which the `&mut *this`
-        // formed below never touches.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `do_append` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
@@ -2371,8 +2371,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. The guard borrows only `(*this).mutex`, which the `&mut *this`
-        // formed below never touches.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `do_append` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };

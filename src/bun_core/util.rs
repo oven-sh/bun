@@ -742,6 +742,12 @@ impl PathBuffer {
     /// the leak/stress tests. Leave the bytes uninit.
     #[inline]
     #[allow(invalid_value, clippy::uninit_assumed_init)]
+    #[allow(
+        clippy::large_stack_frames,
+        reason = "the frame is two `MAX_PATH_BYTES` locals (the `MaybeUninit` temp and the return \
+                  slot), ~196 KB on Windows; neither is written, so optimized builds emit nothing, \
+                  and the caller is committing to a `MAX_PATH_BYTES` local either way"
+    )]
     pub fn uninit() -> Self {
         // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
         // pattern is a valid `u8`, and callers treat this as a write-only
@@ -1348,8 +1354,10 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
                 0
             };
         }
+        // SAFETY: `kif` is a live local; `addr_of!` only forms the field's
+        // address, it reads nothing.
+        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) }.cast::<u8>();
         // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
         let len = unsafe { libc::strlen(path.cast()) };
         let n = len.min(cap);
         // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
@@ -1548,9 +1556,9 @@ pub mod fd {
         unsafe {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
             ProcessParametersStdio {
-                hStdInput: (*pp).hStdInput as *mut c_void,
-                hStdOutput: (*pp).hStdOutput as *mut c_void,
-                hStdError: (*pp).hStdError as *mut c_void,
+                hStdInput: (*pp).hStdInput,
+                hStdOutput: (*pp).hStdOutput,
+                hStdError: (*pp).hStdError,
             }
         }
     }
@@ -2794,10 +2802,12 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
             // `canonicalize()` on Windows returns a verbatim `\\?\` path; strip
             // that back to a plain DOS path before WTF-8 encoding (Node's
             // `process.execPath` is never verbatim-prefixed).
-            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-                s = format!(r"\\{}", rest);
-            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-                s = rest.to_owned();
+            const VERBATIM_UNC: &str = r"\\?\UNC\";
+            const VERBATIM: &str = r"\\?\";
+            if s.starts_with(VERBATIM_UNC) {
+                s.replace_range(..VERBATIM_UNC.len(), r"\\");
+            } else if s.starts_with(VERBATIM) {
+                s.drain(..VERBATIM.len());
             }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }
@@ -3789,7 +3799,7 @@ fn argv_storage() -> &'static [ZBox] {
             // `CommandLineToArgvW` allocates its own array (lifetime managed
             // by the system — intentionally not `LocalFree`d, the
             // argv strings are referenced for the process lifetime).
-            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
+            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &raw mut argc) };
             if !argvw.is_null() {
                 let argc = argc.max(0) as usize;
                 // SAFETY: `CommandLineToArgvW` returned `argc` valid `LPWSTR`s.

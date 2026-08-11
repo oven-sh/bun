@@ -864,7 +864,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    // darwin: 10 while on hosted agents (see darwinHostedQueue), which scale
+    // one agent per shard; it was 2 for the bare-metal fleet's few boxes per
+    // lane. Each shard repeats ~2 min of checkout + artifact + install, so
+    // going much wider mostly buys setup time.
+    parallelism: os === "darwin" ? 10 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",

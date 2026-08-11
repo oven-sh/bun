@@ -285,9 +285,8 @@ struct InstallDirState {
     cached_package_dir: Dir,
     // `Walker` has no `Default`; wrap in Option.
     walker: Option<Walker>,
-    /// Only opened on POSIX. The Windows walkers never touch it (it stays
-    /// `Fd::INVALID`, which relative syscalls resolve against the cwd) and work
-    /// with the absolute paths built in `buf` / `buf2` instead.
+    /// POSIX only. On Windows it stays `Fd::INVALID` (which relative syscalls
+    /// resolve against the cwd); the walkers there use the absolute paths in `buf`/`buf2`.
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -347,9 +346,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         Ok(()) => return Ok(()),
         Err(err) => match err.get_errno() {
             // `mkpath_np` on macOS also checks EISDIR; on Windows EEXIST suffices.
-            // NodeFS additionally probes `directoryExistsAt`; here an existing entry
-            // counts as success like `make_path` does. If it is not a directory, the
-            // first operation beneath it fails and the install fails there.
+            // An existing entry counts as success, like `make_path`.
             E::EISDIR | E::EEXIST => return Ok(()),
             E::ENOENT => {
                 if len == 0 {
@@ -434,10 +431,8 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     }
 }
 
-/// [`mkdir_recursive_os_path`] for the first `len` units of `path`, which the
-/// caller cuts at a component boundary (the parent of a file it is about to
-/// create). `path` is one of the walkers' absolute destination paths, so it
-/// always fits a `WPathBuffer` with room for the terminator.
+/// [`mkdir_recursive_os_path`] for `path[..len]`: the parent directory of the
+/// entry whose absolute destination path a walker built in `path`.
 #[cfg(windows)]
 fn mkdir_recursive_os_path_prefix(path: &[u16], len: usize) -> sys::Maybe<()> {
     let mut buf = bun_paths::w_path_buffer_pool::get();
@@ -1068,8 +1063,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        // This walker also runs when the destination already exists
-                        // (the EEXIST fallback of `install_with_clonefile`).
+                        // EEXIST: this is also the fallback for an existing destination.
                         match sys::mkdirat(destination_dir_, entry.path, 0o755) {
                             Ok(()) => {}
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {}
@@ -1529,8 +1523,7 @@ impl<'a> PackageInstall<'a> {
                     #[cfg(unix)]
                     {
                         let stat = sys::fstat(in_file)?;
-                        // Copying the mode is best effort: filesystems without
-                        // permission bits reject fchmod, and the contents still copy.
+                        // Best effort: filesystems without permission bits reject fchmod.
                         let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
                     }
 

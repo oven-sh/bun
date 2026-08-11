@@ -2082,8 +2082,7 @@ class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback] = setImmediate;
-  // Defined on the base class like node's, so a server session has it too (there it picks the
-  // id of the next pushed stream):
+  // Shared by both session types, as in node:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1423
   setNextStreamID(id) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();

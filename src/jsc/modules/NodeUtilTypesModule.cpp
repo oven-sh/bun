@@ -12,6 +12,9 @@
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/ObjectPrototype.h>
+// objectPrototypeToString is ALWAYS_INLINE in ObjectPrototypeInlines.h; release
+// WebKit archives no longer carry an out-of-line copy to link against.
+#include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"

@@ -287,9 +287,7 @@ impl JSBundleCompletionTask {
         Ok(())
     }
 
-    /// Port of `JSBundleCompletionTask.doCompilation`. Runs on the bundle
-    /// thread (see `compile_on_bundle_thread`): file system and task-owned
-    /// state only, nothing JS-affine.
+    /// Port of `JSBundleCompletionTask.doCompilation`. Bundle thread: nothing in here may touch JS.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
         let compile_options = self
             .config
@@ -428,10 +426,8 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-            // construction; the VM frees it only after this build reports
-            // finished (`embedded_work_finished`, after this returns). Shared
-            // access only, like the bundler's own reads of it on this thread.
+            // SAFETY: the VM frees its loader only after this build reports
+            // finished (`embedded_work_finished`), which happens after this returns.
             unsafe { &*self.env },
             self.config.format,
             &WindowsOptions {
@@ -562,14 +558,8 @@ impl JSBundleCompletionTask {
         result
     }
 
-    /// Bundle thread, right before the result is posted back. Producing the
-    /// executable copies and rewrites the whole bun binary (downloading it
-    /// first for a cross target); done from `on_complete`, that stalled the JS
-    /// thread's event loop for the duration. The env loader read here is the
-    /// one bundling just used on this thread, and the VM keeps it alive until
-    /// `complete_on_bundle_thread` reports the build finished. A cancelled
-    /// build's VM is tearing down and no longer wants the result, so it is not
-    /// made to wait for an executable either.
+    /// Producing the executable copies the whole bun binary (and downloads it
+    /// for a cross target), so it happens here and not in `on_complete` on the JS thread.
     fn compile_on_bundle_thread(&mut self) {
         if self.config.compile.is_none()
             || self.cancelled.load(core::sync::atomic::Ordering::Acquire)
@@ -584,8 +574,7 @@ impl JSBundleCompletionTask {
             }
         };
         let compile_result = self.do_compilation(&mut build.output_files);
-        // `to_executable` and the sourcemap write report their failures to
-        // stderr, and nothing else flushes this thread's buffered stderr.
+        // Nothing else flushes this thread's buffered stderr, which the above reports failures to.
         bun_core::Output::flush();
         self.result = match compile_result {
             CompileResult::Success => BundleV2Result::Value(build),
@@ -694,9 +683,6 @@ impl JSBundleCompletionTask {
         // for `result`/`config`/`log` below.
         let promise: *mut JSPromise = this.promise.swap();
         let promise = JSPromise::opaque_mut(promise);
-
-        // `Bun.build({ compile })` already produced the executable (or turned
-        // `result` into `Err`) on the bundle thread — see `compile_on_bundle_thread`.
 
         // `to_js_error` borrows `&mut self`, which would overlap a
         // `&mut this.result` match scrutinee. Dispatch the pending/err arms

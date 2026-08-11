@@ -125,8 +125,7 @@ pub struct Loader {
     pub quiet: bool,
 
     pub(crate) did_load_process: bool,
-    /// Atomic because the bundle thread asks too, when a cross-target
-    /// `Bun.build({ compile })` downloads its target (see `download_to_path`).
+    /// Also read by the bundle thread (cross-target `Bun.build({ compile })` download).
     pub(crate) reject_unauthorized: bun_core::AtomicCell<TlsRejectUnauthorized>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.

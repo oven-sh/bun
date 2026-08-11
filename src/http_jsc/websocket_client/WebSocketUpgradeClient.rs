@@ -1156,6 +1156,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 return;
             }
         };
+        // The ref `init` returned stays ours until the proxy adopts it below,
+        // so every early return releases it. `start` has to run under this ref
+        // rather than the proxy's: its synchronous callbacks can fail the
+        // client and drop `proxy`, which would free the tunnel while its
+        // SSLWrapper is still on the stack.
+        // SAFETY: `tunnel` is live and this guard takes over the one ref
+        // `init` returned.
+        let tunnel_ref = unsafe { bun_ptr::ScopedRef::adopt(tunnel.as_ptr()) };
 
         // Use ssl_config if available, otherwise use defaults
         // SAFETY: `this` is live; the borrow covers only `ssl_config` and ends
@@ -1171,25 +1179,27 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         // Start TLS handshake
-        // SAFETY: `tunnel` was just allocated by `init` (live, ref_count == 1).
+        // SAFETY: `tunnel_ref` keeps the tunnel live across the call.
         if unsafe { WebSocketProxyTunnel::start(tunnel.as_ptr(), &ssl_options, initial_data) }
             .is_err()
         {
-            // SAFETY: release the ref taken by `init`.
-            unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
             // SAFETY: no borrow of `*this` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
             return;
         }
 
-        // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
-        // can fail the client and take `proxy`.
+        // Re-check proxy state: `start` dispatches SSLWrapper callbacks
+        // synchronously (a TLS alert or non-TLS bytes in `initial_data` fail
+        // the handshake before it returns), and those can fail the client and
+        // take `proxy`. `tunnel_ref` releases the tunnel on this return.
         // SAFETY: `this` is live; the borrow covers only `proxy`.
         let Some(p) = (unsafe { (*this).proxy.as_mut() }) else {
             // SAFETY: no borrow of `*this` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
             return;
         };
+        // The proxy owns the ref from here on; `WebSocketProxy::drop` releases it.
+        tunnel_ref.forget();
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
         unsafe { (*this).state = State::ProxyTlsHandshake };

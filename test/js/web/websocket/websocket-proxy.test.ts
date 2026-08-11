@@ -1,3 +1,4 @@
+import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
@@ -499,6 +500,93 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
 
     await promise;
     gc();
+  });
+});
+
+describe("wss:// proxy tunnel whose TLS handshake fails inside the CONNECT reply", () => {
+  // The proxy answers CONNECT with 200 and, in the same write, bytes that make
+  // the tunnel's TLS handshake fail while WebSocketProxyTunnel::start() is
+  // still running (the client has not even sent its ClientHello yet). The
+  // upgrade client used to drop its only reference to the tunnel on that
+  // path, leaking the tunnel and the SSL_CTX it had just built, once per
+  // connection attempt.
+  const connectEstablished = Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n");
+  // TLS record: alert (21), TLS 1.2, 2-byte body: fatal (2) handshake_failure (40).
+  const fatalAlert = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
+  // Not a TLS record at all: what a captive portal or a misbehaving proxy
+  // tacks onto its 200.
+  const notTls = Buffer.from("<html><body>sign in to continue</body></html>\r\n");
+  const attempts = 5;
+
+  function listenBadProxy(scheme: "http" | "https", trailer: Buffer) {
+    const connectRequests: string[] = [];
+    const onConnection = (socket: net.Socket) => {
+      let request = "";
+      socket.on("data", chunk => {
+        request += chunk.toString("latin1");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.removeAllListeners("data");
+        connectRequests.push(request.split("\r\n", 1)[0]);
+        socket.end(Buffer.concat([connectEstablished, trailer]));
+      });
+      socket.on("error", () => {});
+    };
+    const server =
+      scheme === "https"
+        ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, onConnection)
+        : net.createServer(onConnection);
+    return { server, connectRequests };
+  }
+
+  function attemptThroughProxy(scheme: "http" | "https", port: number) {
+    const { promise, resolve, reject } = Promise.withResolvers<Pick<CloseEvent, "code" | "reason" | "wasClean">>();
+    const ws = new WebSocket("wss://tunnel-target.invalid/", {
+      proxy: `${scheme}://127.0.0.1:${port}`,
+      // The https proxy presents a self-signed cert. Passing a tls config also
+      // makes the tunnel take its TLS options from the user's config rather
+      // than the defaults, so the two schemes cover both of those branches.
+      ...(scheme === "https" ? { tls: { rejectUnauthorized: false } } : {}),
+    });
+    ws.onopen = () => reject(new Error("tunnel handshake unexpectedly succeeded"));
+    ws.onclose = ({ code, reason, wasClean }) => resolve({ code, reason, wasClean });
+    return promise;
+  }
+
+  test.each([
+    ["http", "a fatal TLS alert", fatalAlert],
+    ["http", "non-TLS bytes", notTls],
+    ["https", "a fatal TLS alert", fatalAlert],
+    ["https", "non-TLS bytes", notTls],
+  ] as const)("%s proxy, 200 followed by %s: tunnel is released per attempt", async (scheme, _, trailer) => {
+    const { server, connectRequests } = listenBadProxy(scheme, trailer);
+    const port = await startProxy(server);
+    try {
+      // First attempt absorbs whatever this path allocates once per process
+      // (the shared client SSL_CTX for the https proxy leg) so the steady
+      // state below is exact.
+      expect(await attemptThroughProxy(scheme, port)).toEqual({
+        code: 1015,
+        reason: "TLS handshake failed",
+        wasClean: false,
+      });
+
+      const before = sslCtxLiveCount();
+      const closes: Awaited<ReturnType<typeof attemptThroughProxy>>[] = [];
+      for (let i = 0; i < attempts; i++) closes.push(await attemptThroughProxy(scheme, port));
+      // The tunnel is released inside the socket read that failed the
+      // handshake, before the close event is even queued, so by the time an
+      // attempt resolves the SSL_CTX it built is gone again. Unfixed, this
+      // grows by one per attempt. (<= rather than === because connections
+      // left over from earlier tests in this file may still release their
+      // contexts while this runs.)
+      const leakedSslCtx = sslCtxLiveCount() - before;
+
+      expect(connectRequests).toEqual(Array(attempts + 1).fill("CONNECT tunnel-target.invalid:443 HTTP/1.1"));
+      expect(closes).toEqual(Array(attempts).fill({ code: 1015, reason: "TLS handshake failed", wasClean: false }));
+      expect(leakedSslCtx).toBeLessThanOrEqual(0);
+    } finally {
+      server.close();
+    }
   });
 });
 

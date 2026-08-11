@@ -449,6 +449,67 @@ pub struct DevServer {
 
 bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
+/// Exhaustiveness check: destructures a `&DevServer` without `..`, so adding,
+/// removing, or renaming a field fails to compile at every invocation
+/// (`Drop`, `memory_cost_detailed`), forcing the per-field logic there to be
+/// reviewed. All bindings are `_` so nothing is moved or borrowed past the
+/// statement.
+macro_rules! destructure_dev_server_fields {
+    ($e:expr) => {
+        let crate::bake::dev_server::DevServer {
+            magic: _,
+            root: _,
+            inspector_server_id: _,
+            configuration_hash_key: _,
+            vm: _,
+            server: _,
+            router: _,
+            route_bundles: _,
+            graph_safety_lock: _,
+            client_graph: _,
+            server_graph: _,
+            barrel_files_with_deferrals: _,
+            barrel_needed_exports: _,
+            incremental_result: _,
+            route_lookup: _,
+            html_router: _,
+            assets: _,
+            source_maps: _,
+            bundling_failures: _,
+            frontend_only: _,
+            has_tailwind_plugin_hack: _,
+            server_fetch_function_callback: _,
+            server_register_update_callback: _,
+            bun_watcher: _,
+            directory_watchers: _,
+            watcher_atomics: _,
+            testing_batch_events: _,
+            generation: _,
+            bundles_since_last_error: _,
+            framework: _,
+            bundler_framework_views: _,
+            bundler_options: _,
+            server_transpiler: _,
+            client_transpiler: _,
+            ssr_transpiler: _,
+            log: _,
+            plugin_state: _,
+            current_bundle: _,
+            next_bundle: _,
+            deferred_request_pool: _,
+            active_websocket_connections: _,
+            dump_dir: _,
+            emit_incremental_visualizer_events: _,
+            emit_memory_visualizer_events: _,
+            memory_visualizer_timer: _,
+            has_pre_crash_handler: _,
+            assume_perfect_incremental_bundling: _,
+            broadcast_console_log_from_browser_to_server: _,
+        } = $e;
+    };
+}
+pub(crate) use destructure_dev_server_fields;
+
 pub(super) const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
 pub(super) const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
@@ -1070,62 +1131,11 @@ impl Drop for DevServer {
         // practice, so a plain fetch_add is fine.
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Exhaustiveness check: destructuring without `..` fails to compile when a field is added,
-        // removed, or renamed, forcing this Drop to be reviewed. All bindings
-        // are `_` so nothing is moved; cleanup not done explicitly below
-        // happens via the implicit field drops after this body returns.
-        {
-            let DevServer {
-                magic: _,
-                root: _,
-                inspector_server_id: _,
-                configuration_hash_key: _,
-                vm: _,
-                server: _,
-                router: _,
-                route_bundles: _,
-                graph_safety_lock: _,
-                client_graph: _,
-                server_graph: _,
-                barrel_files_with_deferrals: _,
-                barrel_needed_exports: _,
-                incremental_result: _,
-                route_lookup: _,
-                html_router: _,
-                assets: _,
-                source_maps: _,
-                bundling_failures: _,
-                frontend_only: _,
-                has_tailwind_plugin_hack: _,
-                server_fetch_function_callback: _,
-                server_register_update_callback: _,
-                bun_watcher: _,
-                directory_watchers: _,
-                watcher_atomics: _,
-                testing_batch_events: _,
-                generation: _,
-                bundles_since_last_error: _,
-                framework: _,
-                bundler_framework_views: _,
-                bundler_options: _,
-                server_transpiler: _,
-                client_transpiler: _,
-                ssr_transpiler: _,
-                log: _,
-                plugin_state: _,
-                current_bundle: _,
-                next_bundle: _,
-                deferred_request_pool: _,
-                active_websocket_connections: _,
-                dump_dir: _,
-                emit_incremental_visualizer_events: _,
-                emit_memory_visualizer_events: _,
-                memory_visualizer_timer: _,
-                has_pre_crash_handler: _,
-                assume_perfect_incremental_bundling: _,
-                broadcast_console_log_from_browser_to_server: _,
-            } = &*self;
-        }
+        // Exhaustiveness check (see `destructure_dev_server_fields!`): fails to
+        // compile when a field is added, removed, or renamed, forcing this
+        // Drop to be reviewed. Cleanup not done explicitly below happens via
+        // the implicit field drops after this body returns.
+        destructure_dev_server_fields!(&*self);
 
         // WebSockets should be deinitialized before other parts.
         // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,

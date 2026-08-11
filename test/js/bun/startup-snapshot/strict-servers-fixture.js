@@ -31,6 +31,9 @@ queue("s3-blob-delete", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://
 queue("s3-client-stat", () => Bun.s3.stat("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" })); // the client-level entries are a separate family from the blob methods
 queue("s3-client-write", () => Bun.s3.write("k", "x", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }));
 queue("s3-client-list", () => Bun.s3.list({}, { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }));
+const dns = require("node:dns");
+queue("dns-resolve-mx", () => dns.promises.resolveMx("snapshot.invalid")); // the per-record-type methods share one helper; resolve() itself was gated separately
+queue("dns-lookup-service", () => dns.promises.lookupService("127.0.0.1", 22));
 queue("s3-blob-text", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }).text()); // an S3-backed blob is network I/O
 // ...but stdio is each launch's own and must stay usable while building (process.stdin is built on the same machinery).
 queue("stdout-write", () => Bun.write(Bun.stdout, ""));

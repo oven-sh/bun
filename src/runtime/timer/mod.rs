@@ -1234,6 +1234,7 @@ impl All {
         then: bun_core::Timespec,
         now: bun_core::Timespec,
     ) -> usize {
+        self.thread_id = std::thread::current().id(); // the builder's main thread's id, until now
         let delta_ns: i128 = (now.sec as i128 - then.sec as i128) * 1_000_000_000
             + (now.nsec as i128 - then.nsec as i128);
         if then.sec == 0 && then.nsec == 0 {

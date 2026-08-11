@@ -614,6 +614,16 @@ impl StatWatcher {
     /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
     /// without a crate cycle; the slot in `RareData` is an erased
     /// `Option<NonNull<c_void>>` (§Dispatch).
+    /// Snapshot restore: a scheduler the builder created compares against the builder's main thread otherwise.
+    pub(crate) fn readopt_main_thread_after_snapshot_restore(vm: &mut VirtualMachine) {
+        if let Some(p) = *vm.rare_data().node_fs_stat_watcher_scheduler_slot() {
+            // SAFETY: the slot holds a live scheduler owned by this VM; restore is single-threaded, so nothing reads the field concurrently.
+            unsafe {
+                (*p.as_ptr().cast::<StatWatcherScheduler>()).main_thread = thread::current().id()
+            };
+        }
+    }
+
     fn lazy_scheduler(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         // SAFETY: `vm` is the live per-thread VM; called only from the JS thread.
         let slot = unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot();

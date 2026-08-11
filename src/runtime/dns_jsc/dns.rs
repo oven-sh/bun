@@ -5410,6 +5410,7 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5951,6 +5952,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 2 {

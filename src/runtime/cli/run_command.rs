@@ -1998,6 +1998,10 @@ pub extern "C" fn Bun__startupSnapshotAdoptMainThreadVM() {
         // SAFETY: main-thread VM; single-threaded at this point of restore.
         let vm = unsafe { &mut *vm_ptr };
         vm.forget_env_derived_defaults_for_snapshot_restore();
+        vm.handle().readopt_js_thread();
+        crate::node::node_fs_stat_watcher::StatWatcher::readopt_main_thread_after_snapshot_restore(
+            vm,
+        );
         {
             let tz: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(&[]); // this launch's, since the loader was just reloaded
             // SAFETY: FFI; `tz` is borrowed from the loader for the duration of the call, and `vm.global` is the live global.

@@ -679,6 +679,8 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
     "s3-client-stat",
     "s3-client-write",
     "s3-client-list",
+    "dns-resolve-mx",
+    "dns-lookup-service",
   ])
     expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
   for (const op of ["stdout-write", "stdin-access"]) expect(out).toContain(`[js] ${op} created`); // stdio is exempt from the gate

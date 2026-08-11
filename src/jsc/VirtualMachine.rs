@@ -6024,24 +6024,22 @@ impl VirtualMachine {
 
             splat_space(w, gutter_width)?;
 
-            // JSC reports UTF-16 columns, but SourceLine::trimmed_text() is UTF-8.
-            // Preserve tabs at their logical positions while emitting one padding
-            // cell per UTF-16 code unit for every other codepoint.
+            // Preserve tabs at their logical positions. Supplementary codepoints
+            // occupy two UTF-16 code units, so emit two padding cells for them.
             let codepoints = CodepointIterator::init(line);
             let mut cursor = Cursor::default();
-            let mut units_written = 0;
-            while units_written < column && codepoints.next(&mut cursor) {
+            let mut codepoints_written = 0;
+            while codepoints_written < column && codepoints.next(&mut cursor) {
                 let codepoint_width = 1 + usize::from(cursor.c > 0xFFFF);
-                let remaining = column - units_written;
                 if cursor.c == '\t' as i32 {
                     w.write_all(b"\t")?;
                 } else {
-                    splat_space(w, codepoint_width.min(remaining) as u64)?;
+                    splat_space(w, codepoint_width as u64)?;
                 }
-                units_written += codepoint_width;
+                codepoints_written += 1;
             }
 
-            splat_space(w, column.saturating_sub(units_written) as u64)
+            splat_space(w, column.saturating_sub(codepoints_written) as u64)
         }
         #[inline]
         fn count_digits(n: i32) -> u64 {

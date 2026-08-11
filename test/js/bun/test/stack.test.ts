@@ -85,9 +85,12 @@ test("err.line and err.column are set", async () => {
   );
 });
 
-test.concurrent("runtime error caret preserves tabs before the error column (#10857)", async () => {
+test.concurrent.each([
+  ["\t123 + error()", "1 | \t123 + error()", "    \t      ^"],
+  ['"😀"\t+ error()', '1 | "😀"\t+ error()', "        \t  ^"],
+])("runtime error caret preserves source padding (#10857)", async (script, expectedSource, expectedCaret) => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "\t123 + error()"],
+    cmd: [bunExe(), "-e", script],
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -98,12 +101,12 @@ test.concurrent("runtime error caret preserves tabs before the error column (#10
 
   expect({
     stdout,
-    source: lines.find(line => line.includes("123 + error()")),
+    source: lines.find(line => line.startsWith("1 | ")),
     caret: lines.find(line => line.trimEnd().endsWith("^")),
   }).toEqual({
     stdout: "",
-    source: "1 | \t123 + error()",
-    caret: "    \t      ^",
+    source: expectedSource,
+    caret: expectedCaret,
   });
   expect(exitCode).toBe(1);
 });

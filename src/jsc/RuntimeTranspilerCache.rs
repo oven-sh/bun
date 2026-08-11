@@ -51,9 +51,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: Files with `export` or top-level `await` no longer bind `module`/
-/// `exports`, so `module.require()` in them is no longer rewritten to `require()`
-/// and `--define` applies to the identifiers.
+/// Version 26: `module`/`exports` are free identifiers in files with `export` or top-level `await`.
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

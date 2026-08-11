@@ -14,6 +14,7 @@
 #endif
 
 extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn);
 
 namespace Bun {
 
@@ -99,6 +100,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned after = original->refCount();
     return JSValue::encode(jsNumber(static_cast<int32_t>(after) - static_cast<int32_t>(before)));
+}
+
+// Refcount of the calling JS frame's source URL StringImpl as it stands once
+// this call returns. Goes through Bun__CallFrame__getCallerSrcLoc, the binding
+// Bun.cron and inline snapshots locate their caller with, so every ref a
+// consumer of that binding leaks shows up as +1 between two readings.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_callerSourceURLRefCount, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    BunString sourceURL = { BunStringTag::Dead };
+    unsigned line = 0;
+    unsigned column = 0;
+    Bun__CallFrame__getCallerSrcLoc(callFrame, globalObject, &sourceURL, &line, &column);
+    if (sourceURL.tag != BunStringTag::WTFStringImpl) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        return throwVMTypeError(globalObject, scope, "callerSourceURLRefCount() must be called from JavaScript that has a source URL"_s);
+    }
+
+    // The binding returned a +1 ref that this function owns; report the count
+    // without it, then release it.
+    const unsigned refCount = sourceURL.impl.wtf->refCount() - 1;
+    sourceURL.deref();
+    return JSValue::encode(jsNumber(refCount));
 }
 
 extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);

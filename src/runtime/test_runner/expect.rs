@@ -1117,10 +1117,6 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = call_frame.get_caller_src_loc(global_this);
-            // bun_core::String is Copy
-            // with no Drop, so wrap in the RAII guard to release the +1 on
-            // every exit path (including the early returns below).
-            let _srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.

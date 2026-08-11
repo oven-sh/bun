@@ -673,6 +673,25 @@ export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction
   0,
 );
 
+/**
+ * Refcount of the calling file's source URL string, read through the same
+ * caller-location binding that `Bun.cron()` and inline snapshots use. After a
+ * `Bun.gc(true)` (loading a module leaves garbage that still references its
+ * URL), two readings taken from the same file differ by exactly the number of
+ * references leaked (or over-released) in between.
+ *
+ * "Calling file" is the nearest JS frame still on the stack. JSC compiles both
+ * `return f()` and `const r = f(); return r;` as tail calls, which drop the
+ * calling function's frame and attribute the call to its caller's file, so a
+ * wrapper in another file must do something else with the result (e.g. assign
+ * it to a property) rather than return it.
+ */
+export const callerSourceURLRefCount: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_callerSourceURLRefCount",
+  0,
+);
+
 export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_lowercaseHeaderNameSIMD",

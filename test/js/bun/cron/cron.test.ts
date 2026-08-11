@@ -1,3 +1,4 @@
+import { callerSourceURLRefCount } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -151,6 +152,29 @@ describe("Bun.cron API", () => {
       "test%file.ts": `export default { scheduled() {} };`,
     });
     expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
+  // Bun.cron() resolves the job path against the file that called it. Looking
+  // that file up hands back a reference to its source URL string, which every
+  // registration has to release again, whether or not the path resolves.
+  test("registering releases the reference it takes on the caller's source URL", () => {
+    using dir = tempDir("bun-cron-test", {
+      "job%.ts": `export default { scheduled() {} };`,
+    });
+    // Loading this file leaves garbage that still references its URL; collect
+    // it so the two readings can only differ by what the registrations leak.
+    const refCount = () => {
+      Bun.gc(true);
+      return callerSourceURLRefCount();
+    };
+    const before = refCount();
+    for (let i = 0; i < 4; i++) {
+      expect(() => Bun.cron("./does-not-exist.ts", "* * * * *", "test-srcloc")).toThrow("Failed to resolve path");
+      expect(() => Bun.cron(`${dir}/job%.ts`, "* * * * *", "test-srcloc")).toThrow(
+        "Path must not contain percent signs (cron interprets % as newline)",
+      );
+    }
+    expect(refCount()).toBe(before);
   });
 
   test("remove throws with invalid title characters", () => {

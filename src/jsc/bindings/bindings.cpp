@@ -6535,7 +6535,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
 
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
-        sourceURL = remappedFrame.source_url.toWTFString();
+        sourceURL = remappedFrame.source_url.transferToWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
         lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }

@@ -149,7 +149,11 @@ impl CallFrame {
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
         Bun__CallFrame__getCallerSrcLoc(self, global_this, &mut str, &mut line, &mut column);
-        CallerSrcLoc { str, line, column }
+        CallerSrcLoc {
+            str: bun_core::OwnedString::new(str),
+            line,
+            column,
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -221,7 +225,9 @@ impl<const MAX: usize> Arguments<MAX> {
 }
 
 pub struct CallerSrcLoc {
-    pub str: bun_core::String,
+    /// `Bun__CallFrame__getCallerSrcLoc` writes a +1 ref on the caller's
+    /// source URL into its out-param; owning it here releases it on drop.
+    pub str: bun_core::OwnedString,
     pub line: c_uint,
     pub column: c_uint,
 }

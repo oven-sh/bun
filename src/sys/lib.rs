@@ -6075,7 +6075,17 @@ pub mod macho {
             if self.index >= self.ncmds {
                 return None;
             }
-            let rest = cmds.get(self.offset..)?;
+            let Some(lc) = Self::parse_at(cmds, self.offset) else {
+                self.index = self.ncmds;
+                return None;
+            };
+            self.offset += lc.data.len();
+            self.index += 1;
+            Some(lc)
+        }
+
+        fn parse_at(cmds: &[u8], offset: usize) -> Option<LoadCommand<'_>> {
+            let rest = cmds.get(offset..)?;
             let hdr: load_command = rest
                 .get(..size_of::<load_command>())
                 .map(bytemuck::pod_read_unaligned)?;
@@ -6083,14 +6093,11 @@ pub mod macho {
             if cmdsize < size_of::<load_command>() {
                 return None;
             }
-            let lc = LoadCommand {
+            Some(LoadCommand {
                 hdr,
                 data: rest.get(..cmdsize)?,
-                offset: self.offset,
-            };
-            self.offset += cmdsize;
-            self.index += 1;
-            Some(lc)
+                offset,
+            })
         }
     }
 }

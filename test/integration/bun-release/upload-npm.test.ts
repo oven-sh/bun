@@ -7,8 +7,11 @@ import { platforms } from "../../../packages/bun-release/src/platform";
 // Runs packages/bun-release/scripts/upload-npm.ts against a fake GitHub release.
 // Its dependencies are stubbed: octokit answers every release lookup with
 // release.json, jszip treats a downloaded "zip" as an archive holding `${body}/bun`,
-// and esbuild (only used to bundle the postinstall script) does nothing.
-const packageDir = path.join(import.meta.dir, "..", "..", "..", "packages", "bun-release");
+// and esbuild (only used to bundle the postinstall script) does nothing. src/spawn.ts
+// (covered by spawn.test.ts) is replaced with a copy that records every command in
+// spawn.log instead of running it, so npm itself is never invoked.
+const repoDir = path.join(import.meta.dir, "..", "..", "..");
+const packageDir = path.join(repoDir, "packages", "bun-release");
 
 const sources: Record<string, string> = {
   "scripts/upload-npm.ts": readFileSync(path.join(packageDir, "scripts", "upload-npm.ts"), "utf8"),
@@ -16,6 +19,13 @@ const sources: Record<string, string> = {
 for (const name of new Bun.Glob("*.ts").scanSync(path.join(packageDir, "src"))) {
   sources[`src/${name}`] = readFileSync(path.join(packageDir, "src", name), "utf8");
 }
+sources["src/spawn.ts"] = `
+  import { appendFileSync } from "fs";
+  export function spawn(cmd, args, options = {}) {
+    appendFileSync(new URL("../spawn.log", import.meta.url), JSON.stringify({ cmd, args, cwd: options.cwd }) + "\\n");
+    return { exitCode: 0, stdout: "", stderr: "" };
+  }
+`;
 
 const stubs = {
   "node_modules/octokit/package.json": JSON.stringify({ name: "octokit", version: "0.0.0", main: "index.js" }),
@@ -47,6 +57,7 @@ const version = "1.0.0";
 const tagName = `bun-v${version}`;
 const missingPrefix = `Release "${tagName}" is missing assets: `;
 const host = platforms.filter(({ os, arch }) => os === process.platform && arch === process.arch);
+const allBins = platforms.map(({ bin }) => bin);
 
 function serveAssets(downloaded: string[]) {
   return Bun.serve({
@@ -72,11 +83,12 @@ function releaseDir(name: string, assets: ReturnType<typeof assetsOn>) {
   });
 }
 
-async function uploadNpm(cwd: string, ...args: string[]) {
+async function uploadNpm(cwd: string, action: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join("scripts", "upload-npm.ts"), version, ...args],
+    cmd: [bunExe(), path.join("scripts", "upload-npm.ts"), version, action],
     cwd,
-    env: bunEnv,
+    // src/console.ts switches to "::error::" annotations when GITHUB_ACTION is set.
+    env: { ...bunEnv, GITHUB_ACTION: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -89,18 +101,35 @@ function missingAssets(stderr: string): string[] | undefined {
   return line?.slice(line.indexOf(missingPrefix) + missingPrefix.length).split(", ");
 }
 
-test.concurrent("builds the host's packages from the release assets", async () => {
+/** The npm commands the script ran, in order, as `{ cwd, args }` with `cwd` relative to the package. */
+function npmCalls(dir: string): { cwd: string; args: string[] }[] {
+  const log = path.join(dir, "spawn.log");
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+    .filter(({ cmd }) => cmd === "npm")
+    .map(({ cwd, args }) => ({ cwd, args }));
+}
+
+function npmCallsFor(bins: string[], args: string[]) {
+  return [...bins.map(bin => ({ cwd: path.join("npm", "@oven", bin), args })), { cwd: path.join("npm", "bun"), args }];
+}
+
+test.concurrent("dry-run builds and packs the host's packages, then the root package", async () => {
   const downloaded: string[] = [];
   using server = serveAssets(downloaded);
-  const bins = platforms.map(({ bin }) => bin);
-  using dir = releaseDir("complete", assetsOn(server, bins));
+  using dir = releaseDir("dry-run", assetsOn(server, allBins));
   const cwd = String(dir);
 
-  const { stderr, exitCode } = await uploadNpm(cwd);
-  expect(stderr).toBe("");
+  const { stderr, exitCode } = await uploadNpm(cwd, "dry-run");
+  // publishModule() echoes each npm command's (here empty) output as a line on stderr.
+  expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 
-  expect(downloaded).toEqual(host.map(({ bin }) => bin));
+  const hostBins = host.map(({ bin }) => bin);
+  expect(downloaded).toEqual(hostBins);
   for (const { bin, exe, os, arch } of host) {
     const module = path.join(cwd, "npm", "@oven", bin);
     expect(readFileSync(path.join(module, exe), "utf8")).toBe(bin);
@@ -117,35 +146,92 @@ test.concurrent("builds the host's packages from the release assets", async () =
   expect(root.optionalDependencies).toEqual(
     Object.fromEntries(platforms.filter(({ alias }) => !alias).map(({ bin }) => [`@oven/${bin}`, version])),
   );
+  expect(npmCalls(cwd)).toEqual(npmCallsFor(hostBins, ["pack"]));
 });
 
-test.concurrent("fails before building anything when a selected platform has no asset", async () => {
+test.concurrent("dry-run fails before building anything when a host platform has no asset", async () => {
   const downloaded: string[] = [];
   using server = serveAssets(downloaded);
   const [absent] = host;
-  const bins = platforms.filter(platform => platform !== absent).map(({ bin }) => bin);
-  using dir = releaseDir("incomplete", assetsOn(server, bins));
+  using dir = releaseDir(
+    "dry-run-incomplete",
+    assetsOn(
+      server,
+      allBins.filter(bin => bin !== absent.bin),
+    ),
+  );
   const cwd = String(dir);
 
-  const { stderr, exitCode } = await uploadNpm(cwd);
+  const { stderr, exitCode } = await uploadNpm(cwd, "dry-run");
   expect(stderr).toContain(missingPrefix);
   expect(missingAssets(stderr)).toEqual([`${absent.bin}.zip`]);
   expect(exitCode).toBe(1);
 
   expect(downloaded).toEqual([]);
   expect(existsSync(path.join(cwd, "npm"))).toBe(false);
+  expect(npmCalls(cwd)).toEqual([]);
 });
 
-test.concurrent("publish checks every platform in platform.ts for an asset", async () => {
-  // With no assets at all there is never a package directory for `npm publish` to
-  // run in, so this stays harmless even if the check it exercises were missing.
-  using dir = releaseDir("publish", []);
+test.concurrent("publish builds and publishes every platform in platform.ts, then the root package", async () => {
+  const downloaded: string[] = [];
+  using server = serveAssets(downloaded);
+  using dir = releaseDir("publish", assetsOn(server, allBins));
+  const cwd = String(dir);
+
+  const { stderr, exitCode } = await uploadNpm(cwd, "publish");
+  expect(stderr.trim()).toBe("");
+  expect(exitCode).toBe(0);
+
+  expect(downloaded).toEqual(allBins);
+  expect(npmCalls(cwd)).toEqual(npmCallsFor(allBins, ["publish", "--access", "public", "--tag", "latest"]));
+});
+
+test.concurrent("publish publishes nothing when any platform has no asset", async () => {
+  const downloaded: string[] = [];
+  using server = serveAssets(downloaded);
+  const absent = platforms.find(platform => !host.includes(platform))!;
+  using dir = releaseDir(
+    "publish-incomplete",
+    assetsOn(
+      server,
+      allBins.filter(bin => bin !== absent.bin),
+    ),
+  );
   const cwd = String(dir);
 
   const { stderr, exitCode } = await uploadNpm(cwd, "publish");
   expect(stderr).toContain(missingPrefix);
-  expect(missingAssets(stderr)).toEqual(platforms.map(({ bin }) => `${bin}.zip`));
+  expect(missingAssets(stderr)).toEqual([`${absent.bin}.zip`]);
   expect(exitCode).toBe(1);
 
+  expect(downloaded).toEqual([]);
   expect(existsSync(path.join(cwd, "npm"))).toBe(false);
+  expect(npmCalls(cwd)).toEqual([]);
+});
+
+test.concurrent("publish reports every missing asset at once", async () => {
+  using dir = releaseDir("publish-empty", []);
+  const cwd = String(dir);
+
+  const { stderr, exitCode } = await uploadNpm(cwd, "publish");
+  expect(stderr).toContain(missingPrefix);
+  expect(missingAssets(stderr)).toEqual(allBins.map(bin => `${bin}.zip`));
+  expect(exitCode).toBe(1);
+
+  expect(npmCalls(cwd)).toEqual([]);
+});
+
+// The zips come from .buildkite/scripts/upload-release.sh, so a platform added to
+// platform.ts without also being uploaded there fails every release until both agree.
+test("upload-release.sh uploads a zip for every platform in platform.ts", () => {
+  const script = readFileSync(path.join(repoDir, ".buildkite", "scripts", "upload-release.sh"), "utf8");
+  const uploaded = new Set([
+    ...script
+      .match(/artifacts=\(([^)]*)\)/)![1]
+      .split(/\s+/)
+      .filter(Boolean),
+    // The -baseline zips are repacked from the plain ones by alias_baseline_artifact.
+    ...[...script.matchAll(/echo "([^"]+\.zip)"/g)].map(([, zip]) => zip),
+  ]);
+  expect(allBins.map(bin => `${bin}.zip`).filter(zip => !uploaded.has(zip))).toEqual([]);
 });

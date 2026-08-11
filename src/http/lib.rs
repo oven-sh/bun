@@ -2597,7 +2597,15 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
+        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
         let keep_alive_possible = self.is_keep_alive_possible();
+        // There is no struct copy-back
+        // (`sync_progress_from` skips owned fields) and the original retains
+        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
+        // clone was created via `ptr::read`). Dropping it here would
+        // double-free when the original later runs `clear_data()`. Forget the
+        // clone's view; the original is the sole owner.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2663,11 +2671,6 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.clear_hostname_on_redirect {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
-            // The HTTP-thread clone shares this allocation with the JS-thread
-            // original (created via `ptr::read`); dropping it here would
-            // double-free when the original later runs `clear_data()`. Forget
-            // the clone's view; the original is the sole owner.
-            let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         }
 
         // TODO: should this check be before decrementing the redirect count?
@@ -4314,11 +4317,14 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.clear_hostname_on_redirect {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
-            let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
+        // See `do_redirect`: the HTTP-thread clone shares this allocation
+        // with the JS-thread original (created via `ptr::read`); dropping it
+        // here double-frees once the original runs `clear_data()`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {

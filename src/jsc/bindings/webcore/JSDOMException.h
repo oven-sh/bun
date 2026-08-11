@@ -80,12 +80,18 @@ public:
     void setStackString(JSC::VM&, WTF::String&&);
     void putHeaderStackIfNoFrames(JSC::VM&);
 
+    // An own data property wins over the wrapped impl, as it does for a plain Error. Never allocates or runs JS.
+    WTF::String displayName(JSC::VM&) const;
+    WTF::String displayMessage(JSC::VM&) const;
+
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
 
     void finishCreation(JSC::VM&);
 
 private:
+    WTF::String ownStringOr(JSC::VM&, JSC::PropertyName, WTF::String&& fallback) const;
+
     Ref<DOMException> m_wrapped;
 };
 

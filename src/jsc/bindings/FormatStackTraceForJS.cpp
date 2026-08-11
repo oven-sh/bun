@@ -416,8 +416,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(
                 lexicalGlobalObject = errorInstance->globalObject();
             }
             if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(instance)) {
-                name = domException->wrapped().name();
-                message = domException->wrapped().message();
+                name = domException->displayName(vm);
+                message = domException->displayMessage(vm);
             } else {
                 name = instance->sanitizedNameString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, {});

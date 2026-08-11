@@ -186,6 +186,34 @@ describe("DOMException in Node.js environment", () => {
     expect(new DOMException("", "AbortError").stack.split("\n")[0]).toBe("AbortError");
   });
 
+  it("own name/message properties win in the stack header, like a plain Error", () => {
+    const define = error => {
+      Object.defineProperty(error, "name", { value: "CustomError", configurable: true });
+      Object.defineProperty(error, "message", { value: "custom message", configurable: true });
+      return error.stack.split("\n")[0];
+    };
+    expect(define(new DOMException("boom", "AbortError"))).toBe(define(new Error("boom")));
+  });
+
+  it("own name property wins in the uncaught exception report", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const error = new DOMException("boom", "AbortError");
+         Object.defineProperty(error, "name", { value: "CustomError" });
+         throw error;`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The source line echoed above the report still says AbortError; only the report line must not.
+    expect(stderr).toContain("\nCustomError: boom\n");
+    expect(stderr).not.toContain("\nAbortError: boom\n");
+    expect(exitCode).toBe(1);
+  });
+
   it("util.inspect shows the error name and message", () => {
     const error = new DOMException("boom", "AbortError");
     const inspected = inspect(error);

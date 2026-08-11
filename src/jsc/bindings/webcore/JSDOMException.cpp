@@ -255,10 +255,30 @@ void JSDOMException::putHeaderStackIfNoFrames(VM& vm)
     auto* trace = stackTrace();
     if (trace && !trace->isEmpty())
         return;
-    auto& impl = wrapped();
-    auto name = impl.name();
-    auto message = impl.message();
+    auto name = displayName(vm);
+    auto message = displayMessage(vm);
     setStackString(vm, message.isEmpty() ? name : makeString(name, ": "_s, message));
+}
+
+String JSDOMException::ownStringOr(VM& vm, PropertyName propertyName, String&& fallback) const
+{
+    JSValue own = getDirect(vm, propertyName);
+    if (!own || !own.isString())
+        return WTF::move(fallback);
+    auto* string = asString(own);
+    if (string->isRope()) // Resolving would allocate; callers may be inside a finalizer.
+        return WTF::move(fallback);
+    return String(string->tryGetValue(false));
+}
+
+String JSDOMException::displayName(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->name, wrapped().name());
+}
+
+String JSDOMException::displayMessage(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->message, wrapped().message());
 }
 
 template<typename Visitor>

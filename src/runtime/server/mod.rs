@@ -2468,7 +2468,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, StaticRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        *p,
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2479,7 +2479,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                *p,
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2491,7 +2491,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, FileRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        *p,
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2502,7 +2502,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                *p,
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2514,7 +2514,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, DirectoryRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        *p,
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2525,7 +2525,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                *p,
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2537,7 +2537,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
                         any_server,
                         app,
-                        r.as_ptr(),
+                        r.data,
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2548,7 +2548,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                r.as_ptr(),
+                                r.data,
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,

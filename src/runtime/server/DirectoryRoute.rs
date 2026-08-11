@@ -3,12 +3,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
-use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
 use bun_paths::resolve_path;
+use bun_ptr::ThisPtr;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
@@ -103,34 +103,23 @@ impl DirectoryRoute {
         drop(File::from_fd(this.root_fd.get()));
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_head_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
-        Self::on(NonNull::new(this).unwrap(), req, resp, Method::HEAD);
+    pub fn on_head_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+        Self::on(this, req, resp, Method::HEAD);
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
+    pub fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(NonNull::new(this).unwrap(), req, resp, method);
+        Self::on(this, req, resp, method);
     }
 
-    // `this_ptr` (not `&self`) because it is stashed as `FileResponseStream`'s
+    // `ThisPtr` (not `&self`) because it is stashed as `FileResponseStream`'s
     // ctx userdata; `on_stream_complete` may drop the last ref after a reload,
     // and `Box::from_raw` on a `&self`-derived pointer is UB under Stacked
     // Borrows. See src/CLAUDE.md §Pointer provenance at FFI boundaries.
-    fn on(
-        this_ptr: NonNull<DirectoryRoute>,
-        mut req: AnyRequest,
-        resp: AnyResponse,
-        method: Method,
-    ) {
-        let this = bun_ptr::BackRef::from(this_ptr);
+    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
         this.ref_();
-        let guard = ResponseGuard {
-            route: this_ptr,
-            resp,
-        };
+        let guard = ResponseGuard { route: this, resp };
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
@@ -371,11 +360,11 @@ impl DirectoryRoute {
         (ms, buf, len)
     }
 
-    fn on_response_complete(this: NonNull<DirectoryRoute>, resp: AnyResponse) {
+    fn on_response_complete(this: ThisPtr<DirectoryRoute>, resp: AnyResponse) {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = bun_ptr::BackRef::from(this).server.get() {
+        if let Some(mut server) = this.server.get() {
             server.on_static_request_complete();
         }
         // SAFETY: intrusive refcount; `ref_()` in `on()` pairs with this.
@@ -385,7 +374,7 @@ impl DirectoryRoute {
 
 /// Releases the route ref (and file, if any) on every non-streaming return.
 struct ResponseGuard {
-    route: NonNull<DirectoryRoute>,
+    route: ThisPtr<DirectoryRoute>,
     resp: AnyResponse,
 }
 
@@ -402,11 +391,14 @@ impl Drop for ResponseGuard {
 }
 
 fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
-    DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
+    // SAFETY: `ctx` is the route handed over by `ResponseGuard::into_ctx`; the
+    // ref taken in `on()` keeps it live until this completion callback.
+    DirectoryRoute::on_response_complete(unsafe { ThisPtr::new(ctx.cast()) }, resp);
 }
 
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
-    DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
+    // SAFETY: see `on_stream_complete` above.
+    DirectoryRoute::on_response_complete(unsafe { ThisPtr::new(ctx.cast()) }, resp);
 }
 
 // `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.

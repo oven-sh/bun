@@ -1,9 +1,11 @@
+use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
+use bun_ptr::ThisPtr;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
@@ -309,26 +311,20 @@ impl ServerConfig {
 // NOTE: free `extern "C"` fns are monomorphized per `<SSL, T>` and registered
 // via the raw `c::uws_method_handler` overload.
 
-/// # Safety
-/// `entry` must be a live route pointer that outlives `app` — it is registered
-/// as the uWS userdata and dereferenced from request callbacks for the lifetime
-/// of the app.
-// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
-// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
-// opaque-token forwarding.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// `entry` becomes the uWS userdata of every handler registered here; the route
+/// table's ref keeps it live for as long as the registrations exist (they are
+/// cleared before the table is dropped on reload).
 pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
-    entry: *mut T,
+    entry: NonNull<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<SSL>,
 {
-    // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
+    bun_ptr::BackRef::from(entry).set_server(server);
 
     // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
     // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
@@ -338,10 +334,9 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         req: *mut uws::Request,
         user_data: *mut core::ffi::c_void,
     ) {
-        // SAFETY: uWS invokes this with non-null `resp`/`req` for the duration
-        // of the callback; `user_data` is the `entry` pointer registered below,
-        // kept alive by the route table for the lifetime of the app.
-        let route = user_data.cast::<T>();
+        // SAFETY: `user_data` is the `entry` registered below; the route table's
+        // ref keeps it live for as long as the registration exists.
+        let route = unsafe { ThisPtr::new(user_data.cast::<T>()) };
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
         // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
         // selects the matching `AnyResponse` variant for the const-generic SSL flag.
@@ -350,10 +345,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
-        // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
-        // duration of this uWS callback (see invariants established above);
-        // `on_request` only dereferences them while this frame is live.
-        unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp);
     }
 
     extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
@@ -362,19 +354,17 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         user_data: *mut core::ffi::c_void,
     ) {
         // SAFETY: see `handler` above.
-        let route = user_data.cast::<T>();
+        let route = unsafe { ThisPtr::new(user_data.cast::<T>()) };
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
         let any_resp = if SSL {
             bun_uws_sys::AnyResponse::SSL(resp.cast())
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
-        // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
-        // the callback's duration — same invariants as `handler` above.
-        unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp);
     }
 
-    let user_data = entry.cast::<core::ffi::c_void>();
+    let user_data = entry.as_ptr().cast::<core::ffi::c_void>();
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
@@ -404,40 +394,32 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-/// # Safety
-/// `entry` must be a live route pointer that outlives `app` — it is registered
-/// as the uWS userdata and dereferenced from request callbacks for the lifetime
-/// of the app.
-// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
-// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
-// opaque-token forwarding.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+/// HTTP/3 twin of [`apply_static_route`]; `entry` has the same lifetime contract.
 pub(crate) fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
-    entry: *mut T,
+    entry: NonNull<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<false>,
 {
-    // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
+    bun_ptr::BackRef::from(entry).set_server(server);
 
     fn handler<T: StaticRouteLike<false>>(
         route: &mut T,
         req: &mut uws::h3::Request,
         resp: &mut uws::h3::Response,
     ) {
-        // SAFETY: `route` is the `entry` userdata kept alive by the route table.
-        unsafe {
-            T::on_request(
-                route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
-            )
-        };
+        // SAFETY: `route` is the `entry` registered below; the route table's ref
+        // keeps it live for as long as the registration exists.
+        let route = unsafe { ThisPtr::new(core::ptr::from_mut(route)) };
+        T::on_request(
+            route,
+            bun_uws_sys::AnyRequest::H3(req),
+            bun_uws_sys::AnyResponse::H3(resp),
+        );
     }
     fn head<T: StaticRouteLike<false>>(
         route: &mut T,
@@ -445,111 +427,104 @@ pub(crate) fn apply_static_route_h3<T>(
         resp: &mut uws::h3::Response,
     ) {
         // SAFETY: see `handler` above.
-        unsafe {
-            T::on_head_request(
-                route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
-            )
-        };
+        let route = unsafe { ThisPtr::new(core::ptr::from_mut(route)) };
+        T::on_head_request(
+            route,
+            bun_uws_sys::AnyRequest::H3(req),
+            bun_uws_sys::AnyResponse::H3(resp),
+        );
     }
 
+    let user_data = entry.as_ptr();
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(path, entry, head::<T>);
+        app.head(path, user_data, head::<T>);
     }
     match method {
-        http_method::Optional::Any => app.any(path, entry, handler::<T>),
+        http_method::Optional::Any => app.any(path, user_data, handler::<T>),
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(method_, path, entry, handler::<T>);
+                app.method(method_, path, user_data, handler::<T>);
             }
         }
     }
 }
 
 /// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
-/// (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
-/// Receivers are raw `*mut Self` because the route is registered as the uWS
-/// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
-/// `*mut` to mutate state and stash `self` into onAborted callbacks.
-pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
-    /// SAFETY: `this` is a live route pointer for the lifetime of the app.
-    unsafe fn set_server(this: *mut Self, server: AnyServer);
-    /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles
-    /// valid for the duration of the uWS callback.
-    unsafe fn on_request(
-        this: *mut Self,
+/// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`).
+/// The request handlers take a `ThisPtr` rather than `&self` because the
+/// inherent impls stash the route pointer as onAborted/stream userdata and
+/// release refs through it.
+pub(crate) trait StaticRouteLike<const SSL: bool>: Sized + 'static {
+    fn set_server(&self, server: AnyServer);
+    fn on_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     );
-    /// SAFETY: see `on_request`.
-    unsafe fn on_head_request(
-        this: *mut Self,
+    fn on_head_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     );
 }
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live; `server` is a Cell so &mut
-        // is not required.
-        unsafe { (*this).server.set(Some(server)) };
+    fn set_server(&self, server: AnyServer) {
+        self.server.set(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
+    fn on_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_request(this, req, resp) }
+        // SAFETY: the `ThisPtr` invariant is the inherent fn's contract: a live
+        // heap route, whose root provenance `as_ptr` hands back unchanged.
+        unsafe { Self::on_request(this.as_ptr(), req, resp) }
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
+    fn on_head_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_head_request(this, req, resp) }
+        // SAFETY: see `on_request` above.
+        unsafe { Self::on_head_request(this.as_ptr(), req, resp) }
     }
 }
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).set_server(Some(server)) };
+    fn set_server(&self, server: AnyServer) {
+        self.set_server(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
+    fn on_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        Self::on_request(this, req, resp)
+        Self::on_request(this.as_ptr(), req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
+    fn on_head_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        Self::on_head_request(this, req, resp)
+        Self::on_head_request(this.as_ptr(), req, resp)
     }
 }
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).set_server(Some(server)) };
+    fn set_server(&self, server: AnyServer) {
+        self.set_server(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
+    fn on_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
         Self::on_request(this, req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
+    fn on_head_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
@@ -558,23 +533,22 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
 }
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
-    unsafe fn set_server(this: *mut Self, server: AnyServer) {
-        // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).server.set(Some(server)) };
+    fn set_server(&self, server: AnyServer) {
+        self.server.set(Some(server));
     }
-    unsafe fn on_request(
-        this: *mut Self,
+    fn on_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        Self::on_request(this, req, resp)
+        Self::on_request(this.as_ptr(), req, resp)
     }
-    unsafe fn on_head_request(
-        this: *mut Self,
+    fn on_head_request(
+        this: ThisPtr<Self>,
         req: bun_uws_sys::AnyRequest,
         resp: bun_uws_sys::AnyResponse,
     ) {
-        Self::on_head_request(this, req, resp)
+        Self::on_head_request(this.as_ptr(), req, resp)
     }
 }
 

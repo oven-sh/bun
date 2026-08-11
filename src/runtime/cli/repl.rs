@@ -2622,17 +2622,25 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 while j > 0 && matches!(code[j - 1], b' ' | b'\t') {
                     j -= 1;
                 }
-                // `>>` closing nested generics counts as one closer.
-                while j > 0 && code[j - 1] == b'>' {
-                    j -= 1;
-                }
                 if j > 0 && code[j - 1] == b'/' {
                     true
-                } else if j > 0 && is_word_char(code[j - 1]) {
-                    // Walk a tag/type-argument run (`a.b`, `my-el`, `K, V`) back to its opener.
+                } else if j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b'>' | b']'))
+                {
+                    // Walk the tag-name/type-argument run back to its opener.
                     while j > 0
                         && (is_word_char(code[j - 1])
-                            || matches!(code[j - 1], b'.' | b'-' | b':' | b',' | b' ' | b'\t'))
+                            || matches!(
+                                code[j - 1],
+                                b'.' | b'-'
+                                    | b':'
+                                    | b','
+                                    | b'|'
+                                    | b'['
+                                    | b']'
+                                    | b'>'
+                                    | b' '
+                                    | b'\t'
+                            ))
                     {
                         j -= 1;
                     }

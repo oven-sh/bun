@@ -2186,7 +2186,6 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
-    pub(crate) cancel: bool,
 }
 
 impl Default for NetworkSink {
@@ -2202,7 +2201,6 @@ impl Default for NetworkSink {
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
-            cancel: false,
         }
     }
 }
@@ -2336,7 +2334,6 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         self.source.close(None);
-        self.cancel = true;
         self.finalize();
     }
 
@@ -2522,16 +2519,7 @@ impl NetworkSink {
         if self.task.is_some() && !self.done {
             // we need to wait for the task to end
             self.end_promise = JSPromiseStrong::init(self.global_this());
-            let value = self.end_promise.value();
-            if !self.ended {
-                self.ended = true;
-                // we need to send EOF
-                if let Some(task) = self.task_ref() {
-                    let _ = task.write_bytes(b"", true);
-                }
-                self.source.close(None);
-            }
-            return bun_sys::Result::Ok(value);
+            return bun_sys::Result::Ok(self.end_promise.value());
         }
         // task already detached
         bun_sys::Result::Ok(JSValue::js_number(0.0))

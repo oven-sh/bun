@@ -920,13 +920,14 @@ impl IoRequestLoop {
         request.scheduled = true;
         let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
-        // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
-        // and stay in raw-ptr land via `addr_of!` so we never materialize
-        // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
-        // borrow. `pending.push` and `waker.wake` both take `&self` (lock-free
-        // MPSC push; eventfd write / mach_msg send / uv_async_send).
+        // init of `pending`/`waker`. `get_unchecked` (no owner assert) and a
+        // pointer cast of the `repr(transparent)` `MaybeUninit` (not
+        // `as_mut_ptr(&mut self)`) keep this in raw-ptr land: the only
+        // references formed are the `&pending` / `&waker` autorefs, which may
+        // coexist with the IO thread's `&IoRequestLoop` held across `tick()`.
+        // `pending.push` (lock-free MPSC) and `waker.wake` both take `&self`.
         unsafe {
-            let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
+            let loop_p = LOOP.get_unchecked().cast::<IoRequestLoop>();
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);
             (*core::ptr::addr_of!((*loop_p).waker)).wake();
         }

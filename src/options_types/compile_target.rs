@@ -49,7 +49,7 @@ impl Default for CompileTarget {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Libc {
     /// The default libc for the target
     /// "glibc" for linux, unspecified for other OSes
@@ -77,6 +77,15 @@ impl fmt::Display for Libc {
     }
 }
 
+bun_core::comptime_string_map! {
+    /// `--target` segments that pick a libc; only meaningful together with linux.
+    static LIBC_NAMES: Libc = {
+        b"glibc" => Libc::Default,
+        b"musl" => Libc::Musl,
+        b"android" => Libc::Android,
+    };
+}
+
 struct BaselineFormatter {
     baseline: bool,
 }
@@ -90,12 +99,50 @@ impl fmt::Display for BaselineFormatter {
     }
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ParseError {
-    #[error("UnsupportedTarget")]
-    UnsupportedTarget,
-    #[error("InvalidTarget")]
-    InvalidTarget,
+/// Why a `--target` string was rejected. `Display` is the CLI error message.
+#[derive(thiserror::Error, Debug, Clone, Copy)]
+pub enum ParseError<'a> {
+    /// `segment` is not an architecture, OS, CPU tier, libc or version. `input` is the string
+    /// that was parsed (everything after `bun`), echoed back in the message.
+    UnsupportedSegment {
+        segment: &'a [u8],
+        input: &'a [u8],
+    },
+    /// A `-vX.Y.Z` segment missing one of its three components.
+    IncompleteVersion,
+    /// A libc segment was combined with a non-linux OS.
+    LibcRequiresLinux(Libc),
+    Wasm,
+}
+
+impl fmt::Display for ParseError<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ParseError::UnsupportedSegment { segment, input } => write!(
+                f,
+                "Unsupported target {} in \"bun{}\"\n\
+                 To see the supported targets:\n  \
+                 https://bun.com/docs/bundler/executables",
+                bun_fmt::quote(segment),
+                bstr::BStr::new(input),
+            ),
+            ParseError::IncompleteVersion => write!(
+                f,
+                "Please pass a complete version number to --target. For example, --target=bun-v{}",
+                Environment::VERSION_STRING,
+            ),
+            ParseError::LibcRequiresLinux(Libc::Default) => {
+                f.write_str("invalid target, glibc only exists on linux")
+            }
+            ParseError::LibcRequiresLinux(Libc::Musl) => {
+                f.write_str("invalid target, musl libc only exists on linux")
+            }
+            ParseError::LibcRequiresLinux(Libc::Android) => f.write_str(
+                "invalid target, android only exists with linux (use bun-linux-arm64-android)",
+            ),
+            ParseError::Wasm => f.write_str("invalid target, WebAssembly is not supported. Sorry!"),
+        }
+    }
 }
 
 impl CompileTarget {
@@ -238,7 +285,7 @@ impl CompileTarget {
         }
     }
 
-    pub fn try_from(input_: &[u8]) -> Result<CompileTarget, ParseError> {
+    pub fn try_from(input_: &[u8]) -> Result<CompileTarget, ParseError<'_>> {
         let mut this = CompileTarget::default();
         let input = strings::trim(input_, b" \t\r");
         if input.is_empty() {
@@ -284,7 +331,7 @@ impl CompileTarget {
                         || version.version.minor.is_none()
                         || version.version.patch.is_none()
                     {
-                        return Err(ParseError::InvalidTarget);
+                        return Err(ParseError::IncompleteVersion);
                     }
 
                     this.version = Version {
@@ -297,20 +344,15 @@ impl CompileTarget {
                     _found_version = true;
                     continue;
                 }
-            } else if token == b"glibc" {
-                this.libc = Libc::Default;
-                found_libc = true;
-                continue;
-            } else if token == b"musl" {
-                this.libc = Libc::Musl;
-                found_libc = true;
-                continue;
-            } else if token == b"android" {
-                this.libc = Libc::Android;
+            } else if let Some(libc) = LIBC_NAMES.get(token) {
+                this.libc = *libc;
                 found_libc = true;
                 continue;
             } else {
-                return Err(ParseError::UnsupportedTarget);
+                return Err(ParseError::UnsupportedSegment {
+                    segment: token,
+                    input: input_,
+                });
             }
         }
 
@@ -334,11 +376,11 @@ impl CompileTarget {
 
         // Not `libc != Default`: an explicit "glibc" parses to `Default` and is just as invalid off linux.
         if found_libc && this.os != OperatingSystem::Linux {
-            return Err(ParseError::InvalidTarget);
+            return Err(ParseError::LibcRequiresLinux(this.libc));
         }
 
         if this.arch == Architecture::Wasm || this.os == OperatingSystem::Wasm {
-            return Err(ParseError::InvalidTarget);
+            return Err(ParseError::Wasm);
         }
 
         Ok(this)
@@ -347,65 +389,8 @@ impl CompileTarget {
     pub fn from(input_: &[u8]) -> CompileTarget {
         match Self::try_from(input_) {
             Ok(t) => t,
-            Err(ParseError::UnsupportedTarget) => {
-                let input = strings::trim(input_, b" \t\r");
-                let mut splitter = strings::split(input, b"-");
-                let mut unsupported_token: Option<&[u8]> = None;
-                while let Some(token) = splitter.next() {
-                    if token.is_empty() {
-                        continue;
-                    }
-                    if ARCHITECTURE_NAMES.get(token).is_none()
-                        && OPERATING_SYSTEM_NAMES.get(token).is_none()
-                        && token != b"modern"
-                        && token != b"baseline"
-                        && token != b"glibc"
-                        && token != b"musl"
-                        && token != b"android"
-                        && !(strings::has_prefix(token, b"v1.")
-                            || strings::has_prefix(token, b"v0."))
-                    {
-                        unsupported_token = Some(token);
-                        break;
-                    }
-                }
-
-                if let Some(token) = unsupported_token {
-                    bun_core::err_generic!(
-                        "Unsupported target {} in \"bun{}\"\n\
-                         To see the supported targets:\n  \
-                         https://bun.com/docs/bundler/executables",
-                        bun_fmt::quote(token),
-                        bstr::BStr::new(input_),
-                    );
-                } else {
-                    bun_core::err_generic!("Unsupported target: {}", bstr::BStr::new(input_));
-                }
-                Global::exit(1);
-            }
-            Err(ParseError::InvalidTarget) => {
-                let input = strings::trim(input_, b" \t\r");
-                if strings::contains(input, b"musl") && !strings::contains(input, b"linux") {
-                    bun_core::err_generic!("invalid target, musl libc only exists on linux");
-                } else if strings::contains(input, b"glibc") && !strings::contains(input, b"linux")
-                {
-                    bun_core::err_generic!("invalid target, glibc only exists on linux");
-                } else if strings::contains(input, b"android")
-                    && !strings::contains(input, b"linux")
-                {
-                    bun_core::err_generic!(
-                        "invalid target, android only exists with linux (use bun-linux-arm64-android)"
-                    );
-                } else if strings::contains(input, b"wasm") {
-                    bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
-                } else if strings::contains(input, b"v") {
-                    bun_core::err_generic!(
-                        "Please pass a complete version number to --target. For example, --target=bun-v{}",
-                        Environment::VERSION_STRING,
-                    );
-                } else {
-                    bun_core::err_generic!("Invalid target: {}", bstr::BStr::new(input_));
-                }
+            Err(err) => {
+                bun_core::err_generic!("{}", err);
                 Global::exit(1);
             }
         }

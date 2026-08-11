@@ -226,7 +226,9 @@ To build for macOS x64:
 
 ### Supported targets
 
-The segments of the `--target` value can appear in any order, as long as they're delimited by `-`. Linux targets also accept a libc segment: `-musl` selects the musl build, and `-glibc` (for example `bun-linux-x64-glibc`) explicitly selects the glibc build that the plain `bun-linux-*` targets below use.
+The segments of the `--target` value can appear in any order, as long as they're delimited by `-`.
+
+Linux targets also accept a libc segment, `-glibc` or `-musl` (for example `bun-linux-x64-glibc`), which selects that libc's build of Bun no matter which build is running. Without one, a Linux target uses the libc of the `bun` running the build: the table below describes a glibc build of Bun, while a musl build of Bun turns `bun-linux-x64` into a musl executable.
 
 | --target             | Operating System | Architecture | Modern | Baseline | Libc  |
 | -------------------- | ---------------- | ------------ | ------ | -------- | ----- |

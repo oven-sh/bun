@@ -520,33 +520,36 @@ void us_ssl_enable_pending_events(SSL *ssl) {
   SSL_set_ex_data(ssl, us_ssl_is_socket_ex_idx, (void *)1);
 }
 
-static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap) {
-  if (idx < 0) return 0;
+static struct us_ssl_pending_session_t *
+us_ssl_pop_pending(SSL *ssl, int idx, const unsigned char **out_data, size_t *out_len) {
+  if (idx < 0) return NULL;
   struct us_ssl_pending_session_t *pending = SSL_get_ex_data(ssl, idx);
-  if (!pending) return 0;
+  if (!pending) return NULL;
   SSL_set_ex_data(ssl, idx, pending->next);
-  int len = (int)pending->length;
-  if (len > out_cap) {
-    /* The parking sites cap entries (64 KB sessions, 4 KB+1 keylog lines) and
-     * callers pass buffers at least that large, so this is unreachable; drop
-     * the entry rather than overflow. */
-    len = 0;
-  } else {
-    memcpy(out, pending->data, (size_t)len);
-  }
-  us_free(pending);
-  return len;
+  pending->next = NULL;
+  *out_data = pending->data;
+  *out_len = pending->length;
+  return pending;
 }
 
-/* Pop the oldest parked session/keylog entry into `out` (cap `out_cap`).
- * Returns the byte length, or 0 when the queue is empty. Entries arrive in
- * parking order; each pop hands over exactly one entry. */
-int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
-  return us_ssl_pop_pending(ssl, us_ssl_pending_session_idx, out, out_cap);
+/* Detach the oldest parked session/keylog entry from `ssl` (entries come out
+ * in parking order) and point `*out_data`/`*out_len` at its payload. Returns
+ * NULL when the queue is empty. The entry is no longer reachable from the
+ * SSL, so the callback the caller hands it to may close the connection and
+ * SSL_free (which frees whatever is still queued) without invalidating it;
+ * the caller releases it with us_ssl_free_pending() afterwards. */
+struct us_ssl_pending_session_t *
+us_ssl_pop_pending_session(SSL *ssl, const unsigned char **out_data, size_t *out_len) {
+  return us_ssl_pop_pending(ssl, us_ssl_pending_session_idx, out_data, out_len);
 }
 
-int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
-  return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+struct us_ssl_pending_session_t *
+us_ssl_pop_pending_keylog(SSL *ssl, const unsigned char **out_data, size_t *out_len) {
+  return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out_data, out_len);
+}
+
+void us_ssl_free_pending(struct us_ssl_pending_session_t *entry) {
+  us_free(entry);
 }
 
 /* The resumable session most recently delivered via the new-session callback,

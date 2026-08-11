@@ -739,6 +739,128 @@ it("delivers 'session' even when the data handler destroys the socket immediatel
   await once(server, "close");
 });
 
+describe("over a duplex, 'session' is emitted before the data that followed it on the wire", () => {
+  // Same contract as the tls.connect() test above, on the tls.connect({ socket })
+  // path: there the TLS engine is the SSLWrapper rather than usockets, and it
+  // has to hand over the sessions parked during a read pass before the
+  // application data decrypted in that same pass. A 'data' handler that
+  // destroys the socket tears the engine down, together with anything still
+  // parked in it, so delivering the sessions afterwards is too late. Node and
+  // the plain tls.connect() path both emit 'session' first in every variant
+  // below.
+
+  // Transport for the TLSSocket. With `holdUntilEnd` set, everything the raw
+  // socket receives from then on is delivered as one chunk once the peer has
+  // ended, so the engine sees the whole response in a single read pass.
+  class Transport extends Duplex {
+    held: Buffer[] | null = null;
+    constructor(readonly raw: net.Socket) {
+      super();
+      raw.on("data", chunk => {
+        if (this.held) this.held.push(chunk);
+        else this.push(chunk);
+      });
+      raw.on("end", () => {
+        if (this.held) this.push(Buffer.concat(this.held));
+        this.push(null);
+      });
+    }
+    holdUntilEnd() {
+      this.held = [];
+    }
+    _read() {}
+    _write(chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+      this.raw.write(chunk, encoding, callback);
+    }
+    _final(callback: (error?: Error | null) => void) {
+      this.raw.end();
+      callback();
+    }
+  }
+
+  async function eventOrder(
+    serverOptions: tls.TlsOptions,
+    onConnection: (socket: TLSSocket) => void,
+    { holdResponse = false, request = true } = {},
+  ): Promise<string[]> {
+    await using server = tls.createServer({ ...COMMON_CERT_, ...serverOptions }, socket => {
+      // The client tears its side down without a close_notify; whatever the
+      // server side makes of that is not what is being observed here.
+      socket.on("error", () => {});
+      onConnection(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const raw = net.connect(port, "127.0.0.1");
+    try {
+      await once(raw, "connect");
+      const transport = new Transport(raw);
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const events: string[] = [];
+      client.on("secureConnect", () => {
+        events.push("secureConnect");
+        if (holdResponse) transport.holdUntilEnd();
+        if (request) client.write("x");
+      });
+      client.on("session", () => events.push("session"));
+      client.on("data", () => {
+        events.push("data");
+        client.destroy();
+      });
+      await once(client, "close");
+      return events;
+    } finally {
+      raw.destroy();
+    }
+  }
+
+  // BoringSSL issues more than one TLS 1.3 ticket per connection, each of
+  // which is its own 'session' event; only the relative order matters here.
+  const distinct = (events: string[]) => [...new Set(events)];
+
+  it("response written after the request", async () => {
+    const events = await eventOrder({}, socket => {
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    });
+    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+  });
+
+  it("response and close_notify in the same flight", async () => {
+    const events = await eventOrder({}, socket => {
+      socket.on("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    });
+    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+  });
+
+  it("response larger than the engine's 64 KiB read buffer, delivered in one pass", async () => {
+    // The first 64 KiB are dispatched from inside the read loop to make room
+    // for the rest; destroying the socket there must not lose the tickets.
+    const events = await eventOrder(
+      {},
+      socket => {
+        socket.on("data", () => socket.end(Buffer.alloc(160 * 1024, "r")));
+      },
+      { holdResponse: true },
+    );
+    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+  });
+
+  it("TLS 1.2 session established by the same flight as a server banner", async () => {
+    // TLS 1.2 hands the session over while the handshake completes; the
+    // server's Finished and its banner arrive in one read pass.
+    const events = await eventOrder(
+      { maxVersion: "TLSv1.2" },
+      socket => {
+        socket.write("220 ready\r\n");
+        socket.on("data", () => {});
+      },
+      { request: false },
+    );
+    expect(distinct(events)).toEqual(["secureConnect", "session", "data"]);
+  });
+});
+
 describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s: getSession() / getTLSTicket()", version => {
   // BoringSSL never folds a TLS 1.3 NewSessionTicket into the SSL's own
   // established_session; it only hands the ticket-bearing session to the

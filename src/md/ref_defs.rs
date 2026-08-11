@@ -1,10 +1,8 @@
-use core::mem::{align_of, size_of};
-
 use bun_alloc::AllocError;
 
 use crate::helpers;
-use crate::parser::{BlockHeader, Parser};
-use crate::types::{self, VerbatimLine};
+use crate::parser::Parser;
+use crate::types;
 use crate::unicode;
 
 /// Maximum raw length of a link label (CommonMark: "a link label can have at
@@ -340,37 +338,10 @@ impl Parser<'_> {
     }
 
     pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
-        let mut off: usize = 0;
-        // Take a raw pointer to block_bytes so we can call &mut self methods
-        // (normalize_label, parse_ref_def via self.buffer) while iterating the
-        // byte buffer. Headers are mutated in-place via raw pointer arithmetic.
-        let bytes_ptr = self.block_bytes.as_mut_ptr();
-        let bytes_len = self.block_bytes.len();
+        // Taken out so the loop can call `&mut self` methods while holding a block borrow.
+        let mut blocks = core::mem::take(&mut self.blocks);
 
-        while off < bytes_len {
-            // Align to BlockHeader
-            let align_mask: usize = align_of::<BlockHeader>() - 1;
-            off = (off + align_mask) & !align_mask;
-            if off + size_of::<BlockHeader>() > bytes_len {
-                break;
-            }
-
-            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
-            // block parser wrote a valid BlockHeader at this offset.
-            let mut hdr: BlockHeader =
-                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
-            let hdr_off = off;
-            off += size_of::<BlockHeader>();
-
-            let n_lines = hdr.n_lines as usize;
-            let lines_size = n_lines * size_of::<VerbatimLine>();
-            if off + lines_size > bytes_len {
-                break;
-            }
-
-            let lines_off = off;
-            off += lines_size;
-
+        for (hdr, block_lines) in blocks.iter_mut() {
             // Only process paragraph blocks (not container openers/closers)
             if hdr.block_type != types::BlockType::P
                 || hdr.flags & types::BLOCK_CONTAINER_OPENER != 0
@@ -379,22 +350,13 @@ impl Parser<'_> {
                 continue;
             }
 
-            if n_lines == 0 {
+            if block_lines.is_empty() {
                 continue;
             }
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
-            for li in 0..n_lines {
-                // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
-                // the [lines_off, lines_off + lines_size) range bounds-checked above;
-                // end_current_block wrote n_lines contiguous VerbatimLine entries there.
-                let vline: VerbatimLine = unsafe {
-                    bytes_ptr
-                        .add(lines_off + li * size_of::<VerbatimLine>())
-                        .cast::<VerbatimLine>()
-                        .read_unaligned()
-                };
+            for vline in block_lines.iter() {
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
@@ -456,42 +418,20 @@ impl Parser<'_> {
 
             // Update the block: mark consumed lines
             if lines_consumed > 0 {
-                if lines_consumed as usize >= n_lines {
+                if lines_consumed as usize >= block_lines.len() {
                     // Entire paragraph is ref defs — flag to skip during rendering
                     hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-                    // SAFETY: hdr_off + size_of::<BlockHeader>() <= bytes_len (checked above);
-                    // writes back the header read at the top of this iteration.
-                    unsafe {
-                        bytes_ptr
-                            .add(hdr_off)
-                            .cast::<BlockHeader>()
-                            .write_unaligned(hdr);
-                    }
                 } else {
                     // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
-                    let mut i: u32 = 0;
-                    while i < lines_consumed {
-                        let line_off = lines_off + (i as usize) * size_of::<VerbatimLine>();
-                        // SAFETY: i < lines_consumed < n_lines so line_off is in-bounds of the
-                        // VerbatimLine array written by end_current_block after this header.
-                        unsafe {
-                            let mut vl = bytes_ptr
-                                .add(line_off)
-                                .cast::<VerbatimLine>()
-                                .read_unaligned();
-                            vl.beg = 1;
-                            vl.end = 0;
-                            bytes_ptr
-                                .add(line_off)
-                                .cast::<VerbatimLine>()
-                                .write_unaligned(vl);
-                        }
-                        i += 1;
+                    for vline in &mut block_lines[..lines_consumed as usize] {
+                        vline.beg = 1;
+                        vline.end = 0;
                     }
                 }
             }
         }
 
+        self.blocks = blocks;
         Ok(())
     }
 }

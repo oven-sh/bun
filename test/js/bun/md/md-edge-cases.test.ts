@@ -1282,8 +1282,8 @@ describe("inputs the parser cannot address", () => {
 });
 
 describe("documents whose block metadata the parser cannot address", () => {
-  // Block offsets are u32s too, so `block_bytes` (the flat buffer of block
-  // headers and verbatim-line records) is capped independently of the input
+  // The parser's block metadata (its block headers and verbatim-line records)
+  // is capped in bytes, independently of the input
   // length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
   // shrinks it through `setMaxMarkdownBlockBytesForTesting`
   // (bun:internal-for-testing) and proves the exact boundary: a document
@@ -1294,7 +1294,7 @@ describe("documents whose block metadata the parser cannot address", () => {
     const script = `
       import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
       // One single-line paragraph costs exactly one 16-byte BlockHeader plus
-      // one 12-byte VerbatimLine in block_bytes, with no alignment padding.
+      // one 12-byte VerbatimLine.
       const PARAGRAPH_BYTES = 16 + 12;
       const AT_LIMIT = 40;
       const paragraphs = n => Array.from({ length: n }, (_, i) => "p" + i).join("\\n\\n");
@@ -1337,6 +1337,36 @@ describe("documents whose block metadata the parser cannot address", () => {
     ]);
     expect(exitCode).toBe(0);
   }, 30_000);
+});
+
+describe("blank lines after a closed block inside a list item", () => {
+  // A blank line right after an empty list item ends the list; a closed paragraph or
+  // code block before the blank line must not. The parser used to misread a stored
+  // line indent of 4 as the list-item block type, hence the four-column indents.
+  test.each([
+    [
+      "paragraph continuation line indented four columns",
+      "- foo\n      bar\n  baz\n\n\n  qux\n",
+      "<ul>\n<li>\n<p>foo\nbar\nbaz</p>\n<p>qux</p>\n</li>\n</ul>\n",
+    ],
+    [
+      "fenced code line indented four columns in a bullet item",
+      "- item\n\n  ```\n  a\n      b\n  c\n  ```\n\n  more\n",
+      "<ul>\n<li>\n<p>item</p>\n<pre><code>a\n    b\nc\n</code></pre>\n<p>more</p>\n</li>\n</ul>\n",
+    ],
+    [
+      "fenced code line indented four columns in an ordered item",
+      "1. item\n\n   ```\n   a\n       b\n   c\n   ```\n\n   more\n",
+      "<ol>\n<li>\n<p>item</p>\n<pre><code>a\n    b\nc\n</code></pre>\n<p>more</p>\n</li>\n</ol>\n",
+    ],
+    [
+      "an empty list item followed by a blank line still ends the list",
+      "-\n\n  foo\n",
+      "<ul>\n<li></li>\n</ul>\n<p>foo</p>\n",
+    ],
+  ])("%s", (_name, input, expected) => {
+    expect(Markdown.html(input)).toBe(expected);
+  });
 });
 
 // The runtime module loader for .md files (imports, not the Bun.markdown API).

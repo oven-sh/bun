@@ -5,7 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // a debug build, which is most of the default per-test budget.
 setDefaultTimeout(30_000);
 
-// Test for GitHub issue #26225
+// https://github.com/oven-sh/bun/issues/26225
 // Multipart uploads using form-data + node-fetch@2 + fs.createReadStream() are truncated
 //
 // `node-fetch` always resolves to Bun's bundled implementation (the one this

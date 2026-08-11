@@ -649,15 +649,8 @@ fn open_stdio_path(
         Err(err) => return Ok(Err(err)),
     };
     cleanup.to_close_at_end.push(fd);
-    // The kernel only refuses directories for writing; a read-only stdin
-    // would otherwise hand the child an fd whose every read() fails.
-    match bun_sys::fstat(fd) {
-        Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as _) => {
-            let err = bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::open);
-            return Ok(Err(err.with_path(path)));
-        }
-        Ok(_) => {}
-        Err(err) => return Ok(Err(err.with_path(path))),
+    if let Err(err) = reject_directory_stdio(fd, path) {
+        return Ok(Err(err));
     }
     if let Err(err) = bun_sys::update_nonblocking(fd, false) {
         return Ok(Err(err.with_path(path)));
@@ -667,6 +660,18 @@ fn open_stdio_path(
         actions.close(fd)?;
     }
     Ok(Ok(()))
+}
+
+/// Opening a directory read-only succeeds (only writing is refused), and a
+/// child handed one as stdin would just get EISDIR from every read(). Fail
+/// the spawn with that error instead.
+pub fn reject_directory_stdio(fd: Fd, path: &[u8]) -> bun_sys::Result<()> {
+    let stat = bun_sys::fstat(fd).map_err(|err| err.with_path(path))?;
+    if bun_sys::S::ISDIR(stat.st_mode as _) {
+        let err = bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::open);
+        return Err(err.with_path(path));
+    }
+    Ok(())
 }
 
 /// # Safety

@@ -1925,9 +1925,16 @@ mod spawn_process_body {
                             cleanup_uv_files(&uv_files_to_close, loop_);
                             return Ok(Err(err.with_path(path)));
                         }
-                        stdio.flags = uv::UV_INHERIT_FD;
                         let fd = rc.int();
                         uv_files_to_close.push(fd);
+                        if let Err(err) = bun_spawn_sys::spawn_process::reject_directory_stdio(
+                            Fd::from_uv(fd),
+                            path,
+                        ) {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(err));
+                        }
+                        stdio.flags = uv::UV_INHERIT_FD;
                         stdio.data.fd = fd;
                     }
                     WindowsStdio::Buffer(my_pipe) => {

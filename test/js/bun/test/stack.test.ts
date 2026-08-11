@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -153,8 +154,7 @@ test("Async functions frame should be included in stack trace", async () => {
 
 // When JSC's parser rejects a source it records that source's URL and line on the
 // SyntaxError, and .stack renders them as a synthetic "at <parse> (url:line)" frame.
-// Every other SyntaxError has no such location and must format like node's: the
-// header followed by the real frames.
+// Every other SyntaxError must format like node's: the header followed by the real frames.
 describe("SyntaxError .stack", () => {
   test("new SyntaxError() has no <parse> frame", () => {
     const err = new SyntaxError("user made");
@@ -228,6 +228,67 @@ describe("SyntaxError .stack", () => {
     expect(stderr).not.toContain("<parse>");
     expect(stderr).toMatch(/index\.js:1:\d+/);
     expect(exitCode).toBe(1);
+  });
+
+  // A SyntaxError can carry a sourceURL without coming from the parser: structured clone
+  // recreates an error with its original's line/column/sourceURL, and a GC that collects a
+  // function on the error's stack records the first frame's position on the error instead.
+  // When such an error later gets frames from Error.captureStackTrace(), that location must
+  // not be rendered as a <parse> frame. The cases below capture from a different file than
+  // the one recorded, since a frame from the recorded file would hide the <parse> line anyway.
+  const stackLines = (err: Error) => err.stack!.split("\n");
+
+  test("a structured clone of a SyntaxError captured from another file gets no <parse> frame", () => {
+    const original = new SyntaxError("cloned");
+    expect((structuredClone(original) as any).sourceURL).toEndWith("stack.test.ts");
+
+    const clone = structuredClone(original);
+    const captureElsewhere = new vm.Script("err => Error.captureStackTrace(err)", {
+      filename: "capture-site.js",
+    }).runInThisContext();
+    captureElsewhere(clone);
+    expect(stackLines(clone).slice(0, 3)).toEqual([
+      "SyntaxError: cloned",
+      expect.stringMatching(/^    at .*capture-site\.js:1:\d+\)?$/),
+      expect.stringMatching(/^    at .*stack\.test\.ts:\d+:\d+\)?$/),
+    ]);
+  });
+
+  test("a SyntaxError posted by a worker gets no <parse> frame when the parent captures a stack for it", async () => {
+    using dir = tempDir("worker-syntax-error", {
+      "worker.js": 'postMessage(new SyntaxError("made in worker"));\n',
+    });
+    const worker = new Worker(pathToFileURL(join(String(dir), "worker.js")).href);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<SyntaxError>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+      const err = await promise;
+      Error.captureStackTrace(err);
+      expect(stackLines(err).slice(0, 2)).toEqual([
+        "SyntaxError: made in worker",
+        expect.stringMatching(/^    at .*stack\.test\.ts:\d+:\d+\)?$/),
+      ]);
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  test("a SyntaxError whose frames were collected by GC gets no <parse> frame when captured again", () => {
+    // Nothing but the error refers to the function that created it, so a full GC collects the
+    // function and flushes the error's frames, recording gc-me.js as the error's sourceURL.
+    // A few rounds in case a stale pointer on the native stack keeps the function alive once.
+    for (let i = 0; i < 4; i++) {
+      const err: SyntaxError = new vm.Script('(() => new SyntaxError("collected"))()', {
+        filename: "gc-me.js",
+      }).runInThisContext();
+      Bun.gc(true);
+      Error.captureStackTrace(err);
+      expect(stackLines(err).slice(0, 2)).toEqual([
+        "SyntaxError: collected",
+        expect.stringMatching(/^    at .*stack\.test\.ts:\d+:\d+\)?$/),
+      ]);
+    }
   });
 
   test("a parser SyntaxError keeps its <parse> frame", () => {

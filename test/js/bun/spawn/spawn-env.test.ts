@@ -1,9 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 test("spawn env", async () => {
   const env = {};
@@ -64,19 +62,11 @@ function variableViaSpawnSync(name: string, env: Env) {
   return JSON.parse(stdout.toString());
 }
 
-// node:child_process applies node's own de-duplication in JS before reaching
-// Bun.spawn, so this is the reference the Bun.spawn columns are compared to.
-async function variableViaChildProcess(name: string, env: Env) {
-  const { stdout, stderr } = await promisify(execFile)(bunExe(), ["-e", printVariable(name)], { env });
-  expect(stderr).toBe("");
-  return JSON.parse(stdout);
-}
-
 describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
-  // Same rule as node's child_process (normalizeSpawnArguments): of the keys
-  // that differ only in case, the lexicographically first one (so the upper
-  // case spelling) is passed to the child, whatever order they were added in.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L715-L738
+  // The object is applied the way assigning its properties to process.env would
+  // be: of the properties whose names differ only in case, the last one is what
+  // the child gets, and an undefined one removes the variable. (node:child_process
+  // keeps node's own rule, applied in JS before the object reaches Bun.spawn.)
   const cases: [name: string, env: Env, variable: string, expected: Env][] = [
     [
       "{ ...process.env, PATH } overrides the parent's Path",
@@ -85,70 +75,56 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
       { PATH: "C:\\override" },
     ],
     [
-      "{ PATH, Path }: PATH still wins when added first",
-      { ...envWithoutPath, PATH: "C:\\override", Path: "C:\\from-parent" },
+      "{ ...env, path } overrides an upper case PATH",
+      { ...envWithoutPath, PATH: "C:\\from-parent", path: "C:\\override" },
       "PATH",
-      { PATH: "C:\\override" },
+      { path: "C:\\override" },
     ],
     [
-      "{ Spawn_Env_Case, SPAWN_ENV_CASE }: upper case wins",
-      { ...bunEnv, Spawn_Env_Case: "mixed", SPAWN_ENV_CASE: "upper" },
+      "{ ...env, spawn_env_case } overrides an inherited SPAWN_ENV_CASE (the http_proxy over HTTP_PROXY shape)",
+      { ...bunEnv, SPAWN_ENV_CASE: "inherited", spawn_env_case: "override" },
       "SPAWN_ENV_CASE",
-      { SPAWN_ENV_CASE: "upper" },
+      { spawn_env_case: "override" },
     ],
     [
-      "{ SPAWN_ENV_CASE, Spawn_Env_Case }: upper case wins when added first",
-      { ...bunEnv, SPAWN_ENV_CASE: "upper", Spawn_Env_Case: "mixed" },
+      "{ Spawn_Env_Case, SPAWN_ENV_CASE }: the later one wins",
+      { ...bunEnv, Spawn_Env_Case: "first", SPAWN_ENV_CASE: "second" },
       "SPAWN_ENV_CASE",
-      { SPAWN_ENV_CASE: "upper" },
+      { SPAWN_ENV_CASE: "second" },
     ],
     [
-      "{ spawn_env_case, Spawn_Env_Case }: mixed case beats lower case",
-      { ...bunEnv, spawn_env_case: "lower", Spawn_Env_Case: "mixed" },
+      "{ SPAWN_ENV_CASE, Spawn_Env_Case }: the later one wins",
+      { ...bunEnv, SPAWN_ENV_CASE: "first", Spawn_Env_Case: "second" },
       "SPAWN_ENV_CASE",
-      { Spawn_Env_Case: "mixed" },
+      { Spawn_Env_Case: "second" },
+    ],
+    [
+      "{ SPAWN_ENV_CASE: undefined, spawn_env_case }: clearing every spelling, then setting one",
+      { ...bunEnv, SPAWN_ENV_CASE: undefined, spawn_env_case: "set" },
+      "SPAWN_ENV_CASE",
+      { spawn_env_case: "set" },
+    ],
+    [
+      "{ ...env, SPAWN_ENV_CASE: undefined } removes a differently spelled variable",
+      { ...bunEnv, Spawn_Env_Case: "inherited", SPAWN_ENV_CASE: undefined },
+      "SPAWN_ENV_CASE",
+      {},
+    ],
+    [
+      "{ ...env, spawn_env_case: undefined } removes a differently spelled variable",
+      { ...bunEnv, SPAWN_ENV_CASE: "inherited", spawn_env_case: undefined },
+      "SPAWN_ENV_CASE",
+      {},
     ],
   ];
 
   test.concurrent.each(cases)("%s", async (_name, env, variable, expected) => {
-    const [viaSpawn, viaChildProcess] = await Promise.all([
-      variableViaSpawn(variable, env),
-      variableViaChildProcess(variable, env),
-    ]);
-    expect({ spawn: viaSpawn, childProcess: viaChildProcess }).toEqual({ spawn: expected, childProcess: expected });
+    expect(await variableViaSpawn(variable, env)).toEqual(expected);
   });
 
   test("Bun.spawnSync applies the same rule", () => {
     const [, env, variable, expected] = cases[0];
     expect(variableViaSpawnSync(variable, env)).toEqual(expected);
-  });
-
-  // An undefined property is simply absent; it does not take the name away from
-  // another spelling. Tests all over the repo clear every spelling of a variable
-  // with undefined and then set one of them (see test/js/bun/http/proxy.test.ts).
-  // This is deliberately not what node's child_process does on Windows: it picks
-  // the spelling to keep before looking at the values, so whenever the undefined
-  // spelling sorts first the variable ends up unset.
-  const undefinedCases: [name: string, env: Env, expected: Env][] = [
-    [
-      "{ SPAWN_ENV_CASE: undefined, spawn_env_case }: the defined spelling is passed",
-      { ...bunEnv, SPAWN_ENV_CASE: undefined, spawn_env_case: "lower" },
-      { spawn_env_case: "lower" },
-    ],
-    [
-      "{ Spawn_Env_Case, SPAWN_ENV_CASE: undefined }: the defined spelling is passed",
-      { ...bunEnv, Spawn_Env_Case: "mixed", SPAWN_ENV_CASE: undefined },
-      { Spawn_Env_Case: "mixed" },
-    ],
-    [
-      "{ SPAWN_ENV_CASE, spawn_env_case: undefined }: the defined spelling is passed",
-      { ...bunEnv, SPAWN_ENV_CASE: "upper", spawn_env_case: undefined },
-      { SPAWN_ENV_CASE: "upper" },
-    ],
-  ];
-
-  test.concurrent.each(undefinedCases)("%s", async (_name, env, expected) => {
-    expect(await variableViaSpawn("SPAWN_ENV_CASE", env)).toEqual(expected);
   });
 
   // The PATH entry that wins is also the one the executable is looked up in.
@@ -160,8 +136,8 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
       (withTool, withoutTool) => ({ Path: withoutTool, PATH: withTool }),
     ],
     [
-      "{ PATH: with the tool, Path: without the tool }",
-      (withTool, withoutTool) => ({ PATH: withTool, Path: withoutTool }),
+      "{ PATH: without the tool, Path: with the tool }",
+      (withTool, withoutTool) => ({ PATH: withoutTool, Path: withTool }),
     ],
   ];
 
@@ -182,15 +158,16 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
 });
 
 test.skipIf(isWindows)("env names that differ only in case are distinct variables on POSIX", async () => {
-  const env = { ...bunEnv, Path: "C:\\from-parent", PATH: "C:\\override" };
-  const expected = { Path: "C:\\from-parent", PATH: "C:\\override" };
-  const [viaSpawn, viaChildProcess] = await Promise.all([
-    variableViaSpawn("PATH", env),
-    variableViaChildProcess("PATH", env),
-  ]);
-  expect({ spawn: viaSpawn, spawnSync: variableViaSpawnSync("PATH", env), childProcess: viaChildProcess }).toEqual({
-    spawn: expected,
-    spawnSync: expected,
-    childProcess: expected,
-  });
+  const env = {
+    ...bunEnv,
+    Path: "C:\\from-parent",
+    PATH: "C:\\override",
+    Spawn_Env_Case: "kept",
+    SPAWN_ENV_CASE: undefined,
+  };
+  const expected = [{ Path: "C:\\from-parent", PATH: "C:\\override" }, { Spawn_Env_Case: "kept" }];
+  expect({
+    spawn: await Promise.all([variableViaSpawn("PATH", env), variableViaSpawn("SPAWN_ENV_CASE", env)]),
+    spawnSync: [variableViaSpawnSync("PATH", env), variableViaSpawnSync("SPAWN_ENV_CASE", env)],
+  }).toEqual({ spawn: expected, spawnSync: expected });
 });

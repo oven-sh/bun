@@ -1423,12 +1423,11 @@ export function joinP(...paths: string[]) {
  * Merges env objects so that a later object's value wins even when it spells
  * a variable name differently (Windows has case-insensitive environment
  * variables, so bunEnv carries `Path` while overrides are usually written as
- * `PATH`). The merged object keeps the first spelling seen for each name.
+ * `PATH`). The merged object keeps the first spelling seen for each name and
+ * drops empty values.
  *
- * Bun.spawn itself de-duplicates such names on Windows the way node's
- * child_process does (the upper-case spelling wins), so a plain
- * `{ ...bunEnv, PATH: "..." }` works too; this helper additionally drops
- * empty values and lets a lower-case override win over an upper-case base.
+ * Bun.spawn applies the same later-property-wins rule to its env object on
+ * Windows itself, so a plain `{ ...bunEnv, PATH: "..." }` works as well.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};

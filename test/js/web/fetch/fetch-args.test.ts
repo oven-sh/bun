@@ -29,6 +29,11 @@ test("fetch(request subclass with headers)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+test("fetch(URL object)", async () => {
+  const response = await fetch(new URL(server!.url));
+  expect(response.status).toBe(200);
+});
+
 test("fetch(RequestInit, headers)", async () => {
   const myRequest = {
     headers: {
@@ -203,6 +208,24 @@ describe("does not send a request when", () => {
   test("Invalid redirect", async () => {
     const prevCount = requestCount;
     expect(async () => await fetch(url, { redirect: "😀" })).toThrow("redirect must be");
+    // Give it a chance to possibly send the request.
+    await Bun.sleep(2);
+    expect(requestCount).toBe(prevCount);
+  });
+
+  test("Invalid proxy string", async () => {
+    const prevCount = requestCount;
+    const target = "http://" + server!.hostname + ":" + server!.port;
+    expect(async () => await fetch(target, { proxy: "://" })).toThrow("fetch() proxy URL is invalid");
+    // Give it a chance to possibly send the request.
+    await Bun.sleep(2);
+    expect(requestCount).toBe(prevCount);
+  });
+
+  test("Invalid proxy object url", async () => {
+    const prevCount = requestCount;
+    const target = "http://" + server!.hostname + ":" + server!.port;
+    expect(async () => await fetch(target, { proxy: { url: "://" } })).toThrow("fetch() proxy URL is invalid");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);

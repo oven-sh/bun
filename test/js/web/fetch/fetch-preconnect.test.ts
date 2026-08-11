@@ -233,4 +233,18 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     expect(() => fetch.preconnect("unix:///tmp/foo")).toThrow();
     expect(() => fetch.preconnect("http://:0")).toThrow();
   });
+
+  it("fetch.preconnect stringifies non-string input", () => {
+    expect(() => fetch.preconnect("notaurl")).toThrow("Invalid URL");
+    // A URL object goes through the same stringifier as a string, so it
+    // reaches the later port validation instead of failing URL parsing.
+    expect(() => fetch.preconnect(new URL("http://localhost:0"))).toThrow("Invalid port");
+    expect(() =>
+      fetch.preconnect({
+        toString() {
+          throw new Error("boom from toString");
+        },
+      }),
+    ).toThrow("boom from toString");
+  });
 });

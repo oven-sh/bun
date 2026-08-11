@@ -85,6 +85,29 @@ test("err.line and err.column are set", async () => {
   );
 });
 
+test.concurrent("runtime error caret preserves tabs before the error column (#10857)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "\t123 + error()"],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stderr.split(/\r?\n/);
+
+  expect({
+    stdout,
+    source: lines.find(line => line.includes("123 + error()")),
+    caret: lines.find(line => line.trimEnd().endsWith("^")),
+  }).toEqual({
+    stdout: "",
+    source: "1 | \t123 + error()",
+    caret: "    \t      ^",
+  });
+  expect(exitCode).toBe(1);
+});
+
 test("throwing inside an error suppresses the error and prints the stack", async () => {
   $.throws(false);
   $.env(bunEnv);

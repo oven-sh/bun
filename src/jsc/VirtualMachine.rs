@@ -6014,6 +6014,36 @@ impl VirtualMachine {
             Ok(())
         }
         #[inline]
+        fn write_caret_padding(
+            w: &mut bun_core::io::Writer,
+            line: &[u8],
+            gutter_width: u64,
+            column: usize,
+        ) -> crate::CrateResult<()> {
+            use bun_core::strings::{CodepointIterator, Cursor};
+
+            splat_space(w, gutter_width)?;
+
+            // JSC reports UTF-16 columns, but SourceLine::trimmed_text() is UTF-8.
+            // Preserve tabs at their logical positions while emitting one padding
+            // cell per UTF-16 code unit for every other codepoint.
+            let codepoints = CodepointIterator::init(line);
+            let mut cursor = Cursor::default();
+            let mut units_written = 0;
+            while units_written < column && codepoints.next(&mut cursor) {
+                let codepoint_width = 1 + usize::from(cursor.c > 0xFFFF);
+                let remaining = column - units_written;
+                if cursor.c == '\t' as i32 {
+                    w.write_all(b"\t")?;
+                } else {
+                    splat_space(w, codepoint_width.min(remaining) as u64)?;
+                }
+                units_written += codepoint_width;
+            }
+
+            splat_space(w, column.saturating_sub(units_written) as u64)
+        }
+        #[inline]
         fn count_digits(n: i32) -> u64 {
             bun_core::fmt::digit_count(n) as u64
         }
@@ -6210,9 +6240,12 @@ impl VirtualMachine {
                         if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                             || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
                         {
-                            let indent =
-                                max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
-                            splat_space(writer, indent)?;
+                            write_caret_padding(
+                                writer,
+                                clamped,
+                                max_line_number_pad + b" | ".len() as u64,
+                                col.max(0) as usize,
+                            )?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
                             writer.write_all(b"\n")?;

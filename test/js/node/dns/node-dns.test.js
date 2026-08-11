@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -451,7 +451,7 @@ test("dns.lookup (localhost)", () => {
 // treats it as a hostname and queries the configured servers, here a local
 // responder that REFUSEs every query. Linux-only: it is the one platform
 // where the default Bun.dns backend is c-ares.
-test.skipIf(process.platform !== "linux")("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
+test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
   const fixture = `
     const dns = require("node:dns");
     function refused(msg) {
@@ -715,9 +715,9 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
-    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
-    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+    // Use a name that resolves locally: a public name with several A records
+    // behind round-robin DNS can return a different first address per call.
+    expect(await util.promisify(dns.lookup)("localhost")).toEqual(await dns.promises.lookup("localhost"));
   });
 });
 

@@ -26,7 +26,7 @@ dns.prefetch("bun.com", 443);
 `Bun.dns.lookup()` accepts a `backend` option that selects the resolver implementation:
 
 - `"c-ares"`: the [c-ares](https://c-ares.org/) asynchronous resolver. It reads `/etc/resolv.conf` directly, so it does not consult NSS modules such as `systemd-resolved`. This is the default for `Bun.dns.lookup()` on Linux.
-- `"system"`: the platform's own resolver (the non-blocking system API on macOS and Windows, `getaddrinfo(3)` on a thread pool elsewhere). This is the default on macOS, Windows, and Android.
+- `"system"`: the platform's own resolver (the non-blocking system API on macOS, `getaddrinfo` on a thread pool everywhere else). This is the default on macOS, Windows, and Android.
 - `"getaddrinfo"` (alias `"libc"`): the POSIX `getaddrinfo(3)` function on a thread pool.
 
 ```ts

@@ -112,8 +112,7 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 /// seconds unit `transportParams.maxIdleTimeout` uses.
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
 pub(super) const MS_PER_SEC: u64 = 1_000;
-/// lsquic.h `es_cc_algo`. Adaptive (3, lsquic's default) is never used: on a
-/// loop-ticked engine it picks BBRv1, which then pins cwnd at its floor.
+/// lsquic.h `es_cc_algo` values.
 const CC_ALGO_CUBIC: c_uint = 1;
 const CC_ALGO_BBR: c_uint = 2;
 
@@ -935,7 +934,7 @@ fn apply_transport_params(
     // Node's default max_idle_timeout is 10 seconds
     // (node/src/quic/transportparams.h DEFAULT_MAX_IDLE_TIMEOUT); lsquic's is 30.
     s.idle_timeout(10);
-    // Node's default `cc` is cubic; see CC_ALGO_CUBIC.
+    // Node's default `cc` is cubic; lsquic's own default is adaptive.
     s.cc_algo(CC_ALGO_CUBIC);
     if !options.is_object() {
         local_tp.max_idle_timeout = match s.get_idle_timeout_ms() {

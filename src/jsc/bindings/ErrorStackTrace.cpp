@@ -94,7 +94,7 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
+JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames, WTF::Vector<const JSC::StackFrame*>& visibleFrames)
 {
     WTF::Vector<JSCStackFrame> newFrames;
 
@@ -104,9 +104,12 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     }
 
     newFrames.reserveInitialCapacity(frameCount);
+    visibleFrames.reserveInitialCapacity(frameCount);
     for (size_t i = 0; i < frameCount; i++) {
-        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
-            newFrames.constructAndAppend(vm, existingFrames.at(i));
+        const JSC::StackFrame& frame = existingFrames.at(i);
+        if (!isImplementationVisibilityPrivate(frame)) {
+            newFrames.constructAndAppend(vm, frame);
+            visibleFrames.append(&frame);
         }
     }
 
@@ -180,27 +183,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);
-}
-
-JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
-{
-    const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
-
-    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
-    if (currentException && currentException->value() == thrownValue) {
-        jscStackTrace = &currentException->stack();
-    } else {
-        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
-        if (error) {
-            jscStackTrace = error->stackTrace();
-        }
-    }
-
-    if (!jscStackTrace) {
-        return JSCStackTrace();
-    }
-
-    return fromExisting(vm, *jscStackTrace);
 }
 
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)

@@ -179,27 +179,13 @@ public:
 
     WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
-    static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
+    /* Skips private-visibility frames. JSC only omits them from `existingFrames` itself while
+     * Options::showPrivateScriptsInStackTraces() is off (debug builds turn it on), so the result can be
+     * shorter than `existingFrames`. `visibleFrames` receives the JSC::StackFrame behind each returned
+     * frame at the same index, pointing into `existingFrames`. */
+    static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames, WTF::Vector<const JSC::StackFrame*>& visibleFrames);
 
     static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
-
-    /* In JSC, JSC::Exception points to the actual value that was thrown, usually
-     * a JSC::ErrorInstance (but could be any JSValue). In v8, on the other hand,
-     * TryCatch::Exception returns the thrown value, and we follow the same rule in jscshim.
-     * This is a problem, since JSC::Exception is the one that holds the stack trace.
-     * ErrorInstances might also hold the stack trace (until the error properties are
-     * "materialized" and it is no longer needed). So, to try to get the stack trace for a thrown JSValue,
-     * we'll try two things:
-     * - If the current JSC (vm) exception points to our value, it means our value is probably the current
-     *   exception and we could take the stack trace from the vm's current JSC::Exception. The downside
-     *   of doing this is that we'll get the last stack trace of the thrown value, meaning that if the value
-     *   was thrown, stored in the api and than re-thrown, we'll get the latest stack trace and not the one
-     *   that was available when we stored it. For now it'll do.
-     * - If that failed and our thrown value is a JSC::ErrorInstance, we'll try to use it's stack trace,
-     *   if it currently has one.
-     *
-     * Return value must remain stack allocated */
-    static JSCStackTrace getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue);
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)

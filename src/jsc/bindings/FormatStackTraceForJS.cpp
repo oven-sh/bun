@@ -432,7 +432,9 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
+    // Everything below is indexed per CallSite; `stackFrames` may still hold private frames that get none.
+    WTF::Vector<const JSC::StackFrame*> visibleFrames;
+    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames, visibleFrames);
 
     // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
     MarkedArgumentBuffer callSites;
@@ -454,7 +456,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     for (int i = 0; i < n; i++) {
         ZigStackFrame& frame = remappedFrames[i];
-        auto& stackFrame = stackFrames.at(i);
+        const JSC::StackFrame& stackFrame = *visibleFrames[i];
         sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
         didRemap[i] = false;
         frame.position.line_zero_based = -1;

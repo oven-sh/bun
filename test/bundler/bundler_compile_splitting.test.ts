@@ -61,5 +61,55 @@ describe("bundler", () => {
         },
       });
     }
+
+    // The shared chunk contains a require()d (so __esm-wrapped) module with an
+    // unused import of a node builtin. Builtins are side-effect free, so that
+    // import is tree-shaken out of the printed chunk, but the module record
+    // built for --bytecode still listed it, under the import's original local
+    // name because the dead symbol was never renamed. When a live export of the
+    // chunk had the same name, its export entry turned into a re-export of the
+    // builtin, and the other chunk got fs/promises.rm instead of the local rm().
+    //
+    // The unused import binds every single-character name as well, so the
+    // collision also happens with whatever name the minifier gives `rm`.
+    const deadImportNames = [
+      "rm",
+      ...Array.from("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$", c => `rm as ${c}`),
+    ];
+    for (const minify of [false, true]) {
+      itBundled(`compile/splitting/BytecodeDeadExternalImportInWrappedModule${minify ? "+minify" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+        files: {
+          "/entry.js": /* js */ `
+            import { rm } from "./shared.js";
+            console.log("entry:", rm());
+            await import("./page.js");
+          `,
+          "/page.js": /* js */ `
+            import { rm } from "./shared.js";
+            console.log("page:", rm());
+          `,
+          "/shared.js": /* js */ `
+            const { value } = require("./wrapped.js");
+            export function rm() {
+              return "local rm " + value;
+            }
+          `,
+          // A .js file on purpose: in TypeScript an unused import is dropped by
+          // the parser and never reaches the linker.
+          "/wrapped.js": /* js */ `
+            import { ${deadImportNames.join(", ")} } from "fs/promises";
+            export const value = 42;
+          `,
+        },
+        run: {
+          stdout: "entry: local rm 42\npage: local rm 42",
+        },
+      });
+    }
   });
 });

@@ -145,7 +145,7 @@ describe.skipIf(!cg)("spawn({ cgroup })", () => {
     await using proc = Bun.spawn({
       cmd: ["tail", "/dev/zero"],
       cgroup: cg!.dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env: bunEnv,
     });
@@ -232,11 +232,11 @@ describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () =>
   });
 
   test("a frozen cgroup is refused up front instead of hanging the parent", () => {
-    using v2 = tempDir("spawn-cgroup", { "cgroup.procs": "", "cgroup.events": "populated 0\nfrozen 1\n" });
+    using v2 = tempDir("spawn-cgroup", { "cgroup.procs": "", "cgroup.freeze": "1\n" });
     expect(() => Bun.spawnSync({ cmd: ["true"], cgroup: String(v2) })).toThrow(
       expect.objectContaining({ code: "EBUSY", path: String(v2) }),
     );
-    using v1 = tempDir("spawn-cgroup", { "cgroup.procs": "", "freezer.state": "FROZEN\n" });
+    using v1 = tempDir("spawn-cgroup", { "cgroup.procs": "", "freezer.state": "FREEZING\n" });
     expect(() => Bun.spawnSync({ cmd: ["true"], cgroup: String(v1) })).toThrow(
       expect.objectContaining({ code: "EBUSY" }),
     );

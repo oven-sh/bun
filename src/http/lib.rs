@@ -1586,19 +1586,7 @@ impl<'a> HTTPClient<'a> {
         !self.request_body().is_empty()
     }
 
-    /// Whether the whole request, headers and body (or the chunked
-    /// terminator of a streamed body), has been handed to the socket. Every
-    /// write path sets `request_stage = Done` at that point: `on_writable`
-    /// for Bytes bodies (direct or through a proxy tunnel) and Sendfile
-    /// bodies, `write_to_stream` for Stream bodies.
-    ///
-    /// A response can complete before this happens: a server may answer a
-    /// large PUT (413, or a 200 that ignores the body) or redirect a streaming
-    /// POST (303) while the upload is still going out. A socket in that state
-    /// must be closed rather than pooled (RFC 9112 section 9.3): a reuse would
-    /// write the next request's line and headers into the tail of this
-    /// request's body. The keep-alive release in `do_redirect` and in
-    /// `send_progress_update_without_stage_check` both gate on this.
+    /// Pooling a socket whose request is still going out would land the next request inside this one's body.
     #[inline]
     fn is_request_fully_sent(&self) -> bool {
         self.state.request_stage == RequestStage::Done
@@ -2595,6 +2583,15 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
+        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
+        let keep_alive_possible = self.is_keep_alive_possible();
+        // There is no struct copy-back
+        // (`sync_progress_from` skips owned fields) and the original retains
+        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
+        // clone was created via `ptr::read`). Dropping it here would
+        // double-free when the original later runs `clear_data()`. Forget the
+        // clone's view; the original is the sole owner.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2623,8 +2620,8 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if self.is_request_fully_sent()
-            && self.is_keep_alive_possible()
+        } else if keep_alive_possible
+            && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
             // A direct TLS socket verified against a Host-header override
             // (get_tls_hostname) must not be pooled here: this.url has already
@@ -2654,20 +2651,6 @@ impl<'a> HTTPClient<'a> {
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
-
-        // The redirect target is reached over TCP, so the unix socket path is
-        // dropped here. This has to stay below the pool/close decision above:
-        // is_keep_alive_possible() reads it to keep a unix-socket connection
-        // out of the pool, where it would be keyed by connected_url's
-        // hostname and handed to a later TCP request for that host.
-        //
-        // There is no struct copy-back
-        // (`sync_progress_from` skips owned fields) and the original retains
-        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
-        // clone was created via `ptr::read`). Dropping it here would
-        // double-free when the original later runs `clear_data()`. Forget the
-        // clone's view; the original is the sole owner.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
 
         // Deferred until after the pool/close decision above — see
         // `InternalStateFlags::clear_hostname_on_redirect`.
@@ -3339,12 +3322,7 @@ impl<'a> HTTPClient<'a> {
                 let try_sending_more_data = result.try_sending_more_data;
 
                 if has_sent_headers && has_sent_body {
-                    // `has_sent_body` is only ever true for a Bytes body (see
-                    // send_initial_request_payload), so the whole request has
-                    // been written: mark the request side Done here just like
-                    // the Body arm below does for a body that needed more than
-                    // one write. The keep-alive gates in do_redirect and
-                    // send_progress_update_without_stage_check rely on this.
+                    // has_sent_body is only ever true for a Bytes body, so the whole request is out.
                     self.state.request_stage = if self.flags.proxy_tunneling {
                         RequestStage::ProxyHandshake
                     } else {
@@ -4166,13 +4144,12 @@ impl<'a> HTTPClient<'a> {
 
         if is_done {
             self.unregister_abort_tracker();
-            // is_done is response-driven; see `is_request_fully_sent` for why
-            // a socket whose request is still going out must not be pooled.
-            //
-            // A tunnel additionally has to have flushed its encrypted writes:
-            // pooling it with a non-empty write_buffer would leave the
-            // connection mid-request on the inner TLS stream, and adopt()
-            // resetting write_buffer doesn't restore a clean HTTP/1.1 boundary.
+            // is_done is response-driven. A server can reply early (HTTP 413)
+            // with keep-alive while request_stage is still .proxy_body or the
+            // tunnel still has buffered encrypted writes. Pooling that tunnel
+            // would leave the connection mid-request on the inner TLS stream;
+            // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
+            // boundary. Only pool a tunnel whose request side is fully drained.
             //
             // Also check wrapper liveness: a close-delimited body (no
             // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)

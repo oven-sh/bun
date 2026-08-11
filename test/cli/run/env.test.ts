@@ -331,6 +331,45 @@ test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
   expect(result.exitCode).toBe(0);
 });
 
+test.concurrent(".env expansion stops once a file substitutes in more than 4 MiB", async () => {
+  // Each line substitutes the previous value ten times (alternating between
+  // the two reference syntaxes), so A(n) is 10^(n+1) bytes: A5 is 1 MB, A6
+  // would be 10 MB and two more lines would reach 1 GB. The loader gives up at
+  // A6 and leaves it, and everything after it, as written. Other files are
+  // expanded with a budget of their own.
+  const lines = ["A0=xxxxxxxxxx"];
+  for (let i = 1; i <= 6; i++) lines.push(`A${i}=` + (i % 2 ? `\${A${i - 1}}` : `$A${i - 1}`).repeat(10));
+  lines.push("AFTER=${A0}/after");
+  using dir = tempDir("dotenv-expand-limit", {
+    ".env.local": lines.join("\n"),
+    ".env": "BASE=base\nOTHER_FILE=${BASE}/other",
+    "index.ts": `console.log(JSON.stringify({
+      A5: process.env.A5.length,
+      A6: process.env.A6,
+      AFTER: process.env.AFTER,
+      OTHER_FILE: process.env.OTHER_FILE,
+    }));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_ENV: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(
+    'warn: ".env.local" expands to more than 4.19 MB of variable references, so "A6" and the values after it were left unexpanded',
+  );
+  expect(JSON.parse(stdout)).toEqual({
+    A5: 1_000_000,
+    A6: "$A5".repeat(10),
+    AFTER: "${A0}/after",
+    OTHER_FILE: "base/other",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent(".env comments", async () => {
   using dir = tempDir("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

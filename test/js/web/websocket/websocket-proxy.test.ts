@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
-import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
 import { createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";

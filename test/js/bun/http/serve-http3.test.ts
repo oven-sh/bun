@@ -53,6 +53,7 @@ const server = serve({
     "/file-route": Bun.file(process.env.BIG_FILE),
   },
   async fetch(req) {
+    if (req.headers.get("x-raw-url")) return new Response(req.url);
     const url = new URL(req.url);
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
@@ -219,6 +220,30 @@ describe("Bun.serve HTTP/3", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("x-proto")).toBe("h3");
       expect(await res.text()).toBe("hello over h3");
+    });
+  });
+
+  // request.url is synthesized from Host + target. A Host that can't be a URL
+  // authority must not be pasted into it (HTTP/1 already refused; HTTP/3 used
+  // to produce "https://evil.example/x#/admin/secret" here), and a valid one is
+  // canonicalized the same way on both transports.
+  test("request.url applies the same Host policy as HTTP/1", async () => {
+    await withServer(async port => {
+      const viaH1 = (path: string, headers: Record<string, string>) =>
+        fetch(`https://127.0.0.1:${port}${path}`, { headers, tls: { rejectUnauthorized: false } } as RequestInit).then(
+          r => r.text(),
+        );
+      const viaH3 = (path: string, headers: Record<string, string>) =>
+        fetchH3(port, path, { headers }).then(r => r.text());
+
+      const evil = { host: "evil.example/x#", "x-raw-url": "1" };
+      const h3 = await viaH3("/admin/secret", evil);
+      expect(h3).not.toContain("evil.example");
+      expect(h3).toBe(await viaH1("/admin/secret", evil));
+
+      const odd = { host: "EXAMPLE.com:443", "x-raw-url": "1" };
+      expect(await viaH3("/p", odd)).toBe("https://example.com/p");
+      expect(await viaH1("/p", odd)).toBe("https://example.com/p");
     });
   });
 

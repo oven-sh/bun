@@ -406,9 +406,10 @@ impl<'a> Task<'a> {
                     let name = req.name.slice();
                     let url = req.url.slice();
                     let mut attempt: u8 = 1;
+                    let mut url_buf = bun_paths::path_buffer_pool::get();
 
                     let dir = 'brk: {
-                        if let Some(https) = Repository::try_https(url) {
+                        if let Some(https) = Repository::try_https(url, &mut url_buf) {
                             match Repository::download(
                                 req.env,
                                 &mut this.log,
@@ -448,7 +449,7 @@ impl<'a> Task<'a> {
                     let dir = match dir {
                         Some(d) => d,
                         None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
+                            if let Some(ssh) = Repository::try_ssh(url, &mut url_buf) {
                                 match Repository::download(
                                     req.env,
                                     &mut this.log,

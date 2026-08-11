@@ -98,17 +98,20 @@ beforeAll(() => {
         "dev": "long-running",
       },
       devDependencies: {
-        "long-running": "file:./long-running",
+        // The source folder must not be called `long-running`: `bun long-running`
+        // tries to resolve that name as a path in cwd before falling back to
+        // node_modules/.bin, and a directory of that name would be run directly.
+        "long-running": "file:./long-running-src",
       },
     }),
-    "long-running/package.json": JSON.stringify({
+    "long-running-src/package.json": JSON.stringify({
       name: "long-running",
       version: "1.0.0",
       bin: { "long-running": "cli.js" },
     }),
     // Like vite, this never exits on its own within the test; the timer only
     // bounds how long a stray process can outlive a failed test.
-    "long-running/cli.js": `#!/usr/bin/env node
+    "long-running-src/cli.js": `#!/usr/bin/env node
 console.log("long-running is ready");
 setTimeout(() => {}, 60_000);
 `,

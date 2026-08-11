@@ -1157,7 +1157,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.signal.get() {
+            if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;

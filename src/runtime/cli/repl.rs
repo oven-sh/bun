@@ -2620,6 +2620,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 while j > 0 && matches!(code[j - 1], b' ' | b'\t') {
                     j -= 1;
                 }
+                // `>>` closing nested generics counts as one closer.
+                while j > 0 && code[j - 1] == b'>' {
+                    j -= 1;
+                }
                 if j > 0 && code[j - 1] == b'/' {
                     true
                 } else if j > 0 && is_word_char(code[j - 1]) {
@@ -2728,7 +2732,8 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                             | b'.'
                     ) || (is_word_char(prev)
                         && !word_after_dot
-                        && REGEX_KEYWORDS.contains(&&code[word_start..word_end])
+                        && (REGEX_KEYWORDS.contains(&&code[word_start..word_end])
+                            || matches!(&code[word_start..word_end], b"as" | b"satisfies"))
                         && !matches!(&code[word_start..word_end], b"do" | b"else")));
                 brace_stack.push(!expr_pos);
             }

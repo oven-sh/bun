@@ -859,6 +859,22 @@ describe.concurrent("Bun REPL", () => {
       expect(string.exitCode).toBe(0);
     });
 
+    test("division after a nested generic cast", async () => {
+      const { stdout, exitCode } = await runRepl(["q = (8 as unknown as Array<Array<number>> / 2); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("4");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a cast to an inline type literal", async () => {
+      const { stdout, exitCode } = await runRepl(["function t(x) { return x as {a:number} / 2 }; t(84)", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
     test("division after a spread object literal", async () => {
       const { stdout, exitCode } = await runRepl(["x = { ...{} / 2 }; 40 + 2", ".exit"]);
       const output = stripAnsi(stdout);

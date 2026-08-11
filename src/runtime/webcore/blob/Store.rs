@@ -263,10 +263,6 @@ impl S3Ext for S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        // The associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
-        // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
-        // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
-        // internally.
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),

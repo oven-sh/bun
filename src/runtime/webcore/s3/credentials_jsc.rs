@@ -77,9 +77,6 @@ pub(crate) fn get_credentials_with_options(
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
     // get ENV config
-    // `S3Credentials`
-    // carries an intrusive ref-count and is not `Copy`; `Clone` performs a
-    // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
         options: default_options,

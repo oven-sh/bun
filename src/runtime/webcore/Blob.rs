@@ -1407,9 +1407,7 @@ impl BlobExt for Blob {
             let proxy_url = proxy.map(|p| p.href);
 
             // When no JS overrides were supplied, hand the store's *base*
-            // credentials to the upload (`upload_stream` consumes an
-            // `IntrusiveRc` by value, so the else-arm heap-dupes from the
-            // store's `Arc` instead of from the `aws_options` clone).
+            // credentials to the upload.
             return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() {
                     aws_options.credentials.dupe()
@@ -1733,8 +1731,6 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // `writable_stream` adopts the dup'd ref by value; the
-                // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
                     credentials_with_options.credentials.dupe(),
                     path,

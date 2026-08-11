@@ -415,11 +415,8 @@ pub(crate) fn upload(
 }
 
 /// returns a writable stream that writes to the s3 path
-///
-/// Takes ownership of one `credentials` ref (adopted directly into the
-/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`.
 pub(crate) fn writable_stream(
-    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    credentials: Box<S3Credentials>,
     path: &[u8],
     global_this: &JSGlobalObject,
     options: MultiPartUploadOptions,
@@ -483,7 +480,6 @@ pub(crate) fn writable_stream(
     }
 
     let proxy_url = proxy.unwrap_or(b"");
-    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
     // MultiPartUpload.
@@ -817,12 +813,8 @@ impl Drop for S3UploadStreamWrapper {
 }
 
 /// consumes the readable stream and upload to s3
-///
-/// Takes ownership of one `credentials` ref (adopted directly into the
-/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
-/// early-return path the ref is explicitly released.
 pub(crate) fn upload_stream(
-    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    credentials: Box<S3Credentials>,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,
@@ -839,7 +831,6 @@ pub(crate) fn upload_stream(
 ) -> JsResult<JSValue> {
     let proxy_url = proxy.unwrap_or(b"");
     if readable_stream.is_disturbed(global_this) {
-        credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
             bun_core::String::static_("ReadableStream is already disturbed")
@@ -850,7 +841,6 @@ pub(crate) fn upload_stream(
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
-            credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
                 global_this,
                 bun_core::String::static_("ReadableStream is invalid")
@@ -882,7 +872,6 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
-                credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
@@ -907,7 +896,6 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
-                credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
@@ -931,8 +919,6 @@ pub(crate) fn upload_stream(
         );
     }
 
-    // `credentials` is owned-by-value and explicitly `.deref()`ed on each early
-    // return above; the ref is adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;

@@ -135,7 +135,7 @@ pub struct MultiPartUpload {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) credentials: Box<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
@@ -382,9 +382,6 @@ impl Drop for MultiPartUpload {
             ))
         });
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
-        // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
-        // constructing `writable_stream`/`upload_stream` adopted.
-        self.credentials.deref();
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop
         // bun.destroy(this) — handled by deref_() via heap::take

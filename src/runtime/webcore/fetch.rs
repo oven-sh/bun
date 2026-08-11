@@ -98,7 +98,7 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
-/// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
+/// Build the `bun_s3_signing::S3Credentials` from the lower-tier
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
 /// the call site here in T6.
@@ -1943,9 +1943,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // lifetime is managed by the resolve callback itself).
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
-            // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
-            // `upload_stream` adopts the ref by value (no extra bump) and the
-            // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,

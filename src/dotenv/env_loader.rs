@@ -94,7 +94,7 @@ impl DotEnvBehavior {
 
 /// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
-/// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
+/// upward dep). The high-tier caller constructs the real `S3Credentials` from
 /// this POD at the call site.
 #[derive(Clone, Default)]
 pub struct S3Credentials {

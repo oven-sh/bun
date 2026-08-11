@@ -1891,7 +1891,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
         return v;
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
+    // T2 POD mirror; lift it into `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
     // from `rare_data` storage.

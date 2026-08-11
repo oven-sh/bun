@@ -43,7 +43,9 @@ export async function getStaticPaths() {
     // Strip ANSI codes for cleaner checking
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
-    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
+    // Frames remap to the declaration position here, like the `throwError`/`6:1`
+    // and `helperFunction`/`5:1` expectations below.
+    const hasCorrectThrowLine = /at myFunc \(.*pages[/\\]\[\.\.\.slug\]\.tsx:6:1\)/.test(cleanLines);
     // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
     const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
 

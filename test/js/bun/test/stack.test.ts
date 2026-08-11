@@ -239,37 +239,47 @@ console.log(
     });
   });
 
-  // eval'd code is not transpiled, so `new` and its callee can really be on different lines and
-  // the position has to be recounted from the source text, which is 16-bit when the evaluated
-  // string is not latin1. The same position feeds error.stack, Bun.inspect and CallSites.
-  test.concurrent("in eval'd code with `new` on an earlier line than the callee", async () => {
+  // eval'd and node:vm code is not transpiled, so `new` and its callee can really be on different
+  // lines and the position has to be recounted from the source text, which is 16-bit when the
+  // evaluated string is not latin1. The same position feeds error.stack, Bun.inspect and CallSites.
+  test.concurrent("in eval'd or node:vm code with `new` on an earlier line than the callee", async () => {
     const script = `
-const sources = {
-  latin1: "// latin1\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n",
-  utf16: "// \\u4e2d\\u6587\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n",
+const vm = require("node:vm");
+const cases = {
+  latin1: { source: "// latin1\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n" },
+  utf16: { source: "// \\u4e2d\\u6587\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n" },
   // \`new\` on the first line of the source, and a line break right after the callee.
-  firstLine: "function construct() { return new\\n  Map\\n  (1); }\\nconstruct();\\n",
+  firstLine: { source: "function construct() { return new\\n  Map\\n  (1); }\\nconstruct();\\n" },
+  // The other line terminators JavaScript has.
+  carriageReturn: { source: "function construct() { return new\\r  Map(1); }\\rconstruct();\\r" },
+  crlf: { source: "function construct() { return new\\r\\n  Map(1); }\\r\\nconstruct();\\r\\n" },
+  lineSeparator: { source: "function construct() { return new\\u2028  Map(1); }\\u2028construct();\\u2028" },
+  // node:vm's columnOffset applies to the first line of the source.
+  columnOffset: { source: "function construct() { return new\\n  Map(1); }\\nconstruct();\\n", options: { columnOffset: 100 } },
 };
 const results = {};
-for (const [name, source] of Object.entries(sources)) {
+for (const [name, { source, options }] of Object.entries(cases)) {
   const caught = () => {
     try {
-      (0, eval)(source);
+      options ? vm.runInThisContext(source, options) : (0, eval)(source);
     } catch (e) {
       return e;
     }
   };
   const lineColumn = text => text.match(/at construct \\(.*:(\\d+):(\\d+)\\)/).slice(1).join(":");
 
-  const stack = lineColumn(caught().stack);
-  const inspect = lineColumn(Bun.inspect(caught()));
+  const result = { stack: lineColumn(caught().stack), inspect: lineColumn(Bun.inspect(caught())) };
 
-  const error = caught();
-  Error.prepareStackTrace = (_, callSites) => callSites;
-  const callSite = error.stack.find(callSite => callSite.getFunctionName() === "construct");
-  Error.prepareStackTrace = undefined;
+  // node:vm materializes .stack as a string while the error leaves the script, so
+  // Error.prepareStackTrace can only be observed for the eval'd cases.
+  if (!options) {
+    const error = caught();
+    Error.prepareStackTrace = (_, callSites) => callSites;
+    result.callSiteLine = error.stack.find(callSite => callSite.getFunctionName() === "construct").getLineNumber();
+    Error.prepareStackTrace = undefined;
+  }
 
-  results[name] = { stack, inspect, callSiteLine: callSite.getLineNumber() };
+  results[name] = result;
 }
 console.log(JSON.stringify(results));
 `;
@@ -284,6 +294,10 @@ console.log(JSON.stringify(results));
       latin1: { stack: "3:10", inspect: "3:10", callSiteLine: 3 },
       utf16: { stack: "3:10", inspect: "3:10", callSiteLine: 3 },
       firstLine: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      carriageReturn: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      crlf: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      lineSeparator: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      columnOffset: { stack: "1:131", inspect: "1:131" },
     });
     expect(exitCode).toBe(0);
   });

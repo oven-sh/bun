@@ -7,6 +7,12 @@
 namespace Bun {
 using namespace JSC;
 
+// The LineTerminator set JSC's lexer counts lines with (LF, CR, U+2028, U+2029).
+static bool isLineTerminator(char16_t c)
+{
+    return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029;
+}
+
 /// Moves `pos` (the divot of an expression) back `amount` code units, to the start of the
 /// expression. When that crosses a line boundary the line and column have to be recounted from
 /// the source text. If that is not possible, `pos` is left pointing at the divot.
@@ -34,13 +40,21 @@ static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, Code
         return;
 
     for (int i = start; i < pos.byte_position; i++) {
-        if (source[i] == '\n')
-            pos.line_zero_based--;
+        if (!isLineTerminator(source[i]))
+            continue;
+        pos.line_zero_based--;
+        if (source[i] == '\r' && i + 1 < pos.byte_position && source[i + 1] == '\n')
+            i++;
     }
 
     int column = 0;
-    for (int i = start - 1; i >= 0 && source[i] != '\n'; i--)
+    int i = start - 1;
+    for (; i >= 0 && !isLineTerminator(source[i]); i--)
         column++;
+    // Columns JSC reports on the first line of a source include the source's start column
+    // (node:vm's columnOffset); the fast path above inherits that from the divot's column.
+    if (i < 0)
+        column += provider->startPosition().m_column.zeroBasedInt();
 
     pos.column_zero_based = column;
     pos.byte_position = start;

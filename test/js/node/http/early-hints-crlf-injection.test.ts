@@ -9,7 +9,7 @@ describe("writeEarlyHints", () => {
   // handler passes to res.writeEarlyHints(), and the handler records what the
   // call threw instead of asserting in place, so a mismatch shows up as a
   // failed expect() in the test rather than as a response that never arrives.
-  type Scenario = { hints: Record<string, string>; thrown: unknown };
+  type Scenario = { hints: Record<string, string>; thrown: unknown; cpuMs: number };
   const scenarios = new Map<string, Scenario>();
   let server: Server;
   let port: number;
@@ -17,11 +17,14 @@ describe("writeEarlyHints", () => {
   beforeAll(async () => {
     server = createServer((req, res) => {
       const scenario = scenarios.get(req.url!)!;
+      const cpuBefore = process.cpuUsage();
       try {
         res.writeEarlyHints(scenario.hints);
       } catch (error) {
         scenario.thrown = error;
       }
+      const { user, system } = process.cpuUsage(cpuBefore);
+      scenario.cpuMs = (user + system) / 1000;
       res.end("ok");
     });
     server.listen(0, "127.0.0.1");
@@ -37,7 +40,7 @@ describe("writeEarlyHints", () => {
 
   async function writeEarlyHintsFor(hints: Record<string, string>) {
     const path = `/${scenarios.size}`;
-    const scenario: Scenario = { hints, thrown: undefined };
+    const scenario: Scenario = { hints, thrown: undefined, cpuMs: NaN };
     scenarios.set(path, scenario);
 
     const earlyHints: InformationEvent[] = [];
@@ -48,9 +51,13 @@ describe("writeEarlyHints", () => {
     });
 
     return {
-      thrown: scenario.thrown,
-      earlyHints,
-      response: { statusCode: response.statusCode, body: await text(response) },
+      outcome: {
+        thrown: scenario.thrown,
+        earlyHints,
+        response: { statusCode: response.statusCode, body: await text(response) },
+      },
+      /** CPU time the res.writeEarlyHints() call itself took, in milliseconds. */
+      cpuMs: scenario.cpuMs,
     };
   }
 
@@ -58,7 +65,7 @@ describe("writeEarlyHints", () => {
 
   test("rejects CRLF injection in header name", async () => {
     const name = "x-custom\r\nSet-Cookie: session=evil\r\nX-Injected";
-    const outcome = await writeEarlyHintsFor({ link: "</style.css>; rel=preload", [name]: "val" });
+    const { outcome } = await writeEarlyHintsFor({ link: "</style.css>; rel=preload", [name]: "val" });
 
     expect(outcome.thrown).toBeInstanceOf(TypeError);
     expect(outcome).toEqual({
@@ -72,7 +79,7 @@ describe("writeEarlyHints", () => {
   });
 
   test("rejects CRLF injection in header value", async () => {
-    const outcome = await writeEarlyHintsFor({
+    const { outcome } = await writeEarlyHintsFor({
       link: "</style.css>; rel=preload",
       "x-custom": "legitimate\r\nSet-Cookie: session=evil",
     });
@@ -91,7 +98,7 @@ describe("writeEarlyHints", () => {
   test("rejects CRLF injection in the link value", async () => {
     // The Link format check accepts anything between "<" and ">", so this one
     // is caught by the separate CR/LF check on the link value.
-    const outcome = await writeEarlyHintsFor({ link: "</style.css\r\nSet-Cookie: session=evil>; rel=preload" });
+    const { outcome } = await writeEarlyHintsFor({ link: "</style.css\r\nSet-Cookie: session=evil>; rel=preload" });
 
     expect(outcome.thrown).toBeInstanceOf(TypeError);
     expect(outcome).toEqual({
@@ -107,7 +114,7 @@ describe("writeEarlyHints", () => {
   });
 
   test("allows valid non-link headers in early hints", async () => {
-    const outcome = await writeEarlyHintsFor({
+    const { outcome } = await writeEarlyHintsFor({
       link: "</style.css>; rel=preload",
       "x-custom": "valid-value",
       "x-another": "also-valid",
@@ -131,13 +138,17 @@ describe("writeEarlyHints", () => {
   });
 
   test("rejects pathological link value without catastrophic backtracking", async () => {
-    // If the link-param name pattern admits "=", each ";a=b" matches two ways
-    // and the trailing space forces 2^32 retries before the match fails (node
-    // v26.3.0 hangs on this input). A regression here trips the per-test
-    // timeout; the assertion below pins the instant rejection.
+    // If the link-param name class admits "=", every ";a=b" matches two ways
+    // and the trailing space makes the regex backtrack through all 2^32
+    // combinations. JSC stops such a match at Yarr::matchLimit (~2s of CPU) and
+    // reports no match, so a regressed regex still throws the error asserted
+    // below; only the CPU time of the call tells it apart from the ~1ms a
+    // linear check takes. CPU time rather than wall-clock so a preempted CI
+    // machine cannot fail this.
     const link = "</x>" + ";a=b".repeat(32) + " ";
-    const outcome = await writeEarlyHintsFor({ link });
+    const { outcome, cpuMs } = await writeEarlyHintsFor({ link });
 
+    expect(cpuMs).toBeLessThan(250);
     expect(outcome.thrown).toBeInstanceOf(TypeError);
     expect(outcome).toEqual({
       thrown: expect.objectContaining({

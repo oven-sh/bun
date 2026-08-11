@@ -7,8 +7,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// Lazy property builder: exceptions must not propagate into
-// reifyStaticProperty, which performs no exception check.
+// reifyStaticProperty, which calls the builders below, does not check for exceptions.
 static JSArray* constructMethodsArray(VM& vm, JSGlobalObject* globalObject, unsigned length)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

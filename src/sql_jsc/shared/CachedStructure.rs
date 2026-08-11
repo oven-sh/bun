@@ -1,6 +1,6 @@
-use core::mem::{ManuallyDrop, MaybeUninit};
-
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
+use bun_collections::smallvec::SmallVec;
+use bun_core::OwnedString;
 use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
@@ -51,83 +51,30 @@ impl CachedStructure {
     ) where
         I: Iterator<Item = &'a ColumnIdentifier> + Clone,
     {
-        // lets avoid most allocations
-        // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
-        // element is itself `MaybeUninit` and thus has no validity invariant.
-        let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
-            unsafe { MaybeUninit::uninit().assume_init() };
         // lets de duplicate the fields early
         let non_duplicated_count = columns
             .clone()
             .filter(|c| !matches!(c, ColumnIdentifier::Duplicate))
             .count();
+        let ids = columns.filter_map(|name_or_index| match name_or_index {
+            ColumnIdentifier::Name(name) => Some(ExternColumnIdentifier::name(OwnedString::new(
+                bun_core::String::create_atom_if_possible(name.slice()),
+            ))),
+            ColumnIdentifier::Index(index) => Some(ExternColumnIdentifier::index(*index)),
+            ColumnIdentifier::Duplicate => None,
+        });
 
-        let max_inline = JSObject::max_inline_capacity() as usize;
-        // Initialized to empty so the `> max_inline` branch below can
-        // unconditionally `into_boxed_slice()` it; in the `<= max_inline`
-        // branch it stays empty and is never read.
-        let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
-        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline
-        {
-            &mut stack_ids[..non_duplicated_count]
-        } else {
-            heap_ids = Vec::with_capacity(non_duplicated_count);
-            // Spare capacity is exactly the uninitialized `[MaybeUninit<T>]` view
-            // we need; fully initialized in the loop below before any read.
-            &mut heap_ids.spare_capacity_mut()[..non_duplicated_count]
-        };
-
-        let mut i: usize = 0;
-        for name_or_index in columns {
-            if matches!(name_or_index, ColumnIdentifier::Duplicate) {
-                continue;
-            }
-
-            let mut out = ExternColumnIdentifier::default();
-            match name_or_index {
-                ColumnIdentifier::Name(name) => {
-                    out.value.name =
-                        ManuallyDrop::new(bun_core::String::create_atom_if_possible(name.slice()));
-                }
-                ColumnIdentifier::Index(index) => {
-                    out.value.index = *index;
-                }
-                ColumnIdentifier::Duplicate => unreachable!(),
-            }
-            out.tag = match name_or_index {
-                ColumnIdentifier::Name(_) => 2,
-                ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Duplicate => 0,
-            };
-            ids[i].write(out);
-            i += 1;
-        }
-
-        if non_duplicated_count > max_inline {
-            // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
-            // slot in [0..non_duplicated_count] was initialized in the loop above.
-            unsafe { heap_ids.set_len(non_duplicated_count) };
-            // Ownership transfer of heap `ids` to CachedStructure, which
-            // becomes responsible for freeing the alloc'd slice.
+        if non_duplicated_count > JSObject::max_inline_capacity() as usize {
+            let mut heap_ids = Vec::with_capacity(non_duplicated_count);
+            heap_ids.extend(ids);
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
-            // Every element in `ids[..]` was `.write()`n above; C++ reads them as
-            // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
-            // without materialising a typed slice (avoids an unsafe assume-init cast).
-            self.set(
-                global_object,
-                // SAFETY: every `ids[..len]` slot was initialized in the loop
-                // above; the stack buffer outlives the FFI call.
-                Some(unsafe {
-                    JSObject::create_structure(
-                        global_object,
-                        owner,
-                        ids.len() as u32,
-                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                    )
-                }),
-                None,
-            );
+            // lets avoid most allocations
+            let stack_ids: SmallVec<[ExternColumnIdentifier; 70]> = ids.collect();
+            // SAFETY: `owner` is the connection's JS object, passed through
+            // unchanged by `{Postgres,MySQL}SQLStatement::structure`.
+            let structure = unsafe { JSObject::create_structure(global_object, owner, &stack_ids) };
+            self.set(global_object, Some(structure), None);
         }
     }
 }

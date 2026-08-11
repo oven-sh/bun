@@ -709,6 +709,93 @@ it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls
   await once(server, "close");
 });
 
+it("a write from inside 'data' does not re-enter 'data' on a TLSSocket over a duplex (tls.connect({ socket }))", async () => {
+  // The TLS engine behind a duplex decrypts into a 64 KiB buffer and emits one
+  // buffer at a time. A write() from inside the 'data' handler used to pump the
+  // engine again from within that dispatch, so the next 64 KiB arrived as a
+  // 'data' event nested inside the handler for the previous one; node never
+  // does that. The transport below hands the engine the whole burst in one
+  // push, so there is always more to decrypt at the moment the handler writes.
+  const payload = Buffer.alloc(128 * 1024, Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+  // 64 KiB of plaintext plus a whole 16 KiB TLS record of slack.
+  const releaseAt = 96 * 1024;
+
+  // "got reply" is only sent once the ack written from inside 'data' actually
+  // arrived; the client writes nothing after the ack, so the ack has to reach
+  // the wire on its own.
+  await using server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("data", data => {
+      if (data.toString() === "go") socket.write(payload);
+      else if (data.toString() === "ack") socket.end("got reply");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  // Like SocketProxy, except that while `held` is set the ciphertext is
+  // accumulated and pushed as one chunk once `releaseAt` bytes are queued.
+  class HoldingTransport extends Duplex {
+    held: Buffer[] | null = null;
+    constructor(readonly raw: net.Socket) {
+      super();
+      raw.on("data", chunk => {
+        if (this.held === null) {
+          this.push(chunk);
+          return;
+        }
+        this.held.push(chunk);
+        if (this.held.reduce((total, part) => total + part.length, 0) >= releaseAt) {
+          const burst = Buffer.concat(this.held);
+          this.held = null;
+          this.push(burst);
+        }
+      });
+      raw.on("end", () => this.push(null));
+    }
+    _read() {}
+    _write(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void) {
+      this.raw.write(chunk, callback);
+    }
+    _final(callback: () => void) {
+      this.raw.end();
+      callback();
+    }
+  }
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const transport = new HoldingTransport(raw);
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  await once(client, "secureConnect");
+
+  const chunks: Buffer[] = [];
+  let depth = 0;
+  let nestedDataEvents = 0;
+  let acked = false;
+  client.on("data", (chunk: Buffer) => {
+    depth++;
+    if (depth > 1) nestedDataEvents++;
+    chunks.push(chunk);
+    if (!acked) {
+      acked = true;
+      client.write("ack");
+    }
+    depth--;
+  });
+  transport.held = [];
+  client.write("go");
+  await once(client, "end");
+  client.end();
+  await once(client, "close");
+
+  const received = Buffer.concat(chunks);
+  expect({
+    nestedDataEvents,
+    payloadIntact: received.subarray(0, payload.length).equals(payload),
+    tail: received.subarray(payload.length).toString(),
+  }).toEqual({ nestedDataEvents: 0, payloadIntact: true, tail: "got reply" });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

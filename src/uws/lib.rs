@@ -214,6 +214,18 @@ pub mod ssl_wrapper {
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
+        traffic: Cell<Traffic>,
+    }
+
+    /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Traffic {
+        Idle,
+        /// `handle_traffic` is on the stack, running a pass.
+        Running,
+        /// `handle_traffic` was called again from inside one of the running
+        /// pass's callbacks; the outermost call owes another pass.
+        RerunRequested,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -480,6 +492,7 @@ pub mod ssl_wrapper {
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
+                traffic: Cell::new(Traffic::Idle),
             })
         }
 
@@ -1128,30 +1141,84 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Pump the engine: handshake, flush ciphertext, decrypt and dispatch,
+        /// then the parked session/keylog events.
+        ///
+        /// Not re-entrant. The callbacks a pass fires call straight back in:
+        /// owners write from `on_data`/`on_handshake`, a peer that answers
+        /// synchronously feeds `receive_data` from inside the write callback.
+        /// A nested pass must not decrypt, since that hands the owner the next
+        /// chunk while it is still inside its callback for the previous one
+        /// (the WebSocket client keeps its parse cursor on the stack across a
+        /// dispatch, so a burst longer than [`BUFFER_SIZE`] whose first chunk
+        /// provoked a pong was misparsed; node's `TLSWrap::Cycle` has the same
+        /// guard). A nested call therefore only flushes the ciphertext its
+        /// caller queued and leaves the rest to the outermost call, which
+        /// keeps running passes until none of them was re-entered.
+        ///
+        /// The nested flush keeps wire order because `handle_writing` delivers
+        /// everything it has read before it fires a callback, and it has to
+        /// happen right away: owners tear the wrapper down straight after a
+        /// final write (the WebSocket close frame is written and the tunnel is
+        /// fast-shutdown from the same callback).
+        ///
+        /// Callbacks may `deinit` the wrapper but never free it while a call
+        /// is on the stack (see `UpgradedDuplex::teardown`), so `self.traffic`
+        /// stays writable after every callback.
         fn handle_traffic(&self) {
-            // always handle the handshake first
-            if self.update_handshake_state() {
-                // shared stack buffer for reading and writing
-                // PERF: 64KiB on-stack array — verify stack-size headroom.
-                let mut buffer = [0u8; BUFFER_SIZE];
-                // drain the input BIO first
+            // Shared scratch buffer for reading and writing. A nested call
+            // needs its own: the outer pass's buffer holds the chunk the owner
+            // is still consuming.
+            // PERF: 64KiB on-stack array, verify stack-size headroom.
+            let mut buffer = [0u8; BUFFER_SIZE];
+            if self.traffic.get() != Traffic::Idle {
                 self.handle_writing(&mut buffer);
-
-                // drain the output BIO in loop, because read can trigger writing and vice versa
-                while self.has_pending_read() && self.handle_reading(&mut buffer) {
-                    // read data can trigger writing so we need to handle it
-                    self.handle_writing(&mut buffer);
-                }
-
-                // The SSL_do_handshake/SSL_read calls above may have parked
-                // new-session tickets / keylog lines (BoringSSL surfaces them
-                // mid-read, where dispatching JS could free the SSL out from
-                // under the caller). The stack has unwound here, so hand them
-                // to the owner - same ordering as the C path's
-                // ssl_flush_pending_session: handshake/data callbacks first,
-                // then sessions.
-                self.flush_pending_events(&mut buffer);
+                self.traffic.set(Traffic::RerunRequested);
+                return;
             }
+            loop {
+                self.traffic.set(Traffic::Running);
+                self.traffic_pass(&mut buffer);
+                if self.traffic.get() != Traffic::RerunRequested {
+                    break;
+                }
+            }
+            self.traffic.set(Traffic::Idle);
+        }
+
+        fn traffic_pass(&self, buffer: &mut [u8; BUFFER_SIZE]) {
+            // always handle the handshake first
+            if !self.update_handshake_state() {
+                return;
+            }
+            // flush what the handshake queued before reading
+            self.handle_writing(buffer);
+
+            // reading can queue writes and vice versa, so alternate until the
+            // input BIO is drained. Once a callback has re-entered, stop after
+            // the current step and let the next pass start over from
+            // update_handshake_state: bytes a peer fed in from inside the write
+            // callback may still belong to the handshake, and only the
+            // SSL_do_handshake there reports its completion (SSL_read would
+            // complete it silently).
+            while self.traffic.get() == Traffic::Running
+                && self.has_pending_read()
+                && self.handle_reading(buffer)
+            {
+                self.handle_writing(buffer);
+            }
+            if self.traffic.get() != Traffic::Running {
+                return;
+            }
+
+            // The SSL_do_handshake/SSL_read calls above may have parked
+            // new-session tickets / keylog lines (BoringSSL surfaces them
+            // mid-read, where dispatching JS could free the SSL out from
+            // under the caller). The stack has unwound here, so hand them
+            // to the owner - same ordering as the C path's
+            // ssl_flush_pending_session: handshake/data callbacks first,
+            // then sessions.
+            self.flush_pending_events(buffer);
         }
 
         /// Drain the parked new-session / keylog queues into the owner's

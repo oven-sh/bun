@@ -1,4 +1,4 @@
-import { bunEnv, runBunInstall } from "harness";
+import { bunEnv, bunExe, runBunInstall, tempDir } from "harness";
 import { join } from "node:path";
 import {
   createTestContext,
@@ -24,7 +24,8 @@ function test(
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
-    packageJson?: object;
+    packageJson?: object | ((ctx: TestContext) => object);
+    files?: Record<string, string | Blob>;
     customRegistry?: (urls: string[], ctx: TestContext) => any;
     concurrent?: boolean;
   },
@@ -41,8 +42,15 @@ function test(
           options.customRegistry ? options.customRegistry(urls, ctx) : dummyRegistryForContext(ctx, urls),
         );
 
-        const write = (path: string, content: string | object) =>
-          Bun.write(join(ctx.package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+        const write = (path: string, content: string | Blob | object) =>
+          Bun.write(
+            join(ctx.package_dir, path),
+            typeof content === "string" || content instanceof Blob ? content : JSON.stringify(content),
+          );
+
+        for (const [path, content] of Object.entries(options.files ?? {})) {
+          await write(path, content);
+        }
 
         const scannerPath = options.scannerFile || "./scanner.ts";
         if (typeof options.scanner === "string") {
@@ -63,7 +71,7 @@ function test(
 
         await write(
           "package.json",
-          options.packageJson ?? {
+          (typeof options.packageJson === "function" ? options.packageJson(ctx) : options.packageJson) ?? {
             name: "my-app",
             version: "1.0.0",
             dependencies: {},
@@ -703,6 +711,162 @@ describe("Package Resolution", () => {
     expect: ({ out }) => {
       expect(out).toContain("Latest tag:");
     },
+  });
+
+  test("scanner receives packages resolved from folders and tarballs", {
+    scanner: async ({ packages }) => {
+      const sorted = [...packages].sort((a, b) => a.name.localeCompare(b.name));
+      console.log("PACKAGES:" + JSON.stringify(sorted));
+      return [];
+    },
+    files: {
+      "mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.2.3" }),
+      "bar-0.0.2.tgz": Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")),
+    },
+    packageJson: ctx => ({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        bar: "./bar-0.0.2.tgz",
+        baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+        mypkg: "file:./mypkg",
+      },
+    }),
+    packages: [],
+    expectedExitCode: 0,
+    expect: ({ out, ctx }) => {
+      const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line!.slice("PACKAGES:".length))).toEqual([
+        {
+          name: "bar",
+          version: "./bar-0.0.2.tgz",
+          requestedRange: "./bar-0.0.2.tgz",
+          tarball: "./bar-0.0.2.tgz",
+        },
+        {
+          name: "baz",
+          version: `${ctx.registry_url}baz-0.0.3.tgz`,
+          requestedRange: `${ctx.registry_url}baz-0.0.3.tgz`,
+          tarball: `${ctx.registry_url}baz-0.0.3.tgz`,
+        },
+        {
+          name: "mypkg",
+          version: "file:mypkg",
+          requestedRange: "file:./mypkg",
+          tarball: "",
+        },
+      ]);
+    },
+  });
+
+  test("scanner receives a local tarball added on the command line", {
+    scanner: async ({ packages }) => {
+      console.log("PACKAGES:" + JSON.stringify(packages));
+      return [];
+    },
+    files: {
+      "bar-0.0.2.tgz": Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")),
+    },
+    packages: ["./bar-0.0.2.tgz"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line!.slice("PACKAGES:".length))).toEqual([
+        {
+          name: "bar",
+          version: "./bar-0.0.2.tgz",
+          requestedRange: "./bar-0.0.2.tgz",
+          tarball: "./bar-0.0.2.tgz",
+        },
+      ]);
+    },
+  });
+
+  test("fatal advisory for a folder dependency stops the install", {
+    scanner: async ({ packages }) =>
+      packages
+        .filter(pkg => pkg.version.startsWith("file:"))
+        .map(pkg => ({
+          package: pkg.name,
+          description: `Folder dependency ${pkg.name} is not allowed`,
+          level: "fatal",
+          url: null,
+        })),
+    files: {
+      "mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.2.3" }),
+    },
+    packageJson: {
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        mypkg: "file:./mypkg",
+      },
+    },
+    packages: [],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Folder dependency mypkg is not allowed");
+    },
+  });
+
+  it.concurrent("scanner receives GitHub packages with a tarball URL for the resolved commit", async () => {
+    const tarball = await new Bun.Archive(
+      {
+        "user-repo-abc1234/": "",
+        "user-repo-abc1234/package.json": JSON.stringify({ name: "gh-pkg", version: "1.0.0" }),
+      },
+      { compress: "gzip" },
+    ).bytes();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.includes("/tarball/")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    const githubApiUrl = `http://localhost:${server.port}`;
+
+    using dir = tempDir("scanner-github", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { "gh-pkg": "github:user/repo#main" },
+      }),
+      "bunfig.toml": `[install]\ncache = false\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+      "scanner.ts": `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("PACKAGES:" + JSON.stringify(packages));
+    return [];
+  },
+};`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, GITHUB_API_URL: githubApiUrl },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+    expect(line, err).toBeDefined();
+    expect(JSON.parse(line!.slice("PACKAGES:".length))).toEqual([
+      {
+        name: "gh-pkg",
+        version: "github:user/repo#abc1234",
+        requestedRange: "github:user/repo#main",
+        tarball: `${githubApiUrl}/repos/user/repo/tarball/abc1234`,
+      },
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

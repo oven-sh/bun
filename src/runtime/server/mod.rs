@@ -276,9 +276,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `AnyServer` handles on the JS thread.
     pub(crate) active_websocket_count: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
-    /// `app.close()` drain in `stop_listening`; lets a nested call (reached
-    /// via a callback the body fires) early-return instead of re-running the
-    /// downgrade/teardown while the outer frame still holds `&mut self`.
+    /// `app.close()` drains in `stop_listening` and `deinit`; lets a nested
+    /// call (reached via a callback the body fires) early-return instead of
+    /// re-running the downgrade/teardown while the outer frame still holds
+    /// `&mut self`.
     deinit_running: core::cell::Cell<bool>,
     pub(crate) request_pool:
         *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
@@ -2116,9 +2117,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
         if let Some(app) = server.app.take() {
-            // `destroy` only deinits the socket groups, so whatever no stop
-            // closed (a gracefully stopped server freed at VM teardown, a
-            // `listen()` that failed after binding) is closed here first.
+            // `destroy` closes nothing itself.
             if !server.flags.contains(ServerFlags::TERMINATED) {
                 server.flags.insert(ServerFlags::TERMINATED);
                 server.deinit_running.set(true);

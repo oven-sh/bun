@@ -843,6 +843,114 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   });
 });
 
+describe("application data written over a Duplex transport before the handshake completes", () => {
+  // Node parks such a write (TLSWrap's pending cleartext) and sends it right
+  // after the handshake: the write is still pending when 'secureConnect' /
+  // 'secure' fires, its callback runs afterwards, and the peer receives it
+  // ahead of anything written later. Bun's fd-backed path behaves the same;
+  // these pin the stream-level engine to it.
+  function inMemoryPair(deliver: (push: () => void) => void, onClientTransportWrite = () => {}) {
+    const makeSide = (peer: () => Duplex, onWrite = () => {}) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          onWrite();
+          deliver(() => peer().push(chunk));
+          callback();
+        },
+        final(callback) {
+          deliver(() => peer().push(null));
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide, onClientTransportWrite);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    return { clientSide, serverSide };
+  }
+  const synchronously = (push: () => void) => push();
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+
+  it("client write() issued right after tls.connect() reaches the server, in order", async () => {
+    // The engine for a Duplex transport is created on a later event-loop
+    // turn, so this write lands before it even exists.
+    const { clientSide, serverSide } = inMemoryPair(synchronously);
+    const log: string[] = [];
+    const received: Buffer[] = [];
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("data", (chunk: Buffer) => received.push(chunk));
+    server.on("end", () => server.end());
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    client.on("secureConnect", () => {
+      log.push(`secureConnect writableLength=${client.writableLength}`);
+      client.write("two");
+      client.end();
+    });
+    client.on("data", () => {});
+    client.write("one", err => log.push(`write callback err=${err}`));
+    log.push(`write() returned writableLength=${client.writableLength}`);
+    await once(client, "close");
+
+    expect({ log, received: Buffer.concat(received).toString() }).toEqual({
+      log: ["write() returned writableLength=3", "secureConnect writableLength=3", "write callback err=null"],
+      received: "onetwo",
+    });
+  });
+
+  it("client write() issued while the engine is waiting for the server's flight reaches the server", async () => {
+    // The transport hands chunks over on a later macrotask, so once the engine
+    // has written its ClientHello nothing can answer it before the write below.
+    const clientHelloWritten = Promise.withResolvers<void>();
+    const { clientSide, serverSide } = inMemoryPair(
+      push => setImmediate(push),
+      () => clientHelloWritten.resolve(),
+    );
+    const log: string[] = [];
+    const received: Buffer[] = [];
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("data", (chunk: Buffer) => received.push(chunk));
+    server.on("end", () => server.end());
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    client.on("secureConnect", () => log.push(`secureConnect writableLength=${client.writableLength}`));
+    client.on("data", () => {});
+    await clientHelloWritten.promise;
+    log.push(`ClientHello written secureConnecting=${client.secureConnecting}`);
+    client.write("one", err => log.push(`write callback err=${err}`));
+    client.end();
+    await once(client, "close");
+
+    expect({ log, received: Buffer.concat(received).toString() }).toEqual({
+      log: ["ClientHello written secureConnecting=true", "secureConnect writableLength=3", "write callback err=null"],
+      received: "one",
+    });
+  });
+
+  it("server-side TLSSocket write() issued before the handshake reaches the client", async () => {
+    const { clientSide, serverSide } = inMemoryPair(synchronously);
+    const log: string[] = [];
+    const received: Buffer[] = [];
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("secure", () => log.push(`secure writableLength=${server.writableLength}`));
+    server.on("data", () => {});
+    server.write("banner", err => log.push(`write callback err=${err}`));
+    server.end();
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    client.on("data", (chunk: Buffer) => received.push(chunk));
+    client.on("end", () => client.end());
+    await once(client, "close");
+
+    expect({ log, received: Buffer.concat(received).toString() }).toEqual({
+      log: ["secure writableLength=6", "write callback err=null"],
+      received: "banner",
+    });
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

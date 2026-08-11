@@ -7,7 +7,10 @@
 // 2. A worker queues operations with { signal } behind them and is terminated,
 //    tearing its VM down while they are still queued.
 // 3. Close the write ends: the pool drains and frees the dead worker's jobs.
-import { closeSync, openSync, promises } from "node:fs";
+//    Jobs released that way never run, so none of the worker's writes may have
+//    produced a file; a count above zero means they were not queued behind the
+//    parked threads after all and the run proved nothing.
+import { closeSync, openSync, promises, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -58,4 +61,6 @@ console.log("worker torn down");
 
 for (const fd of writeEnds) closeSync(fd);
 await Promise.all(parked);
-console.log("pool drained");
+const inputs = new Set(["data.txt", "fifo-a", "fifo-b"]);
+const workerWrites = readdirSync(dir).filter(name => !inputs.has(name)).length;
+console.log(`pool drained, worker writes that ran: ${workerWrites}`);

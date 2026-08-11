@@ -113,30 +113,23 @@ version = "0.0.0"
 edition = "2024"
 
 # ─── Release optimization ───────────────────────────────────────────────────
-# The `lto` / `codegen-units` below are NOT what ships. scripts/build/rust.ts
-# pins every CI configuration through CARGO_PROFILE_RELEASE_* env overrides:
-# the cross-language LTO lanes emit per-crate bitcode (`lto = off`,
-# `codegen-units = 1`) and lld's ThinLTO optimizes the Rust crate graph
-# together with the C++ side and the WebKit prebuilt; the lanes without an
-# LTO prebuilt (freebsd, android, windows-arm64) are pinned to the fat/1 they
-# have always used; asan is pinned to off/16. So these two values only reach
-# builds nobody ships: local `bun run build:release`, release-assertions,
-# release-local, and a plain `cargo build --release`.
-#
-# For those the priority is wall-clock time. `lto = "fat"` + `codegen-units
-# = 1` made the cargo step a ~4 minute single thread on a 12-core machine
-# (bun_bin's fat LTO alone ~3 minutes, bun_runtime's single-CGU codegen
-# another minute) while the rest of the machine sat idle: a clean cargo build
-# measured 283s, vs 88s with the settings below, and a fresh
-# `bun run build:release` went from 406s to 222s. Thin LTO still inlines
-# across crates, it just does the work on every core.
+# Zig's release build is one compilation unit with whole-program optimization.
+# Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
+# CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
+# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
+# the whole Rust crate graph into one LLVM module, matching Zig's shape.
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
 # pads means smaller `.pdata`/`.xdata`.
+#
+# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
+# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
+# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
+# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
 [profile.release]
-lto = "thin"
-codegen-units = 16
+lto = "fat"
+codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
 panic = "abort"
@@ -153,6 +146,20 @@ panic = "abort"
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
+
+# Fast-iteration release build for local benching when fat LTO's link time
+# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
+[profile.release-dev]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
+# Release with debuginfo retained for `perf record` / flamegraphs. Same opt
+# level as release; binary is large but profilable.
+[profile.release-profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
 
 # `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
@@ -174,10 +181,9 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
-# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,CODEGEN_UNITS,DEBUG_ASSERTIONS} for
-# the main bun_bin build and the shim build shares that env; without explicit
-# values here (lto/codegen-units above, the two below) the env overrides on
-# `release` would be inherited.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
+# bun_bin build and the shim build shares that env; without explicit values
+# here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
 

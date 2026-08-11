@@ -12,9 +12,7 @@
  * ready edges of equal depth in file order, so the long edges (cargo, the big
  * unified bundles) have to be written first or a fresh build starts them
  * after ~1100 dep objects. These tests pin the writer's ordering, the
- * largest-first source order it relies on, and the cargo profile pins that
- * keep the shipped Rust codegen independent of Cargo.toml's local-build
- * profile.
+ * largest-first source order it relies on.
  *
  * These exercise the ninja-emission logic only (no compiler or ninja needed),
  * so they run on every host.
@@ -26,7 +24,7 @@ import { basename, join, resolve } from "node:path";
 import { emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja, SchedulePriority } from "../../scripts/build/ninja.ts";
-import { cargoBuildInvocation, emitRust, registerRustRules } from "../../scripts/build/rust.ts";
+import { emitRust, registerRustRules } from "../../scripts/build/rust.ts";
 import { generateUnifiedSources } from "../../scripts/build/unified.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
@@ -262,31 +260,5 @@ describe("scheduling order", () => {
     ]);
     expect(split.standalone).toEqual([join(root, "d_alone_big/only.cpp"), join(root, "c_alone_small/only.cpp")]);
     expect(split.bundled.sort()).toEqual(sources.slice(0, 4).sort());
-  });
-});
-
-describe("cargo release profile pins", () => {
-  const pins = (cfg: Config) => {
-    const { CARGO_PROFILE_RELEASE_LTO: lto, CARGO_PROFILE_RELEASE_CODEGEN_UNITS: cgu } = cargoBuildInvocation(cfg).env;
-    return { lto, cgu };
-  };
-
-  test("shipping configurations never inherit lto/codegen-units from Cargo.toml", () => {
-    using dir = tempDir("build-cargo-pins", {});
-    const buildDir = String(dir);
-    // Cross-language LTO lanes: per-crate bitcode for lld's ThinLTO.
-    expect(pins(linuxConfig({ ci: true, lto: true }, buildDir))).toEqual({ lto: "off", cgu: "1" });
-    // Lanes with no -lto WebKit prebuilt (freebsd, android, windows-arm64):
-    // rustc does the Rust-side LTO itself, exactly as before Cargo.toml's
-    // profile was retuned for local builds.
-    expect(pins(linuxConfig({ ci: true, lto: false }, buildDir))).toEqual({ lto: "fat", cgu: "1" });
-    // ASAN never ships and bun_runtime was its single-threaded tail.
-    expect(pins(linuxConfig({ ci: true, lto: false, asan: true }, buildDir))).toEqual({ lto: "off", cgu: "16" });
-    expect(pins(linuxConfig({ lto: false, asan: true }, buildDir))).toEqual({ lto: "off", cgu: "16" });
-  });
-
-  test("a local release build takes Cargo.toml's profile as-is", () => {
-    using dir = tempDir("build-cargo-pins", {});
-    expect(pins(linuxConfig({ lto: false }, String(dir)))).toEqual({ lto: undefined, cgu: undefined });
   });
 });

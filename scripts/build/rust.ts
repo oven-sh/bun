@@ -674,41 +674,18 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // bitcode with its ThinLTO summary intact: the whole link is one uniform
     // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
     // `fat` would pre-merge the crates into one summary-less blob the thin
-    // link can't import from. (Every shipping configuration pins its lto /
-    // codegen-units here rather than inheriting Cargo.toml's
-    // `[profile.release]`, which is tuned for local build time — see the
-    // comment above it in Cargo.toml.)
+    // link can't import from. (The workspace `[profile.release] lto = "fat"`
+    // exists for non-LTO release builds, where the rust .a is linked as
+    // already-codegen'd machine code and still wants intra-Rust inlining.)
     env.CARGO_PROFILE_RELEASE_LTO = "off";
-    // One pre-link module per crate, so the bitcode lld sees is the same
-    // shape it has always been for shipped builds. This is also what makes
-    // `bun_runtime` the tail of every CI cargo step: in build 91391 all 209
-    // crates had started by +45s and cargo finished at +107s, the difference
-    // being bun_runtime's single-CGU pre-link optimization. Relaxing this to
-    // 16 recovers most of that minute per lane but changes the module
-    // boundaries ThinLTO imports across, so it needs a bench (btg profile)
-    // before it changes what ships.
-    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
-    // override Cargo.toml's `[profile.release] lto` still applies and rustc
-    // runs an intra-Rust LTO pass over IR that ASAN instrumentation has
-    // already ~doubled. ASAN builds don't need intra-Rust LTO; turn it off.
-    // Parallel codegen for the same reason: ASAN binaries never ship, and
-    // with one CGU the CI asan lane's cargo step was ~165s of bun_runtime
-    // compiling alone on a 16-vCPU box (PR build 91592: every other crate
-    // done by +45s, cargo finished at +212s).
+    // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
+    // rustc merges every crate into one module and codegens it serially, on
+    // IR that ASAN instrumentation has already ~doubled. That's the 15-min
+    // cargo step vs 4m36s for the linker-plugin-lto build (which defers
+    // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
-    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
-  } else if (cfg.ci) {
-    // The shipping lanes without a -lto WebKit prebuilt (freebsd, android,
-    // windows-arm64 — see ltoDefault in config.ts): rustc does the Rust-side
-    // LTO itself. Pinned to what these lanes have always shipped, so the
-    // Cargo.toml profile can be tuned for local builds without changing
-    // their codegen. This is also why their cargo step takes ~4-5 minutes;
-    // thin + 16 (measured 283s -> 88s locally) is the obvious candidate once
-    // someone has benchmarked it on these targets.
-    env.CARGO_PROFILE_RELEASE_LTO = "fat";
-    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
   }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
@@ -882,10 +859,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // lol-html source fetch before cargo resolves the path dep.
     implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
     orderOnlyInputs: inputs.codegenOrderOnly,
-    // The longest edge of the graph in every profile (measured 88s release /
-    // 68s debug for a clean cargo build on 12 cores, vs 3-70s for the largest
+    // The longest edge of the graph in every profile (a clean cargo build
+    // measured 283s release / 68s debug on 12 cores, vs 3-90s for the largest
     // C++ TUs), so it must start the moment codegen is done — not after ninja
-    // has worked through the dep objects emitted ahead of it.
+    // has worked through the ~1100 dep objects emitted ahead of it.
     priority: SchedulePriority.cargo,
     vars: {
       cwd: cfg.cwd,

@@ -421,7 +421,6 @@ function isEconnresetAfterGoaway(session, error: Error): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ECONNRESET" && session[kGoawayCode] !== undefined;
 }
 const kMaxStreams = 2 ** 32 - 1;
-const kMaxUint32 = 4294967295;
 const kMaxInt = 4294967295;
 const kMaxWindowSize = 2 ** 31 - 1;
 const {
@@ -2183,6 +2182,20 @@ function validateWindowSize(windowSize) {
   }
 }
 hideFromStack(validateWindowSize);
+
+// Node's Http2Session#goaway (one implementation for both session types) only type-checks the
+// two numbers; a code outside the uint32 range is converted on the way to the wire (-1 goes out
+// as 0xffffffff), not rejected. destroy(error, code) routes its caller's code through here too,
+// so a range check would make it throw mid-teardown where Node destroys the session.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#goaway)
+function validateGoawayArguments(code, lastStreamID, opaqueData) {
+  if (opaqueData !== undefined) {
+    validateBuffer(opaqueData, "opaqueData");
+  }
+  validateNumber(code, "code");
+  validateNumber(lastStreamID, "lastStreamID");
+}
+hideFromStack(validateGoawayArguments);
 
 function pushToStream(stream, data) {
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
@@ -4793,12 +4806,7 @@ class ServerHttp2Session extends Http2Session {
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-
-    if (opaqueData !== undefined) {
-      validateBuffer(opaqueData, "opaqueData");
-    }
-    validateInteger(code, "code", 0, kMaxUint32);
-    validateNumber(lastStreamID, "lastStreamID");
+    validateGoawayArguments(code, lastStreamID, opaqueData);
     return this.#parser?.goaway(code, lastStreamID, opaqueData);
   }
 
@@ -4962,7 +4970,7 @@ class ServerHttp2Session extends Http2Session {
       }
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
-      // validateInteger, the native session rejecting a non-numeric error
+      // validateNumber, the native session rejecting a non-numeric error
       // code) throws mid-teardown, and a corrected retry must still run.
       this.#destroying = false;
       throw e;
@@ -5717,9 +5725,10 @@ class ClientHttp2Session extends Http2Session {
     }
     return true;
   }
-  goaway(errorCode = constants.NGHTTP2_NO_ERROR, lastStreamId = 0, opaqueData) {
+  goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
+    validateGoawayArguments(code, lastStreamID, opaqueData);
+    return this.#parser?.goaway(code, lastStreamID, opaqueData);
   }
 
   setLocalWindowSize(windowSize) {
@@ -6049,7 +6058,7 @@ class ClientHttp2Session extends Http2Session {
       }
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
-      // validateInteger, the native session rejecting a non-numeric error
+      // validateNumber, the native session rejecting a non-numeric error
       // code) throws mid-teardown, and a corrected retry must still run.
       this.#destroying = false;
       throw e;

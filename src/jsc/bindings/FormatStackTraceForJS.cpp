@@ -198,15 +198,12 @@ WTF::String formatStackTrace(
                 String sourceURLForFrame = err->sourceURL();
 
                 // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
+                if (globalObject) {
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
 
                 // there is always a newline before each stack frame line, ensuring that the name + message

@@ -222,7 +222,8 @@ describe("SyntaxError .stack", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("SyntaxError: boom");
     expect(stderr).not.toContain("<parse>");
     expect(stderr).toMatch(/index\.js:1:\d+/);
@@ -235,10 +236,17 @@ describe("SyntaxError .stack", () => {
   });
 
   test("a parser SyntaxError in a source without a URL has no <parse> frame", () => {
-    // There is no file to point at, so an "at <parse> (:4)" line would only be noise.
-    const stack = caught(() => new Function("{")).stack!;
+    // There is no file to point at, so an "at <parse> (:1)" line would only be noise.
+    // Not new Function("{") or eval: those materialize .stack from inside JSC's own parse-error
+    // path, which never checks for an exception from the stack hook, so they abort under
+    // BUN_JSC_validateExceptionChecks (see #30823). node:vm's path checks.
+    const stack = caught(() => vm.compileFunction("{")).stack!;
     expect(stack).not.toContain("<parse>");
     expect(stack.split("\n").at(-1)).toMatch(/^    at .*stack\.test\.ts:\d+:\d+\)?$/);
+
+    // The same source with a URL keeps the frame.
+    const named = caught(() => vm.compileFunction("{", [], { filename: "named.js" })).stack!;
+    expect(named.split("\n")).toContain("    at <parse> (named.js:1)");
   });
 
   test("a parser SyntaxError from importing a module keeps its <parse> frame", async () => {

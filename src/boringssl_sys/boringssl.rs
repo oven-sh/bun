@@ -300,6 +300,10 @@ impl OwnedSslCtx {
         self.0.as_ptr()
     }
 
+    pub fn as_non_null(&self) -> core::ptr::NonNull<SSL_CTX> {
+        self.0
+    }
+
     /// Transfers the reference back out; the caller must free it.
     pub fn into_raw(self) -> *mut SSL_CTX {
         core::mem::ManuallyDrop::new(self).0.as_ptr()

@@ -3528,13 +3528,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         let cfg = ssl_opts.as_ref();
-        let ctx_ptr = owned_ctx.as_ref().map(|c| c.as_ptr());
-        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx_ptr);
+        let ctx = owned_ctx.as_ref();
+        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx);
         let (adopt_request_cert, adopt_reject_unauthorized) = match cfg {
             Some(c) => (c.request_cert != 0, c.reject_unauthorized != 0),
             None => (
-                server_ctx_requests_cert(ctx_ptr),
-                server_ctx_rejects_unauthorized(ctx_ptr),
+                server_ctx_requests_cert(ctx),
+                server_ctx_rejects_unauthorized(ctx),
             ),
         };
         let mut initial_flags = Flags::initial(reject_unauthorized);
@@ -4131,7 +4131,7 @@ fn upgrade_reject_policy(
     vm: &VirtualMachine,
     cfg: Option<&SSLConfig>,
     is_server: bool,
-    ctx: Option<*mut SSL_CTX>,
+    ctx: Option<&boringssl_sys::OwnedSslCtx>,
 ) -> bool {
     if cfg.is_none() && is_server {
         server_ctx_rejects_unauthorized(ctx)
@@ -4143,18 +4143,20 @@ fn upgrade_reject_policy(
 /// A bare server-side `secureContext` carries no parsed config, so the policy
 /// comes from the ctx itself: `us_ssl_ctx_from_options` sets
 /// `FAIL_IF_NO_PEER_CERT` iff the context was created with `rejectUnauthorized`.
-fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+fn server_ctx_rejects_unauthorized(ctx: Option<&boringssl_sys::OwnedSslCtx>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
+    // SAFETY: `ctx` owns a live `SSL_CTX` ref; read-only.
+    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx.as_ptr()) & MODE == MODE }
 }
 
-fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+fn server_ctx_requests_cert(ctx: Option<&boringssl_sys::OwnedSslCtx>) -> bool {
     let Some(ctx) = ctx else { return false };
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
+    // SAFETY: `ctx` owns a live `SSL_CTX` ref; read-only.
+    unsafe {
+        boringssl_sys::SSL_CTX_get_verify_mode(ctx.as_ptr()) & boringssl_sys::SSL_VERIFY_PEER != 0
+    }
 }
 
 impl Default for Flags {
@@ -4231,10 +4233,10 @@ pub(crate) struct DuplexUpgradeContext {
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: Option<SSLConfig>,
-    /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
-    /// memoised `tls.createSecureContext` path). Adopted by `startTLSWithCTX`
-    /// on success, freed in `deinit` if Close races ahead of StartTLS.
-    pub owned_ctx: Option<*mut SSL_CTX>,
+    /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext`, the
+    /// memoised `tls.createSecureContext` path). `StartTLS` moves it into the
+    /// SSL wrapper; if Close races ahead it drops with the context in `deinit`.
+    pub owned_ctx: Option<boringssl_sys::OwnedSslCtx>,
     pub is_open: bool,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
     /// when `StartTLS` builds it. Unused for client upgrades.
@@ -4460,8 +4462,6 @@ impl DuplexUpgradeContext {
                     let is_client = (*this).mode == SocketMode::Client;
                     let verify = (*this).server_verify;
                     if let Some(ctx) = (*this).owned_ctx.take() {
-                        // Transfer the ref into SSLWrapper; null first so the
-                        // failure path / deinit don't double-free it.
                         (*this).upgrade.start_tls_with_ctx(ctx, is_client, verify)
                     } else if let Some(config) = &(*this).ssl_config {
                         (*this).upgrade.start_tls(config, is_client, verify)
@@ -4589,12 +4589,6 @@ impl DuplexUpgradeContext {
                 if let Some(tls) = (*this).tls.take() {
                     // Release the owner's +1.
                     tls.deref();
-                }
-                // Close raced ahead of StartTLS — drop the unconsumed config.
-                (*this).ssl_config = None;
-                if let Some(ctx) = (*this).owned_ctx.take() {
-                    // SAFETY: BoringSSL FFI; we hold one owned ref.
-                    boringssl_sys::SSL_CTX_free(ctx);
                 }
             }
         }
@@ -4727,12 +4721,8 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
-    let reject_unauthorized = upgrade_reject_policy(
-        handlers.vm,
-        socket_config,
-        is_server,
-        owned_ctx.as_ref().map(|c| c.as_ptr()),
-    );
+    let reject_unauthorized =
+        upgrade_reject_policy(handlers.vm, socket_config, is_server, owned_ctx.as_ref());
     // Server-side peer-cert policy, applied per-SSL once the engine exists.
     // A bare `secureContext` carries no parsed config, so read `requestCert`
     // back off the ctx's verify mode the same way `upgrade_reject_policy` does
@@ -4740,7 +4730,7 @@ pub fn js_upgrade_duplex_to_tls(
     let server_verify = crate::socket::upgraded_duplex::ServerVerify {
         request_cert: match socket_config {
             Some(cfg) => cfg.request_cert != 0,
-            None => server_ctx_requests_cert(owned_ctx.as_ref().map(|c| c.as_ptr())),
+            None => server_ctx_requests_cert(owned_ctx.as_ref()),
         },
         reject_unauthorized,
     };
@@ -4780,9 +4770,6 @@ pub fn js_upgrade_duplex_to_tls(
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
-    // The +1 `SSL_CTX` ref transfers into `DuplexUpgradeContext.owned_ctx` below.
-    let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
-
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
     // `upgrade.handlers.ctx` both point at the containing allocation, and
     // `UpgradedDuplex` has fn-ptr-niched fields plus a `Drop` impl, so it
@@ -4806,12 +4793,12 @@ pub fn js_upgrade_duplex_to_tls(
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
         // legacy build path.
-        ptr::addr_of_mut!((*duplex_context).ssl_config).write(if owned_ctx_taken.is_none() {
+        ptr::addr_of_mut!((*duplex_context).ssl_config).write(if owned_ctx.is_none() {
             ssl_opts.take()
         } else {
             None
         });
-        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(owned_ctx_taken);
+        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(owned_ctx);
         ptr::addr_of_mut!((*duplex_context).is_open).write(false);
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {

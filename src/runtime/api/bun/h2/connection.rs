@@ -116,9 +116,9 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// ownership cycle.
 pub trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
-    /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
-    /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
-    /// embedder maps to node's NghttpError.
+    /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire,
+    /// carrying `last_stream_id`. `lib_error_code` is the negative nghttp2-style library error
+    /// code (`wire::lib_error`) the embedder maps to node's NghttpError.
     fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
     fn on_local_settings(&self, settings: &Settings);
     fn on_remote_settings(&self, settings: &Settings);
@@ -170,6 +170,12 @@ pub trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
+    /// `Connection::last_peer_stream_id` advanced to `stream_id`. Same contract as
+    /// on_frame_counters: called while the connection is mutably borrowed, so the embedder must
+    /// only store the value. It needs its own copy because the GOAWAYs it writes itself
+    /// (session.close()/destroy()/goaway(), its rejection budgets) can be triggered from JS
+    /// dispatched inside receive(), while the connection is still borrowed.
+    fn on_last_peer_stream_id(&self, _stream_id: u32) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -282,7 +288,16 @@ pub struct Connection {
     evict_buf: Vec<u32>,
 
     preface_received: usize,
+    /// Highest stream id seen in either direction; only meaningful for the §5.1 "has this id
+    /// ever existed" checks. It also counts locally-initiated streams (a client's own requests,
+    /// once their response arrives), so it must never go into a GOAWAY: see `last_peer_stream_id`.
     pub last_stream_id: u32,
+    /// Highest peer-initiated stream id processed: request ids on a server (refused ones
+    /// included), promised ids on a client. nghttp2's last_proc_stream_id. RFC 9113 §6.8 defines
+    /// a GOAWAY's last-stream-id in terms of streams its receiver initiated, and nghttp2 fails
+    /// the connection with PROTOCOL_ERROR on a GOAWAY naming one of the sender's own ids, so this
+    /// is the only mark a GOAWAY written here may carry.
+    pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -323,6 +338,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -373,13 +389,26 @@ impl Connection {
     ) {
         self.going_away = true;
         self.terminated = true;
+        let last = self.last_peer_stream_id;
         let mut payload = Vec::with_capacity(8 + debug.len());
-        payload.extend_from_slice(&self.last_stream_id.to_be_bytes());
+        payload.extend_from_slice(&last.to_be_bytes());
         payload.extend_from_slice(&code.as_u32().to_be_bytes());
         payload.extend_from_slice(debug);
         self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
-        let last = self.last_stream_id;
         sink.on_error(lib_code, last, debug);
+    }
+
+    /// A peer-initiated stream was opened or reserved: advance the mark every GOAWAY we send
+    /// carries (see `last_peer_stream_id`) before the stream is surfaced to the embedder, so a
+    /// GOAWAY written from inside its callbacks already covers this stream.
+    fn note_peer_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        if stream_id > self.last_stream_id {
+            self.last_stream_id = stream_id;
+        }
+        if stream_id > self.last_peer_stream_id {
+            self.last_peer_stream_id = stream_id;
+            sink.on_last_peer_stream_id(stream_id);
+        }
     }
 
     /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
@@ -988,8 +1017,15 @@ impl Connection {
         if is_new {
             // Must advance even for refused streams: §5.1 treats anything at or below the
             // high-water mark as having existed, so frames a client pipelined behind the
-            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
-            if hdr.stream_id > self.last_stream_id {
+            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd. The peer
+            // mark counts them as well: nghttp2 advances last_proc_stream_id before the
+            // on_begin_headers callback in which node refuses a stream for maxSessionMemory.
+            if self.is_server {
+                self.note_peer_stream(sink, hdr.stream_id);
+            } else if hdr.stream_id > self.last_stream_id {
+                // On a client a "new" HEADERS is the response to one of its own requests (the
+                // legacy outbound path opened the stream without telling this engine): it was
+                // initiated locally and must never end up in a GOAWAY we send.
                 self.last_stream_id = hdr.stream_id;
             }
             if !refused {
@@ -1694,9 +1730,7 @@ impl Connection {
             .entry(promised)
             .or_insert_with(|| Stream::new(send_init, recv_init));
         entry.state = State::ReservedRemote;
-        if promised > self.last_stream_id {
-            self.last_stream_id = promised;
-        }
+        self.note_peer_stream(sink, promised);
 
         let end_headers = wire::flags::has(hdr.flags, wire::flags::END_HEADERS);
         self.header_block.clear();
@@ -1977,6 +2011,13 @@ mod tests {
         goaway: Cell<Option<(u32, u32)>>,
         /// nghttp2-style lib error code from on_error (locally-detected connection errors).
         local_error: Cell<Option<i32>>,
+        /// last_stream_id reported by on_error (what the GOAWAY it announces carried).
+        local_error_last_stream_id: Cell<Option<u32>>,
+        /// Every value pushed through on_last_peer_stream_id, in order.
+        peer_marks: RefCell<Vec<u32>>,
+        /// When set, can_open_stream refuses every new peer stream (the embedder's
+        /// maxSessionMemory budget is exhausted).
+        refuse_streams: Cell<bool>,
         opens: RefCell<Vec<u32>>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
@@ -1992,9 +2033,16 @@ mod tests {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
         }
-        fn on_error(&self, lib_code: i32, _l: u32, _d: &[u8]) {
+        fn on_error(&self, lib_code: i32, last_stream_id: u32, _d: &[u8]) {
             // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
             self.local_error.set(Some(lib_code));
+            self.local_error_last_stream_id.set(Some(last_stream_id));
+        }
+        fn on_last_peer_stream_id(&self, stream_id: u32) {
+            self.peer_marks.borrow_mut().push(stream_id);
+        }
+        fn can_open_stream(&self) -> bool {
+            !self.refuse_streams.get()
         }
         fn on_local_settings(&self, _s: &Settings) {}
         fn on_remote_settings(&self, _s: &Settings) {
@@ -2065,6 +2113,41 @@ mod tests {
         v.copy_from_slice(&hb);
         v.extend_from_slice(payload);
         v
+    }
+
+    /// (last-stream-id, error code) of the GOAWAY the engine wrote to `sink`, if any.
+    fn goaway_sent(sink: &CaptureSink) -> Option<(u32, u32)> {
+        let out = sink.out.borrow();
+        let mut off = 0usize;
+        let mut found = None;
+        while out.len() - off >= wire::FRAME_HEADER_SIZE {
+            let hdr = FrameHeader::parse(&out[off..]);
+            let payload = &out[off + wire::FRAME_HEADER_SIZE
+                ..off + wire::FRAME_HEADER_SIZE + hdr.length as usize];
+            if hdr.frame_type == FrameType::GoAway as u8 {
+                let last = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]])
+                    & 0x7fff_ffff;
+                let code = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                found = Some((last, code));
+            }
+            off += wire::FRAME_HEADER_SIZE + hdr.length as usize;
+        }
+        found
+    }
+
+    fn request_block() -> Vec<u8> {
+        encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ])
+    }
+
+    /// A frame every endpoint must answer with a connection PROTOCOL_ERROR (§6.9: a
+    /// connection-level WINDOW_UPDATE with a zero increment).
+    fn connection_error_frame() -> Vec<u8> {
+        frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0])
     }
 
     #[test]
@@ -2303,5 +2386,112 @@ mod tests {
         // Only 4 of 10 bytes fit in the window.
         let sent = c.send_data(&sink, 1, b"0123456789", true);
         assert_eq!(sent, 4);
+    }
+
+    #[test]
+    fn server_goaway_names_the_last_client_stream_not_its_own_push() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 1, &request_block()),
+        );
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 3, &request_block()),
+        );
+        // Our own push reserves stream 4, numerically above everything the client opened.
+        c.begin_header_block();
+        assert!(c.encode_header(b":method", b"GET", false));
+        c.send_push_promise(&sink, 1, 4);
+        assert_eq!(c.last_stream_id, 4);
+
+        let fed = c.receive(&sink, &connection_error_frame());
+        assert!(fed.fatal);
+        assert_eq!(
+            goaway_sent(&sink),
+            Some((3, ErrorCode::ProtocolError.as_u32()))
+        );
+        assert_eq!(sink.local_error_last_stream_id.get(), Some(3));
+        assert_eq!(*sink.peer_marks.borrow(), vec![1, 3]);
+    }
+
+    #[test]
+    fn server_goaway_counts_a_stream_it_refused() {
+        let sink = CaptureSink::default();
+        sink.refuse_streams.set(true);
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 1, &request_block()),
+        );
+        assert!(sink.opens.borrow().is_empty());
+
+        let fed = c.receive(&sink, &connection_error_frame());
+        assert!(fed.fatal);
+        assert_eq!(
+            goaway_sent(&sink),
+            Some((1, ErrorCode::ProtocolError.as_u32()))
+        );
+        assert_eq!(*sink.peer_marks.borrow(), vec![1]);
+    }
+
+    #[test]
+    fn client_goaway_does_not_name_its_own_requests() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        // Responses to the client's own requests on 1 and 3 (opened by the outbound path, so
+        // they look new to the engine).
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let response = encode_block(&[(b":status", b"200")]);
+        c.receive(&sink, &frame(FrameType::Headers, flags, 1, &response));
+        c.receive(&sink, &frame(FrameType::Headers, flags, 3, &response));
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, true), (3, true)]);
+        // They still count for the §5.1 "has this id existed" mark...
+        assert_eq!(c.last_stream_id, 3);
+
+        // ...but the GOAWAY may only name streams the server initiated, of which there are none.
+        let fed = c.receive(&sink, &connection_error_frame());
+        assert!(fed.fatal);
+        assert_eq!(
+            goaway_sent(&sink),
+            Some((0, ErrorCode::ProtocolError.as_u32()))
+        );
+        assert_eq!(sink.local_error_last_stream_id.get(), Some(0));
+        assert!(sink.peer_marks.borrow().is_empty());
+    }
+
+    #[test]
+    fn client_goaway_names_the_last_promised_stream() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        // The server reserves stream 2 on the client's request stream 1 (which, as in
+        // production, this engine has no entry for), then answers the requests on 1 and 3.
+        let mut push = vec![0, 0, 0, 2];
+        push.extend_from_slice(&request_block());
+        c.receive(
+            &sink,
+            &frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &push),
+        );
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let response = encode_block(&[(b":status", b"200")]);
+        c.receive(&sink, &frame(FrameType::Headers, flags, 1, &response));
+        // The client's own stream 3 is numerically above the promised stream and must not
+        // displace it.
+        c.receive(&sink, &frame(FrameType::Headers, flags, 3, &response));
+        assert_eq!(c.last_stream_id, 3);
+
+        let fed = c.receive(&sink, &connection_error_frame());
+        assert!(fed.fatal);
+        assert_eq!(
+            goaway_sent(&sink),
+            Some((2, ErrorCode::ProtocolError.as_u32()))
+        );
+        assert_eq!(*sink.peer_marks.borrow(), vec![2]);
     }
 }

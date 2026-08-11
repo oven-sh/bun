@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_options_types::compile_target::CompileTarget;
+use bun_options_types::compile_target::{CompileTarget, DownloadOptions};
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
 
@@ -223,6 +223,8 @@ pub mod js_bundler {
 
     pub struct CompileOptions {
         pub(crate) compile_target: CompileTarget,
+        /// Taken from the VM's env on the calling thread; the download runs on the bundle thread.
+        pub(crate) download: DownloadOptions,
         pub(crate) exec_argv: OwnedString,
         pub(crate) executable_path: OwnedString,
         pub(crate) windows_hide_console: bool,
@@ -244,6 +246,7 @@ pub mod js_bundler {
         fn default() -> Self {
             Self {
                 compile_target: CompileTarget::default(),
+                download: DownloadOptions::default(),
                 exec_argv: OwnedString::default(),
                 executable_path: OwnedString::default(),
                 windows_hide_console: false,
@@ -1197,6 +1200,9 @@ pub mod js_bundler {
                 let is_standalone_html = this.target == Target::Browser && has_all_html_entrypoints;
                 if !is_standalone_html {
                     this.target = Target::Bun;
+                    compile.download = compile
+                        .compile_target
+                        .download_options(global_this.bun_vm().env_loader());
 
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();

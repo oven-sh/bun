@@ -1646,7 +1646,7 @@ pub(crate) fn inject(
 }
 
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
-pub use bun_options_types::compile_target::CompileTarget;
+pub use bun_options_types::compile_target::{CompileTarget, DownloadOptions};
 
 /// Moved up from `bun_options_types` (T3) so it can name
 /// `bun_http::AsyncHTTP` directly
@@ -1654,7 +1654,7 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &bun_dotenv::Loader,
+    download: &DownloadOptions,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
@@ -1666,7 +1666,7 @@ pub(crate) fn download_to_path(
         // TODO: This is way too much code necessary to send a single HTTP request...
         let mut compressed_archive_bytes =
             Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
-        let mut url_buffer = [0u8; 2048];
+        let mut url_buffer = [0u8; CompileTarget::REGISTRY_URL_BUF_LEN];
         let url_str = match target.to_npm_registry_url(&mut url_buffer) {
             Ok(s) => s,
             Err(err) => {
@@ -1681,10 +1681,6 @@ pub(crate) fn download_to_path(
             // `progress.end()` below is sufficient: no fallible call sits between
             // `refresher.start` and it, so every exit path (including the
             // error returns after it) ends the node exactly once.
-            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
-            // `env` for the proxy URL lifetime; read the bool first.
-            let reject_unauthorized = env.get_tls_reject_unauthorized();
-            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             let progress = refresher.start(b"Downloading", 0);
 
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
@@ -1693,13 +1689,13 @@ pub(crate) fn download_to_path(
                 Default::default(),
                 b"",
                 b"",
-                http_proxy,
+                download.http_proxy.as_deref().map(bun_url::URL::parse),
                 None,
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
-            async_http.client.flags.reject_unauthorized = reject_unauthorized;
+            async_http.client.flags.reject_unauthorized = download.reject_unauthorized;
             let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
@@ -1818,7 +1814,7 @@ pub fn to_executable(
     root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
-    env: &bun_dotenv::Loader,
+    download: &DownloadOptions,
     output_format: Format,
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
@@ -1870,10 +1866,10 @@ pub fn to_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, &mut needs_download);
 
         if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
+            if let Err(e) = download_to_path(target, download, dest_z) {
                 return Ok(match e {
                     crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",

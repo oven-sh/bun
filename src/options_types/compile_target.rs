@@ -98,7 +98,42 @@ pub enum ParseError {
     InvalidTarget,
 }
 
+/// What downloading a target's executable takes from the env loader, copied out
+/// by [`CompileTarget::download_options`] on the thread that owns the loader so
+/// the download itself can run on another one.
+pub struct DownloadOptions {
+    pub reject_unauthorized: bool,
+    /// Proxy for the registry URL, with `NO_PROXY` already applied.
+    pub http_proxy: Option<Box<[u8]>>,
+}
+
+impl Default for DownloadOptions {
+    /// Placeholder until [`CompileTarget::download_options`] fills it in; verifies TLS.
+    fn default() -> Self {
+        Self {
+            reject_unauthorized: true,
+            http_proxy: None,
+        }
+    }
+}
+
 impl CompileTarget {
+    /// Buffer size callers hand to [`Self::to_npm_registry_url`].
+    pub const REGISTRY_URL_BUF_LEN: usize = 2048;
+
+    pub fn download_options(&self, env: &bun_dotenv::Loader) -> DownloadOptions {
+        let mut url_buf = [0u8; Self::REGISTRY_URL_BUF_LEN];
+        // A URL that cannot be built fails the download itself, which reports it.
+        let http_proxy = self.to_npm_registry_url(&mut url_buf).ok().and_then(|url| {
+            env.get_http_proxy_for(&bun_url::URL::parse(url))
+                .map(|proxy| Box::from(proxy.href))
+        });
+        DownloadOptions {
+            reject_unauthorized: env.get_tls_reject_unauthorized(),
+            http_proxy,
+        }
+    }
+
     pub(crate) fn eql(&self, other: &CompileTarget) -> bool {
         self.os == other.os
             && self.arch == other.arch
@@ -185,7 +220,6 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        _env: &bun_dotenv::Loader,
         needs_download: &mut bool,
     ) -> &'a ZStr {
         if self.is_default() {
@@ -206,7 +240,7 @@ impl CompileTarget {
             return version_str;
         }
 
-        // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
+        // The full cache-dir override chain lives in bun_install; this is its fallback.
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),

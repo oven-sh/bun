@@ -288,7 +288,7 @@ impl JSBundleCompletionTask {
     }
 
     /// Port of `JSBundleCompletionTask.doCompilation`. Bundle thread: nothing in here may touch JS.
-    fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
+    fn do_compilation(&self, output_files: &mut Vec<OutputFile>) -> CompileResult {
         let compile_options = self
             .config
             .compile
@@ -426,9 +426,7 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            // SAFETY: the VM frees its loader only after this build reports
-            // finished (`embedded_work_finished`), which happens after this returns.
-            unsafe { &*self.env },
+            &compile_options.download,
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,

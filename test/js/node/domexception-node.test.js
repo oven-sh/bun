@@ -207,11 +207,14 @@ describe("DOMException in Node.js environment", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The source line echoed above the report still says AbortError; only the report line must not.
-    expect(stderr).toContain("\nCustomError: boom\n");
     expect(stderr).not.toContain("\nAbortError: boom\n");
-    expect(exitCode).toBe(1);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("\nCustomError: boom\n"),
+      exitCode: 1,
+    });
   });
 
   it("util.inspect shows the error name and message", () => {

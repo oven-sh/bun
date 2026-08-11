@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -60,6 +60,31 @@ test("Bun.file() read errors include async stack frames", async () => {
   expect(caught.code).toBe("ENOENT");
   expect(caught.stack).toContain("at async level2");
   expect(caught.stack).toContain("at async level1");
+});
+
+// Windows reads the stream through a libuv callback, whose error used to reach
+// JS as code "UV_EBADF" with an "unknown error" message. Bun.file(fd).text()
+// is not affected; only stream() takes this path. On POSIX a failing read does
+// not settle the pull at all yet, so the test is Windows-only.
+test.skipIf(!isWindows)("Bun.file(write-only fd).stream() rejects with EBADF", async () => {
+  await using dir = tempDir("bun-file-stream-ebadf", { "target.txt": "some content" });
+  const handle = await fsPromises.open(join(dir, "target.txt"), "a");
+  let caught: any;
+  try {
+    await Bun.file(handle.fd).stream().getReader().read();
+  } catch (e) {
+    caught = e;
+  } finally {
+    await handle.close();
+  }
+  expect(caught).toBeDefined();
+  const { code, errno, syscall, message } = caught;
+  expect({ code, errno, syscall, message }).toEqual({
+    code: "EBADF",
+    errno: -4083,
+    syscall: "read",
+    message: "EBADF: bad file descriptor, read",
+  });
 });
 
 test("Bun.write() errors include async stack frames", async () => {

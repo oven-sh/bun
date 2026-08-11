@@ -2362,6 +2362,21 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     })
 }
 
+/// `E::UNKNOWN` discriminant (see the `UV_UNKNOWN` row above).
+const E_UNKNOWN_DISCRIMINANT: u16 = 134;
+
+/// [`uv_err_to_e_discriminant`] for a code that is already known to be a
+/// failure: codes missing from the table fold to `E::UNKNOWN` (the same
+/// fallback as `bun_errno::translate_uv_error_to_e`) instead of disappearing,
+/// so a negative libuv result is always reported as an error.
+#[inline]
+const fn uv_err_to_e_discriminant_lossy(code: c_int) -> u16 {
+    match uv_err_to_e_discriminant(code) {
+        Some(discriminant) => discriminant,
+        None => E_UNKNOWN_DISCRIMINANT,
+    }
+}
+
 /// Reverse of [`uv_err_to_e_discriminant`]: map a `bun.sys.E` / `bun_errno::E`
 /// discriminant to the negative `UV_E*` code node reports in `err.errno` on
 /// Windows (`2` → `UV_ENOENT (-4058)`). Same layering rule (no `bun_errno`
@@ -2516,15 +2531,14 @@ impl ReturnCode {
     }
     /// When negative, map the
     /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
-    /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
-    /// unmapped negative codes. Downstream callers
+    /// `UV_ENOENT (-4058)` → `2`); `None` when non-negative. Downstream callers
     /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
     /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
     /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
     #[inline]
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0)
+            Some(uv_err_to_e_discriminant_lossy(self.0))
         } else {
             None
         }
@@ -2566,25 +2580,28 @@ impl ReturnCodeI64 {
     pub const fn int(self) -> i64 {
         self.0
     }
+    /// Same contract as [`ReturnCode::errno`]: a negative `req.result` is a
+    /// `UV_E*` code, translated to the `bun.sys.E` discriminant that
+    /// `bun_sys::Error.errno` stores. Storing the raw `|UV_E*|` magnitude there
+    /// instead resolves to the sparse `E::UV_E*` tail variants on Windows, which
+    /// JS then sees as `code: "UV_EBADF"` with an "unknown error" message.
     #[inline]
     pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            Some(self.0.unsigned_abs() as u16)
-        } else {
-            None
+        if self.0 >= 0 {
+            return None;
         }
+        Some(if self.0 < c_int::MIN as i64 {
+            E_UNKNOWN_DISCRIMINANT
+        } else {
+            uv_err_to_e_discriminant_lossy(self.0 as c_int)
+        })
     }
-    /// Translated `bun_sys::E`
-    /// discriminant via [`uv_err_to_e_discriminant`] (matching
-    /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
-    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
+    /// Same translated value as [`errno`] (matching [`ReturnCode::err_enum`]).
+    /// For the typed `bun_sys::E` use `bun_sys::ReturnCodeExt::err_enum_e`
+    /// (layering: `E` lives upstream).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> {
-        if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0 as c_int)
-        } else {
-            None
-        }
+        self.errno()
     }
     /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`
@@ -2600,6 +2617,32 @@ impl fmt::Display for ReturnCodeI64 {
         write!(f, "{}", self.0)
     }
 }
+
+// Both return-code types hand out the same translated errno, and a failure
+// never reads as success.
+const _: () = {
+    assert!(matches!(ReturnCode::from_raw(UV_EBADF).errno(), Some(9)));
+    assert!(matches!(
+        ReturnCodeI64::init(UV_EBADF as i64).errno(),
+        Some(9)
+    ));
+    assert!(ReturnCode::from_raw(0).errno().is_none());
+    assert!(ReturnCodeI64::init(0).errno().is_none());
+    assert!(ReturnCodeI64::init(i64::MAX).errno().is_none());
+    // -4000 sits in a gap no UV_E* constant occupies.
+    assert!(matches!(
+        ReturnCode::from_raw(-4000).errno(),
+        Some(E_UNKNOWN_DISCRIMINANT)
+    ));
+    assert!(matches!(
+        ReturnCodeI64::init(-4000).errno(),
+        Some(E_UNKNOWN_DISCRIMINANT)
+    ));
+    assert!(matches!(
+        ReturnCodeI64::init(i64::MIN).errno(),
+        Some(E_UNKNOWN_DISCRIMINANT)
+    ));
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `O` — `UV_FS_O_*` flag namespace + `from_bun_o`/`to_bun_o` translation.

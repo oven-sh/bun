@@ -137,6 +137,71 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // On Windows the write happens in a libuv completion callback. The error it
+  // reported used to carry the raw libuv code, which JS saw as code "UV_EBADF"
+  // and message "UV_EBADF: unknown error, write"; Node and POSIX say EBADF.
+  describe("Bun.write(Bun.file(read-only fd), data) rejects with EBADF", () => {
+    it.each([
+      ["string", "abc"],
+      ["Uint8Array", new Uint8Array(3)],
+    ])("%s", async (_label, data) => {
+      using dir = tempDir("bun-write-ebadf", { "target.txt": "original" });
+      const target = join(String(dir), "target.txt");
+      const fd = fs.openSync(target, "r");
+      let caught;
+      try {
+        await Bun.write(Bun.file(fd), data);
+      } catch (e) {
+        caught = e;
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(caught).toBeDefined();
+      const { code, errno, syscall, message } = caught;
+      expect({ code, errno, syscall, message }).toEqual({
+        code: "EBADF",
+        errno: isWindows ? -4083 : -9,
+        syscall: "write",
+        message: "EBADF: bad file descriptor, write",
+      });
+      expect(fs.readFileSync(target, "utf8")).toBe("original");
+    });
+
+    // A pipe source cannot go through uv_fs_copyfile, so this exercises the
+    // uv_fs_read/uv_fs_write loop instead of the single write above. POSIX
+    // rejects a pipe source earlier with a different error, so Windows only.
+    it.skipIf(!isWindows)("Bun.stdin pipe source", async () => {
+      using dir = tempDir("bun-write-ebadf-pipe", { "target.txt": "original" });
+      const target = join(String(dir), "target.txt");
+      const fixture = `
+        const fs = require("fs");
+        const fd = fs.openSync(${JSON.stringify(target)}, "r");
+        try {
+          await Bun.write(Bun.file(fd), Bun.stdin);
+          console.log("resolved");
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message }));
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdin: new Blob(["hello from the pipe"]),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        code: "EBADF",
+        errno: -4083,
+        syscall: "write",
+        message: "EBADF: bad file descriptor, write",
+      });
+      expect(exitCode).toBe(0);
+      expect(fs.readFileSync(target, "utf8")).toBe("original");
+    });
+  });
+
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
     "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
     basename => {

@@ -121,8 +121,9 @@ impl Error {
         })
     }
 
-    /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
-    /// `from_libuv` left at default `false`.
+    /// `Some(err)` when a libuv `ReturnCodeI64` (an async `uv_fs_t.result`) is
+    /// negative; `None` on success. Like [`from_uv_rc`], `ReturnCodeI64::errno()`
+    /// already yields the POSIX `E` discriminant, so `from_libuv` stays `false`.
     #[cfg(windows)]
     #[inline]
     pub(crate) fn from_uv_rc64(

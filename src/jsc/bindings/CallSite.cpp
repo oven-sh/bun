@@ -39,8 +39,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
-    // Initialize "this" and "function" (and set the "IsStrict" flag if needed).
-    // JSC::StackFrame does not record the receiver, so getThis() is always undefined.
+    // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
     if (isStrictFrame) {
         m_function.set(vm, this, JSC::jsUndefined());

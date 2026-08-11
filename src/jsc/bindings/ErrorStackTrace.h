@@ -176,9 +176,7 @@ public:
 
     WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
-    /* Skips private-visibility frames, which JSC only leaves in `existingFrames` while
-     * Options::showPrivateScriptsInStackTraces() is on (debug builds), so the result can be shorter
-     * than `existingFrames`; reach the JSC frame through JSCStackFrame::stackFrame(), not by index. */
+    // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
     static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);

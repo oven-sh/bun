@@ -280,25 +280,37 @@ declare module "bun" {
      * Set a key's time to live in seconds
      * @param key The key to set the expiration for
      * @param seconds The number of seconds until expiration
+     * @param condition Only set the expiration when the condition holds (Redis 7.0+ / Valkey):
+     * `NX` the key has no expiration, `XX` the key already has one,
+     * `GT` the new expiration is later than the current one, `LT` it is earlier.
      * @returns Promise that resolves with 1 if the timeout was set, 0 if not
+     * (the key does not exist or the condition was not met)
      */
-    expire(key: RedisClient.KeyLike, seconds: number): Promise<number>;
+    expire(key: RedisClient.KeyLike, seconds: number, condition?: "NX" | "XX" | "GT" | "LT"): Promise<number>;
 
     /**
      * Set the expiration for a key as a Unix timestamp (in seconds)
      * @param key The key to set expiration on
      * @param timestamp Unix timestamp in seconds when the key should expire
-     * @returns Promise that resolves with 1 if timeout was set, 0 if key does not exist
+     * @param condition Only set the expiration when the condition holds (Redis 7.0+ / Valkey):
+     * `NX` the key has no expiration, `XX` the key already has one,
+     * `GT` the new expiration is later than the current one, `LT` it is earlier.
+     * @returns Promise that resolves with 1 if timeout was set, 0 if not
+     * (the key does not exist or the condition was not met)
      */
-    expireat(key: RedisClient.KeyLike, timestamp: number): Promise<number>;
+    expireat(key: RedisClient.KeyLike, timestamp: number, condition?: "NX" | "XX" | "GT" | "LT"): Promise<number>;
 
     /**
      * Set a key's time to live in milliseconds
      * @param key The key to set the expiration for
      * @param milliseconds The number of milliseconds until expiration
-     * @returns Promise that resolves with 1 if the timeout was set, 0 if the key does not exist
+     * @param condition Only set the expiration when the condition holds (Redis 7.0+ / Valkey):
+     * `NX` the key has no expiration, `XX` the key already has one,
+     * `GT` the new expiration is later than the current one, `LT` it is earlier.
+     * @returns Promise that resolves with 1 if the timeout was set, 0 if not
+     * (the key does not exist or the condition was not met)
      */
-    pexpire(key: RedisClient.KeyLike, milliseconds: number): Promise<number>;
+    pexpire(key: RedisClient.KeyLike, milliseconds: number, condition?: "NX" | "XX" | "GT" | "LT"): Promise<number>;
 
     /**
      * Get the time to live for a key in seconds
@@ -1223,9 +1235,17 @@ declare module "bun" {
      * Set the expiration for a key as a Unix timestamp in milliseconds
      * @param key The key to set expiration on
      * @param millisecondsTimestamp Unix timestamp in milliseconds when the key should expire
-     * @returns Promise that resolves with 1 if timeout was set, 0 if key does not exist
+     * @param condition Only set the expiration when the condition holds (Redis 7.0+ / Valkey):
+     * `NX` the key has no expiration, `XX` the key already has one,
+     * `GT` the new expiration is later than the current one, `LT` it is earlier.
+     * @returns Promise that resolves with 1 if timeout was set, 0 if not
+     * (the key does not exist or the condition was not met)
      */
-    pexpireat(key: RedisClient.KeyLike, millisecondsTimestamp: number): Promise<number>;
+    pexpireat(
+      key: RedisClient.KeyLike,
+      millisecondsTimestamp: number,
+      condition?: "NX" | "XX" | "GT" | "LT",
+    ): Promise<number>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in milliseconds
@@ -1864,13 +1884,14 @@ declare module "bun" {
     ltrim(key: RedisClient.KeyLike, start: number, stop: number): Promise<string>;
 
     /**
-     * Add an element to a HyperLogLog
+     * Add elements to a HyperLogLog. Called with only a key, creates an empty
+     * HyperLogLog if the key does not exist.
      * @param key The HyperLogLog key
-     * @param element The element to add
-     * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0
-     * otherwise
+     * @param elements The elements to add
+     * @returns Promise that resolves with 1 if the HyperLogLog was altered
+     * (its estimated cardinality changed, or it was created), 0 otherwise
      */
-    pfadd(key: RedisClient.KeyLike, element: string): Promise<number>;
+    pfadd(key: RedisClient.KeyLike, ...elements: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Append one or multiple values to a list

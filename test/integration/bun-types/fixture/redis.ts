@@ -29,3 +29,17 @@ await copy.unsubscribe();
 await copy.unsubscribe("hello");
 
 expectType(copy.unsubscribe("hello", () => {})).is<Promise<void>>();
+
+expectType(Bun.redis.expire("key", 10)).is<Promise<number>>();
+expectType(Bun.redis.expire("key", 10, "NX")).is<Promise<number>>();
+expectType(Bun.redis.pexpire("key", 10_000, "XX")).is<Promise<number>>();
+expectType(Bun.redis.expireat("key", 1_700_000_000, "GT")).is<Promise<number>>();
+expectType(Bun.redis.pexpireat("key", 1_700_000_000_000, "LT")).is<Promise<number>>();
+// @ts-expect-error - the condition must be one of NX, XX, GT, LT
+Bun.redis.expire("key", 10, "EX");
+// @ts-expect-error - EXPIRE takes a single condition
+Bun.redis.expire("key", 10, "NX", "GT");
+
+expectType(Bun.redis.pfadd("hll")).is<Promise<number>>();
+expectType(Bun.redis.pfadd("hll", "a")).is<Promise<number>>();
+expectType(Bun.redis.pfadd("hll", "a", Buffer.from("b"), new Blob(["c"]))).is<Promise<number>>();

@@ -182,27 +182,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
-JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
-{
-    const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
-
-    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
-    if (currentException && currentException->value() == thrownValue) {
-        jscStackTrace = &currentException->stack();
-    } else {
-        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
-        if (error) {
-            jscStackTrace = error->stackTrace();
-        }
-    }
-
-    if (!jscStackTrace) {
-        return JSCStackTrace();
-    }
-
-    return fromExisting(vm, *jscStackTrace);
-}
-
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {

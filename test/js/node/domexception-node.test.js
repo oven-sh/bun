@@ -131,6 +131,7 @@ describe("DOMException in Node.js environment", () => {
          Error.stackTraceLimit = 0;
          console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
          console.log(JSON.stringify(new DOMException("", "AbortError").stack));
+         console.log(JSON.stringify(new DOMException("boom", "").stack));
          console.log(JSON.stringify(new Sub("boom", "AbortError").stack));`,
       ],
       env: bunEnv,
@@ -138,7 +139,7 @@ describe("DOMException in Node.js environment", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"AbortError: boom"\n',
+      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"boom"\n"AbortError: boom"\n',
       stderr: "",
       exitCode: 0,
     });
@@ -167,6 +168,10 @@ describe("DOMException in Node.js environment", () => {
       code: 22,
       stack: original.stack,
     });
+    // The clone's own capture at the structuredClone call site is discarded: reading the
+    // position properties must not materialize the clone site's line/column over the copy.
+    void clone.line, clone.column, clone.sourceURL;
+    expect(Object.getOwnPropertyNames(clone)).toEqual(["stack"]);
   });
 
   it("works with Error.captureStackTrace", () => {

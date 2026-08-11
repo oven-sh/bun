@@ -83,6 +83,7 @@ public:
     // An own data property wins over the wrapped impl, as it does for a plain Error. Never allocates or runs JS.
     WTF::String displayName(JSC::VM&) const;
     WTF::String displayMessage(JSC::VM&) const;
+    WTF::String displayHeader(JSC::VM&) const;
 
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);

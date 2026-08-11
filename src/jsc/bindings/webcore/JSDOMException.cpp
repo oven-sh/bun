@@ -246,18 +246,29 @@ void JSDOMException::finishCreation(VM& vm)
 void JSDOMException::setStackString(VM& vm, String&& stack)
 {
     putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    setStackFrames(vm, {}); // Nothing will read the captured frames now; stop visitChildren from rooting them.
     setStackPropertyAlreadyMaterialized();
 }
 
-// ErrorInstance leaves .stack unset on an empty trace; other engines still give the name: message header.
+// ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line.
 void JSDOMException::putHeaderStackIfNoFrames(VM& vm)
 {
     auto* trace = stackTrace();
     if (trace && !trace->isEmpty())
         return;
+    setStackString(vm, displayHeader(vm));
+}
+
+// Same joining rule as formatStackTrace: either side may be empty.
+String JSDOMException::displayHeader(VM& vm) const
+{
     auto name = displayName(vm);
     auto message = displayMessage(vm);
-    setStackString(vm, message.isEmpty() ? name : makeString(name, ": "_s, message));
+    if (name.isEmpty())
+        return message;
+    if (message.isEmpty())
+        return name;
+    return makeString(name, ": "_s, message);
 }
 
 String JSDOMException::ownStringOr(VM& vm, PropertyName propertyName, String&& fallback) const

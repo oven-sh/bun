@@ -856,6 +856,88 @@ describe("relative tarballs", async () => {
       }
     }
   });
+
+  // The tarball path is joined with the project root (root dependency) or the
+  // workspace directory (workspace dependency) into a PathBuffer, which holds
+  // 4096 bytes on Linux, 1024 on macOS and 32767 * 3 + 1 on Windows. These
+  // specs exceed it on every platform.
+  const LONG_SPEC_BYTES = 100_000;
+
+  // Writes a root package with one workspace, declaring `spec` as a dependency
+  // of either the root package or the workspace package.
+  async function writeTarballDependency(packageDir: string, owner: "root" | "workspace", name: string, spec: string) {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkgs/*"],
+          dependencies: owner === "root" ? { [name]: spec } : {},
+        }),
+      ),
+      write(
+        join(packageDir, "pkgs", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: owner === "workspace" ? { [name]: spec } : {},
+        }),
+      ),
+    ]);
+  }
+
+  test.concurrent.each(["root", "workspace"] as const)(
+    "%s dependency on a tarball path longer than the path buffer fails with ENAMETOOLONG",
+    async owner => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const spec = "file:./" + Buffer.alloc(LONG_SPEC_BYTES, "a").toString() + ".tgz";
+      await writeTarballDependency(packageDir, owner, "too-long", spec);
+
+      const { err } = await runBunInstall(env, packageDir, {
+        allowErrors: true,
+        expectedExitCode: 1,
+        savesLockfile: false,
+      });
+
+      expect(err).toContain("error: ENAMETOOLONG extracting tarball from too-long");
+      expect(err).toContain("failed to resolve");
+    },
+  );
+
+  test.concurrent.each(["root", "workspace"] as const)(
+    "%s dependency on a tarball path that only fits the path buffer once normalized resolves",
+    async owner => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      // "x/../" repeated: longer than the path buffer as written, but it
+      // normalizes to the tarball next to the root package.json.
+      const detour = Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString();
+      const spec = "./" + detour + (owner === "root" ? "" : "../../") + "qux-0.0.2.tgz";
+      await Promise.all([
+        writeTarballDependency(packageDir, owner, "qux", spec),
+        cp(join(import.meta.dir, "qux-0.0.2.tgz"), join(packageDir, "qux-0.0.2.tgz")),
+      ]);
+
+      // Reading the tarball happens while resolving. Linking it into
+      // node_modules is skipped: the linker formats the resolution into a
+      // 512 byte buffer and cannot install a spec this long yet.
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("Saved bun.lock (3 packages)");
+      expect(exitCode).toBe(0);
+      const qux = parseLockfile(packageDir).packages.find((pkg: { name: string }) => pkg.name === "qux");
+      expect(qux.resolution).toMatchObject({ tag: "local_tarball", value: spec });
+    },
+  );
 });
 
 test.concurrent("$npm_package_config_ works in root", async () => {

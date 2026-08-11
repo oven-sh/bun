@@ -361,6 +361,7 @@ impl File {
     /// Normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
+    /// Fails with `ENAMETOOLONG` when the normalized path does not fit a `PathBuffer`.
     ///
     /// The cached `top_level_dir` lives in `bun_resolver::fs` (T5), which
     /// `bun_sys` (T1) must not depend on, so callers pass it explicitly.
@@ -371,12 +372,12 @@ impl File {
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
         let mut buf = bun_paths::PathBuffer::default();
-        let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            top_level_dir,
-            &mut buf.0,
-            &[input_path],
-        );
-        Self::read_from(dir, normalized.as_bytes())
+        let Some(normalized) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::platform::Loose,
+        >(top_level_dir, &mut buf.0, &[input_path]) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(input_path));
+        };
+        Self::read_from(dir, normalized)
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {

@@ -1369,6 +1369,15 @@ describe("Bun.serve HTTP/3 request target and authority", () => {
     },
   );
 
+  test("req.url is the request target when :authority is absent", async () => {
+    const hits: string[] = [];
+    using server = serveRecordingHits(hits);
+    const res = await rawH3(server.port, { ":path": "/x" });
+    expect(res.status).toBe("200");
+    expect(JSON.parse(res.body)).toEqual({ url: "/x", host: null });
+    expect(hits).toEqual(["fetch"]);
+  });
+
   test("a valid :authority becomes req.url, normalized like an HTTP/1 Host header", async () => {
     const hits: string[] = [];
     using server = serveRecordingHits(hits);

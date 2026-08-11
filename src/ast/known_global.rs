@@ -5,6 +5,14 @@ use crate as js_ast;
 use crate::E;
 use crate::Symbol;
 
+/// Global constructors whose `new X(...)` can be marked pure or rewritten by
+/// `minify_global_constructor`.
+///
+/// `Error` and its subclasses are deliberately absent even though `Error(...)` builds the same
+/// object as `new Error(...)`: the error captures the stack while it is constructed, and while a
+/// construct expression is never a tail call, `return Error(msg)` / `() => Error(msg)` is one in
+/// strict mode. JSC implements proper tail calls, so dropping the `new` deletes the frame of the
+/// function that created the error from `error.stack`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 pub enum KnownGlobal {
     WeakSet,
@@ -16,14 +24,6 @@ pub enum KnownGlobal {
     Response,
     TextEncoder,
     TextDecoder,
-    Error,
-    TypeError,
-    SyntaxError,
-    RangeError,
-    ReferenceError,
-    EvalError,
-    URIError,
-    AggregateError,
     Array,
     Object,
     Function,
@@ -44,14 +44,6 @@ bun_core::comptime_string_map! {
         b"Response" => KnownGlobal::Response,
         b"TextEncoder" => KnownGlobal::TextEncoder,
         b"TextDecoder" => KnownGlobal::TextDecoder,
-        b"Error" => KnownGlobal::Error,
-        b"TypeError" => KnownGlobal::TypeError,
-        b"SyntaxError" => KnownGlobal::SyntaxError,
-        b"RangeError" => KnownGlobal::RangeError,
-        b"ReferenceError" => KnownGlobal::ReferenceError,
-        b"EvalError" => KnownGlobal::EvalError,
-        b"URIError" => KnownGlobal::URIError,
-        b"AggregateError" => KnownGlobal::AggregateError,
         b"Array" => KnownGlobal::Array,
         b"Object" => KnownGlobal::Object,
         b"Function" => KnownGlobal::Function,
@@ -103,19 +95,6 @@ impl KnownGlobal {
         let constructor = lookup(original_name)?;
 
         match constructor {
-            // Error constructors can be called without 'new' with identical behavior
-            KnownGlobal::Error
-            | KnownGlobal::TypeError
-            | KnownGlobal::SyntaxError
-            | KnownGlobal::RangeError
-            | KnownGlobal::ReferenceError
-            | KnownGlobal::EvalError
-            | KnownGlobal::URIError
-            | KnownGlobal::AggregateError => {
-                // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
-            }
-
             KnownGlobal::Object => {
                 let n = e.args.len_u32();
 
@@ -478,14 +457,6 @@ mod tests {
             KnownGlobal::Response,
             KnownGlobal::TextEncoder,
             KnownGlobal::TextDecoder,
-            KnownGlobal::Error,
-            KnownGlobal::TypeError,
-            KnownGlobal::SyntaxError,
-            KnownGlobal::RangeError,
-            KnownGlobal::ReferenceError,
-            KnownGlobal::EvalError,
-            KnownGlobal::URIError,
-            KnownGlobal::AggregateError,
             KnownGlobal::Array,
             KnownGlobal::Object,
             KnownGlobal::Function,
@@ -503,14 +474,30 @@ mod tests {
             b"Arrow",
             b"String",
             b"Promise",
+            b"Respons_",
             b"Function_",
-            b"TypeErrorr",
-            b"SyntaxErrro",
-            b"SyntaxErrorX",
-            b"ReferenceErrro",
-            b"AggregateErrorX",
+            b"TextEncodeX",
+            b"TextDecoderX",
         ] {
             assert!(lookup(miss).is_none(), "{:?}", bstr::BStr::new(miss));
+        }
+    }
+
+    #[test]
+    fn error_constructors_are_left_alone() {
+        // See the doc comment on `KnownGlobal`: `new Error()` must stay a construct expression.
+        for name in [
+            b"Error".as_slice(),
+            b"TypeError",
+            b"SyntaxError",
+            b"RangeError",
+            b"ReferenceError",
+            b"EvalError",
+            b"URIError",
+            b"AggregateError",
+            b"SuppressedError",
+        ] {
+            assert!(lookup(name).is_none(), "{:?}", bstr::BStr::new(name));
         }
     }
 }

@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -77,7 +77,7 @@ test("err.line and err.column are set", async () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 18,
+        originalColumn: 22,
       },
       null,
       2,
@@ -148,4 +148,56 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// The runtime transpiler used to rewrite `new Error(x)` into `Error(x)`. A construct expression is
+// never a tail call, but in strict mode a call in return position is one, and JSC implements proper
+// tail calls, so the function that created the error vanished from the error's own stack.
+describe("a function that returns a freshly constructed Error appears in its stack", () => {
+  const fixture = /* js */ `
+    class AppError extends Error {}
+    function returnsNew() { return new Error("a"); }
+    function returnsLocal() { const err = new TypeError("b"); return err; }
+    const returnsFromArrow = () => new RangeError("c");
+    function returnsAggregate() { return new AggregateError([], "d"); }
+    function returnsBranch(flag) { return flag ? new ReferenceError("e") : new URIError("f"); }
+    function returnsSubclass() { return new AppError("g"); }
+
+    const results = [];
+    for (const make of [returnsNew, returnsLocal, returnsFromArrow, returnsAggregate, returnsBranch, returnsSubclass]) {
+      const error = make(true);
+      const firstFrame = error.stack.split("\\n").find(line => /^\\s+at /.test(line));
+      results.push({ error: error.constructor.name, createdIn: firstFrame.trim().split(" ")[1] });
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  const expected = [
+    { error: "Error", createdIn: "returnsNew" },
+    { error: "TypeError", createdIn: "returnsLocal" },
+    { error: "RangeError", createdIn: "returnsFromArrow" },
+    { error: "AggregateError", createdIn: "returnsAggregate" },
+    { error: "ReferenceError", createdIn: "returnsBranch" },
+    { error: "AppError", createdIn: "returnsSubclass" },
+  ];
+
+  test.concurrent.each([
+    ["ES module", "fixture.mjs", fixture],
+    ["strict-mode CommonJS", "fixture.cjs", `"use strict";\n${fixture}`],
+    ["sloppy-mode CommonJS", "fixture.cjs", fixture],
+  ])("%s", async (_, filename, source) => {
+    using dir = tempDir("stack-new-error", { [filename]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), filename],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
 });

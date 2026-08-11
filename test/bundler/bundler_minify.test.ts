@@ -819,7 +819,11 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("minify/ErrorConstructorOptimization", {
+  // `Error(...)` builds the same object as `new Error(...)`, but the error captures its stack while
+  // it is constructed, and unlike a construct expression a call in return position is a proper tail
+  // call in strict mode (which JSC implements). Dropping the `new` would delete the creating
+  // function's frame from the error's stack, so the Error constructors keep it.
+  itBundled("minify/ErrorConstructorsKeepNew", {
     files: {
       "/entry.js": /* js */ `
         // Test all Error constructors
@@ -862,31 +866,56 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "Error()",
-      'Error("message")',
-      'Error("message", { cause: "cause" })',
-      "TypeError()",
-      'TypeError("type error")',
-      "SyntaxError()",
-      'SyntaxError("syntax error")',
-      "RangeError()",
-      'RangeError("range error")',
-      "ReferenceError()",
-      'ReferenceError("ref error")',
-      "EvalError()",
-      'EvalError("eval error")',
-      "URIError()",
-      'URIError("uri error")',
-      'AggregateError([], "aggregate error")',
-      'AggregateError([Error("e1")], "multiple")',
-      "Error(msg)",
-      "TypeError(getErrorMessage())",
+      "new Error",
+      'new Error("message")',
+      'new Error("message", { cause: "cause" })',
+      "new TypeError",
+      'new TypeError("type error")',
+      "new SyntaxError",
+      'new SyntaxError("syntax error")',
+      "new RangeError",
+      'new RangeError("range error")',
+      "new ReferenceError",
+      'new ReferenceError("ref error")',
+      "new EvalError",
+      'new EvalError("eval error")',
+      "new URIError",
+      'new URIError("uri error")',
+      'new AggregateError([], "aggregate error")',
+      'new AggregateError([new Error("e1")], "multiple")',
+      "new Error(msg)",
+      "new TypeError(getErrorMessage())",
       "/* @__PURE__ */ new Date",
       "/* @__PURE__ */ new Map",
       "/* @__PURE__ */ new Set",
     ],
     minifySyntax: true,
     target: "bun",
+  });
+
+  itBundled("minify/ErrorConstructorKeepsCreatingFunctionInStack", {
+    files: {
+      "/entry.js": /* js */ `
+        function createError() {
+          "use strict";
+          return new Error("created in strict mode");
+        }
+        const createTypeError = () => {
+          "use strict";
+          const error = new TypeError("also strict");
+          return error;
+        };
+        for (const create of [createError, createTypeError]) {
+          const firstFrame = create().stack.split("\\n").find(line => /^\\s+at /.test(line));
+          console.log(firstFrame.trim().split(" ")[1]);
+        }
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "createError\ncreateTypeError",
+    },
   });
 
   itBundled("minify/ErrorConstructorWithVariables", {

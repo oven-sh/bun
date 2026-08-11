@@ -13,17 +13,17 @@ test("error.cause", () => {
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
 5 |   const err2 = new Error("error 2", { cause: err });
-                       ^
+                   ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:5:16)
 
 1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
-                      ^
+                  ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:4:15)
 "
 `);
 });
@@ -41,9 +41,9 @@ test("Error", () => {
 30 | 
 31 | test("Error", () => {
 32 |   const err = new Error("my message");
-                       ^
+                   ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:32:15)
 "
 `);
 });
@@ -71,21 +71,21 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
+// Debug builds show bun's own builtin functions in stack traces
+// (showPrivateScriptsInStackTraces). Those frames have no file name, e.g.
+// "at require (51:24)" (or "at require (:1:21)" in older builds). Drop them
+// so the snapshots below hold for debug and release builds alike; the
+// snapshotted line:column values themselves must stay exact.
+//
+// The snapshots below embed line numbers of this file: keep this helper's
+// line count stable when editing it.
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
+  const isBuiltinFrame = line => /^\s*at \S+ \(:?\d+:\d+\)$/.test(line);
 
-  return str;
+  return str
+    .split("\n")
+    .filter(line => !isBuiltinFrame(line))
+    .join("\n");
 };
 
 test("Error inside minified file (no color) ", () => {
@@ -109,7 +109,7 @@ test("Error inside minified file (no color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:92:7)"
     `);
@@ -138,7 +138,7 @@ test("Error inside minified file (color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:120:7)"
     `);

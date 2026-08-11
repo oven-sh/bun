@@ -3,6 +3,7 @@
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 #include <fcntl.h>
+#include <atomic>
 #include <cstring>
 #include <signal.h>
 #include <unistd.h>
@@ -208,8 +209,11 @@ template<typename Fn>
 static void cloneTrampoline(void* ctx)
 {
     (*static_cast<Fn*>(ctx))();
-    rawExit(127);
 }
+
+// Kernels < 5.3 and common container seccomp profiles return ENOSYS for
+// clone3; don't keep asking.
+static std::atomic<bool> clone3Unavailable { false };
 
 #if __has_feature(address_sanitizer)
 // What compiler-rt's vfork interceptor calls in the parent: the child ran
@@ -257,10 +261,8 @@ extern "C" ssize_t posix_spawn_bun(
     int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
     volatile bool cgroup_failed = false;
     bool join_cgroup_in_child = false;
-    pid_t child = -1;
-#else
-    pid_t child = -1;
 #endif
+    pid_t child = -1;
 
 #if OS(DARWIN) || OS(FREEBSD)
     const auto childFailed = [&]() -> ssize_t {
@@ -302,7 +304,7 @@ extern "C" ssize_t posix_spawn_bun(
         // touches is charged to the cgroup. Writing "0" moves the writer.
         if (join_cgroup_in_child) {
             int procs = openat(request->cgroup_fd, "cgroup.procs", O_WRONLY | O_CLOEXEC);
-            if (procs < 0 || write(procs, "0", 1) < 0) {
+            if (procs < 0 || write(procs, "0", 1) != 1) {
                 cgroup_failed = true;
                 return childFailed();
             }
@@ -459,13 +461,9 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
 #if OS(LINUX)
-    // On Linux, use vfork() for performance. The parent is suspended until
-    // the child calls exec or _exit, so we can detect exec failure via the
-    // child's exit status without needing the self-pipe trick.
-    // While POSIX restricts vfork children to only calling _exit() or exec*(),
-    // Linux's vfork() is more permissive and allows the setup we need
-    // (setsid, ioctl, dup2, etc.) before exec.
-    if (request->cgroup_fd >= 0) {
+    if (request->cgroup_fd >= 0 && clone3Unavailable.load(std::memory_order_relaxed)) {
+        join_cgroup_in_child = true;
+    } else if (request->cgroup_fd >= 0) {
         // cgroup v2: the child is created inside the cgroup. Migrating it after
         // the fact (writing cgroup.procs) takes cgroup_threadgroup_rwsem for
         // write — an RCU grace period on >= 6.0 kernels — with this thread
@@ -475,15 +473,24 @@ extern "C" ssize_t posix_spawn_bun(
         args.exit_signal = SIGCHLD;
         args.cgroup = static_cast<uint64_t>(request->cgroup_fd);
         long rc = bun_clone3_vfork(&args, sizeof(args), cloneTrampoline<decltype(startChild)>, (void*)&startChild);
-#if __has_feature(address_sanitizer)
-        if (__asan_handle_vfork) {
-            __asan_handle_vfork(__builtin_frame_address(0));
-        }
-#endif
         if (rc >= 0) {
+#if __has_feature(address_sanitizer)
+            if (__asan_handle_vfork) {
+                void* sp;
+#if CPU(X86_64)
+                asm volatile("movq %%rsp, %0" : "=r"(sp));
+#else
+                asm volatile("mov %0, sp" : "=r"(sp));
+#endif
+                __asan_handle_vfork(sp);
+            }
+#endif
             child = static_cast<pid_t>(rc);
         } else if (rc == -ENOSYS || rc == -EBADF || rc == -EINVAL || rc == -E2BIG || rc == -EOPNOTSUPP || rc == -EPERM) {
             // No clone3 (old kernel / seccomp), or not a cgroup2 directory.
+            if (rc == -ENOSYS) {
+                clone3Unavailable.store(true, std::memory_order_relaxed);
+            }
             join_cgroup_in_child = true;
         } else {
             // EBUSY (subtree_control set), EACCES (delegation), ENOENT
@@ -492,7 +499,11 @@ extern "C" ssize_t posix_spawn_bun(
             cgroup_failed = true;
         }
     }
-    if (child == -1 && (request->cgroup_fd < 0 || join_cgroup_in_child)) {
+    // Otherwise vfork(): the parent is suspended until the child calls exec
+    // or _exit, so exec failure is visible via child_errno without the
+    // self-pipe trick. POSIX restricts vfork children to _exit()/exec*(), but
+    // Linux permits the setup we need (setsid, ioctl, dup2, ...) before exec.
+    if (child == -1 && !cgroup_failed) {
         child = vfork();
         if (child == 0) {
             return startChild();

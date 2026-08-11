@@ -1228,11 +1228,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // See EMFILE arm above.
                 spawn_options.deinit();
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                if err.syscall == sys::Tag::clone3 {
-                    let err = match cgroup_dir.as_ref() {
-                        Some(c) => err.with_path(&c.display_path),
-                        None => err,
-                    };
+                if let Some(c) = &cgroup_dir
+                    && err.syscall == sys::Tag::clone3
+                {
+                    let err = err.with_path(c.display_path());
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
                 match err.get_errno() {
@@ -2203,12 +2202,21 @@ enum CgroupTarget {
 
 /// The directory fd handed to `posix_spawn_bun`, plus what to blame on error.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-struct OpenCgroup {
+struct OpenCgroup<'a> {
     dir: Fd,
-    /// Keeps a directory we opened ourselves alive (and closes it on drop);
-    /// `None` when the caller passed their own fd.
+    /// Closes a directory we opened ourselves on drop; `None` for a caller's fd.
     _owned: Option<sys::File>,
-    display_path: Box<[u8]>,
+    target: &'a CgroupTarget,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl OpenCgroup<'_> {
+    fn display_path(&self) -> &[u8] {
+        match self.target {
+            CgroupTarget::Path(path) => path.as_bytes(),
+            CgroupTarget::DirFd(_) => b"cgroup.procs",
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2232,35 +2240,30 @@ impl CgroupTarget {
 
     /// Resolve to a directory fd in the parent so a bad path fails the spawn
     /// with errno + path rather than an opaque exit 127 from the child.
-    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup> {
+    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup<'_>> {
         let opened = match self {
             Self::DirFd(dir) => OpenCgroup {
                 dir: *dir,
                 _owned: None,
-                display_path: b"cgroup.procs"[..].into(),
+                target: self,
             },
-            Self::Path(path) => {
-                let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC;
-                match sys::File::open(path.as_zstr(), flags, 0) {
-                    Ok(file) => OpenCgroup {
-                        dir: file.handle(),
-                        _owned: Some(file),
-                        display_path: path.as_bytes().into(),
-                    },
-                    Err(err) => {
-                        return Err(
-                            global.throw_value(err.with_path(path.as_bytes()).to_js(global))
-                        );
-                    }
+            Self::Path(path) => match sys::open_dir_absolute(path.as_bytes()) {
+                Ok(dir) => OpenCgroup {
+                    dir,
+                    _owned: Some(sys::File::from_fd(dir)),
+                    target: self,
+                },
+                Err(err) => {
+                    return Err(global.throw_value(err.with_path(path.as_bytes()).to_js(global)));
                 }
-            }
+            },
         };
 
-        // A frozen destination would park the child before exec and, through
-        // vfork, this thread with it.
+        // Best-effort: a frozen destination would park the child before exec
+        // and, through vfork, this thread with it. The kernel reports no error.
         if Self::is_frozen(opened.dir) {
             let err = sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::open)
-                .with_path(&opened.display_path);
+                .with_path(opened.display_path());
             return Err(global.throw_value(err.to_js(global)));
         }
 
@@ -2268,19 +2271,11 @@ impl CgroupTarget {
     }
 
     fn is_frozen(dir: Fd) -> bool {
-        for (file, needle) in [
-            (&b"cgroup.events"[..], &b"frozen 1"[..]),
-            (b"freezer.state", b"FROZEN"),
-        ] {
-            let Ok(file) = sys::File::openat(dir, file, sys::O::RDONLY | sys::O::CLOEXEC, 0) else {
-                continue;
-            };
-            let mut buf = [0u8; 256];
-            let n = file.read_all(&mut buf).unwrap_or(0);
-            if strings::contains(&buf[..n], needle) {
-                return true;
-            }
+        match sys::File::read_from(dir, b"cgroup.events") {
+            Ok(events) => strings::contains(&events, b"frozen 1"),
+            // Not cgroup2; v1 only freezes where the freezer controller is co-mounted.
+            Err(_) => sys::File::read_from(dir, b"freezer.state")
+                .is_ok_and(|state| state.starts_with(b"FROZEN")),
         }
-        false
     }
 }

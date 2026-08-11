@@ -1389,6 +1389,9 @@ impl BlobExt for Blob {
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
         let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
@@ -2221,6 +2224,9 @@ impl BlobExt for Blob {
         self.size.get()
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
+        if let Some(kind) = self.snapshot_io_kind() {
+            global_this.throw_disabled_in_snapshot_error_if_needed(kind)?;
+        }
         // TODO: make this async for files
         let tag = match self.store.get() {
             None => return Ok(JSValue::UNDEFINED),

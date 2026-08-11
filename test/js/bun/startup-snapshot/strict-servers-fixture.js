@@ -24,6 +24,13 @@ queue("cp-async", () => new Promise((res, rej) => fs.cp(process.execPath, proces
 queue("bun-write", () => Bun.write(process.env.CP_TARGET, "x"));
 queue("bun-file-text", () => Bun.file(process.execPath).text());
 queue("bun-file-exists", () => Bun.file(process.execPath).exists());
+queue("bun-file-stat", () => Bun.file(process.execPath).stat());
+queue("bun-file-delete", () => Bun.file(process.env.CP_TARGET).delete()); // a path that does not exist: ungated, this fails with ENOENT rather than "refused"
+queue("s3-blob-stat", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }).stat());
+queue("s3-blob-delete", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }).delete());
+queue("s3-client-stat", () => Bun.s3.stat("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" })); // the client-level entries are a separate family from the blob methods
+queue("s3-client-write", () => Bun.s3.write("k", "x", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }));
+queue("s3-client-list", () => Bun.s3.list({}, { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }));
 queue("s3-blob-text", () => Bun.s3.file("k", { bucket: "b", endpoint: "http://127.0.0.1:9", accessKeyId: "a", secretAccessKey: "b" }).text()); // an S3-backed blob is network I/O
 // ...but stdio is each launch's own and must stay usable while building (process.stdin is built on the same machinery).
 queue("stdout-write", () => Bun.write(Bun.stdout, ""));

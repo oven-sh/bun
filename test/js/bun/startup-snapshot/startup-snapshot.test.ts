@@ -671,7 +671,14 @@ snapshotTest("a strict build refuses servers and UDP sockets, not just listen/co
     "bun-write",
     "bun-file-text",
     "bun-file-exists",
+    "bun-file-stat",
+    "bun-file-delete",
     "s3-blob-text",
+    "s3-blob-stat",
+    "s3-blob-delete",
+    "s3-client-stat",
+    "s3-client-write",
+    "s3-client-list",
   ])
     expect(out).toContain(`[js] ${op} refused`); // hand-written node:fs bindings
   for (const op of ["stdout-write", "stdin-access"]) expect(out).toContain(`[js] ${op} created`); // stdio is exempt from the gate
@@ -758,6 +765,69 @@ snapshotTest("TLS verification derived from the builder's environment is re-deri
   const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   expect(err).toContain("[snapshot] restored");
   expect(out).toContain("[js] restored rejected"); // the builder's "don't verify" must not be what this launch runs with
+  expect(code).toBe(0);
+});
+
+snapshotTest(
+  "a .env value the builder's environ shadowed reaches a launch whose environ lacks it, as a normal boot would",
+  async () => {
+    using dir = tempDir("bun-snapshot-env-shadowed", { ".env": "SHADOWED=from-dotenv\nPLAIN=plain-dotenv\n" });
+    using launchDir = tempDir("bun-snapshot-env-shadowed-launch", {}); // no .env here: whatever a launch sees came through the snapshot
+    const img = join(String(dir), "s.snapshot");
+    const fixture = join(import.meta.dir, "env-shadowed-fixture.js");
+    {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        cwd: String(dir),
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, SHADOWED: "from-builder-environ" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      expect(existsSync(img)).toBe(true);
+    }
+    const launch = async (extra: Record<string, string>) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        cwd: String(launchDir),
+        env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, ...extra },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(code).toBe(0);
+      return out.trim();
+    };
+    expect(await launch({})).toBe("[js] SHADOWED=from-dotenv PLAIN=plain-dotenv");
+    expect(await launch({ SHADOWED: "from-launch" })).toBe("[js] SHADOWED=from-launch PLAIN=plain-dotenv"); // the launch's environ still wins
+  },
+);
+
+withSnapshots(isLinux)("children of a restored no-orphans process still get the parent-death signal", async () => {
+  // The builder armed no-orphans mode on its main thread; the restored main thread has to count as that thread too.
+  using dir = tempDir("bun-snapshot-pdeathsig", {});
+  const img = join(String(dir), "s.snapshot");
+  const fixture = join(import.meta.dir, "pdeathsig-fixture.js");
+  {
+    await using p = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(code).toBe(0);
+    expect(existsSync(img)).toBe(true);
+  }
+  await using p = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, , code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+  expect(out.trim()).toBe("[js] child pdeathsig=9");
   expect(code).toBe(0);
 });
 

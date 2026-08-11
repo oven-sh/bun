@@ -1,6 +1,3 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1 // dl_iterate_phdr / dl_phdr_info (Linux)
-#endif
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wformat" // uint64_t is unsigned long on Linux, unsigned long long on Darwin; this file prints a lot of addresses
 #include "root.h"
@@ -81,14 +78,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/MachineStackMarker.h>
-#endif
-#if OS(LINUX)
-#include <sys/personality.h>
-#include <sys/auxv.h>
-#include <link.h>
-#include <elf.h>
-#include <dirent.h>
-#include <ucontext.h>
 #endif
 #ifndef MAP_JIT
 #define MAP_JIT 0

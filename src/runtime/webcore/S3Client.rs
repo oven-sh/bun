@@ -429,6 +429,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -469,6 +470,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -509,6 +511,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -549,6 +552,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -604,6 +608,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         let args = callframe.arguments_as_array::<2>();
 
         let object_keys = args[0];
@@ -634,6 +639,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -722,6 +728,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
         let args = callframe.arguments_as_array::<2>();
         let object_keys = args[0];
         let options = opt_js(args[1]);

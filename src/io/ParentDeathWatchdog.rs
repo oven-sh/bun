@@ -292,7 +292,7 @@ pub fn enable() {
 pub fn ensure_kill_on_close_job() {}
 
 /// A process restored from a snapshot inherited the builder's parent pid and (on macOS) the builder's registered watch, both
-/// meaningless here: watch this process's own parent instead. The inherited poll is left alone by the restore (see
+/// meaningless here, and its main thread is not yet marked as the arming thread: watch this process's own parent instead. The inherited poll is left alone by the restore (see
 /// `FilePoll::rearm_after_snapshot_restore`); it never kept the loop alive and nothing will ever fire it.
 pub fn reinstall_after_snapshot_restore(handle: EventLoopCtx) {
     if !ENABLED.load(Ordering::Relaxed) {
@@ -300,6 +300,7 @@ pub fn reinstall_after_snapshot_restore(handle: EventLoopCtx) {
     }
     // SAFETY: getppid cannot fail.
     ORIGINAL_PPID.store(unsafe { libc::getppid() }, Ordering::Relaxed);
+    bun_spawn_sys::pdeathsig::readopt_arming_thread();
     #[cfg(target_os = "macos")]
     EVENT_LOOP_INSTALLED.store(false, Ordering::Relaxed);
     install_on_event_loop(handle);

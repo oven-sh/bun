@@ -593,7 +593,13 @@ impl Loader {
         // particular must not outlive the environment they came from.
         self.reject_unauthorized.set(None);
         self.aws_credentials = None;
-        self.load_process()
+        self.load_process()?;
+        for (key, value) in core::mem::take(&mut self.map.shadowed_by_process) {
+            if self.map.get(&key).is_none() {
+                self.map.put(&key, &value)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn load_process(&mut self) -> Result<(), AllocError> {
@@ -1284,6 +1290,9 @@ impl<'a> Parser<'a> {
                     // Allow keys defined later in the same file to override keys defined earlier
                     // https://github.com/oven-sh/bun/issues/1262
                     if !OVERRIDE {
+                        if bun_core::startup_snapshot::building() {
+                            map.shadowed_by_process.push((Box::from(key), value_owned));
+                        }
                         continue;
                     }
                 }
@@ -1352,6 +1361,8 @@ pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<Has
 
 pub struct Map {
     pub map: HashTable,
+    /// `.env` values a snapshot builder's environ shadowed; a restored launch whose environ lacks the key gets them, as a normal boot would.
+    shadowed_by_process: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
 impl Default for Map {
@@ -1454,8 +1465,13 @@ impl Map {
 
     #[inline]
     pub(crate) fn init() -> Map {
+        Self::with_table(HashTable::default())
+    }
+
+    pub fn with_table(map: HashTable) -> Map {
         Map {
-            map: HashTable::default(),
+            map,
+            shadowed_by_process: Vec::new(),
         }
     }
 
@@ -1540,9 +1556,7 @@ impl Map {
 
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
         // allocator param dropped — global mimalloc
-        Ok(Map {
-            map: self.map.clone()?,
-        })
+        Ok(Map::with_table(self.map.clone()?))
     }
 }
 

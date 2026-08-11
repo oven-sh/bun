@@ -3773,6 +3773,15 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
+            // The message ended with its header block, so whatever follows it
+            // in this packet was never requested (RFC 9112 section 6.3). As
+            // with the Content-Length overshoot in handle_response_body, the
+            // response is still delivered, but the connection's framing can't
+            // be trusted any more: close it instead of pooling it. do_redirect
+            // honours this flag too via is_keep_alive_possible.
+            if !to_read.is_empty() {
+                self.state.flags.allow_keepalive = false;
+            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;

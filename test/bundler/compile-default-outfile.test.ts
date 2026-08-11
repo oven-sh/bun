@@ -8,7 +8,9 @@ import { join } from "node:path";
 // is taken by the directory itself, in which case the executable is named `index`. Windows
 // executables get a `.exe` suffix, so there the directory name never collides.
 
-// Every case compiles once, which copies the whole bun binary (~1 GB under debug+ASAN).
+// Every case compiles once, which reads and rewrites the whole bun binary (~1 GB under
+// debug+ASAN): hence the timeout, and hence plain `describe` rather than `describe.concurrent`,
+// since concurrent compiles exhaust CI memory/IO (see the note in bundler_compile.test.ts).
 const TIMEOUT = 60_000;
 const exe = isWindows ? ".exe" : "";
 

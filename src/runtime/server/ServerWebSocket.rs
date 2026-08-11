@@ -9,8 +9,8 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignalRef, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
+    self, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
+    JsError, JsRef, JsResult, ZigStringSlice, abort_signal,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::Blob;
@@ -32,10 +32,10 @@ pub struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    /// The request's signal, handed over by the upgrade caller together with
-    /// its pending-activity count; whichever of `on_close`/`finalize` runs
-    /// first takes it, drops the pending-activity count, and releases it.
-    signal: Cell<Option<AbortSignalRef>>,
+    /// The upgraded request's signal, taken over from its `RequestContext`;
+    /// `on_close` takes it out to fire it, and whatever is left is released
+    /// with the socket.
+    signal: Cell<Option<abort_signal::PendingActivityRef>>,
 }
 
 // We pack the per-socket data into this struct below:
@@ -349,14 +349,13 @@ impl ServerWebSocket {
     // pub const js = jsc.Codegen.JSServerWebSocket; — provided by #[bun_jsc::JsClass]
     // toJS / fromJS / fromJSDirect — provided by codegen (see `to_js_ptr` / `JsClass` impl)
 
-    /// Initialize a ServerWebSocket with the given handler, data value, and signal.
-    /// The socket takes over `signal` (and the pending-activity count the
-    /// request context put on it) and releases both when it closes or is
-    /// finalized.
+    /// Initialize a ServerWebSocket with the given handler, data value, and the
+    /// upgraded request's signal, which is fired and released when the socket
+    /// closes.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
-        signal: Option<AbortSignalRef>,
+        signal: Option<abort_signal::PendingActivityRef>,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
@@ -702,11 +701,8 @@ impl ServerWebSocket {
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
         // The guard owns the signal until fn exit; the abort below borrows it
         // through the guard.
-        let cleanup = scopeguard::guard(signal, move |sig| {
-            if let Some(sig) = sig {
-                sig.pending_activity_unref();
-                // Dropping `sig` releases the ref the upgrade caller handed over.
-            }
+        let cleanup = scopeguard::guard(signal, move |signal| {
+            drop(signal);
             if was_not_empty {
                 // The `server` traced edge set in `init` must outlive this
                 // wrapper: `self.handler` points into the server's allocation
@@ -797,10 +793,7 @@ impl ServerWebSocket {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
-        if let Some(signal) = self.signal.take() {
-            signal.pending_activity_unref();
-            // Dropping `signal` releases the ref the upgrade caller handed over.
-        }
+        // Dropping the box releases `signal` if `on_close` never ran.
     }
 
     #[bun_jsc::host_fn(method)]

@@ -1790,13 +1790,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        signal.pending_activity_ref();
+        let signal = jsc::abort_signal::PendingActivityRef::new(signal);
         // `add_listener` may synchronously fire `on_abort_signal` (already
         // aborted), which re-enters via `subprocess_ptr`, so the store below
         // goes through the raw pointer rather than a `&mut Subprocess`.
-        let _ = signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+        signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
         // SAFETY: `subprocess_ptr` is the live Subprocess allocated above;
-        // `clear_abort_signal` releases the ref and the pending-activity count.
+        // `clear_abort_signal` drops the hold.
         unsafe { (*subprocess_ptr).abort_signal.set(Some(signal)) };
     }
 
@@ -1834,8 +1834,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
-                signal.pending_activity_ref();
-                let _ = signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
+                let signal = jsc::abort_signal::PendingActivityRef::new(signal);
+                signal.add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
                 // SAFETY: see the matching block above.
                 unsafe { (*subprocess_ptr).abort_signal.set(Some(signal)) };
             }

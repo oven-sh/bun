@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -187,11 +188,12 @@ impl AbortSignal {
         WebCore__AbortSignal__create(global)
     }
 
-    /// Creates a signal and returns it carrying a `+1` the caller owns; same
-    /// release rule as [`AbortSignal::ref_`].
-    pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
+    /// Creates a signal with no JS wrapper yet (`to_js` makes one on demand).
+    pub fn new(global: &JSGlobalObject) -> AbortSignalRef {
         crate::mark_binding!();
-        WebCore__AbortSignal__new(global)
+        // SAFETY: `WebCore__AbortSignal__new` is `RefPtr::leakRef()` of a fresh
+        // signal: a live, non-null pointer carrying the `+1` adopted here.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__new(global)) }
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.
@@ -254,6 +256,75 @@ impl AbortSignal {
             // same non-null pointer with +1 ownership.
             unsafe { AbortSignalRef::adopt((*p).ref_()) }
         })
+    }
+}
+
+/// What a native operation holds on a signal while it is in flight: a ref
+/// (keeps the C++ object alive), a pending-activity count (keeps the JS
+/// wrapper and the `abort` listeners on it alive, and marks the signal as
+/// observed for `AbortSignal.timeout`), and optionally the one native listener
+/// the operation registered. Dropping it gives all three back, so holders keep
+/// an `Option<PendingActivityRef>` and release by taking it out.
+pub struct PendingActivityRef {
+    signal: AbortSignalRef,
+    /// The `ctx` passed to [`Self::add_listener`], or null if none was.
+    listener_ctx: Cell<*mut c_void>,
+}
+
+impl PendingActivityRef {
+    pub fn new(signal: AbortSignalRef) -> Self {
+        signal.pending_activity_ref();
+        Self {
+            signal,
+            listener_ctx: Cell::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Registers `callback(ctx, reason)` to run when the signal aborts (at once
+    /// if it already has, like [`AbortSignal::add_listener`]); it is removed
+    /// when `self` drops. One listener per hold. Takes `&self` so that this
+    /// shadows the `Deref`'d `AbortSignal::add_listener`, whose registration
+    /// nothing would remove.
+    pub fn add_listener(
+        &self,
+        ctx: *mut c_void,
+        callback: unsafe extern "C" fn(*mut c_void, JSValue),
+    ) {
+        debug_assert!(
+            self.listener_ctx.get().is_null(),
+            "PendingActivityRef already has a listener"
+        );
+        self.listener_ctx.set(ctx);
+        self.signal.add_listener(ctx, callback);
+    }
+
+    /// A plain ref to the same signal, for an owner that outlives this hold.
+    pub fn signal_ref(&self) -> AbortSignalRef {
+        self.signal.clone()
+    }
+}
+
+impl core::ops::Deref for PendingActivityRef {
+    type Target = AbortSignal;
+    #[inline]
+    fn deref(&self) -> &AbortSignal {
+        &self.signal
+    }
+}
+
+impl Drop for PendingActivityRef {
+    fn drop(&mut self) {
+        let ctx = self.listener_ctx.get();
+        if !ctx.is_null() {
+            self.signal.clean_native_bindings(ctx);
+        }
+        // Listener first: `cleanNativeBindings` is the one of the two that
+        // cancels an `AbortSignal.timeout` timer if it finds the signal
+        // unobserved, so it must run while the pending-activity count still
+        // counts as an observer, or a timeout signal JS is still holding would
+        // never fire.
+        self.signal.pending_activity_unref();
+        // `self.signal` drops last and releases the ref.
     }
 }
 

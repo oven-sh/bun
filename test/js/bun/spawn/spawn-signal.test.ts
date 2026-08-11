@@ -134,6 +134,24 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(end - start).toBeLessThan(100);
 });
 
+test("AbortSignal.timeout() passed to spawn still fires after the child has exited", async () => {
+  // The subprocess lets go of the signal when the child exits. The caller
+  // still holds it, so its timer has to keep running.
+  const signal = AbortSignal.timeout(1000);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "0"],
+    env: bunEnv,
+    stdio: ["ignore", "ignore", "ignore"],
+    signal,
+  });
+  await proc.exited;
+  if (!signal.aborted) {
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+  }
+  expect(signal.reason).toBeInstanceOf(DOMException);
+  expect(signal.reason.name).toBe("TimeoutError");
+});
+
 describe("Bun.spawn option validation", () => {
   const spawners = [
     ["Bun.spawn", (opts: any) => Bun.spawn(opts)],

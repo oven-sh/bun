@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_ptr::RefCount;
 
 use bun_jsc::{
-    self as jsc, AbortSignalRef, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef,
-    JsResult, VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
+    VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -147,9 +147,8 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// The `signal` spawn option, held (with a pending-activity count on it)
-    /// while our abort listener is registered; `clear_abort_signal` drops both.
-    pub(crate) abort_signal: JsCell<Option<AbortSignalRef>>,
+    /// The `signal` spawn option, with our abort listener registered on it.
+    pub(crate) abort_signal: JsCell<Option<jsc::abort_signal::PendingActivityRef>>,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -1272,11 +1271,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None) {
-            signal.pending_activity_unref();
-            signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            // Dropping `signal` releases the ref taken in `spawn_maybe_sync`.
-        }
+        drop(self.abort_signal.replace(None));
     }
 
     pub fn finalize(self: Box<Self>) {

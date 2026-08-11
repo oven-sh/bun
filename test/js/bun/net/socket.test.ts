@@ -767,6 +767,70 @@ describe.concurrent("socket", () => {
     }
     Bun.gc(true);
   }, 20_000); // only needed in debug mode
+  it("upgradeTLS throws on a socket that has been shut down and leaves it with its TCP handlers", async () => {
+    // us_socket_adopt() refuses a shut-down socket. It used to return the
+    // socket anyway, so the us_socket_t kept its TCP dispatch kind while
+    // upgradeTLS stored a TLSSocket in its ext slot; every later event was then
+    // dispatched to the wrong type.
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data() {},
+        end(socket) {
+          // The peer's FIN closes this socket right after this handler; the
+          // bytes written here still go out ahead of our own FIN.
+          socket.write("bye");
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    const tcpError = jest.fn();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        data(_socket, chunk) {
+          received += chunk.toString();
+        },
+        close() {
+          closed.resolve();
+        },
+        error: tcpError,
+      },
+    });
+
+    const tlsHandlers = {
+      open: jest.fn(),
+      handshake: jest.fn(),
+      data: jest.fn(),
+      end: jest.fn(),
+      close: jest.fn(),
+      error: jest.fn(),
+    };
+
+    socket.shutdown();
+    expect(() =>
+      socket.upgradeTLS({
+        tls: { ...tls, ca: tls.cert },
+        socket: tlsHandlers,
+      }),
+    ).toThrow("Cannot upgrade to TLS: the socket is closed or has been shut down");
+
+    // The socket is still a plain TCP socket owned by the original handlers:
+    // the server's reply and the close land there, and nowhere else.
+    await closed.promise;
+    expect(received).toBe("bye");
+    expect(tcpError).not.toHaveBeenCalled();
+    for (const handler of Object.values(tlsHandlers)) {
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
   it("should be able to upgrade to TLS", async () => {
     using server = Bun.serve({
       port: 0,

@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, hasIPv6Loopback, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, hasIPv6Loopback, isASAN, isWindows, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -2173,11 +2173,13 @@ describe.concurrent.skipIf(!hasIPv6Loopback())("NO_PROXY matches an IPv6 literal
   // The proxy answers every request itself, so the body of the subprocess's
   // fetch says which route it took.
   let origin: Server; // on ::1
+  let origin4: Server; // on 127.0.0.1, reached as the v4-mapped address [::ffff:7f00:1]
   let redirector: Server; // on 127.0.0.1, 302 -> origin
   let proxy: ReturnType<typeof Bun.listen>;
 
   beforeAll(() => {
     origin = Bun.serve({ hostname: "::1", port: 0, fetch: () => new Response("direct") });
+    origin4 = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("direct") });
     redirector = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -2205,6 +2207,7 @@ describe.concurrent.skipIf(!hasIPv6Loopback())("NO_PROXY matches an IPv6 literal
 
   afterAll(() => {
     origin.stop(true);
+    origin4.stop(true);
     redirector.stop(true);
     proxy.stop(true);
   });
@@ -2254,6 +2257,17 @@ describe.concurrent.skipIf(!hasIPv6Loopback())("NO_PROXY matches an IPv6 literal
     ["1", "proxied"],
   ])("NO_PROXY=%s sends http://[::1]/ %s", async (entry, expected) => {
     expect(await route(entry.replace("ORIGIN_PORT", String(origin.port)))).toBe(expected);
+  });
+
+  // URLs serialize IPv6 hex digits in lowercase; entries are compared to them
+  // case-insensitively. Windows sockets are IPv6-only by default, so only the
+  // other platforms can reach a v4-mapped address.
+  test.skipIf(isWindows).each([
+    ["::FFFF:7F00:1", "direct"],
+    ["[::ffff:7f00:1]", "direct"],
+    ["::ffff:7f00:2", "proxied"],
+  ])("NO_PROXY=%s sends http://[::ffff:7f00:1]/ %s", async (entry, expected) => {
+    expect(await route(entry, { url: `http://[::ffff:7f00:1]:${origin4.port}/` })).toBe(expected);
   });
 
   test("bare address also bypasses an explicit fetch({ proxy }) option", async () => {

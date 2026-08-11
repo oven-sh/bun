@@ -177,9 +177,7 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            // The <parse> frame shows the URL and line addErrorInfo() recorded for a source JSC's parser rejected.
-            // A sourceURL alone doesn't mean that (structured clones and errors whose frames GC already flushed
-            // have one too), and a parser error for a source without a URL (new Function) has nothing to show.
+            // Where the parser failed, as recorded by addErrorInfo(); a source with no URL (new Function) has nothing to show.
             if (err->hasParseLocation() && !err->sourceURL().isEmpty() && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:

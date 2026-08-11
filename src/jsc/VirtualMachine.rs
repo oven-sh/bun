@@ -4773,7 +4773,7 @@ impl VirtualMachine {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
-            exception.value(),
+            exception.as_js_value(),
             Some(exception),
             exception_list,
             &mut formatter,
@@ -5114,6 +5114,9 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
+    /// `value` is the thrown value or, from [`Self::print_exception`], the
+    /// `JSC::Exception` cell wrapping it (see [`Self::print_error_instance_js`]).
+    ///
     /// Note: takes runtime bools and the concrete `bun_core::io::Writer`.
     pub fn print_errorlike_object(
         &mut self,
@@ -5318,7 +5321,7 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        let _ = jsc_vm.uncaught_exception(global_object, exception.as_js_value(), false);
         JSValue::UNDEFINED
     }
 
@@ -5832,7 +5835,10 @@ impl VirtualMachine {
     }
 
     /// JS-value variant of the error printer; see
-    /// [`Self::print_error_instance_body`].
+    /// [`Self::print_error_instance_body`]. `error_instance` may be the
+    /// `JSC::Exception` cell wrapping the thrown value: `toZigException` takes
+    /// the throw-site stack from the cell, but the body has to be handed the
+    /// wrapped Error itself to print its own properties and `cause` chain.
     fn print_error_instance_js(
         &mut self,
         error_instance: JSValue,
@@ -5898,10 +5904,14 @@ impl VirtualMachine {
         );
         error_instance.ensure_still_alive();
 
+        let error_value = match error_instance.to_error() {
+            Some(err) if err.js_type() == jsc::JSType::ErrorInstance => err,
+            _ => error_instance,
+        };
         let result = self.print_error_instance_body(
             // SAFETY: see above.
             unsafe { &mut *exception },
-            error_instance,
+            error_value,
             None, // Note: `exception_list` was already
             // consumed by `remap_zig_exception` above (only writer).
             formatter,

@@ -19,7 +19,9 @@ impl Exception {
         JSC__Exception__getStackTrace(self, global, stack);
     }
 
-    pub fn value(&self) -> JSValue {
+    /// The `JSC::Exception` cell itself as a `JSValue`, not the value it wraps;
+    /// `JSValue::to_error` unwraps it.
+    pub fn as_js_value(&self) -> JSValue {
         JSC__Exception__asJSValue(self)
     }
 }

@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("spawn env", async () => {
   const env = {};

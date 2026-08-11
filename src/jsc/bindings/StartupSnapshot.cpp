@@ -1906,7 +1906,7 @@ static void snapshotRestoreAndRun(const char* path)
     _mi_scavenger_start_if_forked();
     startupSnapshotToolingAfterRestore();
     startupSnapshotToolingArmTraps();
-    // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the snapshot's high-water mark.
+    // pthread TLS keys created by the build process (WTF::ThreadSpecific etc.) must exist here too, or setspecific silently fails; burn keys up to the snapshot's high-water mark. The burned keys have no destructors: a thread that exits after storing into one leaks that value (accepted; the main thread never exits).
     if (hdr.reserved[1]) {
         for (int i = 0; i < 1024; i++) {
             pthread_key_t k = 0;

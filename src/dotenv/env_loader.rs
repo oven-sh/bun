@@ -1317,6 +1317,21 @@ impl<'a> Parser<'a> {
                 }
                 idx += 1;
             }
+            // A key repeated in one file: the later line wins at boot (#1262), so keep only the last stash of each key from this file.
+            let mut i = shadowed_start;
+            while i < map.shadowed_by_process.len() {
+                let key = map.shadowed_by_process[i].0.clone();
+                let last = map
+                    .shadowed_by_process
+                    .iter()
+                    .rposition(|(k, _)| *k == key)
+                    .unwrap();
+                if last != i {
+                    map.shadowed_by_process.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
             let mut idx = shadowed_start;
             while idx < map.shadowed_by_process.len() {
                 let current: Box<[u8]> = map.shadowed_by_process[idx].1.clone();

@@ -77,6 +77,7 @@ What it cannot refresh is anything your code derived from those before the snaps
 - A value read from `process.env`, `os.homedir()`, `process.cwd()` and the like and kept in a variable is the build machine's value in every launch. Holding a reference to `process.env` itself is fine — it is updated in place — but a copy of it (`{ ...process.env }`, `dotenv`-style merging into another object) is not.
 - Random values and timestamps produced before the snapshot (an id generated at startup, `Date.now()` stored in a variable) are identical in every launch.
 - Anything computed from files or the network before the snapshot is whatever the build machine had.
+- `.env` files are read when the snapshot is built, not at launch: a launch gets the build's `.env` values (the launch's own environment still takes precedence), and any `${VAR}` references in them were expanded against the build's environment.
 - The JavaScript engine's own options (`BUN_JSC_*` variables) are read once when the engine starts, so a snapshot carries the build's; setting them when launching a snapshot has no effect.
 
 When the snapshot is written, the build prints which environment variables were read by name before it, and every place `process.env` was copied, with the code that did it. Each entry is either something to move into `main()` or a `"restore"` listener, or a variable that genuinely changes what the program is — those go in `envGate`, and a launch whose value differs boots normally.

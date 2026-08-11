@@ -1428,6 +1428,7 @@ static void snapshotTrapReport()
     }
     fclose(f);
     fprintf(stderr, "[snapshottrap] %zu first-write faults recorded (%.1fMB of pages) -> %s\n", n, n * (size_t)getpagesize() / 1048576.0, path);
+    if (s_trapCount.load() > n) fprintf(stderr, "[snapshottrap] %zu further faults were not recorded (cap of %zu)\n", s_trapCount.load() - n, n);
 }
 
 void startupSnapshotToolingIndexAtFreeze(JSC::VM& vm, size_t pg)

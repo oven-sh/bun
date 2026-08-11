@@ -1235,8 +1235,8 @@ extern "C" void Bun__BunObject__refreshLaunchDerivedProperties(Zig::GlobalObject
         JSValue fresh = p.make(vm, bunObject);
         if (scope.exception() || !fresh) { // e.g. this launch's REDIS_URL is malformed: say so and leave nothing of the builder's behind; 'restore' must still fire
             auto* exception = scope.exception();
+            (void)scope.tryClearException(); // before stringifying: toString bails while an exception is pending
             WTF::String why = exception ? exception->value().toWTFStringForConsole(globalObject) : "no value"_s;
-            (void)scope.tryClearException();
             fprintf(stderr, "[snapshot] Bun.%s could not be remade for this launch: %s\n", p.name.characters(), why.utf8().data());
             fresh = JSC::jsUndefined();
         }

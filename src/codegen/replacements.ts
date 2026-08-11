@@ -13,11 +13,7 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
-/**
- * `$ERR_FOO(` → `$makeErrorWithCode(<n>, ` and `$inheritsFoo(` → `$inherits(<id>, `,
- * keyed by name and applied in one pass by `intrinsicCall`. Values are inserted
- * verbatim, after the `$` → `__intrinsic__` rewrite, so they are spelled with `__intrinsic__`.
- */
+/** `__intrinsic__<name>(` → value; applied by `intrinsicCall` after the `$` rewrite, so values spell out `__intrinsic__`. */
 const intrinsicCallReplacements = new Map<string, string>();
 
 /** First definition of a name wins. */

@@ -13,31 +13,48 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+/**
+ * `$<name>(` calls that expand to a call with a numeric id prepended to the
+ * arguments: `$ERR_FOO(` → `$makeErrorWithCode(<n>, ` for every error code in
+ * ErrorCode.ts and `$inheritsBlob(` → `$inherits(<id>, ` for js_classes.ts.
+ * Keyed by name (after the `$` → `__intrinsic__` rewrite) and applied with one
+ * regex, `intrinsicCall` below. These used to be ~370 entries of
+ * `replacements`, and running every one of them over each of the ~120k code
+ * chunks bundle-modules slices was ~90% of that codegen step's time.
+ *
+ * Values are inserted verbatim, so they are spelled with `__intrinsic__`, which
+ * is what the `$` in the `to:` strings above expands to.
+ */
+const intrinsicCallReplacements = new Map<string, string>();
+
+/** First definition of a name wins, as it did when each name was its own rule. */
+function defineIntrinsicCall(name: string, to: string): void {
+  if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`intrinsic call name must be an identifier: ${name}`);
+  if (!intrinsicCallReplacements.has(name)) intrinsicCallReplacements.set(name, to);
+}
+
 let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
   const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
-  replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${error_i}, `,
-  });
+  defineIntrinsicCall(code, `__intrinsic__makeErrorWithCode(${error_i}, `);
   error_i += 1;
   for (const con of other_constructors) {
     if (con == null) continue;
-    replacements.push({
-      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
-      to: `$makeErrorWithCode(${error_i}, `,
-    });
+    defineIntrinsicCall(`${code}_${con.name}`, `__intrinsic__makeErrorWithCode(${error_i}, `);
     error_i += 1;
   }
 }
 
 for (let id = 0; id < jsclasses.length; id++) {
-  const name = jsclasses[id][0];
-  replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
-    to: `$inherits(${id}, `,
-  });
+  defineIntrinsicCall(`inherits${jsclasses[id][0]}`, `__intrinsic__inherits(${id}, `);
 }
+
+/**
+ * Matches what each of the former per-name rules matched (`\b__intrinsic__<name>\(`):
+ * the name is a maximal identifier run, so a match corresponds to exactly one
+ * entry of the map or, when the name is not in it, to no former rule at all.
+ */
+const intrinsicCall = /\b__intrinsic__([A-Za-z0-9_]+)\(/g;
 
 // These rules are run on the entire file, including within strings.
 export const globalReplacements: ReplacementRule[] = [
@@ -196,6 +213,12 @@ export function applyReplacements(src: string, length: number) {
       replacement.from,
       replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
     );
+  }
+  // Independent of the rules above: none of them produces or consumes a
+  // `__intrinsic__<name>(` call that is in the map, so running this after all
+  // of them matches the old interleaved rule order.
+  if (slice.includes("__intrinsic__")) {
+    slice = slice.replace(intrinsicCall, (call, name) => intrinsicCallReplacements.get(name) ?? call);
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {

@@ -944,13 +944,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // against get_tls_hostname() — which prefers the Host-header
             // override (client.hostname) over url.hostname — so the override
             // must discriminate the pool key there too, not just for CONNECT
-            // tunnels. proxy_auth_hash() reduces to exactly the override hash
-            // (or 0) for a non-proxied request.
-            let proxy_auth_hash: u64 = if want_tunnel || (SSL && client.http_proxy.is_none()) {
-                client.proxy_auth_hash()
-            } else {
-                0
-            };
+            // tunnels.
+            let proxy_auth_hash = client.pool_auth_hash(SSL, want_tunnel);
 
             if let Some(mut found) = self.existing_socket(
                 client.flags.reject_unauthorized,

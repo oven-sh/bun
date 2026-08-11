@@ -2091,15 +2091,15 @@ pub(crate) fn parse_into_binary_lockfile(
             None
         };
 
-        let (off, len) = parse_append_dependencies::<false, true>(
+        let (off, len) = parse_append_dependencies(
             lockfile,
             &root_pkg_exr,
             &mut *log,
             source,
             &mut optional_peers_buf,
-            None,
-            None,
-            Some(&workspaces_obj),
+            DepsOwner::Root {
+                workspaces_obj: &workspaces_obj,
+            },
         )?;
 
         let mut root_pkg = Package::default();
@@ -2159,15 +2159,13 @@ pub(crate) fn parse_into_binary_lockfile(
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
 
-                let (off, len) = parse_append_dependencies::<false, false>(
+                let (off, len) = parse_append_dependencies(
                     lockfile,
                     &value,
                     &mut *log,
                     source,
                     &mut optional_peers_buf,
-                    None,
-                    None,
-                    None,
+                    DepsOwner::Workspace,
                 )?;
 
                 pkg.dependencies = DependencySlice::new(off, len);
@@ -2512,15 +2510,16 @@ pub(crate) fn parse_into_binary_lockfile(
                         };
                         let deps_expr = Expr::from_json_value(&pkg_info[deps_idx], key_loc);
 
-                        let (off, len) = parse_append_dependencies::<true, false>(
+                        let (off, len) = parse_append_dependencies(
                             lockfile,
                             &deps_expr,
                             &mut *log,
                             source,
                             &mut optional_peers_buf,
-                            Some(pkg_path),
-                            Some(&bundled_pkgs),
-                            None,
+                            DepsOwner::Package {
+                                pkg_path,
+                                bundled_pkgs: &bundled_pkgs,
+                            },
                         )?;
 
                         pkg.dependencies = DependencySlice::new(off, len);
@@ -3198,21 +3197,34 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
+/// Which package's dependency groups `parse_append_dependencies` is reading.
+/// `Root` also appends one workspace dependency per entry of `workspaces_obj`;
+/// `Package` also marks dependencies whose `<pkg_path>/<name>` is in
+/// `bundled_pkgs` as `Behavior::BUNDLED`.
+#[derive(Clone, Copy)]
+enum DepsOwner<'a> {
+    Root {
+        workspaces_obj: &'a Expr,
+    },
+    Workspace,
+    Package {
+        pkg_path: &'a [u8],
+        bundled_pkgs: &'a PkgPathSet,
+    },
+}
+
 // A separate `string_buf` parameter would borrow the same
 // `lockfile.buffers.string_bytes` / `string_pool` fields and alias `lockfile`.
 // Instead each append constructs a fresh `sbuf!(lockfile)` so the borrow
 // checker can see the disjoint field accesses against `buffers.dependencies`
 // and `workspace_paths`.
-fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
+fn parse_append_dependencies(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
-    // Only meaningful when `CHECK_FOR_BUNDLED`; carried as Option.
-    pkg_path: Option<&[u8]>,
-    bundled_pkgs: Option<&PkgPathSet>,
-    workspaces_obj: Option<&Expr>,
+    owner: DepsOwner<'_>,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
     // callers (none read the buf between calls) and also covers early-error exits.
@@ -3242,10 +3254,12 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         }
     }
 
-    let mut path_buf = if CHECK_FOR_BUNDLED {
-        Some(PathBuffer::uninit())
-    } else {
-        None
+    let mut bundled = match owner {
+        DepsOwner::Package {
+            pkg_path,
+            bundled_pkgs,
+        } => Some((pkg_path, bundled_pkgs, PathBuffer::uninit())),
+        DepsOwner::Root { .. } | DepsOwner::Workspace => None,
     };
 
     let off = lockfile.buffers.dependencies.len();
@@ -3309,11 +3323,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     ..Default::default()
                 };
 
-                if CHECK_FOR_BUNDLED {
-                    let pkg_path = pkg_path.expect("pkg_path required when CHECK_FOR_BUNDLED");
-                    let bundled_pkgs =
-                        bundled_pkgs.expect("bundled_pkgs required when CHECK_FOR_BUNDLED");
-                    let path_buf = &mut path_buf.as_mut().unwrap()[..];
+                if let Some((pkg_path, bundled_pkgs, path_buf)) = &mut bundled {
                     let bundled_location_len = pkg_path
                         .len()
                         .saturating_add(1)
@@ -3342,8 +3352,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         }
     }
 
-    if IS_ROOT {
-        let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
+    if let DepsOwner::Root { workspaces_obj } = owner {
         'workspaces: for workspace_path in lockfile.workspace_paths.values() {
             for row in object_rows(workspaces_obj) {
                 let path = row.key.slice();

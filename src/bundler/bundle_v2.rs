@@ -5167,9 +5167,7 @@ pub mod bv2_impl {
             })
         }
 
-        /// Resolves `file_path` like `compile.outfile` (against `outdir`, else the
-        /// working directory; absolute paths as-is), writes the metafile there and
-        /// appends it to `output_files`.
+        /// Resolved like `compile.outfile`: against `outdir`, else the cwd; absolute paths as-is.
         fn write_metafile_output(
             &mut self,
             output_files: &mut Vec<options::OutputFile>,

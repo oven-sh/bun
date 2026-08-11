@@ -2,6 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -177,5 +178,93 @@ describe("HTTP/3 header encoding", () => {
 
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
+});
+
+// The native side keeps a stream's unsent body in one queue and, on every
+// on_write, used to copy all of it into a fresh Vec to offer lsquic the few
+// KiB it would take, so sending a body cost (body size x engine ticks) in
+// memcpy and briefly doubled its memory on every tick; setBody() also copied
+// the body twice on the way in. The body must now be resident once beyond
+// the caller's own buffer, whichever way it is handed over. The fixture
+// explains what it measures and why freed copies still show up in it.
+describe.concurrent("a queued body is buffered natively exactly once", () => {
+  const fixture = join(import.meta.dir, "outbound-body-rss-fixture.ts");
+
+  test.each(["open", "setBody", "writer"])(
+    "%s",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`fixture exited with ${exitCode}:\n${stderr}`);
+      const { bodyBytes, rssBefore, rssAfter, bytesSent } = JSON.parse(stdout);
+      expect(bytesSent).toBeGreaterThan(0);
+      // Fixed: 1.00x to 1.05x measured on debug+ASAN and on release.
+      // Unfixed: at least 2x (the queue plus one on_write copy); 2.0x on
+      // release, 4.4x on debug+ASAN, where every tick before the peer saw
+      // the data left another quarantined copy behind.
+      expect((rssAfter - rssBefore) / bodyBytes).toBeLessThan(1.5);
+    },
+    // Debug builds spend a few seconds just loading node:quic in the fixture.
+    60_000,
+  );
+});
+
+// The queue is a ring buffer that is handed to lsquic in place as its (up to)
+// two halves, so feed lsquic across the seam and check what comes out. The
+// receiver's stream window is smaller than a chunk, so every chunk is only
+// partly taken, and highWaterMark equals the chunk size, so each next chunk
+// is appended while the previous one still has a tail queued (a drain takes
+// at most one window, which is less than the high water mark). Chunk 1 sizes
+// the buffer, chunk 2 grows it and ends exactly at its physical end, and
+// from then on every other chunk wraps around to the front.
+describe("outbound queue wrap-around", () => {
+  test("a body fed through a wrapped queue arrives intact", async () => {
+    const CHUNK = 48 * 1024;
+    const chunks = Array.from({ length: 8 }, (_, i) => Buffer.alloc(CHUNK, `chunk ${i} `));
+
+    const received = Promise.withResolvers<Buffer>();
+    await using server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          try {
+            const parts: Uint8Array[] = [];
+            for await (const batch of stream) parts.push(...batch);
+            received.resolve(Buffer.concat(parts));
+          } catch (e) {
+            received.reject(e);
+          }
+        };
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["wrap-test"],
+        transportParams: { initialMaxStreamDataBidiRemote: 16 * 1024 },
+      },
+    );
+
+    const client = await connect(`127.0.0.1:${server.address.port}`, { alpn: "wrap-test", verifyPeer: "manual" });
+    client.closed.catch(() => {});
+    await client.opened;
+    const stream = await client.createBidirectionalStream({ highWaterMark: CHUNK });
+    stream.closed.catch(() => {});
+    stream.setBody(
+      (async function* () {
+        yield* chunks;
+      })(),
+    );
+
+    const expected = Buffer.concat(chunks);
+    const got = await received.promise;
+    client.close();
+    const firstMismatch = got.findIndex((byte, i) => byte !== expected[i]);
+    expect({ length: got.length, firstMismatch }).toEqual({ length: expected.length, firstMismatch: -1 });
   });
 });

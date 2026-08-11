@@ -465,30 +465,28 @@ impl QuicStream {
 
     fn drain_outbound(&self) {
         let Some(s) = self.ls() else { return };
-        loop {
-            let (slice, contig): (Vec<u8>, usize) = {
-                let out = self.outbound.get();
-                if out.data.is_empty() {
-                    break;
-                }
-                let (a, _) = out.data.as_slices();
-                (a.to_vec(), a.len())
+        let queued = self.outbound.get().data.len();
+        if queued > 0 {
+            // Written straight out of the deque: this runs on every on_write,
+            // so copying it first would cost the whole buffered body per
+            // engine tick. Holding the borrow across the call is fine because
+            // lsquic_stream_writev copies what it takes before returning and
+            // never re-enters this stream's callbacks.
+            let taken = {
+                let (head, tail) = self.outbound.get().data.as_slices();
+                s.writev([head, tail])
             };
-            let n = s.write(&slice);
-            if n <= 0 {
-                self.note_write_blocked();
-                break;
+            let taken = usize::try_from(taken).unwrap_or(0).min(queued);
+            if taken > 0 {
+                self.blocked_reported.set(false);
+                self.wrote_to_lsquic.set(true);
+                self.outbound.with_mut(|out| {
+                    out.data.drain(..taken);
+                });
+                self.add_stat(IDX_STATS_BYTES_SENT, taken as u64);
             }
-            self.blocked_reported.set(false);
-            self.wrote_to_lsquic.set(true);
-            let n = n as usize;
-            self.outbound.with_mut(|out| {
-                out.data.drain(..n.min(contig));
-            });
-            self.add_stat(IDX_STATS_BYTES_SENT, n as u64);
-            if n < slice.len() {
+            if taken < queued {
                 self.note_write_blocked();
-                break;
             }
         }
         let (empty, fin) = {
@@ -659,10 +657,10 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let source = frame.arguments_as_array::<1>()[0];
-        let bytes = if source.is_empty_or_undefined_or_null() {
-            Vec::new()
+        let body = if source.is_empty_or_undefined_or_null() {
+            None
         } else if let Some(buf) = source.as_array_buffer(global) {
-            buf.byte_slice().to_vec()
+            Some(buf)
         } else {
             return Err(global.throw(format_args!(
                 "Unsupported QUIC stream body source (Blob and FileHandle sources are not implemented yet)"
@@ -670,7 +668,11 @@ impl QuicStream {
         };
         self.outbound.with_mut(|o| {
             o.started = true;
-            o.data.extend(bytes.iter().copied());
+            if let Some(body) = &body {
+                // `extend` from a slice is one memcpy; from `.iter().copied()`
+                // it is a per-byte loop (no VecDeque specialization for it).
+                o.data.extend(body.byte_slice());
+            }
             o.fin_pending = true;
         });
         self.with_state(|s| s.has_outbound = 1);
@@ -702,8 +704,7 @@ impl QuicStream {
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
-            self.outbound
-                .with_mut(|o| o.data.extend(bytes.iter().copied()));
+            self.outbound.with_mut(|o| o.data.extend(bytes));
         };
         if batch.is_array() {
             let len = batch.get_length(global)?;

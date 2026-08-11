@@ -142,3 +142,4 @@ test/cli/run/require-cache.test.ts
 # getOwnNonIndexPropertyNames -> JSObjectInlines::get scope. Moved here from
 # expectations.txt so the whole file runs on ASAN without validateExceptionChecks.
 test/cli/inspect/inspect.test.ts
+test/cli/inspect/inspect-reconnect.test.ts

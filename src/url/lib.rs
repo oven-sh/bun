@@ -42,11 +42,12 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
+    use bun_core::OwnedString;
+
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
+    /// Opaque heap-allocated WTF::URL (C++); only ever reached through a [`Handle`].
     #[repr(C)]
     pub struct URL {
         _opaque: [u8; 0],
@@ -57,7 +58,7 @@ pub mod whatwg {
     // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
     // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
     // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
+    // Getters take `&URL` (C++ never mutates on read); `URL__deinit` frees, so stays `unsafe fn`.
     // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
@@ -65,13 +66,35 @@ pub mod whatwg {
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__deinit(url: &mut URL);
+        fn URL__deinit(url: *mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
+    }
+
+    /// Owns the `new WTF::URL` handed back by `URL__fromString` and deletes it on drop.
+    #[repr(transparent)]
+    pub struct Handle(core::ptr::NonNull<URL>);
+
+    impl core::ops::Deref for Handle {
+        type Target = URL;
+
+        #[inline]
+        fn deref(&self) -> &URL {
+            // SAFETY: `self.0` is the live heap `WTF::URL` this handle owns until `drop`.
+            unsafe { self.0.as_ref() }
+        }
+    }
+
+    impl Drop for Handle {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: `self.0` is a C++ `new WTF::URL` and this handle is its only owner.
+            unsafe { URL__deinit(self.0.as_ptr()) }
+        }
     }
 
     // The C ABI wants a mutable address. We take `&String` (matching existing call sites
@@ -114,22 +137,22 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
-            URL__fromString(&mut input)
+        pub fn from_utf8(input: &[u8]) -> Option<Handle> {
+            let mut input = String::borrow_utf8(input);
+            URL__fromString(&mut input).map(Handle)
         }
-        pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
-        }
+        // `protocol`, `pathname` and `fragment_identifier` alias the WTF::URL's own buffer
+        // (BunString.cpp uses `toStringWithoutCopying`): consume them while the `Handle` is alive.
+
         /// The URL fragment (the part after `#`), excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String {
-            URL__fragmentIdentifier(self)
+        pub fn fragment_identifier(&self) -> OwnedString {
+            OwnedString::new(URL__fragmentIdentifier(self))
         }
-        pub fn protocol(&self) -> String {
-            URL__protocol(self)
+        pub fn protocol(&self) -> OwnedString {
+            OwnedString::new(URL__protocol(self))
         }
-        pub fn href(&self) -> String {
-            URL__href(self)
+        pub fn href(&self) -> OwnedString {
+            OwnedString::new(URL__href(self))
         }
         /// Returns the host WITH the port.
         ///
@@ -139,14 +162,11 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
-        pub fn hostname(&self) -> String {
-            URL__hostname(self)
+        pub fn hostname(&self) -> OwnedString {
+            OwnedString::new(URL__hostname(self))
         }
-        pub fn pathname(&self) -> String {
-            URL__pathname(self)
-        }
-        pub fn deinit(&mut self) {
-            URL__deinit(self)
+        pub fn pathname(&self) -> OwnedString {
+            OwnedString::new(URL__pathname(self))
         }
     }
 }

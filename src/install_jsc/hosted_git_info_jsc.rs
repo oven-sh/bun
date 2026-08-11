@@ -87,8 +87,6 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         }
     };
 
-    // `parsed.url` is `Box<WhatwgUrl>` (C++-owned WTF::URL); `href()` yields a
-    // `bun_core::String`. `defer parsed.url.deinit()` deleted — Box Drop frees.
     parsed.url.href().to_js(go)
 }
 

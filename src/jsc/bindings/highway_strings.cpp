@@ -865,6 +865,40 @@ size_t IndexOfSpaceOrNewlineOrNonASCIIImpl(const uint8_t* HWY_RESTRICT start_ptr
     return search_len;
 }
 
+// Index of the first CTL octet (0x00-0x1F or 0x7F) other than HTAB, or
+// search_len if there is none. These are exactly the octets that end (CR/LF)
+// or invalidate an HTTP/1.x field value / reason phrase; SP, HTAB, VCHAR and
+// obs-text (0x80-0xFF) are skipped.
+size_t IndexOfHttpCtlImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_sp = hn::Set(d, uint8_t { 0x20 });
+    const auto vec_ht = hn::Set(d, uint8_t { '\t' });
+    const auto vec_del = hn::Set(d, uint8_t { 0x7F });
+    const size_t simd_text_len = search_len - (search_len % N);
+
+    size_t i = 0;
+    for (; i < simd_text_len; i += N) {
+        const auto vec = hn::LoadU(d, start_ptr + i);
+        const auto ctl = hn::Or(hn::AndNot(hn::Eq(vec, vec_ht), hn::Lt(vec, vec_sp)), hn::Eq(vec, vec_del));
+        const intptr_t pos = hn::FindFirstTrue(d, ctl);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < search_len; ++i) {
+        const uint8_t c = start_ptr[i];
+        if ((c < 0x20 && c != '\t') || c == 0x7F) {
+            return i;
+        }
+    }
+
+    return search_len;
+}
+
 bool ContainsNewlineOrNonASCIIOrQuoteImpl(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
     ASSERT(text_len > 0);
@@ -2208,6 +2242,7 @@ HWY_EXPORT(IndexOfFirstAsciiUpper16Impl);
 HWY_EXPORT(IndexOfFirstAsciiUpperImpl);
 HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
 HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
+HWY_EXPORT(IndexOfHttpCtlImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
@@ -2405,6 +2440,11 @@ size_t highway_index_of_needs_escape_for_javascript_string(const uint8_t* HWY_RE
 size_t highway_index_of_space_or_newline_or_non_ascii(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfSpaceOrNewlineOrNonASCIIImpl)(text, text_len);
+}
+
+size_t highway_index_of_http_ctl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHttpCtlImpl)(text, text_len);
 }
 
 void highway_fill_with_skip_mask(

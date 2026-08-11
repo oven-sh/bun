@@ -1,6 +1,6 @@
 /* globals AbortController */
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash, randomFillSync } from "node:crypto";
 import { once } from "node:events";
@@ -696,4 +696,74 @@ test("a response Content-Length containing a digit separator is rejected instead
       e => ({ rejected: true as const, code: e.code }),
     );
   expect(outcome).toEqual({ rejected: true, code: "InvalidContentLength" });
+});
+
+// Field values are `field-vchar / SP / HTAB / obs-text` (RFC 9110 section 5.5):
+// HTAB inside a value is content, any other CTL invalidates the message. The
+// values here are long enough to be scanned by the vectorized path rather than
+// the short-value fast path.
+describe("CTL octets in long response header values", () => {
+  const pad = Buffer.alloc(48, "v").toString();
+  async function fetchWithHeaderValue(value: string) {
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("data", () => {
+          sock.end(Buffer.from(`HTTP/1.1 200 OK\r\nX-Value: ${value}\r\nContent-Length: 2\r\n\r\nok`, "latin1"));
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    return await fetch(`http://127.0.0.1:${port}/`).then(
+      r => ({ rejected: false as const, value: r.headers.get("x-value") }),
+      e => ({ rejected: true as const, code: e.code }),
+    );
+  }
+
+  test("HTAB and obs-text are preserved", async () => {
+    const value = `${pad}\t${pad}\xe9${pad}`;
+    expect(await fetchWithHeaderValue(value)).toEqual({ rejected: false, value });
+  });
+
+  test.each([
+    ["DEL", "\x7f"],
+    ["FF", "\x0c"],
+    ["NUL", "\x00"],
+    ["lone CR", "\r"],
+  ])("%s is rejected", async (_, ctl) => {
+    expect(await fetchWithHeaderValue(`${pad}${ctl}${pad}`)).toEqual({
+      rejected: true,
+      code: "Malformed_HTTP_Response",
+    });
+  });
+});
+
+// The client accumulates a response head that arrives in pieces and must
+// recognise its end however the terminator is split across reads.
+test("response head trickled one byte per write", async () => {
+  const head =
+    "HTTP/1.1 200 OK\r\nX-One: 1\r\nX-Two:  two \t\r\nSet-Cookie: a=b\r\nSet-Cookie: c=d\r\nContent-Length: 2\r\n\r\n";
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.once("data", async () => {
+        for (const ch of head + "ok") {
+          if (!sock.write(ch)) await once(sock, "drain");
+          await new Promise<void>(r => setImmediate(r));
+        }
+        sock.end();
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect({
+    status: res.status,
+    one: res.headers.get("x-one"),
+    two: res.headers.get("x-two"),
+    cookies: res.headers.getSetCookie(),
+    body: await res.text(),
+  }).toEqual({ status: 200, one: "1", two: "two", cookies: ["a=b", "c=d"], body: "ok" });
 });

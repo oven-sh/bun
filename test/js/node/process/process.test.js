@@ -577,7 +577,6 @@ it("process.versions", () => {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
     mimalloc: "1803341d6241d8fa4b3f65fa68cb13a32ad92f04",
-    picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",

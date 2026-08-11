@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (161 symbols)
+# (165 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
@@ -41,6 +41,7 @@ _ZN3bun10N_SVE2_12826IndexOfFirstAsciiUpperImplEPKhm                          [S
 _ZN3bun10N_SVE2_12826IndexOfHTMLEscapeChar8ImplEPKhm                          [SVE]
 _ZN3bun10N_SVE2_12827IndexOfHTMLEscapeChar16ImplEPKtm                         [SVE]
 _ZN3bun10N_SVE2_12828IndexOfFirstAsciiUpper16ImplEPKtm                        [SVE]
+_ZN3bun10N_SVE2_12818IndexOfHttpCtlImplEPKhm                                  [SVE]
 _ZN3bun10N_SVE2_12828IndexOfNewlineOrNonASCIIImplEPKhm                        [SVE]
 _ZN3bun10N_SVE2_12833VisibleLatin1WidthExcludeANSIImplEPKhm                   [SVE]
 _ZN3bun10N_SVE2_12835IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                 [SVE]
@@ -81,6 +82,7 @@ _ZN3bun5N_SVE26IndexOfFirstAsciiUpperImplEPKhm                                [S
 _ZN3bun5N_SVE26IndexOfHTMLEscapeChar8ImplEPKhm                                [SVE]
 _ZN3bun5N_SVE27IndexOfHTMLEscapeChar16ImplEPKtm                               [SVE]
 _ZN3bun5N_SVE28IndexOfFirstAsciiUpper16ImplEPKtm                              [SVE]
+_ZN3bun5N_SVE18IndexOfHttpCtlImplEPKhm                                        [SVE]
 _ZN3bun5N_SVE28IndexOfNewlineOrNonASCIIImplEPKhm                              [SVE]
 _ZN3bun5N_SVE33VisibleLatin1WidthExcludeANSIImplEPKhm                         [SVE]
 _ZN3bun5N_SVE35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [SVE]
@@ -121,6 +123,7 @@ _ZN3bun6N_SVE226IndexOfFirstAsciiUpperImplEPKhm                               [S
 _ZN3bun6N_SVE226IndexOfHTMLEscapeChar8ImplEPKhm                               [SVE]
 _ZN3bun6N_SVE227IndexOfHTMLEscapeChar16ImplEPKtm                              [SVE]
 _ZN3bun6N_SVE228IndexOfFirstAsciiUpper16ImplEPKtm                             [SVE]
+_ZN3bun6N_SVE218IndexOfHttpCtlImplEPKhm                                       [SVE]
 _ZN3bun6N_SVE228IndexOfNewlineOrNonASCIIImplEPKhm                             [SVE]
 _ZN3bun6N_SVE233VisibleLatin1WidthExcludeANSIImplEPKhm                        [SVE]
 _ZN3bun6N_SVE235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                      [SVE]
@@ -161,6 +164,7 @@ _ZN3bun9N_SVE_25626IndexOfFirstAsciiUpperImplEPKhm                            [S
 _ZN3bun9N_SVE_25626IndexOfHTMLEscapeChar8ImplEPKhm                            [SVE]
 _ZN3bun9N_SVE_25627IndexOfHTMLEscapeChar16ImplEPKtm                           [SVE]
 _ZN3bun9N_SVE_25628IndexOfFirstAsciiUpper16ImplEPKtm                          [SVE]
+_ZN3bun9N_SVE_25618IndexOfHttpCtlImplEPKhm                                    [SVE]
 _ZN3bun9N_SVE_25628IndexOfNewlineOrNonASCIIImplEPKhm                          [SVE]
 _ZN3bun9N_SVE_25633VisibleLatin1WidthExcludeANSIImplEPKhm                     [SVE]
 _ZN3bun9N_SVE_25635IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                   [SVE]

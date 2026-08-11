@@ -112,11 +112,7 @@ impl KnownGlobal {
             | KnownGlobal::URIError
             | KnownGlobal::AggregateError
             | KnownGlobal::Function => {
-                // These build the same object with or without `new`, but they read the calling
-                // frame, and in strict mode JSC compiles `return Error(...)` to a proper tail
-                // call that has already popped it: the error's `.stack` loses the function that
-                // created it, and a `Function(...)` body takes its source origin (the base for
-                // `import()` inside it) from the caller's caller. `new` is never a tail call.
+                // Kept: these read the calling frame, which a strict-mode `return Error(...)` tail call has already popped.
                 None
             }
 

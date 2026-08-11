@@ -280,13 +280,9 @@ pub(crate) fn post_process_js_chunk(
             let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
             let source_import_records =
                 all_import_records[part_range.source_index.get() as usize].as_slice();
-            // A wrapped file's range covers every part of the file, including
-            // tree-shaken ones (find_imported_parts_in_js_order), which are
-            // skipped when printing. The symbols of a dead import were never
-            // renamed, so recording it would add an import binding under its
-            // original source name; if a live binding of the chunk ended up with
-            // that name, `ModuleInfo::finalize` would turn its export into a
-            // re-export from the external module.
+            // A wrapped file's range spans all of its parts, tree-shaken ones
+            // included (find_imported_parts_in_js_order); the printer skips
+            // those, so the record has to as well.
             let parts_live = &c.graph.parts_live[part_range.source_index.get() as usize];
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {

@@ -81,11 +81,11 @@ export function generateCargoConfig(cfg: Config): string {
   ];
 
   // `-Zpolonius=next` everywhere: workspace code relies on the polonius
-  // borrow checker (see the matching push in rust.ts for why it's explicit),
-  // so every rustc invocation that type-checks workspace crates pins the
-  // same checker the ninja build uses. Windows-msvc triples get a
-  // rustflags-only section (their linker is env-only, see the doc comment
-  // above) so `cargo check --target *-windows-msvc` / `rust:check-all` work.
+  // borrow checker (see the matching push in rust.ts), so every rustc
+  // invocation that type-checks workspace crates needs it or borrowck
+  // fails. Windows-msvc triples get a rustflags-only section (their linker
+  // is env-only, see the doc comment above) so `cargo check --target
+  // *-windows-msvc` / `rust:check-all` work.
   const polonius = `"-Z", "polonius=next"`;
   for (const triple of allRustTargets) {
     lines.push("");

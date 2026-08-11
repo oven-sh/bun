@@ -3434,6 +3434,8 @@ class ServerHttp2Stream extends Http2Stream {
     }
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
+    // Thrown synchronously like node, before a promised stream id is reserved.
+    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     const sensitives = headers[sensitiveHeaders];
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
     // symbol keys, and deleting it here would flip the object into dictionary mode,

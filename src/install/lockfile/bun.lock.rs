@@ -340,14 +340,13 @@ impl Stringifier {
                     let mut key: Vec<u8> = Vec::new();
                     {
                         use std::io::Write;
-                        write!(
+                        let _ = write!(
                             &mut key,
                             "{}{}{}",
                             bstr::BStr::new(node.relative_path),
                             if node.depth == 0 { "" } else { "/" },
                             bstr::BStr::new(dep.name.slice(buf)),
-                        )
-                        .ok();
+                        );
                     }
                     pkg_map.put(&key, ());
                 }
@@ -475,22 +474,21 @@ impl Stringifier {
 
                     if lockfile.patched_dependencies.count() > 0 {
                         use std::io::Write;
-                        write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf))).ok();
+                        let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
                         match res.tag {
                             ResolutionTag::Workspace => {
                                 if let Some(workspace_version) =
                                     lockfile.workspace_versions.get(&pkg_name_hash)
                                 {
-                                    write!(&mut temp_buf, "{}", workspace_version.fmt(buf)).ok();
+                                    let _ = write!(&mut temp_buf, "{}", workspace_version.fmt(buf));
                                 }
                             }
                             _ => {
-                                write!(
+                                let _ = write!(
                                     &mut temp_buf,
                                     "{}",
                                     res.fmt(buf, bun_core::fmt::PathSep::Posix)
-                                )
-                                .ok();
+                                );
                             }
                         }
 
@@ -981,7 +979,7 @@ impl Stringifier {
                             };
                             {
                                 use std::io::Write;
-                                write!(&mut temp_buf, "{}", repo.fmt(prefix, buf)).ok();
+                                let _ = write!(&mut temp_buf, "{}", repo.fmt(prefix, buf));
                             }
                             write!(
                                 writer,

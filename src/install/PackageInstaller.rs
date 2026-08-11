@@ -1414,7 +1414,6 @@ impl<'a> PackageInstaller<'a> {
             // site stays safe.
             lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
-            file_count: 0,
         };
         bun_output::scoped_log!(
             PackageInstaller,

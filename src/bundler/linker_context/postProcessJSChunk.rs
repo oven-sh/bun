@@ -280,8 +280,14 @@ pub(crate) fn post_process_js_chunk(
             let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
             let source_import_records =
                 all_import_records[part_range.source_index.get() as usize].as_slice();
+            // A wrapped file's range spans all of its parts, including the tree-shaken ones.
+            let parts_live = &c.graph.parts_live[part_range.source_index.get() as usize];
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
+                if !parts_live.is_set(part_i as usize) {
+                    part_i += 1;
+                    continue;
+                }
                 // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
                 for stmt in source_parts[part_i as usize].stmts.iter() {
                     match &stmt.data {

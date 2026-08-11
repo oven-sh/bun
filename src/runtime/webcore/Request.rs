@@ -103,7 +103,7 @@ pub struct Request {
     pub(crate) request_context: AnyRequestContext,
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
-    pub(crate) reported_estimated_size: Cell<usize>,
+    reported_estimated_size: Cell<usize>,
     pub(crate) internal_event_callback: JsCell<InternalJSEventCallback>,
 }
 

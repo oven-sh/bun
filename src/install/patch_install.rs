@@ -506,7 +506,6 @@ impl PatchTask {
             progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
-            file_count: 0,
             // dummy value
             node_modules: &dummy_node_modules,
             lockfile,

@@ -96,7 +96,6 @@ test("dead JSC/WebCore binding helpers do not reappear", () => {
       ["src/jsc/bindings/InspectorHTTPServerAgent.h", /\brequestHandlerException\b/],
       ["src/jsc/bindings/ScriptExecutionContext.h", /\bensureOnMainThread\b/],
       ["src/jsc/bindings/ScriptExecutionContext.h", /^ScriptExecutionContext\* executionContext\(/m],
-      ["src/jsc/bindings/ErrorStackTrace.h", /\bgetStackTraceForThrownValue\b/],
       ["src/jsc/bindings/ErrorStackTrace.h", /\bretrieveTypeName\b/],
       ["src/jsc/bindings/ErrorStackTrace.h", /\bm_typeName\b/],
       // PerformanceResourceTiming is exposed as a constructor but never instantiated natively.
@@ -187,12 +186,6 @@ test("unused llhttp API surface does not reappear", () => {
 });
 
 test("environment variables nothing reads any more are not re-declared", () => {
-  expect(
-    resurrected([
-      ["src/bun_core/env_var.rs", /\bBUN_NEEDS_PROC_SELF_WORKAROUND\b/],
-      ["src/bun_core/env_var.rs", /\bMI_VERBOSE\b/],
-      ["src/bun_core/env_var.rs", /\bTODIUM\b/],
-      ["src/bun_core/env_var.rs", /\bBUN_DUMP_STATE_ON_CRASH\b/],
-    ]),
-  ).toEqual([]);
+  // BUN_NEEDS_PROC_SELF_WORKAROUND, MI_VERBOSE and TODIUM are removed (and pinned) by #35437.
+  expect(resurrected([["src/bun_core/env_var.rs", /\bBUN_DUMP_STATE_ON_CRASH\b/]])).toEqual([]);
 });

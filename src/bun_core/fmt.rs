@@ -68,18 +68,7 @@ pub mod js_printer {
 
     impl<W: fmt::Write> crate::io::Write for FmtSink<'_, W> {
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
-            match super::strings::str_utf8(buf) {
-                Some(s) => self.0.write_str(s),
-                None => buf.utf8_chunks().try_for_each(|chunk| {
-                    self.0.write_str(chunk.valid())?;
-                    if chunk.invalid().is_empty() {
-                        Ok(())
-                    } else {
-                        self.0.write_char(char::REPLACEMENT_CHARACTER)
-                    }
-                }),
-            }
-            .map_err(|_| crate::CrateError::FmtError)
+            super::write_bytes(self.0, buf).map_err(|_| crate::CrateError::FmtError)
         }
     }
 }

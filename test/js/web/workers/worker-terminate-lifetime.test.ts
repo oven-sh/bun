@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -527,16 +528,21 @@ test(
 
 // Regression: the pool Bun.serve allocates its RequestContexts from lived in a
 // thread_local that nothing ever freed, so every Worker that served HTTP
-// stranded one ~1 MB pool per server type it had used (HTTP, HTTPS) when its
-// thread exited. LSan reports each stranded pool as a direct leak from
-// `ServerPools::request_pool` at process exit, so these cells only run on the
-// ASAN lane. The workers start their servers after a tick on purpose: a server
-// created during module evaluation has JSModuleLoader::evaluateNonVirtual on
-// its allocation stack, which test/leaksan.supp suppresses.
-describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when it exits", () => {
+// stranded one ~1 MB pool per server type it had used (HTTP, HTTPS, HTTP/3)
+// when its thread exited. The pools now belong to the VM: a pool whose
+// requests have all finished is freed with it, and one that still holds an
+// unfinished request is kept (last two cells). LSan reports a stranded pool as
+// a direct leak from `ServerPools::request_pool` at process exit, so these
+// cells only run on the ASAN lane. The servers are started after a tick on
+// purpose: a server created during module evaluation has
+// JSModuleLoader::evaluateNonVirtual on its allocation stack, which
+// test/leaksan.supp suppresses.
+describe.skipIf(!isASAN)("Bun.serve request pools are released with the VM that used them", () => {
+  const suppressions = join(import.meta.dirname, "../../../leaksan.supp");
+  const detectLeaks = [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":");
   const leakCheck = {
-    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-    LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    ASAN_OPTIONS: detectLeaks,
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${suppressions}`,
   };
 
   async function runCell(name: string, files: Record<string, string>, env: Record<string, string> = leakCheck) {
@@ -587,7 +593,7 @@ describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when
   );
 
   test.concurrent(
-    "https server, worker exits on its own",
+    "https server with http3, worker exits on its own",
     () =>
       runCell("https", {
         "main.ts": `
@@ -599,7 +605,9 @@ describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when
         "worker.ts": `
           import { cert, key } from "./tls.json";
           await Bun.sleep(0);
-          const server = Bun.serve({ port: 0, tls: { cert, key }, fetch: () => new Response("ok") });
+          // An HTTPS server uses the HTTPS pool; listening for HTTP/3 as well
+          // allocates the separate H3 pool, which used to be stranded too.
+          const server = Bun.serve({ port: 0, tls: { cert, key }, http3: true, fetch: () => new Response("ok") });
           await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text();
           await server.stop(true);
         `,
@@ -607,14 +615,15 @@ describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when
     timeout,
   );
 
-  // The pool is freed at the very end of the worker's VM teardown, after the
-  // JSC VM is gone. A request that is still being handled when terminate()
-  // lands still occupies a slot at that point, so freeing the pool must not run
-  // that slot's destructor (it would touch the dead VM), and nothing after the
-  // free may touch the pool. Malloc=1 puts JSC's allocations on the system
-  // allocator so ASAN sees either mistake; leak detection has to be off with
-  // it (it surfaces process-lifetime WTF allocations), and it would only
-  // repeat the cells above anyway.
+  // A request that is still being handled when the VM is torn down still
+  // occupies its slot at the very end of teardown, after the JSC VM is gone.
+  // Such a pool is kept, slots untouched: running the context's destructor at
+  // that point is a use-after-free (its body slot, for one, has already been
+  // freed with the VM's body pool), which ASAN reports. Malloc=1 puts JSC's
+  // allocations on the system allocator too, so ASAN also sees the destructor
+  // touching the dead VM; leak detection has to be off with it (it surfaces
+  // process-lifetime WTF allocations), and the kept pool is expected to
+  // outlive the worker thread anyway. The next cell covers the pool itself.
   test.concurrent(
     "terminate() with a request still in flight",
     () =>
@@ -647,6 +656,50 @@ describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when
           `,
         },
         { Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      ),
+    timeout,
+  );
+
+  // The same situation on the main thread, which BUN_DESTRUCT_VM_ON_EXIT (set
+  // for every leak-checked test on the ASAN lane) tears down at exit. The kept
+  // pool stays reachable from the thread, so whatever the unreleased context
+  // still references (its server, and depending on how far the request got its
+  // Request, Response, ...) stays as invisible to LSan as it was while the pool
+  // lived in a thread_local; freeing the pool instead would report all of it
+  // against unrelated allocation sites in every test exiting in this state. The
+  // server is the reference every such context holds, so the cell runs with the
+  // suppressions that would normally hide a server removed.
+  test.concurrent(
+    "main thread exits with a request still in flight",
+    () =>
+      runCell(
+        "main-thread",
+        {
+          "lsan.supp": readFileSync(suppressions, "utf8")
+            .split("\n")
+            .filter(line => !/uws|ServerAllConnectionsClosedTask/.test(line))
+            .join("\n"),
+          "main.ts": `
+            await Bun.sleep(0);
+            const server = Bun.serve({
+              port: 0,
+              idleTimeout: 0,
+              fetch() {
+                // Exit once the server is parked on this handler's promise,
+                // which never settles: that request's context is still claimed
+                // when the VM is torn down.
+                setImmediate(() => {
+                  console.log("ok");
+                  process.exit(0);
+                });
+                return new Promise(() => {});
+              },
+            });
+            fetch(server.url).catch(() => {});
+          `,
+        },
+        // LSan opens a relative suppressions path against the child's cwd.
+        { ASAN_OPTIONS: detectLeaks, LSAN_OPTIONS: "print_suppressions=0:suppressions=lsan.supp" },
       ),
     timeout,
   );

@@ -101,8 +101,8 @@ pub(crate) struct RuntimeState {
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     /// The `RequestContext` pools behind every `Bun.serve` on this thread,
     /// lazily allocated per server type. Owned here (not in a `thread_local!`)
-    /// so that a Worker's pools are freed along with its VM; like
-    /// `body_value_pool`, only the allocations are freed, never the slots.
+    /// so that a Worker's pools are freed along with its VM (its `Drop` keeps
+    /// a pool that still holds contexts nothing released).
     pub(crate) request_pools: crate::server::RequestPools,
     pub(crate) active_handles: ActiveHandles,
     /// The resolver's PackageManager wake-handler context (module queue + VM

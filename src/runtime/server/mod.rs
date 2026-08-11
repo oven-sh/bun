@@ -3416,9 +3416,8 @@ mod trampoline {
 // `hive_array::Fallback::{claim,put}` have no internal synchronization and
 // every Worker thread may host servers. The per-thread owner is the VM's
 // `RuntimeState` rather than a `thread_local!` so that a Worker's pools are
-// freed with its VM (`deinit_runtime_state` runs after teardown has stopped
-// every server and freed the uSockets loop) instead of being stranded each
-// time a worker thread that served HTTP exits.
+// freed with its VM (see `impl Drop for RequestPools`) instead of being
+// stranded each time a worker thread that served HTTP exits.
 pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
     fn request_pool()
     -> *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
@@ -3429,18 +3428,13 @@ pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
 type RequestPool<const SSL: bool, const DEBUG: bool, const H3: bool> =
     request_context::RequestContextStackAllocator<NewServer<SSL, DEBUG>, SSL, DEBUG, H3>;
 
-/// `ManuallyDrop` inside the `Box`: `RuntimeState` drops after the JSC VM is
-/// gone, and a request that was still unanswered at teardown occupies its
-/// slot then. Its drop glue must not run at that point (for one, it would
-/// hand its body slot back to the already-freed `body_value_pool`), so only
-/// the pool allocation itself is freed, exactly as for `body_value_pool`.
 type RequestPoolSlot<const SSL: bool, const DEBUG: bool, const H3: bool> =
-    core::cell::OnceCell<Box<core::mem::ManuallyDrop<RequestPool<SSL, DEBUG, H3>>>>;
+    core::cell::OnceCell<Box<RequestPool<SSL, DEBUG, H3>>>;
 
-/// This thread's request pools; a field of `RuntimeState`. Each ~816 KB pool
-/// is allocated the first time a server of its type is created on the thread
-/// (the H3 pools when an H3 listener comes up) and lives until the VM is
-/// destroyed.
+/// This thread's request pools; a field of `RuntimeState`, so they live
+/// exactly as long as the VM. Each ~816 KB pool is allocated the first time a
+/// server of its type is created on the thread (the H3 pools once an H3
+/// listener comes up).
 #[derive(Default)]
 pub(crate) struct RequestPools {
     http: RequestPoolSlot<false, false, false>,
@@ -3463,21 +3457,63 @@ impl RequestPools {
             // writes only the 256 B bitset in place.
             let pool = RequestPool::<SSL, DEBUG, H3>::new_boxed();
             // SAFETY: `new_boxed` leaks a fully-initialized `Box`; this
-            // reclaims that exact allocation. `ManuallyDrop<T>` is
-            // `repr(transparent)` over `T`, so the cast is a layout no-op.
-            unsafe {
-                bun_core::heap::take(
-                    pool.as_ptr()
-                        .cast::<core::mem::ManuallyDrop<RequestPool<SSL, DEBUG, H3>>>(),
-                )
-            }
+            // reclaims that exact allocation.
+            unsafe { bun_core::heap::take(pool.as_ptr()) }
         });
         // `claim`/`put` take `&self`, so servers only need a shared pointer.
-        // The `Box` keeps it valid until `RuntimeState` drops at the end of VM
-        // teardown, by which point every server on the thread has been
-        // stopped and the JSC VM that could release their contexts is gone.
-        &raw const ***pool
+        // It stays valid for as long as anything can still hold a context
+        // from the pool (see `Drop` below).
+        &raw const **pool
     }
+}
+
+/// Runs when the VM is destroyed (`deinit_runtime_state`, after teardown has
+/// stopped every server and destroyed the JSC VM, so no context can be claimed
+/// or released any more).
+///
+/// A pool whose slots have all been released is freed: the normal case, and
+/// the one a Worker that served HTTP used to strand. A slot still claimed at
+/// this point is a context that was never released (a leak of its own: a
+/// request whose handler never settled, for instance), and its pool is kept
+/// instead, as the `thread_local!` that used to own the pools kept it: the
+/// context's drop glue must not run against the dead VM, and freeing the
+/// array under it would only turn everything the context owns into leaks
+/// reported against unrelated allocation sites, and a late release into a
+/// use-after-free. The pointer is parked in the thread's [`KEPT_POOLS`] so
+/// that LeakSanitizer still sees those contexts the way it did before.
+impl Drop for RequestPools {
+    fn drop(&mut self) {
+        fn release<const SSL: bool, const DEBUG: bool, const H3: bool>(
+            slot: &mut RequestPoolSlot<SSL, DEBUG, H3>,
+            kept: &core::cell::Cell<*const ()>,
+        ) {
+            let Some(pool) = slot.take() else { return };
+            if pool.hive.is_empty() {
+                drop(pool);
+            } else {
+                kept.set(core::ptr::from_ref(&*Box::leak(pool)).cast());
+            }
+        }
+        KEPT_POOLS.with(|kept| {
+            release(&mut self.http, &kept[0]);
+            release(&mut self.https, &kept[1]);
+            release(&mut self.debug_http, &kept[2]);
+            release(&mut self.debug_https, &kept[3]);
+            release(&mut self.http_h3, &kept[4]);
+            release(&mut self.https_h3, &kept[5]);
+            release(&mut self.debug_http_h3, &kept[6]);
+            release(&mut self.debug_https_h3, &kept[7]);
+        });
+    }
+}
+
+thread_local! {
+    /// One entry per [`RequestPools`] field, written by its `Drop` for a pool
+    /// that is kept because contexts in it were never released. Only ever
+    /// read by LeakSanitizer; a thread hosts one VM, so each entry is written
+    /// at most once.
+    static KEPT_POOLS: [core::cell::Cell<*const ()>; 8] =
+        const { [const { core::cell::Cell::new(core::ptr::null()) }; 8] };
 }
 
 macro_rules! impl_server_pools {

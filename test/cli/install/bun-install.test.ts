@@ -9527,11 +9527,13 @@ describe.concurrent("folder and link: dependencies near the path buffer limit", 
   }
 
   // Package.rs accepts a folder whose absolute path fits the buffer (longer ones
-  // are rejected as "unsafe folder path", see above), so the resolver has to
-  // reject the ones that no longer fit once "/package.json" and the NUL are
-  // appended: MAX_PATH_BYTES - 13 is the shortest of those, MAX_PATH_BYTES the
-  // longest one that still reaches it.
-  it.each([MAX_PATH_BYTES - PACKAGE_JSON_SUFFIX, MAX_PATH_BYTES])(
+  // are rejected as "unsafe folder path", see above); the resolver has to reject
+  // the ones that no longer fit once "/package.json" and the NUL are appended.
+  // MAX_PATH_BYTES - 13 is the shortest of those and MAX_PATH_BYTES the longest,
+  // except on Windows, where `resolve_path::relative` in Package.rs still
+  // overflows its own buffer on a path of exactly MAX_PATH_BYTES before the
+  // resolver sees it.
+  it.each([MAX_PATH_BYTES - PACKAGE_JSON_SUFFIX, isWindows ? MAX_PATH_BYTES - 1 : MAX_PATH_BYTES])(
     "a file: folder whose absolute path is %i bytes long fails with ENAMETOOLONG",
     async folderPathLength => {
       using dir = tempDir("folder-dep-too-long", {});

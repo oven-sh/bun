@@ -170,7 +170,7 @@ describe("DOMException in Node.js environment", () => {
     });
     // The clone's own capture at the structuredClone call site is discarded: reading the
     // position properties must not materialize the clone site's line/column over the copy.
-    void clone.line, clone.column, clone.sourceURL;
+    (void clone.line, clone.column, clone.sourceURL);
     expect(Object.getOwnPropertyNames(clone)).toEqual(["stack"]);
   });
 

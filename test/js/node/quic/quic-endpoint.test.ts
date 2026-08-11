@@ -310,3 +310,133 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// lsquic's pacer expects to be ticked about when it asks to be (it lets a
+// connection run one clock granularity, 1 ms, ahead of its schedule and has
+// the engine wake it up then). Bun's engines are ticked from the event loop,
+// so on a busy loop the next tick comes whenever JS is done, by which time
+// everything in flight has been acknowledged. The pacer used to take that as a
+// restart, hand out its ten burst tokens and then let through one more
+// millisecond's worth, so however wide the window was, an iteration of a busy
+// loop moved ten packets plus a sliver of it: a tenth to a fifth of the window
+// here. The pacer-late-tick-credit vendor patch lets such a tick send what was
+// due since the last one, which on a busy loop is the window.
+//
+// busy-loop-pacer-fixture.ts samples the session's bytes sent and window at
+// every iteration boundary of its busy loop; asserted on is the share of its
+// window that an iteration of the second half moved, on average. Debug builds
+// measure about 0.9 on Linux and 0.75 to 0.9 on Windows with the patch and
+// 0.1 to 0.25 without it, for both engines (listen() builds one, connect() the
+// other). What keeps the patched figure below 1 is the sender running out of
+// data every so often (the fixture sizes its chunks to last a good many
+// iterations, and refilling costs it an iteration or two each time) and, on
+// Windows, the occasional iteration whose ACKs get processed over more than
+// the two ticks the patch credits a late tick back to.
+//
+// This needs Cubic's pacing rate to be sane, which on Windows it is not without
+// the cubic-llp64-overflow patch (the rate wraps in 32-bit arithmetic): paced
+// at that rate a busy connection moves about 1 KiB per iteration here.
+describe.concurrent("pacing on a busy event loop", () => {
+  const MIN_MEAN_WINDOW_SHARE = 0.4;
+  const fixture = join(import.meta.dir, "busy-loop-pacer-fixture.ts");
+  type Sample = { sent: number; cwnd: number };
+  type Report = { samples: Sample[] };
+
+  // Mean, over the iterations of the second half, of the share of its window
+  // each iteration moved. An iteration counts for at most one window: the one
+  // in which the sender refills its data takes longer than the others (see
+  // the fixture) and moves more, and must not make up for the rest.
+  function meanWindowShareMoved({ samples }: Report) {
+    const secondHalf = samples.slice(Math.floor(samples.length / 2));
+    let total = 0;
+    for (let i = 1; i < secondHalf.length; i++) {
+      total += Math.min(1, (secondHalf[i].sent - secondHalf[i - 1].sent) / secondHalf[i - 1].cwnd);
+    }
+    return total / (secondHalf.length - 1);
+  }
+
+  // The receiving side has to keep reading, or flow control rather than the
+  // pacer would be what limits the sender.
+  async function drain(stream: any) {
+    for await (const _ of stream);
+  }
+
+  function spawnSender(args: string[]) {
+    const port = Promise.withResolvers<number>();
+    const report = Promise.withResolvers<Report>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), fixture, ...args],
+      env: bunEnv,
+      stderr: "pipe",
+      ipc(message: { port: number } | Report) {
+        if ("port" in message) port.resolve(message.port);
+        else report.resolve(message);
+      },
+    });
+    // A fixture that dies early fails the test instead of hanging it.
+    const died = proc.exited.then(async code => {
+      throw new Error(`fixture exited with code ${code} before reporting:\n${await proc.stderr.text()}`);
+    });
+    died.catch(() => {});
+    return {
+      proc,
+      port: () => Promise.race([port.promise, died]),
+      report: () => Promise.race([report.promise, died]),
+    };
+  }
+
+  // Debug builds spend about two seconds just loading node:quic in the
+  // fixture, and the busy loop itself runs for over a second.
+  const TIMEOUT = 30_000;
+
+  test(
+    "a busy server session (listen engine) sends a window per loop iteration",
+    async () => {
+      const sender = spawnSender(["listen"]);
+      await using _proc = sender.proc;
+      const client = await connect(`127.0.0.1:${await sender.port()}`, { alpn: "quic-test", verifyPeer: "manual" });
+      const closed = client.closed.then(
+        () => {},
+        () => {},
+      );
+      await client.opened;
+      // A stream only reaches the peer once something is sent on it.
+      const stream = await client.createBidirectionalStream({ body: "go" });
+      stream.closed.catch(() => {});
+      const draining = drain(stream);
+      const report = await sender.report();
+      await draining;
+      await closed;
+      expect(meanWindowShareMoved(report)).toBeGreaterThanOrEqual(MIN_MEAN_WINDOW_SHARE);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "a busy client session (connect engine) sends a window per loop iteration",
+    async () => {
+      const closed = Promise.withResolvers<void>();
+      const draining = Promise.withResolvers<Promise<void>>();
+      await using server = await listen(
+        (s: any) => {
+          s.closed.then(closed.resolve, closed.resolve);
+          s.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+            // Nothing to send back. Ending this side is what lets the fixture's
+            // stream, and so its graceful session close, finish.
+            stream.setBody(null);
+            draining.resolve(drain(stream));
+          };
+        },
+        { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+      );
+      const sender = spawnSender(["connect", String(server.address.port)]);
+      await using _proc = sender.proc;
+      const report = await sender.report();
+      await draining.promise;
+      await closed.promise;
+      expect(meanWindowShareMoved(report)).toBeGreaterThanOrEqual(MIN_MEAN_WINDOW_SHARE);
+    },
+    TIMEOUT,
+  );
+});

@@ -1,0 +1,302 @@
+pacer: let a late tick send what the connection was held back from sending
+
+lsquic's pacer (a port of Chromium's PacingSender) expects to be
+ticked about when it asked to be: when it blocks a packet it sets
+PA_LAST_SCHED_DELAYED and the engine wakes the connection up at
+pa_next_sched, about a clock granularity (1 ms) later, so the
+"making up for lost time" branch only ever had timer slop to cover.
+
+Bun's engines are ticked from the event loop, so the next tick comes
+when the application's JS is done, tens of milliseconds later on a
+busy server, by which time everything in flight has been acknowledged.
+Two paths in lsquic_pacer_packet_scheduled() then threw the time the
+connection had been held back for away and restarted pacing from now:
+
+  * n_in_flight == 0 replenished the burst tokens, and the token path
+    resets pa_next_sched and clears PA_LAST_SCHED_DELAYED;
+  * in the making-up branch, pa_last_delayed + delay <= now was taken
+    to mean application-limited, which any gap between two ticks
+    satisfies, so making up could never span two ticks.
+
+Either way such a tick released ten packets plus one granularity's
+worth, however wide the window was.  Which ticks were affected came
+down to whether the ACKs had been read before the tick: node:quic's
+driver ticks after reading them, so every iteration of a busy loop was
+one of these (a tenth to a fifth of the window per iteration); the
+HTTP/3 server's driver also ticks before reading them, and those ticks
+still had packets in flight and did make up, so it moved about half a
+window per iteration.
+
+Now:
+
+  * a connection the pacer held back does not get the restart burst,
+    and the making-up branch runs until it has caught up, so a late
+    tick sends what was due since the previous one at the pacing rate,
+    within the congestion window;
+  * tick_in bounds how far behind the schedule may lag: to the tick
+    before the last one that scheduled a packet (pa_credit_since,
+    replacing pa_last_delayed).  A promptly ticked, window-limited
+    connection therefore holds a gap or two between ACKs' worth of
+    credit at most and stays paced instead of accumulating credit that
+    would come out as a burst.  It is the tick before rather than the
+    sending tick itself because the loop drivers tick a connection
+    twice in a row, before and after reading the ACKs that arrived
+    during the iteration; whatever room the first tick finds left in
+    the window must not cost the second one the iteration's worth;
+  * tick_out drops the credit when a tick ends with the window open
+    and the connection not having used it: that is what application-
+    limited actually looks like.  send_ctl passes the window state in,
+    so lsquic_send_ctl_tick_out moves out of the header.  The old
+    "empty tick" reset also fired on every tick a window-limited
+    connection spent waiting for ACKs, i.e. on the ticks the credit
+    is for; pa_n_scheduled and PA_DELAYED_ON_TICK_IN only served it
+    and go away;
+  * lsquic_pacer_delayed(), which the connection's next tick time and
+    send_ctl's app-limited checks are built on, now means that the
+    pacer is blocking right now (schedule in the future).  With the
+    flag kept across ticks it would otherwise have the engine tick a
+    connection whose schedule is in the past, i.e. one waiting for
+    ACKs, continuously.
+
+--- a/src/liblsquic/lsquic_pacer.h
++++ b/src/liblsquic/lsquic_pacer.h
+@@ -9,7 +9,12 @@
+     const struct lsquic_conn
+                    *pa_conn;             /* Used for logging */
+     lsquic_time_t   pa_next_sched;
+-    lsquic_time_t   pa_last_delayed;
++    lsquic_time_t   pa_credit_since;    /* How far behind pa_now the schedule
++                                         * may lag: the tick before the last
++                                         * one that scheduled a packet.  See
++                                         * lsquic_pacer_tick_in().
++                                         */
++    lsquic_time_t   pa_prev_tick;       /* pa_now of the previous tick */
+     lsquic_time_t   pa_now;
+ 
+     /* All tick times are in microseconds */
+@@ -17,10 +22,14 @@
+     unsigned        pa_clock_granularity;
+ 
+     unsigned        pa_burst_tokens;
+-    unsigned        pa_n_scheduled;     /* Within single tick */
+     enum {
++        /* The pacer held a packet back.  While this is set, either the
++         * pacer is blocking (pa_next_sched is in the future: the connection
++         * is ticked then) or the connection is making up for lost time
++         * (pa_next_sched is in the past) and is waiting for the congestion
++         * window.  See lsquic_pacer.c.
++         */
+         PA_LAST_SCHED_DELAYED   = (1 << 0),
+-        PA_DELAYED_ON_TICK_IN   = (1 << 1),
+     }               pa_flags;
+ #ifndef NDEBUG
+     struct {
+@@ -42,8 +51,11 @@
+ void
+ lsquic_pacer_tick_in (struct pacer *, lsquic_time_t);
+ 
++/* `cwnd_has_room' is whether the congestion controller would have let the
++ * connection send more when the tick ended.
++ */
+ void
+-lsquic_pacer_tick_out (struct pacer *);
++lsquic_pacer_tick_out (struct pacer *, int cwnd_has_room);
+ 
+ int
+ lsquic_pacer_can_schedule (struct pacer *, unsigned n_in_flight);
+@@ -58,10 +70,17 @@
+ void
+ lsquic_pacer_disable_burst_tokens (struct pacer *);
+ 
++/* Whether the pacer is what is holding the connection back right now, in
++ * which case lsquic_pacer_next_sched() is when to tick it again.  It is not
++ * while the connection is making up for lost time: that connection is waiting
++ * for the congestion window, and ticking it on the pacer's account would have
++ * the engine tick it continuously until an ACK arrives.
++ */
+ static inline int
+ lsquic_pacer_delayed (const struct pacer *pacer)
+ {
+-    return pacer->pa_flags & PA_LAST_SCHED_DELAYED;
++    return (pacer->pa_flags & PA_LAST_SCHED_DELAYED)
++        && pacer->pa_next_sched > pacer->pa_now;
+ }
+ 
+ static inline lsquic_time_t 
+--- a/src/liblsquic/lsquic_pacer.c
++++ b/src/liblsquic/lsquic_pacer.c
+@@ -44,19 +44,50 @@
+ }
+ 
+ 
++/* bun: the engine is only ticked from an event loop, so a tick can come long
++ * after the pacer asked for one (the loop was busy running the application),
++ * by which time everything that was in flight has usually been acknowledged.
++ * This function used to restart pacing from "now" on such a tick, either
++ * through the burst tokens, handed out whenever nothing is in flight, or
++ * through the making-up branch's per-packet application-limited guess, which
++ * any gap between two ticks trips.  Such a tick got ten packets plus one clock
++ * granularity's worth however much the connection was owed, and on a busy
++ * loop about every other tick was one, so the connection moved about half a
++ * window per loop iteration.
++ *
++ * Now a connection the pacer has held back (PA_LAST_SCHED_DELAYED) keeps
++ * pa_next_sched where it is, and a later tick may send what was due between
++ * then and now at the pacing rate, within the congestion window.  The credit
++ * is bounded to the last couple of ticks (lsquic_pacer_tick_in), so a promptly
++ * ticked connection gets a gap or two between ACKs' worth at most and stays
++ * paced, and it is dropped when a tick ends with the window open and nothing
++ * more to send (lsquic_pacer_tick_out): that connection is application-limited
++ * and restarts like an idle one, with the burst tokens.
++ */
+ void
+ lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
+                             int in_recovery, tx_time_f tx_time, void *tx_ctx)
+ {
+     lsquic_time_t delay, sched_time;
+-    int app_limited, making_up;
++    int making_up;
+ 
+ #ifndef NDEBUG
+     ++pacer->pa_stats.n_scheduled;
+ #endif
+-    ++pacer->pa_n_scheduled;
+-
+-    if (n_in_flight == 0 && !in_recovery)
++    sched_time = pacer->pa_now;
++    /* The tick before this one rather than this one: the event loop often
++     * ticks a connection twice in a row, once before and once after reading
++     * the ACKs that were waiting, and whatever room the first of those finds
++     * in the window must not cost the second one the gap before them both.
++     */
++    pacer->pa_credit_since = pacer->pa_prev_tick;
++
++    /* A held-back connection with nothing in flight is not idle: the ACKs
++     * came in while the engine was not being ticked.  It makes up for that
++     * time below rather than restarting with a burst.
++     */
++    if (n_in_flight == 0 && !in_recovery
++                            && !(pacer->pa_flags & PA_LAST_SCHED_DELAYED))
+     {
+         pacer->pa_burst_tokens = 10;
+         LSQ_DEBUG("%s: replenish tokens: %u", __func__, pacer->pa_burst_tokens);
+@@ -67,33 +98,24 @@
+         --pacer->pa_burst_tokens;
+         pacer->pa_flags &= ~PA_LAST_SCHED_DELAYED;
+         pacer->pa_next_sched = 0;
+-        pacer->pa_last_delayed = 0;
+         LSQ_DEBUG("%s: tokens: %u", __func__, pacer->pa_burst_tokens);
+         return;
+     }
+ 
+-    sched_time = pacer->pa_now;
+     delay = tx_time(tx_ctx);
+     if (pacer->pa_flags & PA_LAST_SCHED_DELAYED)
+     {
+         pacer->pa_next_sched += delay;
+-        app_limited = pacer->pa_last_delayed != 0
+-            && pacer->pa_last_delayed + delay <= sched_time;
+         making_up = pacer->pa_next_sched <= sched_time;
+-        LSQ_DEBUG("making up: %d; app limited; %d", making_up, app_limited);
+-        if (making_up && !app_limited)
+-            pacer->pa_last_delayed = sched_time;
+-        else
+-        {
++        LSQ_DEBUG("making up: %d", making_up);
++        if (!making_up)
+             pacer->pa_flags &= ~PA_LAST_SCHED_DELAYED;
+-            pacer->pa_last_delayed = 0;
+-        }
+     }
+     else
+         pacer->pa_next_sched = MAX(pacer->pa_next_sched + delay,
+                                                     sched_time + delay);
+-    LSQ_DEBUG("next_sched is set to %"PRIu64" usec from now",
+-                                pacer->pa_next_sched - pacer->pa_now);
++    LSQ_DEBUG("next_sched is set to %"PRId64" usec from now",
++                    (int64_t) (pacer->pa_next_sched - pacer->pa_now));
+ }
+ 
+ 
+@@ -147,22 +169,37 @@
+ lsquic_pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
+ {
+     assert(now >= pacer->pa_now);
++    pacer->pa_prev_tick = pacer->pa_now;
+     pacer->pa_now = now;
+-    if (pacer->pa_flags & PA_LAST_SCHED_DELAYED)
+-        pacer->pa_flags |= PA_DELAYED_ON_TICK_IN;
+-    pacer->pa_n_scheduled = 0;
++    /* The schedule cannot lag behind the ticks on which the connection last
++     * sent: it is owed the time it has been held back since, not the time it
++     * spent waiting on the congestion window before that (or the credit would
++     * grow without bound on a window-limited connection and come out as a
++     * burst).
++     */
++    if ((pacer->pa_flags & PA_LAST_SCHED_DELAYED)
++                        && pacer->pa_next_sched < pacer->pa_credit_since)
++    {
++        LSQ_DEBUG("credit bounded to %"PRIu64" usec",
++                                            now - pacer->pa_credit_since);
++        pacer->pa_next_sched = pacer->pa_credit_since;
++    }
+ }
+ 
+ 
+ void
+-lsquic_pacer_tick_out (struct pacer *pacer)
++lsquic_pacer_tick_out (struct pacer *pacer, int cwnd_has_room)
+ {
+-    if ((pacer->pa_flags & PA_DELAYED_ON_TICK_IN)
+-            && pacer->pa_n_scheduled == 0
+-                && pacer->pa_now > pacer->pa_next_sched)
++    /* The pacer would have let more go out and so would the congestion
++     * controller: the application had nothing more to send.  Drop the credit
++     * so that it does not come out as a burst when it has something again.
++     */
++    if ((pacer->pa_flags & PA_LAST_SCHED_DELAYED)
++            && pacer->pa_next_sched <= pacer->pa_now
++                && cwnd_has_room)
+     {
+-        LSQ_DEBUG("tick passed without scheduled packets: reset delayed flag");
++        LSQ_DEBUG("tick ended with pacer and cwnd open: app-limited, reset "
++                                                            "delayed flag");
+         pacer->pa_flags &= ~PA_LAST_SCHED_DELAYED;
+     }
+-    pacer->pa_flags &= ~PA_DELAYED_ON_TICK_IN;
+ }
+--- a/src/liblsquic/lsquic_send_ctl.h
++++ b/src/liblsquic/lsquic_send_ctl.h
+@@ -329,12 +329,8 @@
+     (ctl)->sc_flags &= ~SC_APP_LIMITED;
+ }
+ 
+-static inline void
+-lsquic_send_ctl_tick_out (lsquic_send_ctl_t *ctl)
+-{
+-    if ((ctl)->sc_flags & SC_PACE)
+-        lsquic_pacer_tick_out(&(ctl)->sc_pacer);
+-}
++void
++lsquic_send_ctl_tick_out (lsquic_send_ctl_t *ctl);
+ 
+ static inline lsquic_time_t
+ lsquic_send_ctl_next_pacer_time (lsquic_send_ctl_t *ctl)
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -1862,6 +1862,15 @@
+ }
+ 
+ 
++void
++lsquic_send_ctl_tick_out (struct lsquic_send_ctl *ctl)
++{
++    if (ctl->sc_flags & SC_PACE)
++        lsquic_pacer_tick_out(&ctl->sc_pacer,
++            send_ctl_all_bytes_out(ctl) < ctl->sc_ci->cci_get_cwnd(CGP(ctl)));
++}
++
++
+ int
+ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
+ {

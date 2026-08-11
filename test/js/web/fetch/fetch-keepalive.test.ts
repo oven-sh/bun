@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -368,3 +368,202 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
     exitCode: 0,
   });
 });
+
+// Raw HTTP/1.1 server for the redirect tests below, bound to 127.0.0.1 (the
+// address fetch() dials). Every request is answered on the connection it came
+// in on, so `connections` is exactly how many times bun dialed.
+//   /302, /303, /307  bodyless redirect to /legit on a reusable connection
+//   /302-close        the same 302 with Connection: close
+//   /302-body         a 302 that carries a body
+//   anything else     200 whose body is "<method>:<request body length>"
+const redirectServer = `
+  import net from "node:net";
+  let connections = 0;
+  const server = net.createServer(sock => {
+    connections++;
+    sock.on("error", () => {});
+    let buf = "";
+    sock.on("data", d => {
+      buf += d.toString("latin1");
+      while (true) {
+        const end = buf.indexOf("\\r\\n\\r\\n");
+        if (end === -1) return;
+        const head = buf.slice(0, end);
+        const len = Number(/^content-length:\\s*(\\d+)/im.exec(head)?.[1] ?? 0);
+        if (buf.length < end + 4 + len) return;
+        buf = buf.slice(end + 4 + len);
+        const [method, path] = head.split(" ");
+        const redirect = {
+          "/302": "302 Found",
+          "/302-close": "302 Found",
+          "/302-body": "302 Found",
+          "/303": "303 See Other",
+          "/307": "307 Temporary Redirect",
+        }[path];
+        if (!redirect) {
+          const body = method + ":" + len;
+          sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+        } else if (path === "/302-close") {
+          sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+        } else if (path === "/302-body") {
+          sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
+        } else {
+          sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
+        }
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise(r => server.on("listening", r));
+  const origin = "http://127.0.0.1:" + server.address().port;
+`;
+
+// A bodyless 3xx on a keep-alive connection leaves that connection as reusable
+// as any other completed exchange, so the hop (and every later fetch) should
+// ride on it: four redirected fetches, one connection. This used to hold only
+// for streamed request bodies; a request whose headers and body went out in a
+// single write was never considered finished by the redirect path, so each
+// redirect closed the connection and dialed again for the hop (5 connections
+// here, one per redirect plus the first). Subprocess so the pool is private to
+// the test.
+test.concurrent.each([
+  ["GET -> 302", "/302", "{}", "GET:0", 1],
+  ["POST -> 303 (hop is a bodyless GET)", "/303", '{ method: "POST", body: "payload" }', "GET:0", 1],
+  ["POST -> 307 (hop resends the body)", "/307", '{ method: "POST", body: "payload" }', "POST:7", 1],
+  // Not reusable, so every fetch dials once more for the hop; the hop's own
+  // connection is pooled and carries the next fetch's 3xx.
+  ["GET -> 302 with Connection: close", "/302-close", "{}", "GET:0", 5],
+  ["GET -> 302 carrying a body", "/302-body", "{}", "GET:0", 5],
+])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${redirectServer}
+      const results = [];
+      for (let i = 0; i < 4; i++) {
+        const res = await fetch(origin + ${JSON.stringify(path)}, ${init});
+        results.push(res.status, res.redirected, await res.text());
+      }
+      console.log(JSON.stringify({ results, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { results: Array(4).fill([200, true, hopBody]).flat(), connections },
+    exitCode: 0,
+  });
+});
+
+// What the pooling above must not relax: a response (redirect or final) that
+// arrives while the request body is still going out leaves the connection
+// mid-message. The next request has to dial a new connection; written onto the
+// old one, its request line would land inside the unfinished upload, which the
+// server below reports with a 299. The stream body never ends. The byte body
+// is far larger than the loopback socket buffers on Linux and macOS, so bun
+// gets the reply with most of it still unsent; Windows' loopback accepts the
+// whole 64 MiB into kernel buffers at once, even with the peer not reading, so
+// there the request really is fully sent and reusing the connection is
+// legitimate (the server then sees the full body followed by the request).
+const earlyReplyCases: [
+  label: string,
+  earlyReply: string,
+  body: string,
+  first: [number, string],
+  onWindows: boolean,
+][] = [
+  [
+    "303 while a ReadableStream body is still open",
+    "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\n\r\n",
+    "new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(4)); return new Promise(() => {}); } })",
+    [200, "GET:0"],
+    true,
+  ],
+  [
+    "303 while a 64 MiB byte body is still being written",
+    "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\n\r\n",
+    "new Uint8Array(64 * 1024 * 1024)",
+    [200, "GET:0"],
+    false,
+  ],
+  [
+    "200 while a 64 MiB byte body is still being written",
+    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+    "new Uint8Array(64 * 1024 * 1024)",
+    [200, ""],
+    false,
+  ],
+];
+for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
+  test.concurrent.skipIf(isWindows && !onWindows)(`a connection answered early (${label}) is not pooled`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import net from "node:net";
+        let connections = 0;
+        const server = net.createServer(sock => {
+          connections++;
+          sock.on("error", () => {});
+          let buf = "";
+          let answeredEarly = false;
+          sock.on("data", d => {
+            const chunk = d.toString("latin1");
+            if (answeredEarly) {
+              // Only the rest of the upload may follow the early reply.
+              if (chunk.includes("GET /legit ")) {
+                sock.write("HTTP/1.1 299 Poisoned\\r\\nContent-Length: 0\\r\\n\\r\\n");
+              }
+              return;
+            }
+            buf += chunk;
+            const end = buf.indexOf("\\r\\n\\r\\n");
+            if (end === -1) return;
+            const head = buf.slice(0, end);
+            buf = "";
+            if (head.startsWith("POST /upload ")) {
+              answeredEarly = true;
+              sock.write(${JSON.stringify(earlyReply)});
+            } else {
+              const len = Number(/^content-length:\\s*(\\d+)/im.exec(head)?.[1] ?? 0);
+              const res = head.split(" ")[0] + ":" + len;
+              sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + res.length + "\\r\\n\\r\\n" + res);
+            }
+          });
+        });
+        server.listen(0, "127.0.0.1");
+        await new Promise(r => server.on("listening", r));
+        const origin = "http://127.0.0.1:" + server.address().port;
+
+        const res1 = await fetch(origin + "/upload", { method: "POST", duplex: "half", body: ${body} });
+        const first = [res1.status, await res1.text()];
+        const res2 = await fetch(origin + "/legit");
+        const second = [res2.status, await res2.text()];
+        console.log(JSON.stringify({ first, second, connections }));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      // The 303 rows' hop and the 200 row's follow-up fetch each dial the second
+      // connection; the follow-up in the 303 rows then reuses the hop's.
+      result: { first, second: [200, "GET:0"], connections: 2 },
+      exitCode: 0,
+    });
+  });
+}

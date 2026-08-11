@@ -467,6 +467,80 @@ describe("crash testing", () => {
   }
 });
 
+describe("exceptions thrown while walking properties", () => {
+  // Each case crashed the process before the walk cleared the exception, so
+  // they run in a subprocess.
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("a throwing Proxy trap in the prototype chain skips only that property", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      {
+        const proto = new Proxy(
+          { a: 1, b: 2, c: 3 },
+          {
+            get(target, key, receiver) {
+              if (key === "a") throw new Error("boom");
+              return Reflect.get(target, key, receiver);
+            },
+          },
+        );
+        console.log(Bun.inspect(Object.create(proto)));
+      }
+      {
+        const proto = new Proxy(
+          { a: 1 },
+          {
+            getPrototypeOf() {
+              throw new Error("boom");
+            },
+          },
+        );
+        console.log(Bun.inspect(Object.create(proto)));
+      }
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        b: 2,
+        c: 3,
+      }
+      {
+        a: 1,
+      }
+      "
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a throwing lazy property initializer skips only that property", async () => {
+    // The builtin behind Bun.$ calls the global Symbol, so clobbering it makes
+    // that lazy property throw when it is first reified.
+    const { stdout, stderr, exitCode } = await run(`
+      globalThis.Symbol = NaN;
+      let threw = false;
+      try {
+        Bun.$;
+      } catch {
+        threw = true;
+      }
+      const inspected = Bun.inspect(Bun);
+      console.log(threw, inspected.includes("Archive:"), inspected.includes("version:"));
+    `);
+    expect(stdout).toBe("true true true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("possibly formatted emojis log", () => {
   expect(Bun.inspect("✔")).toBe('"✔"');
 });

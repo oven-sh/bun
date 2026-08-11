@@ -360,6 +360,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let mut cgroup: Option<CgroupTarget> = None;
 
     #[cfg(windows)]
     let mut windows_hide: bool = false;
@@ -688,6 +690,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         },
                     )?;
                     gid = Some(gid_int as u32);
+                }
+            }
+
+            // Ignored where cgroups don't exist, like `windowsHide` on POSIX.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Some(value) = args.get(global_this, "cgroup")? {
+                if !value.is_undefined_or_null() {
+                    cgroup = Some(CgroupTarget::from_js(global_this, value)?);
                 }
             }
 
@@ -1096,6 +1106,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let cgroup_dir = match &cgroup {
+        Some(target) => Some(target.open(global_this)?),
+        None => None,
+    };
+
     let mut spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
         // when the user asked for it: the stored cwd path string can be stale
@@ -1156,6 +1172,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             verbatim_arguments: windows_verbatim_arguments,
             loop_: loop_handle,
         },
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir),
         ..Default::default()
     };
 
@@ -1209,6 +1227,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             sys::Result::Err(err) => {
                 // See EMFILE arm above.
                 spawn_options.deinit();
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if err.syscall == sys::Tag::clone3 {
+                    let err = match cgroup_dir.as_ref() {
+                        Some(c) => err.with_path(&c.display_path),
+                        None => err,
+                    };
+                    return Err(global_this.throw_value(err.to_js(global_this)));
+                }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT
@@ -2166,4 +2192,95 @@ fn append_envp_from_js(
         storage.push(line);
     }
     Ok(())
+}
+
+/// `cgroup` option: a cgroup directory the child starts inside.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+enum CgroupTarget {
+    Path(ZBox),
+    DirFd(Fd),
+}
+
+/// The directory fd handed to `posix_spawn_bun`, plus what to blame on error.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct OpenCgroup {
+    dir: Fd,
+    /// Keeps a directory we opened ourselves alive (and closes it on drop);
+    /// `None` when the caller passed their own fd.
+    _owned: Option<sys::File>,
+    display_path: Box<[u8]>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl CgroupTarget {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        use bun_sys_jsc::FdJsc as _;
+        if let Some(fd) = Fd::from_js_validated(value, global)? {
+            return Ok(Self::DirFd(fd));
+        }
+        if value.is_string() {
+            let path = value.to_slice(global)?;
+            if strings::contains_char(path.slice(), 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "The \"cgroup\" option must be a string without null bytes"
+                )));
+            }
+            return Ok(Self::Path(ZBox::from_bytes(path.slice())));
+        }
+        Err(global.throw_invalid_argument_type_value(b"cgroup", b"string or number", value))
+    }
+
+    /// Resolve to a directory fd in the parent so a bad path fails the spawn
+    /// with errno + path rather than an opaque exit 127 from the child.
+    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup> {
+        let opened = match self {
+            Self::DirFd(dir) => OpenCgroup {
+                dir: *dir,
+                _owned: None,
+                display_path: b"cgroup.procs"[..].into(),
+            },
+            Self::Path(path) => {
+                let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC;
+                match sys::File::open(path.as_zstr(), flags, 0) {
+                    Ok(file) => OpenCgroup {
+                        dir: file.handle(),
+                        _owned: Some(file),
+                        display_path: path.as_bytes().into(),
+                    },
+                    Err(err) => {
+                        return Err(
+                            global.throw_value(err.with_path(path.as_bytes()).to_js(global))
+                        );
+                    }
+                }
+            }
+        };
+
+        // A frozen destination would park the child before exec and, through
+        // vfork, this thread with it.
+        if Self::is_frozen(opened.dir) {
+            let err = sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::open)
+                .with_path(&opened.display_path);
+            return Err(global.throw_value(err.to_js(global)));
+        }
+
+        Ok(opened)
+    }
+
+    fn is_frozen(dir: Fd) -> bool {
+        for (file, needle) in [
+            (&b"cgroup.events"[..], &b"frozen 1"[..]),
+            (b"freezer.state", b"FROZEN"),
+        ] {
+            let Ok(file) = sys::File::openat(dir, file, sys::O::RDONLY | sys::O::CLOEXEC, 0) else {
+                continue;
+            };
+            let mut buf = [0u8; 256];
+            let n = file.read_all(&mut buf).unwrap_or(0);
+            if strings::contains(&buf[..n], needle) {
+                return true;
+            }
+        }
+        false
+    }
 }

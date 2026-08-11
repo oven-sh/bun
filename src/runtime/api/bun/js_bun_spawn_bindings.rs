@@ -2095,10 +2095,8 @@ impl EnvLine {
 /// so `{ ...process.env, PATH }` (`Path` in process.env) would keep the parent's
 /// value. Keep the lexicographically first spelling of each name, like node:
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L715-L738
-/// Deliberately unlike node, names fold ASCII case only (as bun's env maps do on
-/// Windows) and `undefined` properties were already dropped, so
-/// `{ HTTP_PROXY: undefined, http_proxy: url }` sets the proxy (node's key sort
-/// makes it set nothing). Output order is irrelevant: libuv re-sorts the block.
+/// Unlike node this folds ASCII only (as bun's env maps do) and never sees
+/// `undefined` properties, so `{ HTTP_PROXY: undefined, http_proxy: url }` sets the proxy.
 fn dedupe_env_names_windows(lines: &mut Vec<EnvLine>) {
     fn cmp_names(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
         a.iter()

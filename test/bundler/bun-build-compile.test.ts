@@ -108,6 +108,79 @@ describe("Bun.build compile", () => {
   });
 });
 
+// `app.exe` is the outfile on every platform, so Windows has nothing to append to it. The
+// directory is non-empty on purpose: POSIX replaces an empty directory at the outfile, while a
+// non-empty one fails the rename with EISDIR. Every case runs in a child process with cwd set to
+// the temp dir because the executable is assembled as a temp file in cwd before it is moved.
+describe.concurrent("compile with an outfile the executable cannot be moved onto", () => {
+  const hint = "app.exe is a directory. Please choose a different --outfile or delete the directory";
+  const files = {
+    "app.js": `console.log("unreachable");`,
+    "app.exe/keep": "",
+  };
+
+  async function buildInChild(dir: string, compile: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: ["./app.js"], throw: false, compile: ${compile} });
+         console.log(JSON.stringify({
+           success: result.success,
+           logs: result.logs.map(log => log.message.length > 1000 ? log.message.slice(0, 60) + "..." + log.message.slice(-200) : log.message),
+         }));`,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("bun build --compile reports the directory", async () => {
+    using dir = tempDir("build-compile-outfile-is-dir-cli", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "app.exe"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+    expect(stderr).toContain(hint);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "app.exe", "keep"))).toBe(true);
+  });
+
+  test("Bun.build() reports the directory", async () => {
+    using dir = tempDir("build-compile-outfile-is-dir-api", files);
+
+    expect(await buildInChild(String(dir), `{ outfile: "app.exe" }`)).toEqual({
+      success: false,
+      logs: [expect.stringContaining(hint)],
+    });
+    expect(existsSync(join(String(dir), "app.exe", "keep"))).toBe(true);
+  });
+
+  // The destination is converted to UTF-16 before the move, and that conversion yields an empty
+  // path when the name does not fit the 32767-unit wide path buffer. The directory check has to
+  // leave that case alone: an empty name would resolve to cwd, which is a directory.
+  test.skipIf(!isWindows)("Bun.build() keeps the move error for an outfile longer than a wide path", async () => {
+    using dir = tempDir("build-compile-outfile-too-long", { "app.js": files["app.js"] });
+
+    expect(await buildInChild(String(dir), `{ outfile: Buffer.alloc(33_000, "a").toString() }`)).toEqual({
+      success: false,
+      logs: [expect.stringMatching(/^failed to move executable to .*\.exe: E[A-Z]+$/)],
+    });
+  });
+});
+
 describe("compiled binary validity", () => {
   test("output binary has valid executable header", async () => {
     using dir = tempDir("build-compile-valid-header", {

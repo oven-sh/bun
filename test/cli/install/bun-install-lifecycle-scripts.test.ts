@@ -90,18 +90,6 @@ async function setupTest(): Promise<TestCtx> {
   }
 }
 
-// An environment with no node in it at all, so that `bun install` has to put its own
-// `node`/`bun` shims on the scripts' PATH. Emptying PATH is not enough: when the test
-// runner itself was started through `bun run` (as `bun bd test` is), the environment
-// carries NODE/npm_node_execpath pointing at the real node, and bun trusts those
-// instead of creating the shims.
-function envWithoutNode(env: Record<string, string>): Record<string, string> {
-  const result = { ...env, PATH: "" };
-  delete result.NODE;
-  delete result.npm_node_execpath;
-  return result;
-}
-
 // The six multi-install tests below are the longest in the file (2-3 serial `bun install`s
 // each, some with cold caches). Declare them first so they start before the ~110 shorter
 // tests and overlap with them instead of forming a serial tail at the end of the run.
@@ -3653,7 +3641,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env: envWithoutNode(testEnv),
+        env: { ...testEnv, PATH: "" },
       });
 
       let err = await stderr.text();
@@ -3689,7 +3677,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
-        env: envWithoutNode(testEnv),
+        env: { ...testEnv, PATH: "" },
       });
 
       let err = await stderr.text();

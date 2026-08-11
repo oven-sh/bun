@@ -686,39 +686,64 @@ impl RunCommand {
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
-            #[cfg(bun_debug)]
-            {
-                // Debug builds wipe and recreate the bun-node temp dir so the
-                // ALREADY_EXISTS short-circuit below never reuses a stale
-                // hardlink at a previous debug binary.
-                //
-                // The wipe does not always leave the path absent:
-                // `bun-run.test.ts` uses
-                // `describe.concurrent`, so multiple debug processes race on
-                // this shared dir and `make_dir` can legitimately observe
-                // `PathAlreadyExists` after a sibling re-created it. Swallow
-                // the error — the `CreateHardLinkW` retry below already
-                // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
-                    &target_path_buffer[..dir_slice_len],
-                );
-                let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
-                let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
-            }
-
             let image_path = win::exe_path_w();
+            // The links are hard links, so an existing one can only be checked
+            // by comparing file identity with the running image.
+            let image_stat = bun_sys::File::openat_os_path(
+                bun_sys::Fd::cwd(),
+                image_path,
+                bun_sys::O::RDONLY,
+                0,
+            )
+            .and_then(|image| image.stat())
+            .ok();
+
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `target_path_buffer` is mutated in place between FFI calls
-                // (the dir-NUL/backslash toggle below).
-                // Under Stacked Borrows a `*const` derived via `Deref::deref`
-                // is invalidated by the intervening `&mut` from `IndexMut`, so
-                // re-derive `as_ptr()` at each FFI call site instead of caching.
-                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0
-                {
+                // `name` includes its NUL terminator; the link path ends before it.
+                let link_len = dir_slice_len + name.len() - 1;
+                let mut made_dir = false;
+                let mut replaced = false;
+                loop {
+                    // `target_path_buffer` is mutated in place between FFI calls
+                    // (the dir-NUL/backslash toggle below).
+                    // Under Stacked Borrows a `*const` derived via `Deref::deref`
+                    // is invalidated by the intervening `&mut` from `IndexMut`, so
+                    // re-derive `as_ptr()` at each FFI call site instead of caching.
+                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
+                        != 0
+                    {
+                        break;
+                    }
                     match win::Win32Error::get() {
-                        win::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
+                        win::Win32Error::ALREADY_EXISTS => {
+                            // Same rules as the POSIX EEXIST branch above. A
+                            // rebuilt binary is a different file from the one
+                            // the existing links were made from, so this also
+                            // covers stale links left by a previous debug build.
+                            let matches = image_stat.as_ref().is_some_and(|image| {
+                                bun_sys::openat_windows(
+                                    bun_sys::Fd::cwd(),
+                                    &target_path_buffer[..link_len],
+                                    bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+                                    0,
+                                )
+                                .map(bun_sys::File::from_fd)
+                                .and_then(|link| link.stat())
+                                .is_ok_and(|link| {
+                                    link.st_dev == image.st_dev && link.st_ino == image.st_ino
+                                })
+                            });
+                            if matches || replaced {
+                                break;
+                            }
+                            let _ = win::DeleteFileBun(
+                                &target_path_buffer[..link_len],
+                                win::DeleteFileOptions::default(),
+                            );
+                            replaced = true;
+                        }
+                        _ if !made_dir => {
                             target_path_buffer[dir_slice_len] = 0;
                             // SAFETY: `dir_slice_len` is in-bounds; the byte at
                             // `dir_slice_len` was just set to NUL.
@@ -726,16 +751,9 @@ impl RunCommand {
                                 bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
-
-                            if win::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
+                            made_dir = true;
                         }
+                        _ => return Ok(()),
                     }
                 }
             }

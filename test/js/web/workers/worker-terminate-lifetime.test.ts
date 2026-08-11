@@ -164,6 +164,9 @@ test.skipIf(!isASAN)(
       ],
       env: {
         ...bunEnv,
+        // The CI runner sets this for every test; set it here too so the
+        // main thread's own per-VM state is not reported when run directly.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
         LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
       },
@@ -521,3 +524,130 @@ test(
   },
   timeout,
 );
+
+// Regression: the pool Bun.serve allocates its RequestContexts from lived in a
+// thread_local that nothing ever freed, so every Worker that served HTTP
+// stranded one ~1 MB pool per server type it had used (HTTP, HTTPS) when its
+// thread exited. LSan reports each stranded pool as a direct leak from
+// `ServerPools::request_pool` at process exit, so these cells only run on the
+// ASAN lane. The workers start their servers after a tick on purpose: a server
+// created during module evaluation has JSModuleLoader::evaluateNonVirtual on
+// its allocation stack, which test/leaksan.supp suppresses.
+describe.skipIf(!isASAN)("a Worker that served HTTP frees its request pools when it exits", () => {
+  const leakCheck = {
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+  };
+
+  async function runCell(name: string, files: Record<string, string>, env: Record<string, string> = leakCheck) {
+    using dir = tempDir(`worker-serve-pool-${name}`, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  }
+
+  // The 'close' event is dispatched once the worker thread has been joined,
+  // i.e. after everything the worker thread owned is supposed to be gone.
+  const closed = `
+    function closed(worker) {
+      return new Promise((resolve, reject) => {
+        worker.addEventListener("close", resolve);
+        worker.addEventListener("error", e => reject(e.message));
+      });
+    }
+  `;
+
+  test.concurrent(
+    "http servers, worker exits on its own",
+    () =>
+      runCell("http", {
+        "main.ts": `
+          ${closed}
+          // Two workers: each thread allocates (and used to strand) its own pool.
+          for (let i = 0; i < 2; i++) {
+            await closed(new Worker(new URL("./worker.ts", import.meta.url).href));
+          }
+          console.log("ok");
+        `,
+        "worker.ts": `
+          await Bun.sleep(0);
+          // Two servers of the same type share the thread's one pool.
+          const servers = [0, 1].map(() => Bun.serve({ port: 0, fetch: () => new Response("ok") }));
+          for (const server of servers) await (await fetch(server.url)).text();
+          await Promise.all(servers.map(server => server.stop(true)));
+        `,
+      }),
+    timeout,
+  );
+
+  test.concurrent(
+    "https server, worker exits on its own",
+    () =>
+      runCell("https", {
+        "main.ts": `
+          ${closed}
+          await closed(new Worker(new URL("./worker.ts", import.meta.url).href));
+          console.log("ok");
+        `,
+        "tls.json": JSON.stringify({ cert: tls.cert, key: tls.key }),
+        "worker.ts": `
+          import { cert, key } from "./tls.json";
+          await Bun.sleep(0);
+          const server = Bun.serve({ port: 0, tls: { cert, key }, fetch: () => new Response("ok") });
+          await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text();
+          await server.stop(true);
+        `,
+      }),
+    timeout,
+  );
+
+  // The pool is freed at the very end of the worker's VM teardown, after the
+  // JSC VM is gone. A request that is still being handled when terminate()
+  // lands still occupies a slot at that point, so freeing the pool must not run
+  // that slot's destructor (it would touch the dead VM), and nothing after the
+  // free may touch the pool. Malloc=1 puts JSC's allocations on the system
+  // allocator so ASAN sees either mistake; leak detection has to be off with
+  // it (it surfaces process-lifetime WTF allocations), and it would only
+  // repeat the cells above anyway.
+  test.concurrent(
+    "terminate() with a request still in flight",
+    () =>
+      runCell(
+        "terminate",
+        {
+          "main.ts": `
+            ${closed}
+            const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+            await new Promise((resolve, reject) => {
+              worker.onmessage = resolve;
+              worker.onerror = e => reject(e.message);
+            });
+            const gone = closed(worker);
+            worker.terminate();
+            await gone;
+            console.log("ok");
+          `,
+          "worker.ts": `
+            await Bun.sleep(0);
+            const server = Bun.serve({
+              port: 0,
+              idleTimeout: 0,
+              fetch() {
+                postMessage("in flight");
+                return new Promise(() => {});
+              },
+            });
+            fetch(server.url).catch(() => {});
+          `,
+        },
+        { Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      ),
+    timeout,
+  );
+});

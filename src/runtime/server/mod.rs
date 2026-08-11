@@ -280,13 +280,16 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
+    /// BACKREF to this thread's pool for this server type (see
+    /// [`RequestPools`]); owned by the VM's `RuntimeState`, which outlives
+    /// every server on the thread.
     pub(crate) request_pool:
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+        *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
     /// conditional field so the struct stays uniform across monomorphizations.
     pub(crate) h3_request_pool:
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
+        *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
@@ -763,8 +766,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: `request_pool` points at a process-static (or
-        // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
+        // SAFETY: `request_pool` points at this thread's `RuntimeState`-owned
+        // `HiveArray::Fallback`, which outlives the server (see `RequestPools`).
         // The `HiveSlot` token is leaked deliberately: the slot is recycled by
         // `RequestContext::deinit` via `put_raw`, never via `HiveSlot::Drop`.
         let ctx_slot = std::mem::ManuallyDrop::new(unsafe { (*server.request_pool).claim() })
@@ -2163,7 +2166,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Plain HTTP servers never allocate the ~816 KB H3 pool; defer to
             // the H3-listen path (`listen()` below) so HTTPS servers that
             // don't enable `config.http3` don't pay either.
-            h3_request_pool: core::ptr::null_mut(),
+            h3_request_pool: core::ptr::null(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
@@ -3404,60 +3407,97 @@ mod trampoline {
 }
 
 // ─── per-monomorphization request pools ──────────────────────────────────────
-// Rust generics cannot own statics, so
-// declare one `thread_local!` per concrete (SSL, DEBUG, H3) combo via macro and
-// hand the leaked pointer back through a trait.
+// One `RequestContext` pool per concrete (SSL, DEBUG, H3) server type, shared
+// by every server of that type on the thread. Rust generics cannot own
+// per-instantiation storage, so the pools are the fields of [`RequestPools`]
+// and the trait maps each server type to its field.
 //
-// THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
-// Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
-// a process-static would race when two `Bun.serve` instances run on distinct
-// Worker threads (each Worker has its own event loop and may host a server).
+// THREAD-SAFETY: the pools MUST be per-thread, not process-global:
+// `hive_array::Fallback::{claim,put}` have no internal synchronization and
+// every Worker thread may host servers. The per-thread owner is the VM's
+// `RuntimeState` rather than a `thread_local!` so that a Worker's pools are
+// freed with its VM (`deinit_runtime_state` runs after teardown has stopped
+// every server and freed the uSockets loop) instead of being stranded each
+// time a worker thread that served HTTP exits.
 pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
-    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
+    fn request_pool()
+    -> *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn h3_request_pool()
-    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
+    -> *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
+}
+
+type RequestPool<const SSL: bool, const DEBUG: bool, const H3: bool> =
+    request_context::RequestContextStackAllocator<NewServer<SSL, DEBUG>, SSL, DEBUG, H3>;
+
+/// `ManuallyDrop` inside the `Box`: `RuntimeState` drops after the JSC VM is
+/// gone, and a request that was still unanswered at teardown occupies its
+/// slot then. Its drop glue must not run at that point (for one, it would
+/// hand its body slot back to the already-freed `body_value_pool`), so only
+/// the pool allocation itself is freed, exactly as for `body_value_pool`.
+type RequestPoolSlot<const SSL: bool, const DEBUG: bool, const H3: bool> =
+    core::cell::OnceCell<Box<core::mem::ManuallyDrop<RequestPool<SSL, DEBUG, H3>>>>;
+
+/// This thread's request pools; a field of `RuntimeState`. Each ~816 KB pool
+/// is allocated the first time a server of its type is created on the thread
+/// (the H3 pools when an H3 listener comes up) and lives until the VM is
+/// destroyed.
+#[derive(Default)]
+pub(crate) struct RequestPools {
+    http: RequestPoolSlot<false, false, false>,
+    https: RequestPoolSlot<true, false, false>,
+    debug_http: RequestPoolSlot<false, true, false>,
+    debug_https: RequestPoolSlot<true, true, false>,
+    http_h3: RequestPoolSlot<false, false, true>,
+    https_h3: RequestPoolSlot<true, false, true>,
+    debug_http_h3: RequestPoolSlot<false, true, true>,
+    debug_https_h3: RequestPoolSlot<true, true, true>,
+}
+
+impl RequestPools {
+    fn get<const SSL: bool, const DEBUG: bool, const H3: bool>(
+        slot: impl FnOnce(&Self) -> &RequestPoolSlot<SSL, DEBUG, H3>,
+    ) -> *const RequestPool<SSL, DEBUG, H3> {
+        let pool = slot(crate::jsc_hooks::request_pools()).get_or_init(|| {
+            // `Box::new(RequestPool::init())` builds the ~816 KB pool on the
+            // stack and `memcpy`s it into the heap (no NRVO); `new_boxed`
+            // writes only the 256 B bitset in place.
+            let pool = RequestPool::<SSL, DEBUG, H3>::new_boxed();
+            // SAFETY: `new_boxed` leaks a fully-initialized `Box`; this
+            // reclaims that exact allocation. `ManuallyDrop<T>` is
+            // `repr(transparent)` over `T`, so the cast is a layout no-op.
+            unsafe {
+                bun_core::heap::take(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<RequestPool<SSL, DEBUG, H3>>>(),
+                )
+            }
+        });
+        // `claim`/`put` take `&self`, so servers only need a shared pointer.
+        // The `Box` keeps it valid until `RuntimeState` drops at the end of VM
+        // teardown, by which point every server on the thread has been
+        // stopped and the JSC VM that could release their contexts is gone.
+        &raw const ***pool
+    }
 }
 
 macro_rules! impl_server_pools {
-    ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
+    ($(($ssl:literal, $debug:literal, $pool:ident, $h3_pool:ident)),* $(,)?) => {$(
         impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
-            fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
-                thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
-                }
-                POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
-                        // `Box::new(Pool::init())` builds the ~816 KB pool on
-                        // the stack and `memcpy`s it into the heap (no NRVO);
-                        // `new_boxed` writes only the 256 B bitset in place.
-                        p = Pool::new_boxed().as_ptr();
-                        cell.set(p);
-                    }
-                    p
-                })
+            fn request_pool() -> *const RequestPool<$ssl, $debug, false> {
+                RequestPools::get(|pools| &pools.$pool)
             }
-            fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, true>;
-                thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
-                }
-                POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
-                        p = Pool::new_boxed().as_ptr();
-                        cell.set(p);
-                    }
-                    p
-                })
+            fn h3_request_pool() -> *const RequestPool<$ssl, $debug, true> {
+                RequestPools::get(|pools| &pools.$h3_pool)
             }
         }
     )*};
 }
-impl_server_pools!((false, false), (true, false), (false, true), (true, true));
+impl_server_pools!(
+    (false, false, http, http_h3),
+    (true, false, https, https_h3),
+    (false, true, debug_http, debug_http_h3),
+    (true, true, debug_https, debug_https_h3),
+);
 
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {

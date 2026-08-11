@@ -99,6 +99,11 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
+    /// The `RequestContext` pools behind every `Bun.serve` on this thread,
+    /// lazily allocated per server type. Owned here (not in a `thread_local!`)
+    /// so that a Worker's pools are freed along with its VM; like
+    /// `body_value_pool`, only the allocations are freed, never the slots.
+    pub(crate) request_pools: crate::server::RequestPools,
     pub(crate) active_handles: ActiveHandles,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
@@ -237,6 +242,17 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
     unsafe { &(*state).global_dns_data }
+}
+
+/// Per-VM `Bun.serve` request pools; see [`crate::server::RequestPools`].
+#[inline]
+pub(crate) fn request_pools() -> &'static crate::server::RequestPools {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable for the VM's lifetime and only read (interior
+    // mutability via `OnceCell`).
+    unsafe { &(*state).request_pools }
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
@@ -398,6 +414,7 @@ unsafe fn init_runtime_state(
                 )
             }
         },
+        request_pools: crate::server::RequestPools::default(),
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
     }));

@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-use core::ffi::c_int;
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
@@ -193,8 +192,7 @@ pub mod lib {
             unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
         }
         pub fn read_open_memory(&self, buf: &[u8]) -> Result {
-            // SAFETY: self valid; buf outlives the archive (caller contract,
-            // see `BufferReadStream::buf` field comment).
+            // SAFETY: self valid; caller keeps `buf` alive until the archive is freed.
             unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
@@ -352,16 +350,13 @@ pub mod lib {
         // `self` must be a live archive handle from `archive_{read,write}_new()`.
         // `Archive` is `opaque_ffi!`-backed (UnsafeCell), so `&self → *mut Self`
         // is sound; libarchive never returns null from `*_new()`.
-        pub fn error_string(&self) -> &'static [u8] {
+        pub fn error_string(&self) -> &[u8] {
             // SAFETY: `self` is a live archive handle.
             let p = unsafe { archive_error_string(self.as_mut_ptr()) };
             if p.is_null() {
                 return b"";
             }
-            // SAFETY: libarchive owns the error string for the lifetime of the
-            // archive; callers treat it as borrowed-until-next-call. The
-            // `'static` here is a lifetime erasure — the caller must not let
-            // the slice outlive the archive.
+            // SAFETY: the string is owned by the archive and valid until the next call on it.
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
         }
 
@@ -865,58 +860,28 @@ pub mod lib {
     // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
 }
 
-use lib::Archive;
+use lib::{Archive, ReadArchive};
 
-pub struct BufferReadStream {
-    buf: *const [u8],
-
-    archive: *mut Archive,
-    reading: bool,
+/// libarchive reads `buf` through `archive` until the archive is freed.
+pub(crate) struct BufferReadStream<'a> {
+    buf: &'a [u8],
+    archive: ReadArchive,
 }
 
-impl BufferReadStream {
-    /// Construct a stream over `buf`.
-    ///
-    /// # Safety
-    /// `buf` is type-erased to a raw `*const [u8]` (no lifetime parameter on
-    /// `BufferReadStream` — see field comment). The caller
-    /// **must** guarantee that the slice `buf` points to remains valid and
-    /// unmoved for the entire lifetime of the returned `BufferReadStream`
-    /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
-    /// and [`open_read()`] dereference a dangling pointer (UB).
-    pub(crate) unsafe fn init(buf: &[u8]) -> Self {
-        // was an out-param constructor (`this.* = ...`)
+impl<'a> BufferReadStream<'a> {
+    pub(crate) fn init(buf: &'a [u8]) -> Self {
         Self {
-            buf: std::ptr::from_ref::<[u8]>(buf),
-            archive: Archive::read_new(),
-            reading: false,
+            buf,
+            archive: ReadArchive::new(),
         }
     }
 
-    /// Borrow the underlying libarchive handle.
-    ///
-    /// SAFETY (invariant): `self.archive` is set to a fresh non-null handle by
-    /// `Archive::read_new()` in `init()` (asserted there) and remains valid
-    /// until `read_free()` in `Drop`. All `Archive` methods take `&self`
-    /// (FFI interior mutability), so a shared borrow is sufficient.
     #[inline]
     fn archive(&self) -> &Archive {
-        // SAFETY: see doc comment — non-null for the lifetime of `self`.
-        unsafe { &*self.archive }
+        &self.archive
     }
 
-    /// Borrow the input buffer.
-    ///
-    /// SAFETY (invariant): `self.buf` is a fat pointer captured from the
-    /// `&[u8]` passed to `init()`; the caller guarantees it outlives `self`
-    /// (see field comment). Never null, never mutated.
-    #[inline]
-    fn buf(&self) -> &[u8] {
-        // SAFETY: see doc comment — borrowed for `self`'s lifetime.
-        unsafe { &*self.buf }
-    }
-
-    pub(crate) fn open_read(&mut self) -> lib::Result {
+    pub(crate) fn open_read(&self) -> lib::Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
         // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
@@ -938,14 +903,9 @@ impl BufferReadStream {
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
         // _ = lib.archive_read_support_filter_none(this.archive);
-
-        let rc = archive.read_open_memory(self.buf());
-
-        self.reading = (rc as c_int) > -1;
-
         // _ = lib.archive_read_support_compression_all(this.archive);
 
-        rc
+        archive.read_open_memory(self.buf)
     }
 
     // pub fn archive_write_callback(
@@ -978,13 +938,6 @@ impl BufferReadStream {
     //     var this = fromCtx(ctx1);
     //     var that = fromCtx(ctx2);
     // }
-}
-
-impl Drop for BufferReadStream {
-    fn drop(&mut self) {
-        let _ = self.archive().read_close();
-        let _ = self.archive().read_free();
-    }
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.
@@ -1225,10 +1178,9 @@ impl Archiver {
     ) -> crate::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
+        let stream = BufferReadStream::init(file_buffer);
         let _ = stream.open_read();
-        let archive = stream.archive;
+        let archive = stream.archive();
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
@@ -1254,8 +1206,7 @@ impl Archiver {
         let mut normalized_buf = bun_paths::PathBuffer::uninit();
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = archive.read_next_header(&mut entry);
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -1379,10 +1330,9 @@ impl Archiver {
     ) -> crate::Result<u32> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
+        let stream = BufferReadStream::init(file_buffer);
         let _ = stream.open_read();
-        let archive = stream.archive;
+        let archive = stream.archive();
         let mut count: u32 = 0;
         let dir_fd = dir;
 
@@ -1400,8 +1350,7 @@ impl Archiver {
         let mut use_lseek = true;
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = archive.read_next_header(&mut entry);
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -1832,20 +1781,12 @@ impl Archiver {
                                             plucker_.contents.inflate(size)?;
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
-                                            // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
+                                            let read = archive
+                                                .read_data(plucker_.contents.list.as_mut_slice());
                                             if read < 0 {
                                                 if options.log {
-                                                    // SAFETY: `archive` is the live
-                                                    // `read_new()` handle this
-                                                    // extraction loop is iterating.
-                                                    let archive_error = slice_to_nul(
-                                                        unsafe { &*archive }.error_string(),
-                                                    );
+                                                    let archive_error =
+                                                        slice_to_nul(archive.error_string());
                                                     Output::err(
                                                         "libarchive error",
                                                         "extracting {}: {}",
@@ -1886,14 +1827,11 @@ impl Archiver {
                                 let mut retries_remaining: u8 = 5;
 
                                 'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
-                                    } {
+                                    match archive.read_data_into_fd(
+                                        *file_handle,
+                                        &mut use_pwrite,
+                                        &mut use_lseek,
+                                    ) {
                                         lib::Result::Eof => break 'loop_,
                                         lib::Result::Ok => break 'possibly_retry,
                                         lib::Result::Retry => {
@@ -1914,12 +1852,8 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                // SAFETY: `archive` is the live
-                                                // `read_new()` handle this
-                                                // extraction loop is iterating.
-                                                let archive_error = slice_to_nul(
-                                                    unsafe { &*archive }.error_string(),
-                                                );
+                                                let archive_error =
+                                                    slice_to_nul(archive.error_string());
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

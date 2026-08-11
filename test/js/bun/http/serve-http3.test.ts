@@ -1301,3 +1301,127 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+// Both QUIC engines (Bun.serve's and the fetch client's) are only ticked from
+// an event loop, so every RTT lsquic measures includes whatever that loop ran
+// in between. quic.c pins the congestion controller to Cubic: lsquic's default
+// "adaptive" mode settles on BBRv1 for good as soon as a connection's early RTT
+// samples exceed 1.5 ms, and BBRv1 then models loop latency as the path. Its
+// window target is bandwidth x min RTT, where the "bandwidth" it can observe
+// on a busy loop is one window per loop iteration and the min RTT is whatever
+// the quickest moment of the connection looked like, so once it leaves startup
+// the window shrinks round after round until it sits at the 4-packet minimum.
+// Cubic only reacts to loss, which a slow loop does not produce.
+//
+// The fixture counts its own event loop iterations and paces them with
+// Bun.sleepSync: 5 ms per iteration while the connection is set up (so the
+// handshake RTTs that adaptive mode decides on are well over 1.5 ms), idle for
+// a moment once the transfer starts (so the controller's min RTT is the real
+// loopback RTT, as it would be for any connection that saw one quick round
+// trip), then 12 ms per iteration for ITERATIONS iterations. Only the second
+// half of those is asserted on, which leaves either controller ample rounds to
+// settle. Over those 60 iterations Cubic moves several MiB (it is bounded by
+// the receiver's UDP buffer: 3.5-7 MiB with Linux's 208 KiB default on a debug
+// build), a collapsed BBRv1 window moves ~7 KiB per iteration, 0.4-0.5 MiB.
+describe("Bun.serve HTTP/3 congestion control", () => {
+  const ITERATIONS = 120;
+  // Larger than any window either controller reaches here, so every tick is
+  // limited by the congestion window, not by how much the application had
+  // queued. (Application-limited rounds never let BBRv1 leave startup, which
+  // is why a response made of small chunks does not show the collapse.)
+  const CHUNK_SIZE = 512 * 1024;
+  const MIN_SECOND_HALF_BYTES = 1024 * 1024;
+
+  const script = `
+    const tls = ${JSON.stringify(tls)};
+    const ITERATIONS = ${ITERATIONS};
+    const CHUNK = Buffer.alloc(${CHUNK_SIZE}, "cwnd");
+    let busyMs = 5;
+    let iterations = 0;
+    let windowStart = Infinity;
+    (function spin() {
+      iterations++;
+      if (iterations >= windowStart + ITERATIONS) busyMs = 0;
+      if (busyMs) Bun.sleepSync(busyMs);
+      setImmediate(spin);
+    })();
+    function startTransfer() {
+      busyMs = 0;
+      setTimeout(() => { windowStart = iterations; busyMs = 12; }, 20);
+    }
+    // Iterations since the busy window opened; negative before that.
+    const elapsed = () => iterations - windowStart;
+    const inSecondHalf = () => elapsed() >= ITERATIONS / 2;
+    let download = { chunks: 0, secondHalfChunks: 0 };
+    const server = Bun.serve({
+      port: 0, tls, http3: true, http1: false,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/download") {
+          startTransfer();
+          download = { chunks: 0, secondHalfChunks: 0 };
+          return new Response(new ReadableStream({
+            // pull() runs once the previous chunk has been handed to lsquic in
+            // full, so chunks pulled during the second half of the window are
+            // the chunks the connection actually moved during it (+-1).
+            pull(ctrl) {
+              if (elapsed() >= ITERATIONS) return ctrl.close();
+              download.chunks++;
+              if (inSecondHalf()) download.secondHalfChunks++;
+              ctrl.enqueue(CHUNK);
+            },
+          }));
+        }
+        if (pathname === "/download/stats") return Response.json(download);
+        if (pathname === "/upload") {
+          startTransfer();
+          let total = 0, secondHalf = 0;
+          for await (const chunk of req.body) {
+            if (elapsed() >= ITERATIONS) break;
+            total += chunk.length;
+            if (inSecondHalf()) secondHalf += chunk.length;
+          }
+          return Response.json({ total, secondHalf });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    console.error("PORT=" + server.port);
+    process.stdin.on("data", () => {});
+    ${STOP_ON_STDIN_END}
+  `;
+
+  test("a response body keeps flowing while the server's event loop is busy", async () => {
+    await withCustomServer(script, async port => {
+      const body = await fetchH3(port, "/download").then(r => r.bytes());
+      const { chunks, secondHalfChunks } = (await fetchH3(port, "/download/stats").then(r => r.json())) as {
+        chunks: number;
+        secondHalfChunks: number;
+      };
+      expect(body.length).toBe(chunks * CHUNK_SIZE);
+      expect(secondHalfChunks * CHUNK_SIZE).toBeGreaterThanOrEqual(MIN_SECOND_HALF_BYTES);
+    });
+  });
+
+  // The fetch client's engine sees the same thing from the other side: the
+  // server's loop delays every ACK, so its RTT samples are inflated the same way.
+  test("a streamed request body keeps flowing while the server's event loop is busy", async () => {
+    await withCustomServer(script, async port => {
+      const chunk = Buffer.alloc(CHUNK_SIZE, "cwnd");
+      let responded = false;
+      const res = await fetchH3(port, "/upload", {
+        method: "POST",
+        body: new ReadableStream({
+          pull(ctrl) {
+            if (responded) ctrl.close();
+            else ctrl.enqueue(chunk);
+          },
+        }),
+      });
+      responded = true;
+      const { total, secondHalf } = (await res.json()) as { total: number; secondHalf: number };
+      expect(total).toBeGreaterThanOrEqual(secondHalf);
+      expect(secondHalf).toBeGreaterThanOrEqual(MIN_SECOND_HALF_BYTES);
+    });
+  });
+});

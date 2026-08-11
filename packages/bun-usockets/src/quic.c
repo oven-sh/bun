@@ -690,6 +690,20 @@ static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
     SSL_CTX_set_early_data_enabled(ssl, 0);
 }
 
+/* Both engines are only ticked from an event loop (see "process driver"
+ * above), so every RTT lsquic measures includes whatever the loop ran between
+ * two ticks. lsquic's default "adaptive" CC (es_cc_algo 3) makes a permanent
+ * choice from a connection's handshake RTT, BBRv1 above 1.5 ms, which any JS
+ * work during the handshake exceeds even on loopback. BBRv1 then models loop
+ * latency as the path: the only bandwidth it can observe is one cwnd per loop
+ * iteration, so cwnd never grows in startup and, once startup ends, shrinks to
+ * the 4-packet minimum; a busy server then moves ~7 KB per loop iteration.
+ * Cubic only reacts to loss, which a slow loop doesn't produce, and is what
+ * adaptive mode picks on a quiet loop anyway. */
+static void us_quic_use_cubic(struct lsquic_engine_settings *settings) {
+    settings->es_cc_algo = 1;
+}
+
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
@@ -706,6 +720,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     ctx->ssl_ctx = ssl;
 
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP_SERVER);
+    us_quic_use_cubic(&ctx->settings);
     ctx->settings.es_versions = LSQUIC_DF_VERSIONS & LSQUIC_IETF_VERSIONS;
     ctx->settings.es_ecn = 0;
     /* QPACK can expand small dynamic-table refs into large header lists; cap
@@ -1170,6 +1185,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     ctx->stream_ext_size = stream_ext_size;
 
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP);
+    us_quic_use_cubic(&ctx->settings);
     ctx->settings.es_versions = (1u << LSQVER_I001);
     ctx->settings.es_ecn = 0;
     ctx->settings.es_max_header_list_size = 64 * 1024;

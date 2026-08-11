@@ -35,6 +35,12 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            /* Same layer at which HttpParser 400s a malformed HTTP/1 header
+             * block, so static and file routes are covered too. */
+            if (req.isMalformed()) {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

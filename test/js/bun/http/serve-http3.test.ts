@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -1269,10 +1270,11 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // RFC 9114 §4.2 forbids Transfer-Encoding; the server rejects it with 400
-  // (server.zig prepareJsRequestContextFor). Not testable via the native
-  // client either — `isConnectionSpecific()` strips the header before
-  // encoding — so the check is defense-in-depth against raw QUIC clients.
+  // Malformed request fields (RFC 9114 §4.1.2 / §4.2) get a 400 from
+  // Http3Context before routing; see "Bun.serve HTTP/3 malformed request
+  // fields" below. Only the CR/LF value rule is exercised there: neither
+  // in-tree client will put Transfer-Encoding, a non-token name or a NUL on
+  // the wire.
 
   // I: server.upgrade() returns false over H3 instead of crashing, and the
   // handler can still send a normal response.
@@ -1300,4 +1302,87 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+});
+
+// QPACK is length-prefixed, so a request field can carry bytes the HTTP/1
+// parser could never deliver. The native client refuses to send them, so
+// these drive the server with node:quic, the way a hostile peer would.
+describe("Bun.serve HTTP/3 malformed request fields", () => {
+  function serveRecordingHeaders(seen: Record<string, string>[]) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      routes: {
+        "/static": new Response("static"),
+      },
+      fetch(req) {
+        seen.push(Object.fromEntries(req.headers));
+        return new Response("handled");
+      },
+    });
+  }
+
+  async function rawH3(port: number, headers: Record<string, string>) {
+    const client = await connect(
+      { address: "127.0.0.1", port, family: "ipv4" },
+      { servername: "localhost", verifyPeer: "manual" },
+    );
+    try {
+      await client.opened;
+      const status = Promise.withResolvers<string | undefined>();
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":path": "/", ":authority": "localhost", ...headers },
+        onheaders(received: Record<string, string>) {
+          status.resolve(received[":status"]);
+        },
+      });
+      const chunks: Uint8Array[] = [];
+      for await (const batch of stream) chunks.push(...batch);
+      // FIN arrived, so the response headers (if any) were delivered already.
+      stream.closed.then(
+        () => status.resolve(undefined),
+        () => status.resolve(undefined),
+      );
+      return { status: await status.promise, body: Buffer.concat(chunks).toString() };
+    } finally {
+      await client.close();
+    }
+  }
+
+  // RFC 9114 §4.1.2. Before this was enforced the value reached
+  // req.headers verbatim, and anything that re-serializes those headers over
+  // HTTP/1 (fetch(upstream, { headers: req.headers }) in a proxy, for one)
+  // would emit the injected line.
+  test.each([
+    ["x-forwarded-for", "1.2.3.4\r\nx-injected: 1"],
+    ["x-forwarded-for", "1.2.3.4\nx-injected: 1"],
+    ["x-forwarded-for", "1.2.3.4\r"],
+    // Surfaces as the synthesized `host` header.
+    [":authority", "localhost\r\nx-injected: 1"],
+  ])("a request whose %s field contains CR or LF is rejected with 400 before routing", async (name, value) => {
+    const seen: Record<string, string>[] = [];
+    using server = serveRecordingHeaders(seen);
+    const res = await rawH3(server.port, { [name]: value });
+    expect(res).toEqual({ status: "400", body: "" });
+    expect(seen).toEqual([]);
+  });
+
+  test("a malformed field is rejected before a declared route is matched", async () => {
+    const seen: Record<string, string>[] = [];
+    using server = serveRecordingHeaders(seen);
+    const res = await rawH3(server.port, { ":path": "/static", "x-forwarded-for": "1.2.3.4\r\nx-injected: 1" });
+    expect(res).toEqual({ status: "400", body: "" });
+  });
+
+  // Only NUL/CR/LF are out; the rest of the value is opaque, so an HTAB,
+  // embedded spaces and an empty value still reach the handler.
+  test("values without CR, LF or NUL are delivered unchanged", async () => {
+    const seen: Record<string, string>[] = [];
+    using server = serveRecordingHeaders(seen);
+    const res = await rawH3(server.port, { "x-tab": "a\tb c", "x-empty": "" });
+    expect(res).toEqual({ status: "200", body: "handled" });
+    expect(seen).toEqual([expect.objectContaining({ host: "localhost", "x-tab": "a\tb c", "x-empty": "" })]);
+  });
 });

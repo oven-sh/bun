@@ -3120,15 +3120,6 @@ where
         //
         // We first validate the self-reported request body length so that
         // we avoid needing to worry as much about what memory to free.
-        // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
-        // header field is malformed.
-        if Ctx::IS_H3 {
-            if ReqLike::header(req, b"transfer-encoding").is_some() {
-                RespLike::write_status(resp, b"400 Bad Request");
-                RespLike::end_without_body(resp, false);
-                return None;
-            }
-        }
 
         // Resolve once, reuse for both `has_request_body()` and the forward to
         // `Ctx::create`.

@@ -21,6 +21,7 @@ struct Http3Request {
             const us_quic_header_t *h = us_quic_stream_header(s, i);
             std::string_view name{h->name, h->name_len};
             std::string_view value{h->value, h->value_len};
+            if (isMalformedField(name, value)) malformed = true;
             if (name == ":method") {
                 method = value;
             } else if (name == ":path") {
@@ -42,6 +43,8 @@ struct Http3Request {
             }
         }
     }
+
+    bool isMalformed() { return malformed; }
 
     bool isAncient() { return false; }
     bool getYield() { return yield; }
@@ -103,6 +106,37 @@ struct Http3Request {
     }
 
 private:
+    /* RFC 9110 tchar minus uppercase; RFC 9114 §4.2 makes a message with an
+     * uppercase field name malformed. */
+    static bool isLowercaseTokenByte(unsigned char c) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') return true;
+        switch (c) {
+            case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
+            case '+': case '.': case '^': case '_': case '`': case '|': case '~':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /* RFC 9114 §4.1.2 / §4.2, the same rules the HTTP/2 and HTTP/3 clients
+     * apply to response fields (is_malformed_response_field / _value). QPACK
+     * is length-prefixed, so nothing below this layer rejects a CR, LF or NUL
+     * the way HttpParser does for HTTP/1; whatever passes here is what
+     * Request.headers hands back to be re-serialized by fetch() et al. */
+    static bool isMalformedField(std::string_view name, std::string_view value) {
+        std::string_view token = name;
+        if (!token.empty() && token[0] == ':') token.remove_prefix(1);
+        if (token.empty()) return true;
+        for (unsigned char c : token) {
+            if (!isLowercaseTokenByte(c)) return true;
+        }
+        if (value.find_first_of(std::string_view{"\0\r\n", 3}) != std::string_view::npos) return true;
+        /* Connection-specific fields have no meaning outside HTTP/1 (§4.2). */
+        return name == "connection" || name == "keep-alive" || name == "proxy-connection"
+            || name == "transfer-encoding" || name == "upgrade";
+    }
+
     static bool equalsIgnoreCase(std::string_view a, std::string_view b) {
         if (a.size() != b.size()) return false;
         for (size_t i = 0; i < a.size(); i++) {
@@ -116,6 +150,7 @@ private:
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;
+    bool malformed = false;
 };
 
 }

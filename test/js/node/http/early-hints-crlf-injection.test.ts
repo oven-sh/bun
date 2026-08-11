@@ -29,8 +29,10 @@ describe("writeEarlyHints", () => {
     port = (server.address() as AddressInfo).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    const closed = once(server, "close");
     server.close();
+    await closed;
   });
 
   async function writeEarlyHintsFor(hints: Record<string, string>) {

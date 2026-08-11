@@ -295,12 +295,11 @@ impl RuntimeTranspilerStore {
                 break;
             }
             // if there are more, we need to drain the microtasks from the previous run
-            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if !terminated
-                && unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                    .is_err()
-            {
-                terminated = true;
+            if !terminated {
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                terminated = drained.is_err();
             }
             if terminated {
                 // The rest of the batch is already off the queue, so teardown's

@@ -1330,7 +1330,12 @@ pub struct H2FrameParser {
     /// node strictSingleValueFields session option (default true): when false, duplicate
     /// single-value headers and array values for them are encoded as-is instead of rejected.
     strict_single_value_fields: Cell<bool>,
+    /// Highest stream id registered in either direction (see highest_started_stream_id).
     last_stream_id: Cell<u32>,
+    /// Id the next locally initiated stream gets (a request on a client, a push on a server):
+    /// nghttp2's next_stream_id. Only local allocations and setNextStreamID move it; the peer's
+    /// streams advance `last_stream_id`, never this.
+    next_stream_id: Cell<u32>,
     /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
     /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
     /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
@@ -5318,6 +5323,11 @@ impl H2FrameParser {
         {
             self.last_peer_stream_id.set(stream_identifier);
         }
+        if self.has_local_parity(stream_identifier)
+            && stream_identifier >= self.next_stream_id.get()
+        {
+            self.next_stream_id.set(stream_identifier + 2);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -6814,7 +6824,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"nextStreamID",
-            JSValue::js_number(this.get_next_stream_id() as f64),
+            JSValue::js_number(this.next_stream_id.get() as f64),
         );
         result.put(
             global_object,
@@ -8271,21 +8281,13 @@ impl H2FrameParser {
         Ok(JSValue::js_number(result as f64))
     }
 
-    /// `set_next_stream_id` can park `last_stream_id` anywhere in the u32 range, so the step
-    /// saturates; callers that open the stream reject anything above `MAX_STREAM_ID`.
-    fn get_next_stream_id(&self) -> u32 {
-        let stream_id = self.last_stream_id.get();
-        if self.is_server.get() {
-            if stream_id.is_multiple_of(2) {
-                stream_id.saturating_add(2)
-            } else {
-                stream_id.saturating_add(1)
-            }
-        } else if stream_id.is_multiple_of(2) {
-            stream_id.saturating_add(1)
-        } else {
-            stream_id.saturating_add(2)
-        }
+    /// RFC 9113 §5.1.1: a server initiates even streams, a client odd ones.
+    fn first_local_stream_id(&self) -> u32 {
+        if self.is_server.get() { 2 } else { 1 }
+    }
+
+    fn has_local_parity(&self, stream_id: u32) -> bool {
+        stream_id % 2 == self.first_local_stream_id() % 2
     }
 
     #[bun_jsc::host_fn(method)]
@@ -8298,22 +8300,16 @@ impl H2FrameParser {
         debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
-        // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
-        // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
-        // so the subtraction saturates to the initial state instead of wrapping.
-        let next_stream_id = stream_id_arg.to_u32();
-        let last_stream_id = if this.is_server.get() {
-            if next_stream_id.is_multiple_of(2) {
-                next_stream_id.saturating_sub(2)
-            } else {
-                next_stream_id.saturating_sub(1)
-            }
-        } else if next_stream_id.is_multiple_of(2) {
-            next_stream_id.saturating_sub(1)
+        let requested = stream_id_arg.to_u32();
+        // An id of the peer's parity rounds up to the next one of ours; 0 (the JS layer lets a
+        // fraction below 1 through) lands on the first id, as on a fresh session.
+        let next_stream_id = if this.has_local_parity(requested) {
+            requested
         } else {
-            next_stream_id.saturating_sub(2)
+            requested.saturating_add(1)
         };
-        this.last_stream_id.set(last_stream_id);
+        this.next_stream_id
+            .set(next_stream_id.max(this.first_local_stream_id()));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8335,10 +8331,11 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let id = this.get_next_stream_id();
+        let id = this.next_stream_id.get();
         if id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
+        // Registering the stream is what advances next_stream_id.
         if this.handle_received_stream_id(id).is_none() {
             return Ok(JSValue::js_number(-1.0));
         }
@@ -8828,7 +8825,7 @@ impl H2FrameParser {
             if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
                 stream_id_arg.to_u32()
             } else {
-                this.get_next_stream_id()
+                this.next_stream_id.get()
             };
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
@@ -9839,6 +9836,7 @@ impl H2FrameParser {
             max_send_header_block_length: Cell::new(0),
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
+            next_stream_id: Cell::new(1),
             last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
@@ -10019,6 +10017,9 @@ impl H2FrameParser {
         }
 
         this_ref.is_server.set(is_server);
+        this_ref
+            .next_stream_id
+            .set(this_ref.first_local_stream_id());
         JSH2FrameParser::Gc::context.set(this_value, global_object, context_obj);
 
         this_ref

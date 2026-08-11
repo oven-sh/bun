@@ -297,6 +297,10 @@ impl CompileTarget {
                     _found_version = true;
                     continue;
                 }
+            } else if token == b"glibc" {
+                this.libc = Libc::Default;
+                found_libc = true;
+                continue;
             } else if token == b"musl" {
                 this.libc = Libc::Musl;
                 found_libc = true;
@@ -328,7 +332,8 @@ impl CompileTarget {
             this.baseline = false;
         }
 
-        if this.libc != Libc::Default && this.os != OperatingSystem::Linux {
+        // Not `libc != Default`: an explicit "glibc" parses to `Default` and is just as invalid off linux.
+        if found_libc && this.os != OperatingSystem::Linux {
             return Err(ParseError::InvalidTarget);
         }
 
@@ -354,6 +359,7 @@ impl CompileTarget {
                         && OPERATING_SYSTEM_NAMES.get(token).is_none()
                         && token != b"modern"
                         && token != b"baseline"
+                        && token != b"glibc"
                         && token != b"musl"
                         && token != b"android"
                         && !(strings::has_prefix(token, b"v1.")
@@ -381,6 +387,9 @@ impl CompileTarget {
                 let input = strings::trim(input_, b" \t\r");
                 if strings::contains(input, b"musl") && !strings::contains(input, b"linux") {
                     bun_core::err_generic!("invalid target, musl libc only exists on linux");
+                } else if strings::contains(input, b"glibc") && !strings::contains(input, b"linux")
+                {
+                    bun_core::err_generic!("invalid target, glibc only exists on linux");
                 } else if strings::contains(input, b"android")
                     && !strings::contains(input, b"linux")
                 {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibc, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
 import { join } from "path";
 
@@ -119,6 +119,99 @@ describe("Bun.build compile", () => {
 
     // The test passes if compilation succeeds - the actual embedded resource
     // path handling is verified by the successful compilation
+  });
+});
+
+// `Bun.Build.Libc` is "glibc" | "musl". "-glibc" explicitly selects the default Linux build, which on
+// a glibc host is the running bun itself, so the accepting tests below never download anything.
+describe("compile target -glibc token", () => {
+  const arch = isArm64 ? "arm64" : "x64";
+
+  test.concurrent.skipIf(!isGlibc)("Bun.build accepts a bun-linux-<arch>-glibc target", async () => {
+    using dir = tempDir("build-compile-glibc-api", {
+      "app.js": `console.log("glibc-target-ok");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: {
+        target: `bun-linux-${arch}-glibc`,
+        outfile: join(String(dir), "app"),
+      },
+    });
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "glibc-target-ok\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent.skipIf(!isGlibc)("bun build --compile accepts --target=bun-linux-<arch>-glibc", async () => {
+    using dir = tempDir("build-compile-glibc-cli", {
+      "app.js": `console.log("glibc-target-ok");`,
+    });
+    const outfile = join(String(dir), "app");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${arch}-glibc`, "app.js", "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stderr: buildStderr, exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "glibc-target-ok\n", stderr: "", exitCode: 0 });
+  });
+
+  // libc is a Linux-only axis. These are rejected while parsing the target, on every host.
+  test.concurrent("bun build --compile rejects -glibc combined with a non-linux OS", async () => {
+    using dir = tempDir("build-compile-glibc-cli-invalid", {
+      "app.js": `console.log("unreachable");`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=bun-windows-x64-glibc", "app.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "error: invalid target, glibc only exists on linux\n",
+      exitCode: 1,
+    });
+  });
+
+  test("Bun.build rejects -glibc combined with a non-linux OS", () => {
+    using dir = tempDir("build-compile-glibc-api-invalid", {
+      "app.js": `console.log("unreachable");`,
+    });
+
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: {
+          target: "bun-darwin-arm64-glibc" as Bun.Build.CompileTarget,
+          outfile: join(String(dir), "app"),
+        },
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-darwin-arm64-glibc"`);
   });
 });
 

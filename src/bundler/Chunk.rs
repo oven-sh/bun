@@ -1040,14 +1040,13 @@ impl IntermediateOutput {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                         // This comment must go before the //# sourceMappingURL comment
                         let mut debug_id_fmt = Vec::new();
-                        write!(
+                        let _ = write!(
                             &mut debug_id_fmt,
                             "\n//# debugId={}\n",
                             source_map::DebugIDFormatter {
                                 id: chunk.isolated_hash
                             }
-                        )
-                        .ok();
+                        );
 
                         let _ = arena; // Note: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;

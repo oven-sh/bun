@@ -224,19 +224,10 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// file: URLs
-// ──────────────────────────────────────────────────────────────────────────
-
-/// The body blob opens the file lazily, so this is where `fetch("file:...")`
-/// learns that the path cannot be read. Returns the rejection value, a
-/// `TypeError` like every other `fetch()` failure (`ValueError::SystemTypeError`).
-///
-/// `stat`, not `open`: opening a FIFO or a device has side effects and the fd
-/// is not needed. Non-file stores (files embedded in a standalone executable)
-/// have nothing on disk to check.
+/// The `TypeError` for `fetch("file:...")` to reject with when the blob's path cannot be read.
 fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> Option<JSValue> {
     let store = file_blob.store()?;
+    // A file embedded in a standalone executable comes back as a byte store; nothing to check.
     let blob::store::Data::File(file) = &store.data else {
         return None;
     };
@@ -245,6 +236,7 @@ fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> 
     };
 
     let mut path_buf = bun_paths::path_buffer_pool::get();
+    // `stat`, not `open`: opening a FIFO or a device has side effects, and the fd is not needed.
     let err = match bun_sys::stat(path.slice_z(&mut path_buf)) {
         Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as bun_sys::Mode) => {
             bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::read)

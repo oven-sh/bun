@@ -114,6 +114,18 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
+    /* Same equivalence as the listeners' SNI tree (ASCII case-insensitive), so
+     * this queue and the trees agree on which entry a name refers to. */
+    static bool sameServerName(std::string_view a, std::string_view b) {
+        if (a.length() != b.length()) return false;
+        for (size_t i = 0; i < a.length(); i++) {
+            unsigned char ca = (unsigned char) a[i], cb = (unsigned char) b[i];
+            if (ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+            if (cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+            if (ca != cb) return false;
+        }
+        return true;
+    }
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -191,7 +203,7 @@ public:
                 us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
             });
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
-                if (it->hostname == hostname_pattern) {
+                if (sameServerName(it->hostname, hostname_pattern)) {
                     us_internal_ssl_ctx_unref(it->ctx);
                     delete it->router;
                     it = pendingServerNames.erase(it);
@@ -619,7 +631,7 @@ public:
 
         void *domainRouter = nullptr;
         for (auto &p : pendingServerNames) {
-            if (p.hostname == serverName) { domainRouter = p.router; break; }
+            if (sameServerName(p.hostname, serverName)) { domainRouter = p.router; break; }
         }
         if (domainRouter) {
             httpContextData->currentRouter = (decltype(httpContextData->currentRouter)) domainRouter;

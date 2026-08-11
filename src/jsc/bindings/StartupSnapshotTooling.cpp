@@ -1168,6 +1168,7 @@ static void dumpNewCells(JSC::VM& vm)
         size_t blocks = 0, liveBytes = 0, capBytes = 0, emptyBlocks = 0;
     };
     std::map<std::string, D> byDir;
+    JSC::HeapIterationScope scope(vm.heap);
     vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
         if (h->block().isImmortal()) return;
         mortalBlocks++;
@@ -1181,7 +1182,6 @@ static void dumpNewCells(JSC::VM& vm)
         d.capBytes += h->cellsPerBlock() * h->cellSize();
         if (!live) d.emptyBlocks++;
     });
-    JSC::HeapIterationScope scope(vm.heap);
     vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
         bool isNew = cell->isPreciseAllocation() ? !cell->preciseAllocation().isImmortal() : !cell->markedBlock().isImmortal();
         if (!isNew) return IterationStatus::Continue;

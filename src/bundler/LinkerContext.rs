@@ -1583,9 +1583,9 @@ pub struct GenerateChunkCtx<'a> {
     /// `generate_chunks_in_parallel`. The slice outlives every
     /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
-    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk], bun_ptr::Mut>,
+    /// safe `Deref`. Read-only: each task writes only through its own
+    /// `*mut Chunk`.
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via

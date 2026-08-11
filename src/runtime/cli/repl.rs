@@ -2608,8 +2608,22 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     while j > 0 && is_word_char(code[j - 1]) {
                         j -= 1;
                     }
-                    (j > 0 && matches!(code[j - 1], b'.' | b'#'))
+                    if (j > 0 && matches!(code[j - 1], b'.' | b'#'))
                         || !REGEX_KEYWORDS.contains(&&code[j..end])
+                    {
+                        true
+                    } else {
+                        // `as void!` asserts a type, so the `!` is still postfix.
+                        let mut k = j;
+                        while k > 0 && matches!(code[k - 1], b' ' | b'\t') {
+                            k -= 1;
+                        }
+                        let kw_end = k;
+                        while k > 0 && is_word_char(code[k - 1]) {
+                            k -= 1;
+                        }
+                        matches!(&code[k..kw_end], b"as" | b"satisfies")
+                    }
                 } else {
                     false
                 }
@@ -2709,13 +2723,17 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
         if is_word_char(ch) {
             if word_end != i {
-                // `void` after `as`/`satisfies` is a type, not the void operator.
-                word_after_type_op = is_word_char(prev)
-                    && matches!(&code[word_start..word_end], b"as" | b"satisfies");
+                // `void` after `as`/`satisfies` (also across `|`/`&`) is a type.
+                word_after_type_op = (is_word_char(prev)
+                    && matches!(&code[word_start..word_end], b"as" | b"satisfies"))
+                    || (word_after_type_op && matches!(prev, b'|' | b'&'));
                 word_start = i;
                 word_after_dot = matches!(prev, b'.' | b'#');
             }
             word_end = i + 1;
+        } else if !matches!(ch, b'|' | b'&') {
+            // Any other significant token ends the type position.
+            word_after_type_op = false;
         }
 
         match ch {

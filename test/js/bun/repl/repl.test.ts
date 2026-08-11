@@ -893,11 +893,27 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(cast.stdout)).not.toContain("SyntaxError");
       expect(cast.exitCode).toBe(0);
 
+      const union = await runRepl(["q = (86 as string | void / 2); q", ".exit"]);
+      expect(stripAnsi(union.stdout)).toContain("43");
+      expect(stripAnsi(union.stdout)).not.toContain("SyntaxError");
+      expect(union.exitCode).toBe(0);
+
+      const asserted = await runRepl(["q = (88 as void! / 2); q", ".exit"]);
+      expect(stripAnsi(asserted.stdout)).toContain("44");
+      expect(stripAnsi(asserted.stdout)).not.toContain("SyntaxError");
+      expect(asserted.exitCode).toBe(0);
+
       // The void operator still takes a regex operand.
       const operator = await runRepl(["q = void /\"/.test('\"'); q", ".exit"]);
       expect(stripAnsi(operator.stdout)).toContain("undefined");
       expect(stripAnsi(operator.stdout)).not.toContain("SyntaxError");
       expect(operator.exitCode).toBe(0);
+
+      // Bitwise-or of a void-operator expression is not a type union.
+      const bitwise = await runRepl(["q = (256 | void /\"/.test('\"')) + 1; q", ".exit"]);
+      expect(stripAnsi(bitwise.stdout)).toContain("257");
+      expect(stripAnsi(bitwise.stdout)).not.toContain("SyntaxError");
+      expect(bitwise.exitCode).toBe(0);
     });
 
     test("division after a cast to an inline type literal", async () => {

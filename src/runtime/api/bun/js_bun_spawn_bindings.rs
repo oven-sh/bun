@@ -1259,6 +1259,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 {
                     return Err(global_this.throw_value(c.target.blame(&err).to_js(global_this)));
                 }
+                // A stdio `Bun.file(path)` that failed to open already names
+                // its own path; the argv[0] attribution below is for exec.
+                if err.syscall == sys::Tag::open {
+                    return Err(global_this.throw_value(err.to_js(global_this)));
+                }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT

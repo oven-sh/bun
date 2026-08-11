@@ -13,6 +13,8 @@ use core::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use bun_core::Output;
 #[cfg(unix)]
+use bun_core::ZStr;
+#[cfg(unix)]
 use bun_sys::FdExt as _;
 use bun_sys::{self, Fd};
 
@@ -622,6 +624,51 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// Opens a `PosixStdio::Path` in the parent and has the child dup2 it onto
+/// `fileno`. As a child-side open action it would run under vfork (Linux) or
+/// inside the posix_spawn syscall (macOS), so an open(2) that blocks (a FIFO
+/// with no peer, a hung mount) would park this thread with it, and a failure
+/// would be reported as a posix_spawn error against argv[0]. O_NONBLOCK only
+/// covers the open itself; it is cleared before the child inherits the
+/// description.
+#[cfg(unix)]
+fn open_stdio_path(
+    actions: &mut PosixSpawnActions,
+    cleanup: &mut PosixSpawnFdGuard,
+    fileno: Fd,
+    path: &[u8],
+    flags: i32,
+) -> crate::Result<bun_sys::Result<()>> {
+    let path_z = bun_sys::to_posix_path(path).map_err(|_| crate::Error::Unexpected)?;
+    let fd = match bun_sys::open(
+        ZStr::from_cstr(&path_z),
+        flags | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY | bun_sys::O::NONBLOCK,
+        0o664,
+    ) {
+        Ok(fd) => fd,
+        Err(err) => return Ok(Err(err)),
+    };
+    cleanup.to_close_at_end.push(fd);
+    // The kernel only refuses directories for writing; a read-only stdin
+    // would otherwise hand the child an fd whose every read() fails.
+    match bun_sys::fstat(fd) {
+        Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as _) => {
+            let err = bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::open);
+            return Ok(Err(err.with_path(path)));
+        }
+        Ok(_) => {}
+        Err(err) => return Ok(Err(err.with_path(path))),
+    }
+    if let Err(err) = bun_sys::update_nonblocking(fd, false) {
+        return Ok(Err(err.with_path(path)));
+    }
+    actions.dup2(fd, fileno)?;
+    if fd != fileno {
+        actions.close(fd)?;
+    }
+    Ok(Ok(()))
+}
+
 /// # Safety
 /// `argv` must point to a null-terminated array of NUL-terminated C strings
 /// with at least one non-null element (`argv[0]`); `envp` must point to a
@@ -777,7 +824,15 @@ pub unsafe fn spawn_process_posix(
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
+                let flags = if i == 0 {
+                    bun_sys::O::RDONLY
+                } else {
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT
+                };
+                if let Err(err) = open_stdio_path(&mut actions, &mut cleanup, fileno, path, flags)?
+                {
+                    return Ok(Err(err));
+                }
             }
             PosixStdio::Buffer => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -921,12 +976,15 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
-                actions.open(
+                if let Err(err) = open_stdio_path(
+                    &mut actions,
+                    &mut cleanup,
                     fileno,
                     path,
-                    (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32,
-                    0o664,
-                )?;
+                    bun_sys::O::RDWR | bun_sys::O::CREAT,
+                )? {
+                    return Ok(Err(err));
+                }
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {

@@ -45,22 +45,18 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
+#[cfg(unix)]
+use self::posix_compat::fd_t;
 use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-#[cfg(unix)]
-use self::posix_compat::{fd_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
     #[cfg(unix)]
-    use crate::Error;
-    #[cfg(unix)]
     use core::ffi::c_int;
-    #[cfg(unix)]
-    use std::ffi::CString;
 
     /// Native fd backing int.
     // posix_spawn file actions use libc `int` fds on the C side
@@ -111,12 +107,6 @@ mod posix_compat {
     pub(super) fn errno_from_posix_spawn(rc: c_int) -> Errno {
         Errno(rc)
     }
-
-    /// Copy a path into a NUL-terminated buffer.
-    #[cfg(unix)]
-    pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
-        CString::new(path).map_err(|_| crate::Error::Unexpected)
-    }
 }
 
 // MOVE_DOWN: this file was `src/runtime/api/bun/spawn.rs`; the `stdio`
@@ -163,17 +153,6 @@ pub mod bun_spawn {
 
         // deinit: freed chdir_buf, each action.path, and the actions list — all owned
         // types now, so Drop is automatic.
-
-        pub(crate) fn open(
-            &mut self,
-            fd: Fd,
-            path: &[u8],
-            flags: u32,
-            mode: i32,
-        ) -> Result<(), Error> {
-            let posix_path = to_posix_path(path)?;
-            self.open_z(fd, &posix_path, flags, mode)
-        }
 
         pub(crate) fn open_z(
             &mut self,

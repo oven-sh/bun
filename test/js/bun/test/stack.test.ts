@@ -85,9 +85,15 @@ test("err.line and err.column are set", async () => {
   );
 });
 
+const supplementaryCharacter = String.fromCodePoint(0x10000);
+
 test.concurrent.each([
   ["\t123 + error()", "1 | \t123 + error()", "    \t      ^"],
-  ['"😀"\t+ error()', '1 | "😀"\t+ error()', "        \t  ^"],
+  [
+    `"${supplementaryCharacter}"\t+ error()`,
+    `1 | "${supplementaryCharacter}"\t+ error()`,
+    "        \t  ^",
+  ],
 ])("runtime error caret preserves source padding (#10857)", async (script, expectedSource, expectedCaret) => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],

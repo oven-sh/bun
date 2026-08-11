@@ -343,8 +343,16 @@ impl Lookup {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            // `name` comes from the source map's `sources` array, so the joined
+            // path can be longer than any path buffer; it is a display string,
+            // so it is produced at whatever length it has.
+            let mut spill = Vec::new();
             return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
+                bun_paths::resolve_path::join_abs_string_spill::<bun_paths::platform::Auto>(
+                    dir,
+                    &mut spill,
+                    &[name],
+                ),
             ));
         }
 
@@ -402,14 +410,16 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::PathBuffer::uninit();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+            let mut buf = bun_paths::path_buffer_pool::get();
+            // `name` comes from the source map's `sources` array; a joined path
+            // that does not fit in a path buffer cannot be opened either way.
+            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            >(dir, &mut buf[..], &[name])?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }

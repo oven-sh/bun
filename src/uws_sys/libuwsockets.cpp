@@ -1420,12 +1420,8 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* No close gate here: callers (FileResponseStream::finish,
-       * DevServer/HTMLBundle error paths) keep using the response after this
-       * returns, so closing inside this call would destruct the ext under
-       * them. Corked callers get the gate HttpResponse::cork() runs after its
-       * handler; uncorked ones run uws_res_close_if_done_and_marked themselves
-       * once they are done with the response. */
+      /* Callers keep using the response after this returns, so the close gate
+       * must not run here; closeIfDoneAndMarked() lists who runs it instead. */
     }
     else
     {

@@ -11,6 +11,15 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
 };
 
+// The tunneling tests connect to 127.0.0.1 through an explicit proxy and
+// expect the proxy to be hit. NO_PROXY applies to explicit proxies too, so an
+// ambient NO_PROXY covering loopback would make them bypass the proxy (same
+// as in ../../web/websocket/websocket-proxy.test.ts).
+const prevNoProxy = process.env.NO_PROXY;
+const prevNoProxyLower = process.env.no_proxy;
+process.env.NO_PROXY = "";
+process.env.no_proxy = "";
+
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
 let authProxy: net.Server;
@@ -89,6 +98,8 @@ afterAll(() => {
   httpsProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
+  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
 describe("ws package proxy API", () => {

@@ -2,9 +2,31 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, gc } from "harness";
 import path from "path";
+import { clearProxyEnv, proxyFreeEnv, restoreProxyEnv } from "./proxy-stress-helpers";
+
+// Forwards an absolute-form request to its target and marks the response so
+// tests can tell it went through the proxy.
+async function forward(request) {
+  const response = await fetch(request.url, {
+    method: request.method,
+    body: await request.text(),
+  });
+  const headers = new Headers(response.headers);
+  headers.set("x-proxy-used", "1");
+  return new Response(response.body, {
+    status: response.status,
+    headers,
+  });
+}
 
 let proxy, auth_proxy, server;
+// The in-process tests fetch localhost through an explicit `proxy:`, and
+// NO_PROXY applies to explicit proxies too; the proxies' upstream fetch()
+// would likewise honor an ambient HTTP_PROXY. `bunEnv` was captured before
+// this runs, so the subprocess tests spread `proxyFreeEnv` on top of it.
+let savedProxyEnv;
 beforeAll(() => {
+  savedProxyEnv = clearProxyEnv();
   proxy = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -15,17 +37,7 @@ beforeAll(() => {
 
       // simple http proxy
       if (request.url.startsWith("http://")) {
-        const response = await fetch(request.url, {
-          method: request.method,
-          body: await request.text(),
-        });
-        // Add marker header to indicate request went through proxy
-        const headers = new Headers(response.headers);
-        headers.set("x-proxy-used", "1");
-        return new Response(response.body, {
-          status: response.status,
-          headers,
-        });
+        return await forward(request);
       }
 
       // no TLS support here
@@ -54,10 +66,7 @@ beforeAll(() => {
 
       // simple http proxy
       if (request.url.startsWith("http://")) {
-        return await fetch(request.url, {
-          method: request.method,
-          body: await request.text(),
-        });
+        return await forward(request);
       }
 
       // no TLS support here
@@ -80,6 +89,7 @@ afterAll(() => {
   server.stop(true);
   proxy.stop(true);
   auth_proxy.stop(true);
+  restoreProxyEnv(savedProxyEnv);
 });
 
 const test = process.env.PROXY_URL ? it : it.skip;
@@ -116,38 +126,40 @@ describe.concurrent(() => {
     expect(result.data).toBe(data);
   });
 
-  describe("proxy non-TLS", async () => {
+  describe("proxy non-TLS", () => {
     let url;
     let auth_proxy_url;
     let proxy_url;
-    const requests = [
-      () => [new Request(url), auth_proxy_url],
-      () => [
+    const requests = {
+      "GET Request through auth proxy": () => [new Request(url), auth_proxy_url],
+      "POST Request through auth proxy": () => [
         new Request(url, {
           method: "POST",
           body: "Hello, World",
         }),
         auth_proxy_url,
       ],
-      () => [url, auth_proxy_url],
-      () => [new Request(url), proxy_url],
-      () => [
+      "GET url through auth proxy": () => [url, auth_proxy_url],
+      "GET Request through proxy": () => [new Request(url), proxy_url],
+      "POST Request through proxy": () => [
         new Request(url, {
           method: "POST",
           body: "Hello, World",
         }),
         proxy_url,
       ],
-      () => [url, proxy_url],
-    ];
+      "GET url through proxy": () => [url, proxy_url],
+    };
     beforeAll(() => {
       url = `http://localhost:${server.port}`;
       auth_proxy_url = `http://squid_user:ASD123%40123asd@localhost:${auth_proxy.port}`;
       proxy_url = `localhost:${proxy.port}`;
     });
 
-    for (let callback of requests) {
-      test(async () => {
+    // These only need the in-process servers, so they are not gated on
+    // PROXY_URL like the httpbin tests above.
+    for (const [name, callback] of Object.entries(requests)) {
+      it(name, async () => {
         const [request, proxy] = callback();
         gc();
         const response = await fetch(request, { verbose: true, proxy });
@@ -155,6 +167,7 @@ describe.concurrent(() => {
         const text = await response.text();
         gc();
         expect(text).toBe("Hello, World");
+        expect(response.headers.get("x-proxy-used")).toBe("1");
       });
     }
   });
@@ -231,6 +244,7 @@ describe.concurrent(() => {
       cmd: [bunExe(), "-e", `await fetch("${localServer.url}")`],
       env: {
         ...bunEnv,
+        ...proxyFreeEnv,
         http_proxy: http_proxy,
         https_proxy: https_proxy,
       },
@@ -259,6 +273,7 @@ describe.concurrent(() => {
       cmd: [bunExe(), "-e", `fetch("http://localhost:1").catch(() => {})`],
       env: {
         ...bunEnv,
+        ...proxyFreeEnv,
         http_proxy: "http://127.0.0.1:1",
         NO_PROXY: no_proxy,
       },
@@ -287,6 +302,7 @@ describe.concurrent(() => {
         ],
         env: {
           ...bunEnv,
+          ...proxyFreeEnv,
           http_proxy: `http://localhost:${proxy.port}`,
           NO_PROXY: `localhost:${server.port}`,
         },
@@ -318,6 +334,7 @@ describe.concurrent(() => {
         ],
         env: {
           ...bunEnv,
+          ...proxyFreeEnv,
           http_proxy: `http://localhost:${proxy.port}`,
           NO_PROXY: `localhost:${differentPort}`,
         },
@@ -348,6 +365,7 @@ describe.concurrent(() => {
         ],
         env: {
           ...bunEnv,
+          ...proxyFreeEnv,
           http_proxy: `http://localhost:${proxy.port}`,
           NO_PROXY: `localhost`,
         },
@@ -379,6 +397,7 @@ describe.concurrent(() => {
         ],
         env: {
           ...bunEnv,
+          ...proxyFreeEnv,
           http_proxy: `http://localhost:${proxy.port}`,
           NO_PROXY: `example.com, localhost:${differentPort}, localhost:${server.port}`,
         },

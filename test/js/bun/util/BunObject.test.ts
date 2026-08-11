@@ -61,8 +61,13 @@ console.log("caught:", caught, "phase:", phase);`,
   });
 });
 
-// Same assert, no hooks: first-touching Bun.sql with almost no stack left makes
-// the builder's module evaluation throw a RangeError after the transition.
+// No hooks: first-touching Bun.sql with almost no stack left makes the builder
+// throw a RangeError. The Bun object does not transition here; this guards the
+// builder, which used to report the exception while it was still pending. That
+// report's read of process._fatalException reified the property but counted as
+// a miss because of the pending exception, hitting the same assert on the
+// process object, and the report also consumed the exception the builder then
+// relied on.
 test("lazy property builder that throws from stack overflow does not abort", async () => {
   await using proc = Bun.spawn({
     cmd: [

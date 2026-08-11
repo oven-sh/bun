@@ -141,8 +141,9 @@ test("dead built-in JS helpers do not reappear", () => {
       ["src/js/internal/quic/quic.ts", /get \[kVerifyPeer\]\(\)/],
       // colors.ts consumers only read white/red/green/blue/hasColors
       ["src/js/internal/util/colors.ts", /\byellow\b|\bgray\b|\bclear\b|\breset\b/],
-      // repl.js takes the modes from internal/repl/mode, not from utils
-      ["src/js/internal/repl/utils.js", /^\s+REPL_MODE_(SLOPPY|STRICT),$/m],
+      // repl.js takes the modes from internal/repl/mode, not from utils. utils.js
+      // still uses REPL_MODE_STRICT internally, so only the sloppy one is pinned.
+      ["src/js/internal/repl/utils.js", /\bREPL_MODE_SLOPPY\b/],
       // SSLMode is only ever imported as a type
       ["src/js/internal/sql/shared.ts", /^\s+SSLMode,$/m],
       ["src/js/internal/fifo.ts", /\bclear\(\)/],

@@ -669,8 +669,21 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // Once .stack is materialized the frames are discarded and never read again;
+    // installing new ones only trips ASSERT(!m_errorInfoMaterialized) in
+    // computeErrorInfo when GC finalizes the error.
+    if (destination->hasMaterializedErrorInfo()) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     if (!destination->stackTrace()) {
-        destination->captureStackTrace(vm, globalObject, 1);
+        // ErrorInstance::captureStackTrace() unwraps stackTraceLimit(), which is
+        // empty once Error.stackTraceLimit has been set to a non-number or deleted.
+        if (globalObject->stackTraceLimit()) {
+            destination->captureStackTrace(vm, globalObject, 1);
+        } else {
+            destination->setStackFrames(vm, {});
+        }
     }
 
     if (source->stackTrace()) {

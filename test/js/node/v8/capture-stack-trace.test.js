@@ -993,6 +993,59 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
+// Both of these abort the process when they fail, so they run in a child.
+test.concurrent("Error.appendStackTrace does not abort when stackTraceLimit is non-numeric or deleted", async () => {
+  const src = `
+    class Source {
+      constructor() {
+        this.error = new Error("source");
+      }
+    }
+    const source = new Source().error;
+
+    Error.stackTraceLimit = "foo";
+    const destination = new Error("destination");
+    Error.appendStackTrace(source, destination);
+    Error.appendStackTrace(new Error("a"), new Error("b"));
+
+    delete Error.stackTraceLimit;
+    Error.appendStackTrace(new Error("c"), new Error("d"));
+
+    process.stdout.write(JSON.stringify({ appended: destination.stack.includes("at new Source") }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify({ appended: true }), stderr: "", exitCode: 0 });
+});
+
+test.concurrent("Error.appendStackTrace is a no-op once the destination's .stack has been materialized", async () => {
+  const src = `
+    const destination = new Error("destination");
+    const stack = destination.stack;
+    for (let i = 0; i < 100; i++) {
+      Error.appendStackTrace(new Function("return new Error('source')")(), destination);
+    }
+    Bun.gc(true);
+    Bun.gc(true);
+    process.stdout.write(JSON.stringify({ unchanged: destination.stack === stack }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ unchanged: true }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `

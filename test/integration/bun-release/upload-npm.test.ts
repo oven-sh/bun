@@ -72,7 +72,7 @@ function releaseDir(name: string, assets: ReturnType<typeof assetsOn>) {
 
 async function uploadNpm(cwd: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join("scripts", "upload-npm.ts"), version],
+    cmd: [bunExe(), path.join(cwd, "scripts", "upload-npm.ts"), version],
     cwd,
     env: bunEnv,
     stdout: "ignore",

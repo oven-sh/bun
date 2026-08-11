@@ -1044,3 +1044,66 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+// https://github.com/oven-sh/bun/issues/37603
+describe("percent-encoded literal segments", () => {
+  test("literal route segments match percent-decoded, like :params", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/robots.txt": new Response("static-hit"),
+        "/fn-literal.txt": () => new Response("fn-hit"),
+        "/user/:id": req => Response.json({ id: req.params.id }),
+        "/one/two": () => new Response("two-seg"),
+        "/100%": () => new Response("invalid-escape-hit"),
+        "/a%20b": () => new Response("encoded-key-hit"),
+      },
+      fetch: () => new Response("fell-through", { status: 404 }),
+    });
+    const get = async (path: string) => {
+      const res = await fetch(`http://localhost:${server.port}${path}`);
+      return `${res.status} ${await res.text()}`;
+    };
+
+    // RFC 3986 6.2.2.2: "%74" is a non-canonical spelling of "t"
+    expect(await get("/robots.txt")).toBe("200 static-hit");
+    expect(await get("/robots.tx%74")).toBe("200 static-hit");
+    expect(await get("/fn-literal.txt")).toBe("200 fn-hit");
+    expect(await get("/fn%2Dliteral.txt")).toBe("200 fn-hit");
+    expect(await get("/fn%2dliteral.txt")).toBe("200 fn-hit"); // lowercase hex
+
+    // route keys registered encoded match either spelling
+    expect(await get("/a%20b")).toBe("200 encoded-key-hit");
+    expect(await get("/a b")).toBe("200 encoded-key-hit"); // fetch re-encodes to %20
+
+    // :params still decode exactly once
+    expect(await get("/user/a%20b")).toBe('200 {"id":"a b"}');
+    expect(await get("/user/a%2520b")).toBe('200 {"id":"a%20b"}');
+
+    // %2F is data, not a path separator
+    expect(await get("/one%2Ftwo")).toBe("404 fell-through");
+    expect(await get("/one/two")).toBe("200 two-seg");
+
+    // invalid escapes stay literal
+    expect(await get("/100%")).toBe("200 invalid-escape-hit");
+    expect(await get("/100%25")).toBe("200 invalid-escape-hit");
+  });
+
+  test("decoded literal match keeps precedence over :param", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/p/secret": () => new Response("literal"),
+        "/p/:v": req => new Response(`param:${req.params.v}`),
+      },
+      fetch: () => new Response("fell-through", { status: 404 }),
+    });
+    const get = async (path: string) => {
+      const res = await fetch(`http://localhost:${server.port}${path}`);
+      return await res.text();
+    };
+    expect(await get("/p/secret")).toBe("literal");
+    expect(await get("/p/%73ecret")).toBe("literal");
+    expect(await get("/p/other")).toBe("param:other");
+  });
+});

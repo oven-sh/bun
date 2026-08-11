@@ -52,6 +52,63 @@ private:
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
 
+    /* Percent-decoded form of each URL segment, filled when the segment is parsed.
+     * Literal route matching compares decoded bytes (RFC 3986 6.2.2.2: "%74" and "t"
+     * are the same), consistent with how :param captures are decoded before reaching
+     * JS. Decoding per segment keeps "%2F" as data rather than a path separator.
+     * Only set when the raw segment actually contains a valid %XX escape. */
+    std::string urlSegmentDecodedStorage[MAX_URL_SEGMENTS] = {};
+    bool urlSegmentIsDecoded[MAX_URL_SEGMENTS] = {};
+
+    static int hexValue(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    /* Decode valid %XX escapes into output; invalid escapes stay literal (same
+     * policy as decodeURIComponentSIMD for :params). Returns false when nothing
+     * was decoded, in which case output is untouched and the raw view is usable. */
+    static bool percentDecodeSegment(std::string_view input, std::string &output) {
+        size_t firstPercent = input.find('%');
+        if (firstPercent == std::string_view::npos) {
+            return false;
+        }
+        output.clear();
+        output.reserve(input.length());
+        output.append(input.substr(0, firstPercent));
+        for (size_t i = firstPercent; i < input.length();) {
+            if (input[i] == '%' && i + 2 < input.length()) {
+                int hi = hexValue(input[i + 1]);
+                int lo = hexValue(input[i + 2]);
+                if (hi >= 0 && lo >= 0) {
+                    output.push_back((char) ((hi << 4) | lo));
+                    i += 3;
+                    continue;
+                }
+            }
+            output.push_back(input[i]);
+            i++;
+        }
+        /* Decoding strictly shrinks; equal length means every escape was invalid */
+        return output.length() != input.length();
+    }
+
+    /* The segment to use when matching or registering a literal (non-':', non-'*')
+     * pattern segment: the percent-decoded form, unless decoding would turn the
+     * segment into a parameter or wildcard marker. */
+    std::string_view literalSegment(int urlSegment, std::string_view raw) {
+        if (!urlSegmentIsDecoded[urlSegment]) {
+            return raw;
+        }
+        const std::string &decoded = urlSegmentDecodedStorage[urlSegment];
+        if (!decoded.empty() && (decoded[0] == ':' || decoded[0] == '*')) {
+            return raw;
+        }
+        return decoded;
+    }
+
     /* The matching tree */
     struct Node {
         std::string name = {};
@@ -157,6 +214,8 @@ private:
                 /* Update currentUrl */
                 currentUrl = currentUrl.substr(segmentLength);
             }
+
+            urlSegmentIsDecoded[urlSegment] = percentDecodeSegment(urlSegmentVector[urlSegment], urlSegmentDecodedStorage[urlSegment]);
         }
         /* In any case we return it */
         return {urlSegmentVector[urlSegment], false};
@@ -179,6 +238,9 @@ private:
             return false;
         }
 
+        /* Literal children are matched against the percent-decoded segment */
+        std::string_view decodedSegment = literalSegment(urlSegment, segment);
+
         for (auto &p : parent->children) {
             if (p->name.starts_with('*')) {
                 /* Wildcard match (can be seen as a shortcut) */
@@ -188,13 +250,13 @@ private:
                     }
                 }
             } else if (p->name.starts_with(':') && !segment.empty()) {
-                /* Parameter match */
+                /* Parameter match (raw bytes: params are percent-decoded later, in JS land) */
                 routeParameters.push(segment);
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
                     return true;
                 }
                 routeParameters.pop();
-            } else if (p->name == segment) {
+            } else if (p->name == decodedSegment) {
                 /* Static match */
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
                     return true;
@@ -211,8 +273,8 @@ private:
                 setUrl(pattern);
                 Node *n = node.get();
                 for (int i = 0; !getUrlSegment(i).second; i++) {
-                    /* Go to next segment or quit */
-                    std::string segment(getUrlSegment(i).first);
+                    /* Go to next segment or quit (same decoded form as add()) */
+                    std::string segment(literalSegment(i, getUrlSegment(i).first));
                     Node *next = nullptr;
                     for (const std::unique_ptr<Node> &child : n->children) {
                         if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
@@ -287,7 +349,9 @@ public:
             /* Iterate over all segments */
             setUrl(pattern);
             for (int i = 0; !getUrlSegment(i).second; i++) {
-                std::string strippedSegment(getUrlSegment(i).first);
+                /* Literal pattern segments are stored percent-decoded so every
+                 * encoded spelling of a path reaches the same node */
+                std::string strippedSegment(literalSegment(i, getUrlSegment(i).first));
                 if (strippedSegment.length() > 1 && strippedSegment[0] == ':') {
                     /* Parameter routes must be named only : */
                     strippedSegment.resize(1);

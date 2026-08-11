@@ -410,29 +410,37 @@ describe("web worker", () => {
     // parent inside one drain: a drain task delivers a bounded batch and posts the
     // rest to the next loop iteration, so timers and I/O get their turn in between.
     test("a message flood from a worker does not starve the parent's event loop", async () => {
-      const total = 1500; // more than one drain task's budget (drainBatchLimit in WorkerMessagingProxy.cpp)
+      const budget = 1024; // drainBatchLimit in WorkerMessagingProxy.cpp
+      // Two budgets plus one: the continuation the first task posts has to yield and
+      // post another one as well.
+      const total = 2 * budget + 1;
       const flag = new Int32Array(new SharedArrayBuffer(4));
       const src = `onmessage = ({ data: flag }) => {
         for (let i = 0; i < ${total}; i++) postMessage(i);
         Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
       }`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
-      let received = 0;
-      const delivered = Promise.withResolvers<void>();
-      w.onmessage = () => {
-        if (++received === total) delivered.resolve();
-      };
+      const got: number[] = [];
+      w.onmessage = e => got.push(e.data);
       w.postMessage(flag);
       // Block until the whole flood sits in the parent's inbox, so the first drain task
       // starts out with more than its budget no matter how fast either thread is.
       Atomics.wait(flag, 0, 0, 30_000);
       expect(Atomics.load(flag, 0)).toBe(1);
-      // Resumes inside the first drain task. An immediate armed there runs as soon as
-      // that task ends, before the continuation it posted delivers the next batch.
+      // Resumes inside the first drain task. An immediate armed there runs as soon as the
+      // task ends and before the continuation it posted runs, so each immediate sees what
+      // exactly one more task delivered; two in a row seeing the same count is the end.
       await once(w, "message");
-      await new Promise<void>(r => setImmediate(r));
-      expect(received).toBeLessThan(total);
-      await delivered.promise;
+      const afterEachTask: number[] = [];
+      do {
+        await new Promise<void>(r => setImmediate(r));
+        afterEachTask.push(got.length);
+      } while (afterEachTask.at(-1) !== afterEachTask.at(-2));
+      // [1024, 2048, 2049, 2049]: neither the first task nor its continuation delivered
+      // everything, and everything still arrived, in order.
+      expect(afterEachTask[0]).toBeLessThan(total);
+      expect(afterEachTask[1]).toBeLessThan(total);
+      expect(got).toEqual(Array.from({ length: total }, (_, i) => i));
       w.terminate();
       await once(w, "close");
     });

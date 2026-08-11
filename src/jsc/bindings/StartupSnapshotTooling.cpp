@@ -1454,9 +1454,10 @@ void startupSnapshotToolingAfterRestore()
 {
     const char* d = getenv("BUN_MEMDEBUG");
     s_dir = (d && *d) ? strdup(d) : nullptr; // the builder's pointer would point into its environment
-    if (s_dir)
+    if (s_dir) {
         s_profSampleRate = 64 * 1024;
         mi_prof_enable(s_profSampleRate); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
+    }
 }
 
 void startupSnapshotToolingInstall()

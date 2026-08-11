@@ -112,6 +112,14 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 /// seconds unit `transportParams.maxIdleTimeout` uses.
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
 pub(super) const MS_PER_SEC: u64 = 1_000;
+/// lsquic.h `es_cc_algo`. Never left at lsquic's own default (3, "adaptive"):
+/// adaptive commits each connection to Cubic or BBRv1 on its first RTT
+/// sample, and since these engines only run when the event loop ticks them,
+/// that sample (and every later bandwidth sample BBRv1 would act on) measures
+/// the JS that ran between two ticks rather than the path. On a busy loop
+/// BBRv1 shrinks cwnd to its 4-packet floor and stays there.
+const CC_ALGO_CUBIC: c_uint = 1;
+const CC_ALGO_BBR: c_uint = 2;
 
 /// Copy a sockaddr sized by its family (sockaddr_in = 16, sockaddr_in6 = 28)
 /// so an AF_INET address never over-reads past its allocation.
@@ -931,6 +939,9 @@ fn apply_transport_params(
     // Node's default max_idle_timeout is 10 seconds
     // (node/src/quic/transportparams.h DEFAULT_MAX_IDLE_TIMEOUT); lsquic's is 30.
     s.idle_timeout(10);
+    // Node's default `cc` is cubic (ngtcp2's default); see CC_ALGO_CUBIC for
+    // why lsquic's adaptive default is not usable here.
+    s.cc_algo(CC_ALGO_CUBIC);
     if !options.is_object() {
         local_tp.max_idle_timeout = match s.get_idle_timeout_ms() {
             0 => s.get_idle_timeout().saturating_mul(1000),
@@ -1062,14 +1073,12 @@ fn apply_transport_params(
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
-        // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
-        // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
-        // backend), so map 'reno' to Cubic, the closest loss-based option,
-        // rather than silently falling through to Adaptive which may pick BBR.
         let algo = match name.as_slice() {
-            b"cubic" | b"reno" => 1,
-            b"bbr" => 2,
-            _ => 0,
+            b"bbr" => CC_ALGO_BBR,
+            // 'cubic', and 'reno': lsquic ships no Reno (NGTCP2_CC_ALGO_RENO
+            // in node's backend), so it gets Cubic, the closest loss-based
+            // option.
+            _ => CC_ALGO_CUBIC,
         };
         s.cc_algo(algo);
     }

@@ -64,11 +64,16 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
+        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__deinit(url: &mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
+        safe fn URL__pathFromFileURL(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
@@ -96,6 +101,10 @@ pub mod whatwg {
         let mut input = *str;
         URL__getFileURLString(&mut input)
     }
+    pub fn path_from_file_url(str: &String) -> String {
+        let mut input = *str;
+        URL__pathFromFileURL(&mut input)
+    }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
     ///
@@ -114,12 +123,22 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
+        pub fn from_string(str: String) -> Option<core::ptr::NonNull<URL>> {
+            let mut input = str;
             URL__fromString(&mut input)
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(String::borrow_utf8(input))
+        }
+        /// By-value associated forms of the file-URL conversions, for callers
+        /// holding a `String` they are done with.
+        pub fn file_url_from_string(str: String) -> String {
+            let mut input = str;
+            URL__getFileURLString(&mut input)
+        }
+        pub fn path_from_file_url(str: String) -> String {
+            let mut input = str;
+            URL__pathFromFileURL(&mut input)
         }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
@@ -142,11 +161,37 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        /// Returns the host WITHOUT the port (the opposite of JS `host`; the
+        /// with-port form is [`URL::hostname`]).
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
+        /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
+        /// is guaranteed to be within the `u16` range.
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
         pub fn deinit(&mut self) {
             URL__deinit(self)
+        }
+        /// Raw-pointer form of [`URL::deinit`] for callers releasing an owned
+        /// `NonNull<URL>` (scopeguards).
+        ///
+        /// # Safety
+        /// `this` must be a valid owned pointer from `from_string`/`from_utf8`/
+        /// `from_js`, freed exactly once.
+        pub unsafe fn destroy(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is valid and owned.
+            unsafe { URL__deinit(&mut *this) }
         }
     }
 }

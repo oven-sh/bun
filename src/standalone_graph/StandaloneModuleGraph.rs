@@ -548,19 +548,12 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // Note: `from_internal` fills `internal = Some(ism)` +
-                // `input_line_count = ism.input_line_count()` and defaults the rest.
-                let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
                 // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
-                    std::iter::repeat_with(std::sync::OnceLock::new)
-                        .take(source_files_count)
-                        .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -574,24 +567,15 @@ impl LazySourceMap {
                     }));
                 }
 
-                let data = Box::new(SerializedSourceMapLoaded {
-                    map: SerializedSourceMap {
-                        bytes: serialized.bytes,
-                    },
-                    decompressed_files: decompressed_contents_slice.into_boxed_slice(),
-                });
+                let loaded: &'static SourceMap::SerializedSourceMap::Loaded =
+                    Box::leak(Box::new(SourceMap::SerializedSourceMap::Loaded::new(
+                        serialized.bytes,
+                        source_files_count,
+                    )));
 
-                stored.external_source_names = file_names;
-                // `from_provider` stores the pointer as a raw address in
-                // `SourceContentPtr.data`; the provider dispatch is never
-                // invoked for this type-punned pointer (guarded by
-                // `is_standalone_module_graph`).
-                stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
-                );
-                stored.is_standalone_module_graph = true;
-
-                let parsed = Arc::new(stored);
+                let parsed = Arc::new(SourceMap::ParsedSourceMap::from_standalone(
+                    ism, loaded, file_names,
+                ));
                 // The Arc clone held in self keeps the parsed map alive.
                 *self = LazySourceMap::Parsed(Arc::clone(&parsed));
                 Some(parsed)
@@ -2339,16 +2323,6 @@ impl SerializedSourceMap {
         // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
         unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
     }
-}
-
-/// Once loaded, this map stores additional data for keeping track of source code.
-pub struct SerializedSourceMapLoaded {
-    pub map: SerializedSourceMap,
-
-    /// Only decompress source code once! Once a file is decompressed,
-    /// it is stored here. Decompression failures are stored as an empty
-    /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

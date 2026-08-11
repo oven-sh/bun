@@ -7,6 +7,7 @@ use bun_core::{self, ZigStringSlice};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
+use crate::parsed_source_map::SourceContent;
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourceMap};
 
@@ -335,7 +336,7 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
+        if source_map.is_standalone_module_graph() {
             return Some(bun_core::String::clone_utf8(name));
         }
 
@@ -365,26 +366,23 @@ impl Lookup {
             let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
-            let provider = source_map.underlying_provider.provider()?;
-
             let index = usize::try_from(self.mapping.source_index).ok()?;
 
-            // Standalone module graph source maps are stored (in memory) compressed.
-            // They are decompressed on demand.
-            if source_map.is_standalone_module_graph {
-                let serialized = source_map.standalone_module_graph_data();
-                if index >= source_map.external_source_names.len() {
-                    return None;
+            let provider = match source_map.underlying_provider.content() {
+                SourceContent::None => return None,
+                // Standalone module graph source maps are stored (in memory) compressed.
+                // They are decompressed on demand.
+                SourceContent::Standalone(serialized) => {
+                    if index >= source_map.external_source_names.len() {
+                        return None;
+                    }
+
+                    let code = serialized.source_file_contents(index)?;
+
+                    return Some(ZigStringSlice::from_utf8_never_free(code));
                 }
-
-                // SAFETY: `standalone_module_graph_data` returns a pointer
-                // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` fills the
-                // per-index decompression cache through a `OnceLock`.
-                let code = unsafe { (*serialized).source_file_contents(index) };
-
-                return Some(ZigStringSlice::from_utf8_never_free(code?));
-            }
+                SourceContent::Provider(provider) => provider,
+            };
 
             if let Some(parsed) = provider.get_source_map(
                 base_filename,

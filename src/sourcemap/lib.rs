@@ -33,8 +33,8 @@ pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 // `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
 // inference fails only because `InternalSourceMap` holds the blob's raw data
 // pointer (owned by this map, or borrowed from the embedded standalone
-// section); `SourceContentPtr`'s provider handles are packed as plain
-// integers and never dereferenced off the JS thread.
+// section) and `SourceContentPtr` holds the raw provider handle, which is
+// never dereferenced off the JS thread.
 unsafe impl Send for ParsedSourceMap {}
 // SAFETY: see the `Send` rationale above — refcount is atomic and the raw
 // provider pointers are opaque, never dereferenced off the JS thread.
@@ -363,7 +363,7 @@ impl SourceProviderMap {
     }
 
     pub(crate) fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_provider(self)
+        SourceContentPtr::from_source_provider::<Self>(self)
     }
 }
 
@@ -684,9 +684,9 @@ pub mod SerializedSourceMap {
     }
 
     /// Once loaded, this map stores additional data for keeping track of
-    /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
-    /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
-    pub(crate) struct Loaded {
+    /// source code. Held by `ParsedSourceMap.underlying_provider` (see
+    /// `ParsedSourceMap::from_standalone`).
+    pub struct Loaded {
         pub(crate) map: SerializedSourceMap,
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
@@ -695,6 +695,17 @@ pub mod SerializedSourceMap {
     }
 
     impl Loaded {
+        /// `bytes` is the whole serialized map, starting at its [`Header`];
+        /// `source_files_count` is that header's file count.
+        pub fn new(bytes: &'static [u8], source_files_count: usize) -> Loaded {
+            Loaded {
+                map: SerializedSourceMap { bytes },
+                decompressed_files: std::iter::repeat_with(std::sync::OnceLock::new)
+                    .take(source_files_count)
+                    .collect(),
+            }
+        }
+
         pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);

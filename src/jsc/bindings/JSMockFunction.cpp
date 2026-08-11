@@ -967,9 +967,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     RELEASE_AND_RETURN(scope, jsMockFunctionCallImpl(globalObject, fn, callframe, thisValue));
 }
 
-// JSC requires a native [[Construct]] to return an object, so this cannot share jsMockFunctionCall.
-// Matches ordinary function construct semantics (and Jest): create `this` from newTarget's prototype,
-// run the mock with it, and return the mock's result if it is an object, the new instance otherwise.
+// A native [[Construct]] must return an object (Interpreter::executeConstruct calls asObject on the result).
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);

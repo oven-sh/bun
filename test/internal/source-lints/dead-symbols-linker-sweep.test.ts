@@ -9,27 +9,17 @@
 //
 // This is a source-tree lint: it reads files from the repository and does not
 // touch the built binary, so it belongs in test/internal/source-lints/ per the
-// README. It reads the committed tree (HEAD) rather than the working tree:
-// `git stash` round-trips can temporarily restore files a branch deletes (see
-// the same note in dead-code-escapes.test.ts), and those strays must not fail
-// the lint. CI runs against the committed tree, so HEAD is what matters.
+// README. The symbol checks read the working tree, so a tree that still (or
+// again) contains one of these definitions fails. The deleted-files check reads
+// the committed tree (HEAD) instead: `git stash` round-trips can temporarily
+// restore files a branch deletes (see the same note in dead-code-escapes.test.ts),
+// and those strays must not fail the lint.
 
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-
-function headFile(p: string): string {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", repoRoot, "show", `HEAD:${p}`],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (r.exitCode !== 0) {
-    throw new Error(`git show HEAD:${p} failed: ${r.stderr.toString()}`);
-  }
-  return r.stdout.toString();
-}
 
 function headTree(): Set<string> {
   const r = Bun.spawnSync({
@@ -48,7 +38,7 @@ function resurrected(checks: Array<[string, RegExp]>): string[] {
   const read = (file: string) => {
     let text = cache.get(file);
     if (text === undefined) {
-      text = headFile(file);
+      text = readFileSync(path.join(repoRoot, file), "utf8");
       cache.set(file, text);
     }
     return text;

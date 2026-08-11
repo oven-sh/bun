@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createHash, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -1300,4 +1302,150 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+});
+
+async function h3Exchange(
+  port: number,
+  headers: Record<string, string>,
+  options: Record<string, unknown> = {},
+): Promise<string> {
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+    ...options,
+  });
+  const outcome = Promise.withResolvers<string>();
+  client.closed.then(
+    () => outcome.resolve("closed"),
+    (err: Error & { code?: string; errorCode?: bigint }) =>
+      outcome.resolve(err?.code === "ERR_QUIC_APPLICATION_ERROR" ? `closed ${err.code} ${err.errorCode}` : "closed"),
+  );
+  client.opened
+    .then(async () => {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        headers,
+        onheaders(received: Record<string, string>) {
+          status = received[":status"];
+        },
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      if (status) outcome.resolve(`${status} ${body}`);
+    })
+    .catch(() => {});
+  const result = await outcome.promise;
+  if (!client.destroyed) client.close().catch(() => {});
+  return result;
+}
+
+const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
+  ":method": "GET",
+  ":path": path,
+  ":scheme": "https",
+  ":authority": "localhost",
+  ...extra,
+});
+
+describe("Bun.serve HTTP/3 request validation", () => {
+  test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
+    let reachedWithProbe = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        if (req.headers.has("x-probe")) reachedWithProbe++;
+        return new Response(String(reachedWithProbe));
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
+      results[JSON.stringify(value)] = await h3Exchange(server.port, requestHeaders("/", { "x-probe": value }));
+    }
+    results.wellFormed = await h3Exchange(server.port, requestHeaders("/", { "x-probe": "plain" }));
+    results.after = await h3Exchange(server.port, requestHeaders("/"));
+
+    expect(results).toEqual({
+      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      wellFormed: "200 1",
+      after: "200 1",
+    });
+  });
+
+  test("request.url falls back to the :path when :authority is not a valid host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const authorities = [
+      "example.com/other",
+      "user@example.com",
+      "example.com#frag",
+      "example.com\\other:8080",
+      "[::1]:3000?q",
+    ];
+    const results: Record<string, string> = {};
+    for (const authority of authorities) {
+      results[authority] = await h3Exchange(server.port, { ...requestHeaders("/index"), ":authority": authority });
+    }
+    results["example.com:8443"] = await h3Exchange(server.port, {
+      ...requestHeaders("/index"),
+      ":authority": "example.com:8443",
+    });
+
+    expect(results).toEqual({
+      "example.com/other": "200 /index",
+      "user@example.com": "200 /index",
+      "example.com#frag": "200 /index",
+      "example.com\\other:8080": "200 /index",
+      "[::1]:3000?q": "200 /index",
+      "example.com:8443": "200 https://example.com:8443/index",
+    });
+  });
+
+  test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    let handled = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls: {
+        key: pem("agent1-key.pem"),
+        cert: pem("agent1-cert.pem"),
+        ca: pem("ca1-cert.pem"),
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      http3: true,
+      fetch() {
+        handled++;
+        return new Response(String(handled));
+      },
+    });
+
+    const clientIdentity = (name: string) => ({
+      keys: [createPrivateKey(pem(`${name}-key.pem`))],
+      certs: [readFileSync(join(keysDir, `${name}-cert.pem`))],
+    });
+    const selfSigned = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent2"));
+    const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
+
+    expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
 });

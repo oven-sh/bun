@@ -676,6 +676,55 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  it("deleting process.env.NODE_TLS_REJECT_UNAUTHORIZED restores certificate verification and later assignments still apply", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: CERT_EXPIRED,
+      fetch() {
+        return new Response("Hello World");
+      },
+    });
+    const script = `
+      const url = process.env.SERVER;
+      async function attempt() {
+        try {
+          const res = await fetch(url, { keepalive: false });
+          return await res.text();
+        } catch (e) {
+          return e.code;
+        }
+      }
+      const out = [];
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+      out.push(await attempt());
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      out.push(String(process.env.NODE_TLS_REJECT_UNAUTHORIZED));
+      out.push(await attempt());
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+      out.push(await attempt());
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1";
+      out.push(await attempt());
+      console.log(JSON.stringify(out));
+    `;
+    const { NODE_TLS_REJECT_UNAUTHORIZED: _, ...env } = bunEnv as Record<string, string | undefined>;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...env, SERVER: `https://127.0.0.1:${server.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual([
+      "Hello World",
+      "undefined",
+      "CERT_HAS_EXPIRED",
+      "Hello World",
+      "CERT_HAS_EXPIRED",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,

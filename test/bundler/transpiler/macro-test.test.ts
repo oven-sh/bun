@@ -159,6 +159,65 @@ test("object argument with a sparse numeric key", async () => {
   });
 });
 
+test("object destructuring of a macro result keeps every bound property regardless of key order or repeated keys", async () => {
+  using dir = tempDir("macro-destructure-object", {
+    "m.ts": `export function m() {\n  return { a: 1, c: 2 };\n}\n`,
+    "index.ts": [
+      `import { m } from "./m.ts" with { type: "macro" };`,
+      `const { c, a } = m();`,
+      `const { a: x, a: y, c: z } = m();`,
+      `console.log(JSON.stringify([c, a, x, y, z]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toMatchObject({ lastLine: "[2,1,1,1,2]" });
+  expect(exitCode).toBe(0);
+});
+
+test("macros are not run from a node_modules file reached through a differently-cased path", async () => {
+  using dir = tempDir("macro-node-modules-casing", {
+    "Node_Modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "Node_Modules/pkg/m.js": `
+      import { writeFileSync } from "node:fs";
+      export function f() {
+        writeFileSync("MACRO_RAN", "macro executed");
+        return "INLINED_RESULT";
+      }
+    `,
+    "Node_Modules/pkg/index.js": `
+      import { f } from "./m.js" with { type: "macro" };
+      export const value = f();
+    `,
+    "entry.ts": `
+      import { value } from "./Node_Modules/pkg/index.js";
+      console.log(value);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toMatchObject({
+    stderr: expect.stringContaining("macros cannot be run from node_modules"),
+  });
+  expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+  expect(existsSync(path.join(String(dir), "Node_Modules", "pkg", "MACRO_RAN"))).toBe(false);
+  expect(existsSync(path.join(String(dir), "dist", "entry.js"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

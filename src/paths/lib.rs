@@ -963,17 +963,13 @@ pub mod fs {
             self.name().dir_with_trailing_slash()
         }
 
-        /// Checks for `<sep>node_modules<sep>` in the
+        /// Checks for `<sep>node_modules<sep>` (ASCII case-insensitively) in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            if cfg!(any(target_os = "macos", windows)) {
-                crate::strings::contains_case_insensitive_ascii(
-                    self.name().dir,
-                    crate::NODE_MODULES_NEEDLE,
-                )
-            } else {
-                crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
-            }
+            crate::strings::contains_case_insensitive_ascii(
+                self.name().dir,
+                crate::NODE_MODULES_NEEDLE,
+            )
         }
 
         /// Key used to identify this path in the incremental graph: the real

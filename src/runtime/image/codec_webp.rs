@@ -29,21 +29,13 @@ unsafe extern "C" {
     fn VP8LEncDspInit();
 }
 
-/// libwebp fills its per-ISA function-pointer tables from whichever codec call
-/// comes first, and in our build (no `WEBP_USE_THREAD`; on Windows libwebp
-/// never locks regardless) every thread that finds the flag unset runs the
-/// whole init body at once. That is only safe while the bodies are idempotent,
-/// and the two VP8L ones are not: `VP8LDspInitSSE2` / `VP8LEncDspInitSSE2`
-/// build the `*_SSE` tail tables by copying the live dispatch table, which a
-/// thread a few ns ahead may already have filled with the AVX2 kernels, and
-/// those kernels hand their <8-pixel tails to the `*_SSE` tables. A process
-/// that loses that race is left with predictor kernels that tail-call
-/// themselves forever: the next image using the predictor transform wedges a
-/// worker thread at 100% CPU.
-/// Run the init once, serialised, before any codec call; libwebp's own calls
-/// then find the flags set. `VP8LEncDspInit` nests `VP8LDspInit`, so this
-/// covers both tables. Every other dsp init body only stores fixed values, so
-/// concurrent re-runs of those are harmless.
+/// libwebp initialises its dispatch tables lazily and, without
+/// `WEBP_USE_THREAD` (and always on Windows), unsynchronised: concurrent first
+/// calls all run the init bodies. The VP8L bodies are not idempotent (their
+/// SSE2 stage snapshots the live table into the `*_SSE` tail tables the AVX2
+/// kernels delegate to), so racing inits can leave a kernel delegating to
+/// itself. Initialise once up front so libwebp's own calls find it done;
+/// `VP8LEncDspInit` also runs `VP8LDspInit`.
 fn init_dsp() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {

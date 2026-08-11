@@ -1,7 +1,7 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tls } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -56,24 +56,54 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
   }
 
   if (kind === "h3") {
-    const srv = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      http1: false,
-      fetch() {
-        let i = 0;
-        return new Response(
-          new ReadableStream({
-            pull(ctrl) {
-              if (i++ < count) ctrl.enqueue(payload);
-              else ctrl.close();
+    // Bun.serve({ http3 }) runs lsquic on the event loop of the process that
+    // created it. In this file that loop is also draining the 1 GiB bodies of
+    // the concurrent "server stops writing" tests, and a userspace transport
+    // only makes progress once per loop iteration (at most about a cwnd of
+    // packets), so served from here the 16 MiB body took 11-13 s under
+    // debug/ASAN, past the 5 s test timeout. The TCP servers are unaffected
+    // because the kernel moves their bytes. Serve h3 from an idle process.
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const payload = Buffer.alloc(${CHUNK}, 65);
+          const server = Bun.serve({
+            port: 0,
+            tls: ${JSON.stringify(tls)},
+            http3: true,
+            http1: false,
+            fetch() {
+              let i = 0;
+              return new Response(
+                new ReadableStream({
+                  pull(ctrl) {
+                    if (i++ < ${count}) ctrl.enqueue(payload);
+                    else ctrl.close();
+                  },
+                }),
+              );
             },
-          }),
-        );
-      },
+          });
+          console.log(server.url.href);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    return { url: String(srv.url), sent: () => sent, [Symbol.asyncDispose]: () => srv.stop(true) };
+    const lines = forEachLine(proc.stdout);
+    const { value: url, done } = await lines.next();
+    if (done) throw new Error(`h3 server exited ${await proc.exited}: ${await proc.stderr.text()}`);
+    return {
+      url,
+      sent: () => sent,
+      [Symbol.asyncDispose]: async () => {
+        proc.kill();
+        await proc.exited;
+      },
+    };
   }
 
   // h1 / h1-chunked / h1-gzip / h1-tls

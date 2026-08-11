@@ -601,20 +601,11 @@ impl RunCommand {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT (and is a
-                            // single fixed name for debug builds), so two
-                            // different binaries built at the same commit (e.g.
-                            // side-by-side local builds being benchmarked)
-                            // collide here. Blindly reusing the existing link
-                            // would make every `--bun` child of the SECOND
-                            // binary silently exec the FIRST. Verify the target
-                            // before reusing; replace it once if stale.
-                            //
-                            // This is also the only cleanup allowed in this dir:
-                            // concurrent buns of the same build share these
-                            // links and the scripts they already spawned exec
-                            // them at any moment, so a link that points at this
-                            // binary must never be removed, not even briefly.
+                            // Another binary at this commit (any debug build, for
+                            // debug builds) may have planted this link: reuse it
+                            // only if it points at us, else re-point it once. No
+                            // other removal is allowed here: scripts spawned by
+                            // concurrent runs of this binary exec these links.
                             let mut buf = bun_paths::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
@@ -687,8 +678,7 @@ impl RunCommand {
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
             let image_path = win::exe_path_w();
-            // The links are hard links, so an existing one can only be checked
-            // by comparing file identity with the running image.
+            // Hard links have no target to read back; compare file identity instead.
             let image_stat = bun_sys::File::openat_os_path(
                 bun_sys::Fd::cwd(),
                 image_path,
@@ -705,11 +695,9 @@ impl RunCommand {
                 let mut made_dir = false;
                 let mut replaced = false;
                 loop {
-                    // `target_path_buffer` is mutated in place between FFI calls
-                    // (the dir-NUL/backslash toggle below).
-                    // Under Stacked Borrows a `*const` derived via `Deref::deref`
-                    // is invalidated by the intervening `&mut` from `IndexMut`, so
-                    // re-derive `as_ptr()` at each FFI call site instead of caching.
+                    // Re-derive `as_ptr()` at every FFI call: the buffer is mutated
+                    // in between (dir NUL/backslash toggle below), which under
+                    // Stacked Borrows invalidates a pointer derived earlier.
                     if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
                         != 0
                     {
@@ -717,10 +705,9 @@ impl RunCommand {
                     }
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {
-                            // Same rules as the POSIX EEXIST branch above. A
-                            // rebuilt binary is a different file from the one
-                            // the existing links were made from, so this also
-                            // covers stale links left by a previous debug build.
+                            // Same rules as the POSIX EEXIST branch. A rebuilt binary
+                            // is a different file, so this also replaces links left
+                            // behind by an earlier debug build.
                             let matches = image_stat.as_ref().is_some_and(|image| {
                                 bun_sys::openat_windows(
                                     bun_sys::Fd::cwd(),

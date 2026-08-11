@@ -24,9 +24,6 @@ use crate::shell::states::pipeline::Pipeline;
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
-    /// Start the node at this id (`Interpreter::start_node`). Used when a
-    /// freshly-created child needs starting at top-of-stack.
-    Start(NodeId),
     /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
     /// the registered child at top-of-stack.
     OnIoWriterChunk {
@@ -129,7 +126,6 @@ impl Yield {
                     }
                     interp.next_node(id)
                 }
-                Yield::Start(id) => interp.start_node(id),
                 Yield::OnIoWriterChunk {
                     child,
                     written,

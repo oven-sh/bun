@@ -11,8 +11,7 @@
 #include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
-#include <JavaScriptCore/ObjectPrototype.h>
-#include <JavaScriptCore/ObjectPrototypeInlines.h> // objectPrototypeToString is ALWAYS_INLINE, no out-of-line copy to link
+#include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"

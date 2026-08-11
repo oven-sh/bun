@@ -313,19 +313,19 @@ extern "C" fn on_data(
 }
 
 pub struct ConnectConfig {
-    pub(crate) port: u16,
-    pub(crate) address: BunString,
+    port: u16,
+    address: BunString,
 }
 
 pub struct UDPSocketConfig {
     pub(crate) hostname: BunString,
-    pub(crate) connect: Option<ConnectConfig>,
+    connect: Option<ConnectConfig>,
     pub(crate) port: u16,
     pub(crate) flags: i32,
     /// Adopt this already-created (and usually bound) socket descriptor
     /// instead of creating a new one. Used by node:dgram for
     /// `socket.bind({ fd })` and cluster-shared sockets.
-    pub(crate) fd: Option<i32>,
+    fd: Option<i32>,
     pub(crate) binary_type: BinaryType,
 }
 

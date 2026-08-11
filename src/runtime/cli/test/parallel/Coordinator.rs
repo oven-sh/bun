@@ -59,7 +59,7 @@ pub struct Coordinator<'a> {
     pub(crate) live_workers: u32,
     pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
-    pub(crate) bailed: bool,
+    pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
@@ -67,9 +67,21 @@ pub struct Coordinator<'a> {
     pub(crate) windows_job: Option<*mut c_void>,
 }
 
+/// Why the run stopped dispatching files. A worker panic overrides `Bail`
+/// (see `abort_on_worker_panic`); nothing clears it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopReason {
+    /// `--bail=N` reached: idle workers are shut down, inflight files finish.
+    Bail,
+    /// A worker died of a crash signal and every other worker was terminated,
+    /// so the siblings' inflight files are collateral, not crashes of their own.
+    WorkerPanicked,
+}
+
 impl<'a> Coordinator<'a> {
     fn is_done(&self) -> bool {
-        (self.files_done as usize >= self.files.len() || self.bailed) && self.live_workers == 0
+        (self.files_done as usize >= self.files.len() || self.stop_reason.is_some())
+            && self.live_workers == 0
     }
 
     fn has_undispatched_files(&self) -> bool {
@@ -128,7 +140,7 @@ impl<'a> Coordinator<'a> {
             }
             if self.spawned_count < self.parallel_limit
                 && self.has_undispatched_files()
-                && !self.bailed
+                && self.stop_reason.is_none()
             {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
@@ -244,7 +256,7 @@ impl<'a> Coordinator<'a> {
         if self.spawned_count >= self.parallel_limit {
             return;
         }
-        if self.bailed || !self.has_undispatched_files() {
+        if self.stop_reason.is_some() || !self.has_undispatched_files() {
             return;
         }
         let now = bun_core::time::milli_timestamp();
@@ -272,7 +284,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn assign_work(&mut self, w: &mut Worker) {
-        if self.bailed {
+        if self.stop_reason.is_some() {
             return w.shutdown();
         }
         if let Some(idx) = w.range.pop_front() {
@@ -307,10 +319,10 @@ impl<'a> Coordinator<'a> {
     }
 
     fn bail_out(&mut self) {
-        if self.bailed {
+        if self.stop_reason.is_some() {
             return;
         }
-        self.bailed = true;
+        self.stop_reason = Some(StopReason::Bail);
         self.break_dots();
         bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -577,8 +589,7 @@ impl<'a> Coordinator<'a> {
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
             let panicked = is_panic_status(status);
-            let was_bailed = self.bailed;
-            if was_bailed && !panicked {
+            if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.record_timing(idx, w.dispatched_at);
@@ -604,7 +615,7 @@ impl<'a> Coordinator<'a> {
         }
 
         let mut respawned = false;
-        if !self.bailed && self.has_undispatched_files() {
+        if self.stop_reason.is_none() && self.has_undispatched_files() {
             // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
@@ -623,7 +634,7 @@ impl<'a> Coordinator<'a> {
         }
 
         if !respawned {
-            if !self.bailed && self.live_workers == 0 {
+            if self.stop_reason.is_none() && self.live_workers == 0 {
                 self.abort_queued_files(b"no live workers");
             }
             // Explicit early release: `w` is a borrowed slot in self.workers, so
@@ -668,8 +679,8 @@ impl<'a> Coordinator<'a> {
     }
 
     /// A worker was killed by a crash signal — treat this as a Bun bug, not
-    /// a test failure. Print the panic banner (even if --bail already set
-    /// `bailed`), terminate every other worker, and mark all remaining
+    /// a test failure. Print the panic banner (even if --bail already
+    /// stopped the run), terminate every other worker, and mark all remaining
     /// files as aborted so the run ends immediately with a non-zero exit
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
@@ -689,8 +700,8 @@ impl<'a> Coordinator<'a> {
         // mid-file would keep producing output after the panic banner.
         // Terminate the whole process group (same as the SIGINT path) so the
         // run ends now; reapWorker() will account each inflight file as a
-        // crash when the exit arrives. Runs even if --bail already set
-        // `bailed`, since bailOut() only shutdown()s idle workers and would
+        // crash when the exit arrives. Runs even if --bail already stopped
+        // the run, since bailOut() only shutdown()s idle workers and would
         // leave inflight ones running past the banner.
         // Reachable from reap_worker with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() would
@@ -729,10 +740,14 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        if self.bailed {
+        // Overrides an earlier --bail stop so the siblings terminated above
+        // reap as collateral; the queued files are only swept when this panic
+        // is what stopped the run.
+        let already_stopped = self.stop_reason.is_some();
+        self.stop_reason = Some(StopReason::WorkerPanicked);
+        if already_stopped {
             return;
         }
-        self.bailed = true;
         self.abort_queued_files(b"aborted: worker panicked");
     }
 

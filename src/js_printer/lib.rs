@@ -1195,8 +1195,8 @@ pub struct Options<'a> {
     // us do binary search on to figure out what line a given AST node came from
     /// Borrowed from `LinkerGraph.files[i].line_offset_table`. The same
     /// source can print into multiple part-ranges/chunks, so the table must
-    /// not be consumed. `get_source_map_builder` shallow-copies it into the
-    /// builder (`ManuallyDrop`, never freed on the bundler path).
+    /// not be consumed. `get_source_map_builder` moves the borrow into the
+    /// builder as `LineOffsetTables::Borrowed`.
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
@@ -1486,7 +1486,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) renamer: rename::Renamer<'a, 'a>,
         pub(crate) prev_stmt_tag: StmtTag,
-        pub(crate) source_map_builder: SourceMap::chunk::Builder,
+        pub(crate) source_map_builder: SourceMap::chunk::Builder<'a>,
 
         pub(crate) temporary_bindings: Vec<B::Property>,
 
@@ -6583,9 +6583,9 @@ pub(crate) mod __gated_printer {
             import_records: &'a [ImportRecord],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
-            source_map_builder: SourceMap::chunk::Builder,
+            source_map_builder: SourceMap::chunk::Builder<'a>,
         ) -> Self {
-            let printer = Self {
+            Self {
                 bump,
                 import_records,
                 needs_semicolon: false,
@@ -6609,13 +6609,7 @@ pub(crate) mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
-            };
-            // The `Builder` field is `&'static [u32]` pending lifetime threading,
-            // so instead of caching a self-borrow here,
-            // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
-            // via `ListExt::items_byte_offset_to_start_of_line()` (see Chunk.rs).
-            let _ = GENERATE_SOURCE_MAP;
-            printer
+            }
         }
 
         pub(crate) fn print_dev_server_module(
@@ -7322,6 +7316,7 @@ impl GenerateSourceMap {
 // `Scope.parent` backref). `print_json` is live as well.
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
+use SourceMap::chunk::LineOffsetTables;
 use js_ast::Ast;
 
 // `generate_source_map` is a runtime arg: `generic_const_exprs`
@@ -7329,17 +7324,16 @@ use js_ast::Ast;
 // viral `where` clauses, and the body only does runtime branches anyway. The
 // `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
 // constant in the monomorphized callers.
-pub(crate) fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
+pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
-    opts: &mut Options,
-    source: &bun_ast::Source,
+    opts: &mut Options<'a>,
+    source: &'a bun_ast::Source,
     tree: &Ast,
-) -> SourceMap::chunk::Builder {
+) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
         return SourceMap::chunk::Builder::default();
     }
 
-    let precomputed = opts.line_offset_tables.take();
     let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
@@ -7348,32 +7342,17 @@ pub(crate) fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
-        // `Options.line_offset_tables` is a borrow into shared linker
-        // state; copy it bitwise via `ptr::read` into a
-        // `ManuallyDrop` so dropping the `Builder` never frees borrowed
-        // storage. When no table is supplied (the runtime/transpiler path) we
-        // leave this `EMPTY` and let the builder build it lazily on the first
-        // mapping (see `set_deferred_line_offset_table` below).
-        line_offset_tables: core::mem::ManuallyDrop::new(match precomputed {
-            // SAFETY: `borrowed` points to a valid `List` owned by the caller
-            // (e.g. `LinkerGraph.files[i].line_offset_table`). The bitwise
-            // copy aliases that storage; it is wrapped in `ManuallyDrop` and
-            // never dropped, so ownership stays with the caller.
-            Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
-        }),
+        line_offset_tables: match opts.line_offset_tables.take() {
+            Some(table) => LineOffsetTables::Borrowed(table),
+            None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {
+                contents: source.contents(),
+                approximate_line_count: i32::try_from(tree.approximate_newline_count)
+                    .expect("int cast"),
+            },
+            None => LineOffsetTables::None,
+        },
         ..Default::default()
     };
-    if precomputed.is_none() && generate_source_map == GenerateSourceMap::Lazy {
-        // Defer table construction to the first `add_source_mapping` call:
-        // modules that emit no mappings (asset/JSON shims, empty modules,
-        // fully-stripped files) never pay the full-source scan + allocation.
-        builder.set_deferred_line_offset_table(
-            // allocator dropped
-            &source.contents,
-            i32::try_from(tree.approximate_newline_count).expect("int cast"),
-        );
-    }
     // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
     // mapping per token; growing from 0 by doubling means ~16 reallocs and
     // O(n) memmoves on a large module. The estimate is intentionally
@@ -7529,12 +7508,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         renamer,
         source_map_builder,
     );
-    // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
-    // — no longer needed: `Builder.line_offset_tables` is `List<AstAlloc>` and on
-    // this path is always EMPTY (`get_source_map_builder` defers generation to
-    // the `Global`-backed `lazy_line_offset_tables`, freed by `Printer`'s drop
-    // via `OwnedLineOffsetTables::Drop`). No caller of `print_ast` supplies a
-    // precomputed table.
     printer.was_lazy_export = tree.has_lazy_export;
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
@@ -7678,7 +7651,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7709,7 +7682,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7750,7 +7723,7 @@ pub(crate) fn print_with_writer_and_platform<
     mut writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],

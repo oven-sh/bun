@@ -1604,10 +1604,12 @@ impl<Enc: Encoding> NodeScalar<Enc> {
 // Directive / Document / Stream
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Only `%YAML` is tracked (at most one per document); `%TAG` directives
+/// register their handle as a side effect of parsing and reserved directives
+/// are skipped, so neither needs a variant of its own.
 pub(crate) enum Directive {
     Yaml,
-    Tag,
-    Reserved,
+    Other,
 }
 
 pub(crate) struct Document {
@@ -2297,7 +2299,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.skip_s_white();
                 self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag);
+                return Ok(Directive::Other);
             }
 
             // secondary tag handle
@@ -2306,7 +2308,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.try_skip_s_white()?;
                 self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag);
+                return Ok(Directive::Other);
             }
 
             // named tag handle
@@ -2321,7 +2323,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
-            return Ok(Directive::Tag);
+            return Ok(Directive::Other);
         }
 
         // reserved directive
@@ -2336,7 +2338,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.try_skip_to_new_line()?;
 
-        Ok(Directive::Reserved)
+        Ok(Directive::Other)
     }
 
     pub(crate) fn parse_directive_tag_prefix(&mut self) -> Result<(), ParseError> {
@@ -2358,23 +2360,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     pub(crate) fn parse_document(&mut self) -> Result<Document, ParseError> {
-        let mut directives: Vec<Directive> = Vec::new();
-
         self.anchors.clear();
         self.has_cyclic_alias = false;
         self.tag_handles.clear();
 
+        let mut has_directives = false;
         let mut has_yaml_directive = false;
 
         while matches!(self.token.data, TokenData::Directive) {
-            let directive = self.parse_directive()?;
-            if matches!(directive, Directive::Yaml) {
+            if let Directive::Yaml = self.parse_directive()? {
                 if has_yaml_directive {
                     return Err(ParseError::MultipleYamlDirectives);
                 }
                 has_yaml_directive = true;
             }
-            directives.push(directive);
+            has_directives = true;
             self.scan(ScanOptions::default())?;
         }
 
@@ -2383,7 +2383,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if matches!(self.token.data, TokenData::DocumentStart) {
             self.explicit_document_start_line = Some(self.token.line);
             self.scan(ScanOptions::default())?;
-        } else if !directives.is_empty() {
+        } else if has_directives {
             // if there's directives they must end with '---'
             return Err(Self::unexpected_token());
         }

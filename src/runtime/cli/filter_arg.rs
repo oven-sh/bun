@@ -1,4 +1,4 @@
-use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
@@ -35,10 +35,7 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
 // `DirEntryAccessor` lives in `bun_resolver` (it depends on the resolver's
 // DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
-// The Iterator borrows the GlobWalker owned by `PackageFilterIterator`. The walker is
-// heap-allocated (`*mut GlobWalker` from `Box::into_raw`) so its address is stable even if
-// the `PackageFilterIterator` itself moves; the borrow is erased to `'static` because the
-// allocation lives until `deinit_walker` drops the iterator first, then frees the walker.
+// Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 pub(crate) fn get_candidate_package_patterns<'a>(
@@ -246,130 +243,90 @@ impl FilterSet {
     }
 }
 
-pub(crate) struct PackageFilterIterator {
-    // `patterns` and `root_dir` borrow from the caller.
-    // Callers keep them alive for the iterator's lifetime — `RawSlice` invariant.
-    patterns: bun_ptr::RawSlice<Box<[u8]>>,
-    pattern_idx: usize,
-    root_dir: bun_ptr::RawSlice<u8>,
+// Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
+// a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
+// `GlobWalkerIterator` borrowing the walker would violate.
+struct OwnedWalker(NonNull<GlobWalker>);
 
-    // Heap-allocated via `Box::into_raw` so the `iter` borrow stays valid if `self` moves.
-    // Null iff `valid == false` (`init_walker` tears down on failure to keep this).
-    // Owned by `self`; freed in `deinit_walker`.
-    walker: *mut GlobWalker,
-    iter: MaybeUninit<GlobWalkerIterator>,
-    valid: bool,
+impl Drop for OwnedWalker {
+    fn drop(&mut self) {
+        // SAFETY: allocated by `heap::alloc_nn` in `start_walk` and freed only here; the
+        // `GlobWalkerIterator` borrowing it is always dropped first (see `ActiveWalk`).
+        unsafe { bun_core::heap::destroy(self.0.as_ptr()) };
+    }
 }
 
-impl PackageFilterIterator {
+// Field order is drop order: `iter` borrows `_walker`, so it must go first.
+struct ActiveWalk {
+    iter: GlobWalkerIterator,
+    _walker: OwnedWalker,
+}
+
+pub(crate) struct PackageFilterIterator<'a> {
+    patterns: &'a [Box<[u8]>],
+    pattern_idx: usize,
+    root_dir: &'a [u8],
+    /// The walk for `patterns[pattern_idx]`; `None` until `next` starts it.
+    active: Option<ActiveWalk>,
+}
+
+impl<'a> PackageFilterIterator<'a> {
     pub(crate) fn init(
-        patterns: &[Box<[u8]>],
-        root_dir: &[u8],
-    ) -> Result<PackageFilterIterator, crate::Error> {
+        patterns: &'a [Box<[u8]>],
+        root_dir: &'a [u8],
+    ) -> Result<PackageFilterIterator<'a>, crate::Error> {
         Ok(PackageFilterIterator {
-            // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
-            patterns: bun_ptr::RawSlice::new(patterns),
+            patterns,
             pattern_idx: 0,
-            root_dir: bun_ptr::RawSlice::new(root_dir),
-            walker: core::ptr::null_mut(),
-            iter: MaybeUninit::uninit(),
-            valid: false,
+            root_dir,
+            active: None,
         })
     }
 
-    fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
-        loop {
-            // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
-            let iter = unsafe { self.iter.assume_init_mut() };
-            match iter.next()? {
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error: {}", err);
-                    continue;
-                }
-                Ok(path) => {
-                    return Ok(path);
-                }
-            }
-        }
-    }
-
-    fn init_walker(&mut self) -> Result<(), crate::Error> {
+    fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
-        let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
+        let pattern: &[u8] = &self.patterns[self.pattern_idx];
         // bun_glob copies `pattern`/`cwd` internally.
-        let cwd: &[u8] = self.root_dir.slice();
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = GlobWalker::init_with_cwd(
+        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
             pattern,
-            cwd,
+            self.root_dir,
             true,
             true,
             false,
             true,
             true,
             Some(glob_ignore_fn),
-        )??;
-        // Heap-allocate the walker so its address is stable even if `self` moves between
-        // `init_walker` and the iterator's last use. `iter` holds a `'static`-erased `&mut`
-        // into this allocation; `deinit_walker` drops `iter` before freeing the walker.
-        let walker_ptr = Box::into_raw(Box::new(walker));
-        self.walker = walker_ptr;
-        // SAFETY: `walker_ptr` is a live, uniquely-owned heap allocation that outlives `iter`
-        // (freed only in `deinit_walker`, after `iter` is dropped).
-        self.iter
-            .write(glob::walk::Iterator::new(unsafe { &mut *walker_ptr }));
-        // SAFETY: just wrote `iter`.
-        let inited: Result<(), crate::Error> =
-            (|| Ok(unsafe { self.iter.assume_init_mut() }.init()??))();
-        if let Err(err) = inited {
-            // Tear down `iter` and the walker allocation so `walker` is null again
-            // whenever `valid == false` (the field invariant).
-            self.deinit_walker();
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    fn deinit_walker(&mut self) {
-        // SAFETY: `iter` and `walker` are initialized (caller invariant).
-        // Drop iter first (it borrows the walker allocation), then free the walker.
-        unsafe {
-            self.iter.assume_init_drop();
-            drop(Box::from_raw(self.walker));
-        }
-        self.walker = core::ptr::null_mut();
+        )??));
+        // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
+        // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
+        // afterwards), so this is the only access to the walker while the erased borrow is live.
+        let mut iter: GlobWalkerIterator =
+            glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
+        iter.init()??;
+        Ok(ActiveWalk {
+            iter,
+            _walker: walker,
+        })
     }
 
     pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
-            if !self.valid {
-                // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.
-                let patterns_len = self.patterns.len();
-                if self.pattern_idx < patterns_len {
-                    self.init_walker()?;
-                    self.valid = true;
-                } else {
+            let Some(active) = &mut self.active else {
+                if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
                 }
+                self.active = Some(self.start_walk()?);
+                continue;
+            };
+            match active.iter.next()? {
+                Ok(Some(path)) => return Ok(Some(path)),
+                Ok(None) => {
+                    self.active = None;
+                    self.pattern_idx += 1;
+                }
+                Err(err) => bun_core::pretty_errorln!("Error: {}", err),
             }
-            // Note: shaped for borrowck — we must end the `&mut self` borrow before
-            // re-borrowing on the else branch. We rely on NLL to make this work; if
-            // it doesn't, restructure.
-            if let Some(path) = self.walker_next()? {
-                return Ok(Some(path));
-            } else {
-                self.valid = false;
-                self.pattern_idx += 1;
-                self.deinit_walker();
-            }
-        }
-    }
-}
-
-impl Drop for PackageFilterIterator {
-    fn drop(&mut self) {
-        if self.valid {
-            self.deinit_walker();
         }
     }
 }

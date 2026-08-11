@@ -13,9 +13,8 @@ static bool isLineTerminator(char16_t c)
     return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029;
 }
 
-/// Moves `pos` (the divot of an expression) back `amount` code units, to the start of the
-/// expression. When that crosses a line boundary the line and column have to be recounted from
-/// the source text. If that is not possible, `pos` is left pointing at the divot.
+/// Moves `pos` (an expression's divot) back `amount` code units to the start of the expression,
+/// recounting the line and column from the source when that crosses a line break.
 static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
 {
     if (amount <= 0 || pos.byte_position < amount)
@@ -33,8 +32,7 @@ static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, Code
     if (!provider)
         return;
 
-    // eval, new Function and node:vm code is not transpiled, so unlike transpiled modules
-    // its source can be 16-bit. StringView indexing handles both encodings.
+    // Untranspiled sources (eval, new Function, node:vm) can be 16-bit; indexing handles both.
     WTF::StringView source = provider->source();
     if (static_cast<unsigned>(pos.byte_position) > source.length())
         return;
@@ -51,8 +49,7 @@ static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, Code
     int i = start - 1;
     for (; i >= 0 && !isLineTerminator(source[i]); i--)
         column++;
-    // Columns JSC reports on the first line of a source include the source's start column
-    // (node:vm's columnOffset); the fast path above inherits that from the divot's column.
+    // JSC's columns on the first line of a source include its start column (node:vm columnOffset).
     if (i < 0)
         column += provider->startPosition().m_column.zeroBasedInt();
 

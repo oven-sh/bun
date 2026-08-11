@@ -11,12 +11,10 @@ class StackFrame;
 
 namespace Bun {
 
-/// Source position of the bytecode at `bc`, moved to where V8 reports it
-/// (`new X(...)` is reported at `new`, JSC's divot is at the end of `X`).
+/// Position of the bytecode at `bc` where V8 would report it: `new X(...)` at `new`, not after `X`.
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc);
 
-/// Same for a captured stack frame. Frames without a code block (native, wasm) get a position
-/// with every field set to -1, which Bun__remapStackFramePositions skips.
+/// Same for a captured frame. Frames without a code block get -1 in every field (invalid position).
 ZigStackFramePosition getAdjustedPositionForStackFrame(const JSC::StackFrame& frame);
 
 } // namespace Bun

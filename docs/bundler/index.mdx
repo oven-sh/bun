@@ -1772,7 +1772,8 @@ interface BuildConfig {
   /**
    * Generate a metafile describing the build. `true` exposes it as
    * `BuildOutput.metafile`; a string or an object also writes it to disk.
-   * Relative paths are resolved against `outdir`.
+   * Relative paths are resolved against `outdir`, or against the working
+   * directory when there is no `outdir`.
    *
    * @default false
    */

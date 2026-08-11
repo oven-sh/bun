@@ -74,6 +74,8 @@ expectAssignable<Bun.BuildConfig["metafile"]>("meta.json");
 expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json" });
 expectAssignable<Bun.BuildConfig["metafile"]>({ markdown: "meta.md" });
 expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json", markdown: "meta.md" });
+// An empty object only exposes result.metafile, the same as `true`.
+expectAssignable<Bun.BuildConfig["metafile"]>({});
 // @ts-expect-error - only json and markdown can be written
 expectAssignable<Bun.BuildConfig["metafile"]>({ yaml: "meta.yaml" });
 

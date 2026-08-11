@@ -799,6 +799,23 @@ describe("Bun.build metafile option variants", () => {
     expect(metafile.inputs).toBeDefined();
     expect(metafile.outputs).toBeDefined();
   });
+
+  test("metafile: {} provides the metafile object without writing any files", async () => {
+    using dir = tempDir("metafile-empty-object", {
+      "test.js": `export const a = 1;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/test.js`],
+      outdir: `${dir}/dist`,
+      metafile: {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(Object.keys(result.metafile as Metafile)).toEqual(["inputs", "outputs"]);
+    expect(result.outputs.map(output => output.kind)).toEqual(["entry-point"]);
+    expect(readdirSync(`${dir}/dist`)).toEqual(["test.js"]);
+  });
 });
 
 describe("Bun.build metafile paths", () => {

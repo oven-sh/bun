@@ -1283,7 +1283,7 @@ static bool snapshotDump(JSC::VM& vm, const char* path)
                 }
             }
             if (getenv("BUN_STARTUP_SNAPSHOT_VERBOSE")) fprintf(stderr, "[snapshot] JIT region %llx+%llx resident=%u dirty=%u\n", (unsigned long long)addr, (unsigned long long)size, r.pagesResident, r.pagesDirtied);
-                } else if (ours && r.writable && !r.executable && r.anon && !r.isStack && !r.isMallocZone && !r.isGuard && !r.shared) {
+        } else if (ours && r.writable && !r.executable && r.anon && !r.isStack && !r.isMallocZone && !r.isGuard && !r.shared) {
             // Emitted even when nothing in it is resident: pointers into it may exist (an allocator table that is still all zeros), so the mapping itself must come back.
             regions.push_back({ addr, size, 0, ((uint64_t)tag << 8) | 4 }); // anonymous reserve, then resident runs as file-backed data
             std::vector<int> disp;

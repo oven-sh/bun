@@ -25,16 +25,14 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
-// mutability (`Cell` for the `Copy` flags and the only-ever-`take()`n signal,
-// `JsCell` for the non-`Copy` `JsRef`) carries the writes.
+// mutability (`Cell`, `JsCell` for the non-`Copy` `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
 pub struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    /// The upgraded request's signal, taken over from its `RequestContext`;
-    /// `on_close` takes it out to fire it, and whatever is left is released
-    /// with the socket.
+    /// The upgraded request's signal, moved here from its `RequestContext`;
+    /// `on_close` takes it out and fires it.
     signal: Cell<Option<abort_signal::PendingActivityRef>>,
 }
 
@@ -349,9 +347,7 @@ impl ServerWebSocket {
     // pub const js = jsc.Codegen.JSServerWebSocket; — provided by #[bun_jsc::JsClass]
     // toJS / fromJS / fromJSDirect — provided by codegen (see `to_js_ptr` / `JsClass` impl)
 
-    /// Initialize a ServerWebSocket with the given handler, data value, and the
-    /// upgraded request's signal, which is fired and released when the socket
-    /// closes.
+    /// `signal` is the upgraded request's; it is fired when the socket closes.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
@@ -699,8 +695,6 @@ impl ServerWebSocket {
             .try_get()
             .unwrap_or(JSValue::UNDEFINED);
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
-        // The guard owns the signal until fn exit; the abort below borrows it
-        // through the guard.
         let cleanup = scopeguard::guard(signal, move |signal| {
             drop(signal);
             if was_not_empty {

@@ -2179,8 +2179,6 @@ where
         // --- After this point, do not throw an exception
         // See https://github.com/oven-sh/bun/issues/1339
         upgrader.upgrade_context.set(UpgradeState::Upgraded);
-        // The socket takes over the request's signal (fired when the socket
-        // closes instead of when the request ends).
         let signal = upgrader.signal.replace(None);
         upgrader.resp.set(None);
 

@@ -115,8 +115,7 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    /// Registered with this box's address as the listener ctx; dropping it
-    /// unregisters `on_abort` before the box goes away.
+    /// `on_abort` is registered on it with this box's address as ctx.
     signal: bun_jsc::abort_signal::PendingActivityRef,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,

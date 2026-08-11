@@ -1550,8 +1550,6 @@ pub struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    /// Owns a ref on the signal for as long as our listener is registered on
-    /// it; `Drop` removes the listener, then the field's drop releases the ref.
     signal: AbortSignalRef,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
@@ -1589,8 +1587,7 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // The listener was registered with `self`'s address as its ctx
-        // (`attach_signal`); remove it before `self.signal` drops our ref.
+        // `attach_signal` registered the listener with `self`'s address as ctx.
         let ctx = std::ptr::from_mut(self).cast::<c_void>();
         self.signal.clean_native_bindings(ctx);
         // ParentRef backref — parser outlives every SignalRef (ref()'d in
@@ -9352,8 +9349,6 @@ impl H2FrameParser {
 
             if let Some(signal_arg) = options.get(global_object, "signal")? {
                 if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
-                    // `from_js` returns the signal owned by the JS wrapper, which
-                    // `signal_arg` keeps alive for the rest of this call.
                     let signal_ = AbortSignal::opaque_ref(signal_ptr);
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;

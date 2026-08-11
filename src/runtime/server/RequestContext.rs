@@ -117,11 +117,9 @@ pub struct RequestContext<
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, HTTP3>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
-    /// `request.signal`, fired with `ConnectionClosed` when the client goes
-    /// away. The `Request` holds its own `AbortSignalRef` to the same signal;
-    /// this hold is taken out (and released) in `on_abort` /
-    /// `finalize_without_deinit`, or moved into the `ServerWebSocket` on
-    /// upgrade.
+    /// `request.signal` (the `Request` holds its own ref to it). Taken out in
+    /// `on_abort` / `finalize_without_deinit`, or moved to the `ServerWebSocket`
+    /// on upgrade.
     pub(crate) signal: JsCell<Option<jsc::abort_signal::PendingActivityRef>>,
     pub method: Method,
     /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
@@ -622,9 +620,8 @@ where
     }
 
     pub(crate) fn set_signal_aborted(&self, reason: jsc::CommonAbortReason) {
-        // Abort listeners may end this request and take the hold out of
-        // `self.signal`, so fire through a ref of our own rather than a borrow
-        // of the cell.
+        // Own ref, not a borrow of the cell: abort listeners may end the request
+        // and empty it.
         let Some(signal) = self.signal.get().as_ref().map(|s| s.signal_ref()) else {
             return;
         };
@@ -1420,7 +1417,6 @@ where
                 signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
                 any_js_calls.set(true);
             }
-            // Dropping the hold releases the signal.
         }
 
         // if have sink, call onAborted on sink
@@ -1507,7 +1503,6 @@ where
             if self.flags.aborted() && !signal.aborted() {
                 signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
             }
-            // Dropping the hold releases the signal.
         }
 
         // Case 1:

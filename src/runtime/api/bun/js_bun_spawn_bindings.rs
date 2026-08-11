@@ -367,8 +367,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_hide: bool = false;
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
-    // Owned here until it moves into the Subprocess at the very end; every
-    // earlier return releases it by dropping it.
     let mut abort_signal: Option<jsc::AbortSignalRef> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user

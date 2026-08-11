@@ -1306,10 +1306,16 @@ describe("Bun.serve HTTP/3 production", () => {
   // (US_QUIC_SOCKET_BUFFER_SIZE): the Bun.serve listener and the shared
   // fetch() client endpoint. The kernel default (Linux net.core.rmem_default,
   // 208 KiB) queues fewer than 100 full-size packets, so every cwnd-sized
-  // lsquic burst overflowed the receiving socket. The value is only
-  // observable through getsockopt(2) on the live fds, hence bun:ffi.
+  // lsquic burst overflowed the receiving socket.
   const QUIC_SOCKET_BUFFER = 4 * 1024 * 1024;
-  test.skipIf(isWindows)("QUIC UDP sockets get enlarged kernel buffers", async () => {
+
+  // Spawns a bun that starts an h3 server, fetches from it over h3, and reads
+  // SO_RCVBUF / SO_SNDBUF back from every inet datagram socket in the process
+  // (the listener and the client endpoint) via getsockopt(2), the only place
+  // the values are observable. `defaults` is what a plain UDP socket gets on
+  // this host. `requestBytes` overrides quic.c's request through
+  // bun:internal-for-testing; the override is process-wide, hence a child.
+  async function probeQuicSocketBuffers(requestBytes?: number) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1317,6 +1323,12 @@ describe("Bun.serve HTTP/3 production", () => {
         `
           const { dlopen, FFIType, ptr } = require("bun:ffi");
           const { readdirSync } = require("fs");
+          const dgram = require("dgram");
+          ${
+            requestBytes === undefined
+              ? ""
+              : `require("bun:internal-for-testing").quicInternals.setSocketBufferSize(${requestBytes});`
+          }
           const isDarwin = process.platform === "darwin";
           const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
             getsockopt: {
@@ -1355,6 +1367,13 @@ describe("Bun.serve HTTP/3 production", () => {
             return out;
           }
 
+          // Kernel defaults, read off an ordinary UDP socket that is closed
+          // again before the scan below so it does not show up in it.
+          const plain = dgram.createSocket("udp4");
+          await new Promise(resolve => plain.bind(0, "127.0.0.1", resolve));
+          const defaults = { rcvbuf: plain.getRecvBufferSize(), sndbuf: plain.getSendBufferSize() };
+          await new Promise(resolve => plain.close(resolve));
+
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
@@ -1368,9 +1387,11 @@ describe("Bun.serve HTTP/3 production", () => {
             tls: { rejectUnauthorized: false },
           });
           const body = await res.text();
-          const sockets = udpSockets().map(s => ({ ...s, role: s.port === server.port ? "listener" : "client" }));
+          const sockets = udpSockets()
+            .map(({ port, ...bufs }) => ({ role: port === server.port ? "listener" : "client", ...bufs }))
+            .sort((a, b) => a.role.localeCompare(b.role));
           server.stop(true);
-          console.log(JSON.stringify({ body, sockets }));
+          console.log(JSON.stringify({ body, defaults, sockets }));
         `,
       ],
       env: bunEnv,
@@ -1379,10 +1400,15 @@ describe("Bun.serve HTTP/3 production", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0 || !stdout.trim()) throw new Error(`probe exited with ${exitCode}:\n${stderr}`);
-    const { body, sockets } = JSON.parse(stdout) as {
+    return JSON.parse(stdout) as {
       body: string;
-      sockets: Array<{ role: string; port: number; rcvbuf: number; sndbuf: number }>;
+      defaults: { rcvbuf: number; sndbuf: number };
+      sockets: Array<{ role: "client" | "listener"; rcvbuf: number; sndbuf: number }>;
     };
+  }
+
+  test.concurrent.skipIf(isWindows)("QUIC UDP sockets get enlarged kernel buffers", async () => {
+    const { body, sockets } = await probeQuicSocketBuffers();
 
     // socket(7): Linux clamps the request to net.core.{r,w}mem_max and then
     // reports double the clamped value, so an untuned host lands at exactly
@@ -1392,18 +1418,31 @@ describe("Bun.serve HTTP/3 production", () => {
       isLinux
         ? Math.min(QUIC_SOCKET_BUFFER, 2 * Number(readFileSync(`/proc/sys/net/core/${max}`, "utf8")))
         : QUIC_SOCKET_BUFFER;
-    const checked = sockets
-      .sort((a, b) => a.role.localeCompare(b.role))
-      .map(s => ({
-        role: s.role,
-        rcvbuf: s.rcvbuf >= floor("rmem_max") ? "raised" : `not raised (${s.rcvbuf})`,
-        sndbuf: s.sndbuf >= floor("wmem_max") ? "raised" : `not raised (${s.sndbuf})`,
-      }));
+    const checked = sockets.map(s => ({
+      role: s.role,
+      rcvbuf: s.rcvbuf >= floor("rmem_max") ? "raised" : `not raised (${s.rcvbuf})`,
+      sndbuf: s.sndbuf >= floor("wmem_max") ? "raised" : `not raised (${s.sndbuf})`,
+    }));
     expect({ body, sockets: checked }).toEqual({
       body: "ok",
       sockets: [
         { role: "client", rcvbuf: "raised", sndbuf: "raised" },
         { role: "listener", rcvbuf: "raised", sndbuf: "raised" },
+      ],
+    });
+  });
+
+  // The request is applied only when it yields more than the socket already
+  // has, so a host whose defaults are larger than what the request yields (a
+  // tuned one; simulated here with a request below every platform's default)
+  // keeps its defaults instead of having them lowered.
+  test.concurrent.skipIf(isWindows)("QUIC UDP socket buffers are never lowered below the kernel default", async () => {
+    const { body, defaults, sockets } = await probeQuicSocketBuffers(1024);
+    expect({ body, sockets }).toEqual({
+      body: "ok",
+      sockets: [
+        { role: "client", ...defaults },
+        { role: "listener", ...defaults },
       ],
     });
   });

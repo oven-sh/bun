@@ -851,24 +851,42 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
 
 /* Kernel default UDP socket buffers are sized for request/response datagram
  * traffic: Linux net.core.rmem_default (208 KiB) queues fewer than 100
- * full-size QUIC packets once skb overhead is charged, Windows defaults to
- * 64 KiB. lsquic sends up to a cwnd per engine tick and one socket carries
- * every connection, so the tail of any larger burst is dropped by the
- * receiving socket before lsquic sees it, every burst becomes a loss event,
- * and throughput settles at about one socket buffer per RTT. 4 MiB is in line
- * with other QUIC stacks and below macOS's default kern.ipc.maxsockbuf.
- * Linux clamps the request to net.core.{r,w}mem_max (then doubles it), so an
- * untuned host gets 2x the default and a tuned one the full amount. Best
- * effort: a failure, or a default that is already this large, leaves the
- * socket as is. */
+ * full-size QUIC packets once skb overhead is charged; Windows (128 KiB) is
+ * no better. lsquic hands the kernel up to a cwnd per engine tick and one
+ * socket carries every connection, so the tail of any larger burst is
+ * dropped by the receiving socket before lsquic sees it and each such burst
+ * is a loss event. 4 MiB is in line with other QUIC stacks and below macOS's
+ * default kern.ipc.maxsockbuf. Linux clamps the request to
+ * net.core.{r,w}mem_max (then doubles it), so an untuned host gets 2x the
+ * default and a tuned one the full amount. */
 #define US_QUIC_SOCKET_BUFFER_SIZE (4 * 1024 * 1024)
 
+static int us_quic_socket_buffer_request = US_QUIC_SOCKET_BUFFER_SIZE;
+
+void us_quic_set_socket_buffer_size_for_testing(int bytes) {
+    __atomic_store_n(&us_quic_socket_buffer_request, bytes, __ATOMIC_SEQ_CST);
+}
+
+/* Buffers are only ever raised. setsockopt succeeds even when the kernel
+ * clamps the request below a socket's (administratively raised) default and
+ * the old value cannot be restored afterwards, so what the request actually
+ * yields is measured on a throwaway socket first and a socket that already
+ * has at least that much is left alone. Best effort: any failure leaves the
+ * socket at its default. */
 static void us_quic_set_socket_buffers(struct us_udp_socket_t *udp) {
+    int request = __atomic_load_n(&us_quic_socket_buffer_request, __ATOMIC_SEQ_CST);
+    if (request <= 0) return;
+    LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(AF_INET, SOCK_DGRAM, 0, NULL);
+    if (probe == LIBUS_SOCKET_ERROR) return;
     for (int is_recv = 0; is_recv <= 1; is_recv++) {
-        int size = 0;
-        if (us_udp_socket_buffer_size(udp, is_recv, 0, &size) == 0 && size >= US_QUIC_SOCKET_BUFFER_SIZE) continue;
-        us_udp_socket_buffer_size(udp, is_recv, US_QUIC_SOCKET_BUFFER_SIZE, &size);
+        int granted = 0, current = 0;
+        if (bsd_socket_buffer_size(probe, is_recv, request, &granted) != 0 ||
+            bsd_socket_buffer_size(probe, is_recv, 0, &granted) != 0 ||
+            us_udp_socket_buffer_size(udp, is_recv, 0, &current) != 0 ||
+            current >= granted) continue;
+        us_udp_socket_buffer_size(udp, is_recv, request, &current);
     }
+    bsd_close_socket(probe);
 }
 
 us_quic_listen_socket_t *us_quic_socket_context_listen(

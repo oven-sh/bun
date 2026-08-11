@@ -5254,6 +5254,23 @@ pub mod testing_apis {
         }
     }
 
+    /// `quicInternals.setSocketBufferSize(bytes)`: the SO_RCVBUF / SO_SNDBUF
+    /// size quic.c requests for QUIC UDP sockets created from now on
+    /// (`Bun.serve({ http3 })` listeners and the fetch() HTTP/3 endpoint);
+    /// 0 leaves them at the kernel default.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_set_quic_socket_buffer_size(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [bytes] = frame.arguments_as_array::<1>();
+        if !bytes.is_number() {
+            return Err(global.throw_invalid_argument_type_value("bytes", "number", bytes));
+        }
+        bun_uws_sys::quic::set_socket_buffer_size_for_testing(bytes.coerce_to_i32(global)?);
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[cfg(socket_fault_injection)]
     fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
         macro_rules! map {

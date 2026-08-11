@@ -436,10 +436,9 @@ describe("web worker", () => {
         await new Promise<void>(r => setImmediate(r));
         afterEachTask.push(got.length);
       } while (afterEachTask.at(-1) !== afterEachTask.at(-2));
-      // [1024, 2048, 2049, 2049]: neither the first task nor its continuation delivered
-      // everything, and everything still arrived, in order.
-      expect(afterEachTask[0]).toBeLessThan(total);
-      expect(afterEachTask[1]).toBeLessThan(total);
+      // The first task and its continuation each stop at the budget, the third delivers
+      // the one left over, and everything arrives in order.
+      expect(afterEachTask).toEqual([budget, 2 * budget, total, total]);
       expect(got).toEqual(Array.from({ length: total }, (_, i) => i));
       w.terminate();
       await once(w, "close");

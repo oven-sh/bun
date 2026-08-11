@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -381,6 +381,8 @@ describe("web worker", () => {
     // terminate() landing while the worker reports that its entry point does not
     // resolve: the report is skipped, not turned into a panic.
     test("terminate() while the entry point fails to resolve", async () => {
+      // Every round covers the eight terminate offsets once.
+      const rounds = isDebug ? 3 : 12;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -394,7 +396,7 @@ describe("web worker", () => {
              await closed;
              done++;
            }
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
            console.log("done", done);`,
         ],
         env: bunEnv,
@@ -402,7 +404,7 @@ describe("web worker", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("done 96\n");
+      expect(stdout).toBe(`done ${rounds * 8}\n`);
       expect(exitCode).toBe(0);
     });
 
@@ -472,9 +474,9 @@ describe("web worker", () => {
         "side.js": `globalThis.sideRan = true;`,
         "preload.js": `import("./side.js");`,
         // big enough that the entry graph is still transpiling when side.js evaluates
-        // (tens of times side.js's transpile); bigger mostly just slows debug builds down
+        // (debug builds transpile far slower, so a quarter of it keeps the same margin)
         "big.js": Array.from(
-          { length: 1000 },
+          { length: isDebug ? 1000 : 4000 },
           (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
         ).join("\n"),
         "worker.js": `import "./big.js";
@@ -494,10 +496,11 @@ describe("web worker", () => {
 
     // Everything a worker posted before it exited arrives before 'close'.
     test("messages posted right before a natural exit are all delivered before close", async () => {
+      // Several drain batches' worth (1024 each); receiving them is ~1s per round on debug builds.
       const K = 5000;
       const src = `const p = Buffer.alloc(256, "x").toString(); for (let i = 0; i < ${K}; i++) postMessage({ i, p })`;
       const url = URL.createObjectURL(new Blob([src]));
-      for (let r = 0; r < 3; r++) {
+      for (let r = 0; r < (isDebug ? 1 : 3); r++) {
         let got = 0;
         const w = new Worker(url);
         w.onmessage = () => got++;
@@ -518,11 +521,12 @@ describe("web worker", () => {
 
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
-    // One worker per terminate offset (0-9ms after it reports busy), in two
-    // batches so the second one reuses the pool that just discarded the first
-    // batch's completions. require() rather than import: building node:fs's ESM
-    // namespace also loads its stream classes, which nearly doubled each
-    // worker's start on debug builds.
+    // busy is posted from the first completion so that every terminate offset
+    // (0-9ms, each batch covers them once) lands mid-churn on debug builds
+    // too, where the worker's first loop turn alone outlasts the offset range.
+    // Starting one of these workers costs ~0.5s on debug builds, hence one
+    // batch there; require() because importing node:fs also builds its ESM
+    // namespace, which loads the stream classes.
     test("terminate() while fs.readFile completions keep arriving", async () => {
       using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
       await using proc = Bun.spawn({
@@ -530,11 +534,12 @@ describe("web worker", () => {
           bunExe(),
           "-e",
           `const src = \`const { readFile } = require("node:fs");
-             let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
-             postMessage("busy")\`;
+             let n = 0, busy = false;
+             (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => {
+               if (!busy) { busy = true; postMessage("busy") } n--; setImmediate(pump) }) } })()\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 2; r++) await Promise.all(Array.from({ length: 5 }, (_, i) => new Promise(res => {
-             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), r * 5 + i) })));
+           for (let r = 0; r < ${isDebug ? 1 : 5}; r++) await Promise.all(Array.from({ length: 10 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), i) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),
         ],

@@ -1173,7 +1173,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             loop_: loop_handle,
         },
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir),
+        cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
     };
 
@@ -1231,7 +1231,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(c) = &cgroup_dir
                     && err.syscall == sys::Tag::clone3
                 {
-                    return Err(global_this.throw_value(c.blame(&err).to_js(global_this)));
+                    return Err(global_this.throw_value(c.target.blame(&err).to_js(global_this)));
                 }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
@@ -2202,25 +2202,22 @@ enum CgroupTarget {
 /// The directory fd handed to `posix_spawn_bun`, plus what to blame on error.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct OpenCgroup<'a> {
-    dir: Fd,
-    /// Closes a directory we opened ourselves on drop; `None` for a caller's fd.
-    _owned: Option<sys::File>,
+    /// Always ours and `O_CLOEXEC` (a caller's fd is dup'd), so it can neither
+    /// leak into the child nor be closed under us mid-spawn.
+    dir: sys::File,
     target: &'a CgroupTarget,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-impl OpenCgroup<'_> {
+impl CgroupTarget {
     /// Attach whichever of path / fd the caller gave us.
     fn blame(&self, err: &sys::Error) -> sys::Error {
-        match self.target {
-            CgroupTarget::Path(path) => err.with_path(path.as_bytes()),
-            CgroupTarget::DirFd(fd) => err.with_fd(*fd),
+        match self {
+            Self::Path(path) => err.with_path(path.as_bytes()),
+            Self::DirFd(fd) => err.with_fd(*fd),
         }
     }
-}
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl CgroupTarget {
     fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         use bun_sys_jsc::FdJsc as _;
         if let Some(fd) = Fd::from_js_validated(value, global)? {
@@ -2229,9 +2226,15 @@ impl CgroupTarget {
         if value.is_string() {
             let path = value.to_slice(global)?;
             if strings::contains_char(path.slice(), 0) {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "The \"cgroup\" option must be a string without null bytes"
-                )));
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The property 'options.cgroup' must be a string without null bytes. Received {}",
+                            bun_fmt::quote(path.slice())
+                        ),
+                    )
+                    .throw());
             }
             return Ok(Self::Path(ZBox::from_bytes(path.slice())));
         }
@@ -2241,28 +2244,22 @@ impl CgroupTarget {
     /// Resolve to a directory fd in the parent so a bad path fails the spawn
     /// with errno + path rather than an opaque exit 127 from the child.
     fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup<'_>> {
-        let opened = match self {
-            Self::DirFd(dir) => OpenCgroup {
-                dir: *dir,
-                _owned: None,
+        let dir = match self {
+            Self::DirFd(fd) => sys::dup(*fd),
+            Self::Path(path) => sys::open_dir_absolute(path.as_bytes()),
+        };
+        let opened = match dir {
+            Ok(dir) => OpenCgroup {
+                dir: sys::File::from_fd(dir),
                 target: self,
             },
-            Self::Path(path) => match sys::open_dir_absolute(path.as_bytes()) {
-                Ok(dir) => OpenCgroup {
-                    dir,
-                    _owned: Some(sys::File::from_fd(dir)),
-                    target: self,
-                },
-                Err(err) => {
-                    return Err(global.throw_value(err.with_path(path.as_bytes()).to_js(global)));
-                }
-            },
+            Err(err) => return Err(global.throw_value(self.blame(&err).to_js(global))),
         };
 
         // Best-effort: a frozen destination would park the child before exec
         // and, through vfork, this thread with it. The kernel reports no error.
-        if Self::is_frozen(opened.dir) {
-            let err = opened.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
+        if Self::is_frozen(opened.dir.handle()) {
+            let err = self.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
             return Err(global.throw_value(err.to_js(global)));
         }
 

@@ -347,8 +347,9 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         Ok(()) => return Ok(()),
         Err(err) => match err.get_errno() {
             // `mkpath_np` on macOS also checks EISDIR; on Windows EEXIST suffices.
-            // NodeFS additionally probes `directoryExistsAt`; the package-install
-            // call sites discard the result (`_ =`) so a bare Ok matches behaviour.
+            // NodeFS additionally probes `directoryExistsAt`; here an existing entry
+            // counts as success like `make_path` does. If it is not a directory, the
+            // first operation beneath it fails and the install fails there.
             E::EISDIR | E::EEXIST => return Ok(()),
             E::ENOENT => {
                 if len == 0 {
@@ -1067,7 +1068,13 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
+                        // This walker also runs when the destination already exists
+                        // (the EEXIST fallback of `install_with_clonefile`).
+                        match sys::mkdirat(destination_dir_, entry.path, 0o755) {
+                            Ok(()) => {}
+                            Err(e) if e.get_errno() == sys::Errno::EEXIST => {}
+                            Err(e) => return Err(e.into()),
+                        }
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();

@@ -134,6 +134,8 @@ for (const mode of [
   ["--bun", "dev"],
   ...(isWindows ? [] : [["--bun", "./node_modules/.bin/long-running"]]),
 ]) {
+  // Deliberately serial: each case gives the process tree 300ms to die after
+  // SIGINT, and launching all six at once on a debug build eats into that.
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
     expect(installExitCode).toBe(0);
     const proc = Bun.spawn({

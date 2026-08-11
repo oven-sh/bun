@@ -12,13 +12,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 async function frozenInstall(name: string, packageName: string) {
   const requests: string[] = [];
   await using server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch(req) {
       requests.push(new URL(req.url).pathname);
       return new Response("not found", { status: 404 });
     },
   });
-  const registry = `http://localhost:${server.port}`;
+  const registry = `http://127.0.0.1:${server.port}`;
 
   await using dir = tempDir(name, {
     "package.json": JSON.stringify({

@@ -20,7 +20,7 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::{String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use bun_jsc::{JsCell, StringJsc as _, SysErrorJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -973,9 +973,10 @@ impl Value {
 
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+            return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
+                Ok(blob) => Ok(Value::Blob(blob)),
+                Err(err) => Err(err.throw(global_this)),
+            };
         }
 
         if let Some(search_params) = as_url_search_params(value) {

@@ -192,7 +192,14 @@ pub trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    /// Serializes `form_data` as `multipart/form-data`, reading its file-backed
+    /// entries eagerly. Returns the first read failure instead of throwing it:
+    /// `Request`/`Response` construction throws it as-is, while a `fetch()`
+    /// body that cannot be read is a network error and rejects as a `TypeError`.
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> Result<Blob, bun_sys::Error>
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -869,7 +876,10 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> Result<Blob, bun_sys::Error> {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -884,8 +894,7 @@ impl BlobExt for Blob {
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
-            failed: false,
-            global_this,
+            read_error: None,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
         // string entry 8, plus 3 for the closing boundary.
@@ -951,12 +960,12 @@ impl BlobExt for Blob {
             (&raw mut context).cast::<c_void>(),
             for_each_thunk,
         );
-        if context.failed {
+        if let Some(err) = context.read_error {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
             // conversions, NodeFS read_file result buffers — is freed.
             drop(context.joiner);
-            return Blob::init_empty(global_this);
+            return Err(err);
         }
 
         context.joiner.push_static(b"--");
@@ -979,7 +988,7 @@ impl BlobExt for Blob {
             .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
         blob.content_type_was_set.set(true);
 
-        blob
+        Ok(blob)
     }
 
     fn content_type(&self) -> &[u8] {
@@ -3859,14 +3868,14 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
-/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
-/// both strictly outlive this struct, so they are stored as plain references
-/// rather than raw pointers.
+/// caller's `boundary_buf`, which strictly outlives this struct, so it is
+/// stored as a plain reference rather than a raw pointer.
 struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
-    failed: bool,
-    global_this: &'a JSGlobalObject,
+    /// First file-backed entry that could not be read; once set, the remaining
+    /// entries are skipped and `from_dom_form_data` returns it.
+    read_error: Option<bun_sys::Error>,
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3959,12 +3968,11 @@ impl FormDataContext<'_> {
     }
 
     fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
-        if self.failed {
+        if self.read_error.is_some() {
             return;
         }
-        // Copy the borrowed refs out first (disjoint-field reads) so the
+        // Copy the borrowed ref out first (disjoint-field reads) so the
         // long-lived `&mut self.joiner` below doesn't conflict.
-        let global_this = self.global_this;
         let boundary = self.boundary;
         let joiner = &mut self.joiner;
 
@@ -4030,9 +4038,7 @@ impl FormDataContext<'_> {
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
                                 Err(err) => {
-                                    self.failed = true;
-                                    let js_err = err.to_js(global_this);
-                                    let _ = global_this.throw_value(js_err);
+                                    self.read_error = Some(err);
                                 }
                                 Ok(mut result) => {
                                     joiner.push_cloned(result.slice());

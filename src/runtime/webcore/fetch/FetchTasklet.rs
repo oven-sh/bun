@@ -26,7 +26,9 @@ use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
-use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
+use crate::webcore::blob::{
+    Any as AnyBlob, Blob, BlobExt as _, SizeType as BlobSizeType, Store as BlobStore,
+};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
@@ -211,6 +213,18 @@ impl HTTPRequestBody {
     }
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
+        if let Some(form_data) = jsc::DOMFormData::from_js(value) {
+            return match Blob::from_dom_form_data(global_this, form_data) {
+                Ok(blob) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
+                // A request body that cannot be read is a network error, so it
+                // rejects the way fetch() reports those: a TypeError that still
+                // carries `code`/`syscall`/`path`.
+                Err(err) => {
+                    let err: jsc::SystemError = err.to_system_error().into();
+                    Err(global_this.throw_value(err.to_type_error_instance(global_this)))
+                }
+            };
+        }
         let mut body_value = BodyValue::from_js(global_this, value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))

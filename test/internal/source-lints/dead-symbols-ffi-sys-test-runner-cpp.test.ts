@@ -88,8 +88,42 @@ test("dead c-ares and brotli FFI declarations do not reappear", () => {
 });
 
 test("dead simdutf wrappers stay removed on both sides of the FFI", () => {
-  const names =
-    /simdutf__(detect_encodings|validate_utf32|convert_utf32_to_utf8|convert_utf16be_to_utf8|count_utf8|change_endianness_utf16|utf16_length_from_latin1|base64_decode_from_binary16|convert_latin1_to_utf8)\b/;
+  // The complete set of wrappers removed (22 had an unused Rust declaration,
+  // 8 had already lost theirs). The trailing \b keeps the still-live
+  // `*_with_errors` / `*be` siblings of several of these from matching.
+  const removed = [
+    "base64_decode_from_binary16",
+    "change_endianness_utf16",
+    "convert_latin1_to_utf8",
+    "convert_utf16be_to_utf32",
+    "convert_utf16be_to_utf8",
+    "convert_utf16le_to_utf32",
+    "convert_utf16le_to_utf32_with_errors",
+    "convert_utf16le_to_utf8",
+    "convert_utf32_to_utf16be",
+    "convert_utf32_to_utf16le",
+    "convert_utf32_to_utf16le_with_errors",
+    "convert_utf32_to_utf8",
+    "convert_utf8_to_utf32",
+    "convert_valid_utf16le_to_utf32",
+    "convert_valid_utf32_to_utf16le",
+    "convert_valid_utf8_to_utf16be",
+    "convert_valid_utf8_to_utf16le",
+    "count_utf16be",
+    "count_utf16le",
+    "count_utf8",
+    "detect_encodings",
+    "utf16_length_from_latin1",
+    "utf16_length_from_utf32",
+    "utf32_length_from_utf16le",
+    "utf8_length_from_utf32",
+    "validate_utf16be",
+    "validate_utf16be_with_errors",
+    "validate_utf16le_with_errors",
+    "validate_utf32",
+    "validate_utf32_with_errors",
+  ];
+  const names = new RegExp(`\\bsimdutf__(?:${removed.join("|")})\\b`);
   expect(
     resurrected([
       ["src/simdutf_sys/simdutf.rs", names],

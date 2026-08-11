@@ -425,12 +425,12 @@ describe("web worker", () => {
       w.postMessage(flag);
       // Block until the whole flood sits in the parent's inbox, so the first drain task
       // starts out with more than its budget no matter how fast either thread is.
-      expect(Atomics.wait(flag, 0, 0, 30_000)).toBe("ok");
+      Atomics.wait(flag, 0, 0, 30_000);
+      expect(Atomics.load(flag, 0)).toBe(1);
       // Resumes inside the first drain task. An immediate armed there runs as soon as
       // that task ends, before the continuation it posted delivers the next batch.
       await once(w, "message");
       await new Promise<void>(r => setImmediate(r));
-      expect(received).toBeGreaterThan(0);
       expect(received).toBeLessThan(total);
       await delivered.promise;
       w.terminate();

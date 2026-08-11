@@ -1,25 +1,19 @@
-// bun_ast is one of the crates scripts/rust-miri.ts runs under Miri, and Miri
-// never links, so it stays green while the crate's test binary references
-// symbols only the full bun binary defines. A host `cargo test -p bun_ast` is
-// what notices: the tape tests build JsonTapes on TapeAlloc::Global, but the
-// Arena arm of the same Allocator impl keeps <&MimallocArena as Allocator>
-// live, and mimalloc is not part of the test binary. src/ast/native_test_shims.rs
-// defines the mi_* entry points that code reaches; without it lld fails with
+// The Miri lane (scripts/rust-miri.ts) runs bun_ast's tests without linking,
+// so only a host `cargo test -p bun_ast` notices when the test binary
+// references symbols that exist only in the full bun link. The tape tests keep
+// the TapeAlloc::Arena arm live, and src/ast/native_test_shims.rs defines the
+// mimalloc symbols it reaches; without it:
 //   ld.lld: error: undefined symbol: mi_heap_malloc
-// Which entry points are live depends on the profile (bun_alloc's
-// mi_free_checked frees through mi_free_size* under debug_assertions and
-// mi_free otherwise), so both profiles are built. The tests are run rather
-// than stopped at --no-run: the shims abort if anything reaches them.
+// The set differs per profile (bun_alloc's mi_free_checked uses mi_free_size*
+// under debug_assertions and mi_free otherwise), hence both rows; the tests
+// are run, not just linked, because the shims abort if anything reaches them.
 //
-// Unix only: the check relies on the linker reporting only references from
-// live code (lld with --gc-sections). link.exe also resolves references from
-// dead code, so there a test binary depending on bun_core either fails on
-// ~100 unrelated externs or is linked with unresolved symbols forced through,
-// and neither outcome says anything about these shims. Same remaining
-// prerequisites as rust-windows-sys-link.test.ts: cargo on PATH and a
-// configured checkout (cargo needs vendor/lolhtml to resolve the workspace,
-// bun_core/build.rs needs build_options.rs); test-only CI lanes have neither
-// and skip.
+// Unix only: this relies on the linker reporting only references from live
+// code (lld --gc-sections). link.exe reports dead ones too, so a bun_core
+// dependent's test binary there either fails on ~100 unrelated externs or has
+// them forced through; neither says anything about these shims. Remaining
+// prerequisites as in rust-windows-sys-link.test.ts: cargo, and a configured
+// checkout (vendor/lolhtml, build_options.rs), which test-only CI lanes lack.
 import { which } from "bun";
 import { expect, test } from "bun:test";
 import { isWindows } from "harness";

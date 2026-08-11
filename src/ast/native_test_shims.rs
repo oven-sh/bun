@@ -1,16 +1,8 @@
-//! mimalloc entry points this crate's `cargo test` binary references; mimalloc
-//! itself is only linked into the full bun binary. Never compiled into the real
-//! build.
-//!
-//! The JSON tape tests only build `TapeAlloc::Global` tapes, but the
-//! `TapeAlloc::Arena` arm of the same `Allocator` impl keeps
-//! `<&MimallocArena as Allocator>::{allocate, deallocate}` live, so the link
-//! needs everything those two reach: `mi_free_checked` in `bun_alloc::basic`
-//! frees through `mi_free_size*` under `debug_assertions` and `mi_free`
-//! otherwise, hence both sets (test/internal/rust-ast-cargo-test.test.ts
-//! links both profiles). Nothing in the binary references `mi_heap_new` or
-//! `mi_heap_main`, so no test can hold an arena and none of these is ever
-//! called; they abort instead of pretending to allocate.
+//! mimalloc symbols this crate's `cargo test` binary references through the
+//! `TapeAlloc::Arena` arm (in either profile); mimalloc itself is only linked
+//! into bun. The tests use `TapeAlloc::Global`, and nothing in the binary can
+//! create a heap (`mi_heap_new` is not even referenced), so these are never
+//! called. Never compiled into the real build.
 
 use core::ffi::c_void;
 

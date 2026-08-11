@@ -615,7 +615,8 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)?;
+        Ok(())
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -871,7 +872,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                if let Some(key) =
+                    Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?
+                {
+                    warn_expansion_limit(base, key);
+                }
             }
         }
 
@@ -918,7 +923,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                if let Some(key) =
+                    Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?
+                {
+                    warn_expansion_limit(file_path, key);
+                }
             }
         }
 
@@ -945,6 +954,17 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
+#[cold]
+fn warn_expansion_limit(file_path: &[u8], key: &[u8]) {
+    bun_core::warn!(
+        "{} expands to more than {} of variable references, so {} and the values after it were left unexpanded",
+        bun_core::fmt::quote(file_path),
+        bun_core::fmt::bytes(Parser::MAX_EXPANSION_BYTES),
+        bun_core::fmt::quote(key),
+    );
+    Output::flush();
+}
+
 fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
@@ -963,13 +983,28 @@ struct Parser<'a> {
     pos: usize,
     src: &'a [u8],
     value_buffer: &'a mut Vec<u8>,
+    /// Bytes of referenced values this file may still substitute in; starts at
+    /// [`Self::MAX_EXPANSION_BYTES`].
+    expansion_budget: usize,
 }
+
+/// A value's `$NAME` / `${NAME}` references would substitute in more bytes
+/// than the file's remaining [`Parser::expansion_budget`].
+struct ExpansionLimitExceeded;
 
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
 impl<'a> Parser<'a> {
+    /// Total bytes one file's `${...}` references may substitute in. Every
+    /// value is expanded against the already-expanded values above it, so
+    /// without a bound a few hundred bytes of `A1=${A0}${A0}...` grow by 10x
+    /// per line. Only substituted bytes count: a value's own text is bounded
+    /// by the file size. Anything past a few MB could not be passed to a child
+    /// process anyway (Linux caps the environment at ARG_MAX, 2 MiB by default).
+    const MAX_EXPANSION_BYTES: usize = 4 * 1024 * 1024;
+
     fn skip_line(&mut self) {
         if let Some(i) = strings::index_of_any(&self.src[self.pos..], b"\n\r") {
             self.pos += i + 1;
@@ -1134,12 +1169,17 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    /// `Ok(None)` when `value` contains nothing to expand.
+    fn expand_value(
+        &mut self,
+        map: &Map,
+        value: &[u8],
+    ) -> Result<Option<&[u8]>, ExpansionLimitExceeded> {
         if value.len() < 2 {
             return Ok(None);
         }
         self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
+        if !Self::expand_into(map, value, self.value_buffer, &mut self.expansion_budget, 0)? {
             return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
@@ -1148,11 +1188,30 @@ impl<'a> Parser<'a> {
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
-    /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    /// default clause is expanded recursively. Every referenced value that is
+    /// substituted in is charged to `budget`.
+    fn expand_into(
+        map: &Map,
+        value: &[u8],
+        out: &mut Vec<u8>,
+        budget: &mut usize,
+        depth: u8,
+    ) -> Result<bool, ExpansionLimitExceeded> {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        fn substitute(
+            out: &mut Vec<u8>,
+            budget: &mut usize,
+            referenced: &[u8],
+        ) -> Result<(), ExpansionLimitExceeded> {
+            *budget = budget
+                .checked_sub(referenced.len())
+                .ok_or(ExpansionLimitExceeded)?;
+            out.extend_from_slice(referenced);
+            Ok(())
         }
 
         let mut pos = 0;
@@ -1212,13 +1271,13 @@ impl<'a> Parser<'a> {
                 let rest = &inner[key_end..];
                 if rest.is_empty() {
                     if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
+                        substitute(out, budget, v)?;
                     }
                 } else if let Some(default) = rest.strip_prefix(b":-") {
                     if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
+                        substitute(out, budget, v)?;
                     } else if depth < 200 {
-                        Self::expand_into(map, default, out, depth + 1);
+                        Self::expand_into(map, default, out, budget, depth + 1)?;
                     } else {
                         out.extend_from_slice(default);
                     }
@@ -1236,7 +1295,7 @@ impl<'a> Parser<'a> {
                     k += 1;
                 }
                 if let Some(v) = map.get(&value[key_start..k]) {
-                    out.extend_from_slice(v);
+                    substitute(out, budget, v)?;
                 }
                 pos = k;
                 continue;
@@ -1244,13 +1303,15 @@ impl<'a> Parser<'a> {
             out.push(b'$');
             pos += 1;
         }
-        changed
+        Ok(changed)
     }
 
-    fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    /// Returns the key at which expansion ran out of [`Self::expansion_budget`],
+    /// if any; that value and every value after it are left as written.
+    fn parse<'m, const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
-        map: &mut Map,
-    ) -> Result<(), AllocError> {
+        map: &'m mut Map,
+    ) -> Result<Option<&'m [u8]>, AllocError> {
         let mut count = map.map.count();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
@@ -1282,27 +1343,31 @@ impl<'a> Parser<'a> {
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
+                match self.expand_value(map, &current) {
+                    Ok(Some(expanded)) => {
+                        map.map.values_mut()[idx] = HashTableValue {
+                            value: Box::from(expanded),
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(ExpansionLimitExceeded) => return Ok(Some(&map.map.keys()[idx])),
                 }
                 idx += 1;
             }
             count = 0;
         }
         let _ = count;
-        Ok(())
+        Ok(None)
     }
 
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn parse_bytes<'m, const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
-        map: &mut Map,
+        map: &'m mut Map,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
+    ) -> Result<Option<&'m [u8]>, AllocError> {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
         let mut parser = Parser {
@@ -1311,6 +1376,7 @@ impl<'a> Parser<'a> {
             // first key fails `parse_key` and `skip_line` silently drops line 1.
             src: strings::without_utf8_bom(src),
             value_buffer,
+            expansion_budget: Self::MAX_EXPANSION_BYTES,
         };
         parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }

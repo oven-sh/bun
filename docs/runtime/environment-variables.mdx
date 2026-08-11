@@ -137,6 +137,8 @@ BAR=hello\$FOO
 process.env.BAR; // => "hello$FOO"
 ```
 
+Expansion is limited to 4 MiB of substituted text per file. If a file goes past that, Bun prints a warning naming the variable it stopped at and leaves that variable, and the ones after it in the same file, unexpanded.
+
 ### `dotenv`
 
 Bun reads `.env` files automatically, so `dotenv` and `dotenv-expand` are unnecessary.

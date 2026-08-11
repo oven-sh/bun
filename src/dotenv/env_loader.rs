@@ -988,25 +988,18 @@ struct Parser<'a> {
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
-/// Upper bound on a single expanded value. A `.env` file whose `${}` references
-/// transitively exceed this produces an empty value (and a one-time warning)
-/// instead of aborting the process on allocation failure. Sized well above any
-/// legitimate env var but well below where allocation becomes a DoS vector.
+/// Per-value cap on `${}` expansion output; a value over this is stored empty.
 const MAX_EXPANDED_VALUE_LEN: usize = 4 * 1024 * 1024;
 
-/// Upper bound on the sum of expanded-value bytes stored per `parse` call.
-/// Bounds the linear case (many variables each referencing one at-cap value)
-/// that the per-value cap alone does not.
+/// Per-file cap on the sum of stored expansion output.
 const MAX_EXPANDED_TOTAL_LEN: usize = 32 * 1024 * 1024;
 
 struct ExpansionTooLarge;
 
 enum Expansion<'a> {
-    /// No `$` reference in the input; keep the original value.
     Unchanged,
-    /// Expanded result (borrow of `value_buffer`).
+    /// Borrows `value_buffer`.
     Value(&'a [u8]),
-    /// Expansion would exceed [`MAX_EXPANDED_VALUE_LEN`]; caller sets the value empty.
     TooLarge,
 }
 
@@ -1194,10 +1187,6 @@ impl<'a> Parser<'a> {
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
     /// default clause is expanded recursively.
-    ///
-    /// Literal bytes copied from `value` are bounded by the file size; only
-    /// looked-up substitutions can grow without bound, so those go through
-    /// `push_lookup` and trip [`MAX_EXPANDED_VALUE_LEN`].
     fn expand_into(
         map: &Map,
         value: &[u8],
@@ -1209,6 +1198,7 @@ impl<'a> Parser<'a> {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
         }
 
+        // Only looked-up values are size-checked; literal bytes are bounded by the input.
         fn push_lookup(out: &mut Vec<u8>, v: &[u8]) -> Result<(), ExpansionTooLarge> {
             if out.len().saturating_add(v.len()) > MAX_EXPANDED_VALUE_LEN {
                 return Err(ExpansionTooLarge);
@@ -1376,9 +1366,7 @@ impl<'a> Parser<'a> {
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
     ///
-    /// Returns `true` when at least one `${}` expansion was capped (per-value at
-    /// [`MAX_EXPANDED_VALUE_LEN`] or per-file aggregate at [`MAX_EXPANDED_TOTAL_LEN`])
-    /// and the affected value was set to empty.
+    /// Returns `true` if any expansion hit a size cap and was stored empty.
     fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,

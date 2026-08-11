@@ -846,6 +846,17 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(prefix.stdout)).toContain("true");
       expect(stripAnsi(prefix.stdout)).not.toContain("SyntaxError");
       expect(prefix.exitCode).toBe(0);
+
+      // A member named like a keyword is still postfix context.
+      const member = await runRepl(["q = ({ in: 84 }.in! / 2); q", ".exit"]);
+      expect(stripAnsi(member.stdout)).toContain("42");
+      expect(stripAnsi(member.stdout)).not.toContain("SyntaxError");
+      expect(member.exitCode).toBe(0);
+
+      const string = await runRepl(['q = ("x"! / 2); q', ".exit"]);
+      expect(stripAnsi(string.stdout)).toContain("NaN");
+      expect(stripAnsi(string.stdout)).not.toContain("SyntaxError");
+      expect(string.exitCode).toBe(0);
     });
 
     test("division after a spread object literal", async () => {
@@ -885,6 +896,14 @@ describe.concurrent("Bun REPL", () => {
       const spacedClose = await runRepl(["q = (<a></a > / 2)", "60 + 2", ".exit"]);
       expect(stripAnsi(spacedClose.stdout)).toContain("62");
       expect(spacedClose.exitCode).toBe(0);
+
+      const memberTag = await runRepl(["q = (<a.b></a.b> / 2)", "70 + 2", ".exit"]);
+      expect(stripAnsi(memberTag.stdout)).toContain("72");
+      expect(memberTag.exitCode).toBe(0);
+
+      const hyphenTag = await runRepl(["q = (<my-el></my-el> / 2)", "80 + 2", ".exit"]);
+      expect(stripAnsi(hyphenTag.stdout)).toContain("82");
+      expect(hyphenTag.exitCode).toBe(0);
     });
 
     test("a method named like a conditional keyword does not make its paren a regex context", async () => {

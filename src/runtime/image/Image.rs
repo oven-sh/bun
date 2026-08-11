@@ -749,13 +749,7 @@ impl Image {
                             // SAFETY: classifier guarantees `ptr[0..len]` is
                             // valid for the duration of this call (JS thread).
                             let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-                            Ok((
-                                Input {
-                                    copied: Some(copied),
-                                    ..Default::default()
-                                },
-                                Pin::NONE,
-                            ))
+                            Ok((Input::Copied(copied), Pin::NONE))
                         }
                     }
                     // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
@@ -772,34 +766,19 @@ impl Image {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
                             // Js side, or the sync caller's scope).
                             let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
-                            Ok((
-                                Input {
-                                    bytes: bun_ptr::RawSlice::new(bytes),
-                                    ..Default::default()
-                                },
-                                Pin(v),
-                            ))
+                            Ok((Input::Borrowed(bun_ptr::RawSlice::new(bytes)), Pin(v)))
                         }
                     }
                     _ => unreachable!(),
                 }
             }
-            // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
-            // Strong while pending_tasks > 0 (see `schedule()`).
+            // SAFETY: `Owned` bytes and the `Path` string outlive the task because
+            // `this_ref` is held Strong while pending_tasks > 0 (see `schedule()`).
             Source::Owned(b) => Ok((
-                Input {
-                    bytes: bun_ptr::RawSlice::new(b.as_slice()),
-                    ..Default::default()
-                },
+                Input::Borrowed(bun_ptr::RawSlice::new(b.as_slice())),
                 Pin::NONE,
             )),
-            Source::Path(p) => Ok((
-                Input {
-                    path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
-                    ..Default::default()
-                },
-                Pin::NONE,
-            )),
+            Source::Path(p) => Ok((Input::Path(bun_ptr::BackRef::new(p.as_zstr())), Pin::NONE)),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -1397,8 +1376,8 @@ pub struct PipelineTask {
     auto_orient: bool,
     result: TaskResult,
 }
-// SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
-// the job's Js side keeps alive; read only under the pool borrow. The rest is owned.
+// SAFETY: `Input::Borrowed`/`Input::Path` point at bytes the job's Js side keeps
+// alive (`Pin`, `PendingTask`); read only under the pool borrow. The rest is owned.
 unsafe impl Send for PipelineTask {}
 
 /// The JS-thread half of a scheduled `PipelineTask`.
@@ -1477,35 +1456,14 @@ impl jsc::JobContext for PipelineTask {
     }
 }
 
-/// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
-pub struct Input {
-    // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
-    // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
-    bytes: bun_ptr::RawSlice<u8>,
-    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
-    // held via BACKREF for the task's lifetime, same as `bytes` above.
-    path: Option<*const ZStr>,
+/// Bytes for the worker, prepared on the JS thread by `pin_for_task`.
+pub enum Input {
+    /// Pinned ArrayBuffer or `Source::Owned` bytes; `Pin` and `Image` outlive the task.
+    Borrowed(bun_ptr::RawSlice<u8>),
     /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
-    copied: Option<Vec<u8>>,
-}
-
-impl Default for Input {
-    fn default() -> Self {
-        Self {
-            bytes: bun_ptr::RawSlice::EMPTY,
-            path: None,
-            copied: None,
-        }
-    }
-}
-
-impl Input {
-    fn slice(&self) -> &[u8] {
-        if let Some(c) = &self.copied {
-            return c.as_slice();
-        }
-        self.bytes.slice()
-    }
+    Copied(Vec<u8>),
+    /// `Source::Path`, read on the worker; the `Image` outlives the task.
+    Path(bun_ptr::BackRef<ZStr>),
 }
 
 #[derive(bun_jsc::JsAffine)]
@@ -1555,70 +1513,67 @@ pub enum TaskResult {
 impl PipelineTask {
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
-        // `self.input` was prepared on the JS thread by `pin_for_task`: either a
-        // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
-        // buffer, or a path to read here.
-        let owned_file: Option<Vec<u8>>;
-        let input: &[u8] = if let Some(p) = self.input.path {
-            // SAFETY: `p` borrows `image.source.path`, which outlives the task
-            // because `this_ref` is held Strong while pending_tasks > 0.
-            let p: &ZStr = unsafe { &*p };
-            // The path string came straight from the constructor, so treat
-            // it as untrusted: open + fstat first instead of `readFrom`.
-            //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
-            //     otherwise pread forever (st_size=0, never returns 0) until
-            //     the doubling Vec OOMs the process; a FIFO with no writer
-            //     would park this WorkPool thread in-kernel forever.
-            //   • st_size cap → file-based decompression-bomb fails up
-            //     front with a clear error instead of materialising a
-            //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
-            #[cfg(unix)]
-            let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
-            #[cfg(not(unix))]
-            let oflags = sys::O::RDONLY;
-            let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
-                sys::Result::Ok(f) => f,
-                sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+        let owned_file: Vec<u8>;
+        let input: &[u8] = match &self.input {
+            Input::Borrowed(bytes) => bytes.slice(),
+            Input::Copied(bytes) => bytes.as_slice(),
+            Input::Path(p) => {
+                let p: &ZStr = p.get();
+                // The path string came straight from the constructor, so treat
+                // it as untrusted: open + fstat first instead of `readFrom`.
+                //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
+                //     otherwise pread forever (st_size=0, never returns 0) until
+                //     the doubling Vec OOMs the process; a FIFO with no writer
+                //     would park this WorkPool thread in-kernel forever.
+                //   • st_size cap → file-based decompression-bomb fails up
+                //     front with a clear error instead of materialising a
+                //     multi-GB encoded buffer before `maxPixels` even runs.
+                // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
+                // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
+                // handle) and the subsequent sync read fails EINVAL. Windows has
+                // no open-blocking FIFOs in the same sense; the !S_ISREG check
+                // below still rejects pipes/devices.
+                #[cfg(unix)]
+                let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
+                #[cfg(not(unix))]
+                let oflags = sys::O::RDONLY;
+                let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
+                    sys::Result::Ok(f) => f,
+                    sys::Result::Err(e) => {
+                        self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                        return;
+                    }
+                };
+                // `defer file.close()` — assume `sys::File` closes on Drop.
+                let st = match file.stat() {
+                    sys::Result::Ok(s) => s,
+                    sys::Result::Err(e) => {
+                        self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                        return;
+                    }
+                };
+                if !sys::S::ISREG(st.st_mode as _) {
+                    self.result = TaskResult::IoErr(sys::Error {
+                        errno: sys::E::ENODEV as _,
+                        syscall: sys::Tag::read,
+                        path: p.as_bytes().to_vec().into_boxed_slice(),
+                        ..Default::default()
+                    });
                     return;
                 }
-            };
-            // `defer file.close()` — assume `sys::File` closes on Drop.
-            let st = match file.stat() {
-                sys::Result::Ok(s) => s,
-                sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+                    self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                     return;
                 }
-            };
-            if !sys::S::ISREG(st.st_mode as _) {
-                self.result = TaskResult::IoErr(sys::Error {
-                    errno: sys::E::ENODEV as _,
-                    syscall: sys::Tag::read,
-                    path: p.as_bytes().to_vec().into_boxed_slice(),
-                    ..Default::default()
-                });
-                return;
-            }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
-                self.result = TaskResult::Err(codecs::Error::TooManyPixels);
-                return;
-            }
-            match file.read_to_end() {
-                Ok(bytes) => owned_file = Some(bytes),
-                Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
+                match file.read_to_end() {
+                    Ok(bytes) => owned_file = bytes,
+                    Err(e) => {
+                        self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                        return;
+                    }
                 }
+                owned_file.as_slice()
             }
-            owned_file.as_deref().unwrap()
-        } else {
-            self.input.slice()
         };
 
         // Header-only fast path for `.metadata()` — Sharp parses just the

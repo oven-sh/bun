@@ -169,20 +169,13 @@ fn slice_with_underlying_string_to_js_with_options(
         // `ZigStringSlice` encodes ownership in the variant:
         // `Owned`/`WTF` ⇒ allocated, `Static` ⇒ borrowed.
         if this.utf8.is_allocated() {
-            if let Some(utf16) = strings::to_utf16_alloc(this.utf8.slice(), false, false)
+            if let Some(mut utf16) = strings::to_utf16_alloc(this.utf8.slice(), false, false)
                 .map_err(|_| global_object.throw_out_of_memory())?
             {
                 // Drop the now-unused utf8 allocation.
                 this.utf8 = ZigStringSlice::default();
-                // Ownership of `utf16` is transferred to JSC as an
-                // external string; do not drop it here.
-                let mut utf16 = core::mem::ManuallyDrop::new(utf16);
                 utf16.shrink_to_fit();
-                // SAFETY: `utf16` was allocated by the global allocator and is
-                // wrapped in `ManuallyDrop`; ownership transfers to JSC here.
-                return Ok(unsafe {
-                    zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
-                });
+                return Ok(zig_string::to_external_u16(utf16, global_object));
             } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
                 // Ownership of the utf8 bytes is transferred to JSC via
                 // `to_external_value`; `take_owned_raw` already cleared `utf8`

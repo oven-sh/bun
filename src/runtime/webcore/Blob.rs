@@ -2650,7 +2650,7 @@ impl BlobExt for Blob {
                     return Err(global.throw_out_of_memory());
                 }
             };
-            if let Some(external) = converted {
+            if let Some(mut external) = converted {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
@@ -2661,17 +2661,8 @@ impl BlobExt for Blob {
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
-                // Ownership of the UTF-16 buffer transfers to JSC's external-string
-                // finalizer (which calls back into the default allocator's `free`).
-                // `into_raw` is the explicit ownership-transfer-to-FFI API; the
-                // matching free lives on the C++ side.
-                let len = external.len();
-                let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
-                    .cast::<u16>()
-                    .cast_const();
-                // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
-                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-                return Ok(unsafe { zig_string_to_external_u16(ptr, len, global) });
+                external.shrink_to_fit();
+                return Ok(jsc::zig_string::to_external_u16(external, global));
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -6219,9 +6210,8 @@ fn resolve_file_stat(store: &StoreRef) {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
-// `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`;
-// `zig_string_to_external_u16` is the free-fn form re-exported from
-// `bun_jsc`. Only Blob-local extension traits remain here.
+// `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`.
+// Only Blob-local extension traits remain here.
 // ──────────────────────────────────────────────────────────────────────────
 mod zigstring_blob_ext {
     /// Local shim for allocator-identity queries on
@@ -6241,7 +6231,6 @@ mod zigstring_blob_ext {
         }
     }
 }
-use bun_jsc::zig_string_to_external_u16;
 use zigstring_blob_ext::ZigStringSliceBlobExt as _;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -6799,18 +6788,11 @@ impl Internal {
 
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
+        if let Some(mut out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
             .map_err(|_| global_this.throw_out_of_memory())?
         {
-            let out_len = out.len();
-            // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
-                .cast::<u16>()
-                .cast_const();
-            // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
-            // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-            let return_value =
-                unsafe { jsc::zig_string::to_external_u16(out_ptr, out_len, global_this) };
+            out.shrink_to_fit();
+            let return_value = jsc::zig_string::to_external_u16(out, global_this);
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
             return Ok(return_value);

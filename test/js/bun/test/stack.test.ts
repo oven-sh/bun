@@ -200,6 +200,12 @@ customError();
 function constructAtColumnOne() {
 new Thrower(1);
 }
+// The transpiler keeps this callee on several lines, so JSC's divot ends up two lines below the \`new\`.
+function classExpressionCallee() {
+  return new class extends Thrower {
+    marker() {}
+  }(1);
+}
 
 // "fixture.js:LINE:COLUMN" of the frame for the function called \`name\`.
 function frame(stack, name) {
@@ -228,6 +234,7 @@ console.log(
     viaCaptureStackTrace: frame(viaCaptureStackTrace(), "viaCaptureStackTrace"),
     callAtColumnOne: frame(caught(callAtColumnOne).stack, "callAtColumnOne"),
     constructAtColumnOne: frame(caught(constructAtColumnOne).stack, "constructAtColumnOne"),
+    classExpressionCallee: frame(caught(classExpressionCallee).stack, "classExpressionCallee"),
   }),
 );
 `;
@@ -247,12 +254,13 @@ console.log(
       viaCaptureStackTrace: "fixture.js:34:3",
       callAtColumnOne: "fixture.js:39:1",
       constructAtColumnOne: "fixture.js:42:1",
+      classExpressionCallee: "fixture.js:46:10",
     });
   });
 
-  // eval'd and node:vm code is not transpiled, so `new` and its callee can really be on different
-  // lines and the position has to be recounted from the source text, which is 16-bit when the
-  // evaluated string is not latin1. The same position feeds error.stack, Bun.inspect and CallSites.
+  // eval'd and node:vm code is not transpiled, so the text the line and column get recounted from
+  // is whatever the user wrote, including 16-bit strings and every kind of line terminator. The
+  // same position feeds error.stack, Bun.inspect and CallSites.
   test.concurrent("in eval'd or node:vm code with `new` on an earlier line than the callee", async () => {
     const script = `
 const vm = require("node:vm");
@@ -261,10 +269,14 @@ const cases = {
   utf16: { source: "// \\u4e2d\\u6587\\nfunction construct() {\\n  return new\\n    Map(1);\\n}\\nconstruct();\\n" },
   // \`new\` on the first line of the source, and a line break right after the callee.
   firstLine: { source: "function construct() { return new\\n  Map\\n  (1); }\\nconstruct();\\n" },
-  // The other line terminators JavaScript has.
+  // The other line terminators JavaScript has, between the \`new\` and the callee (counted to find
+  // the line) and, in the second-line variants, before the \`new\` too (where the column count stops).
   carriageReturn: { source: "function construct() { return new\\r  Map(1); }\\rconstruct();\\r" },
+  carriageReturnSecondLine: { source: "// x\\rfunction construct() { return new\\r  Map(1); }\\rconstruct();\\r" },
   crlf: { source: "function construct() { return new\\r\\n  Map(1); }\\r\\nconstruct();\\r\\n" },
   lineSeparator: { source: "function construct() { return new\\u2028  Map(1); }\\u2028construct();\\u2028" },
+  lineSeparatorSecondLine: { source: "// x\\u2028function construct() { return new\\u2028  Map(1); }\\u2028construct();\\u2028" },
+  paragraphSeparatorSecondLine: { source: "// x\\u2029function construct() { return new\\u2029  Map(1); }\\u2029construct();\\u2029" },
   // node:vm's columnOffset applies to the first line of the source.
   columnOffset: { source: "function construct() { return new\\n  Map(1); }\\nconstruct();\\n", options: { columnOffset: 100 } },
 };
@@ -313,8 +325,11 @@ console.log(JSON.stringify(results));
       utf16: { stack: "3:10", inspect: "3:10", callSiteLine: 3 },
       firstLine: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
       carriageReturn: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      carriageReturnSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
       crlf: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
       lineSeparator: { stack: "1:31", inspect: "1:31", callSiteLine: 1 },
+      lineSeparatorSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
+      paragraphSeparatorSecondLine: { stack: "2:31", inspect: "2:31", callSiteLine: 2 },
       columnOffset: { stack: "1:131", inspect: "1:131" },
       byteZero: "at byte-zero.js:1:1",
     });

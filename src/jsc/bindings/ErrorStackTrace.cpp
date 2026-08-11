@@ -423,7 +423,7 @@ bool JSCStackFrame::calculateSourcePositions()
         return false;
     }
 
-    auto location = Bun::getAdjustedPositionForBytecode(m_codeBlock, m_bytecodeIndex);
+    auto location = Bun::getAdjustedLineColumnForBytecode(m_codeBlock, m_bytecodeIndex);
     m_sourcePositions.line = location.line();
     m_sourcePositions.column = location.column();
 

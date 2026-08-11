@@ -56,9 +56,27 @@ static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, Code
     pos.byte_position = start;
 }
 
+// JavaScriptCore puts the divot of these at the `(` or the end of the callee; V8 reports the `new`.
+static bool isConstruct(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
+{
+    switch (code->instructionAt(bc)->opcodeID()) {
+    case op_construct:
+    case op_construct_varargs:
+    case op_super_construct:
+    case op_super_construct_varargs:
+        return true;
+    default:
+        return false;
+    }
+}
+
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
+    // Uncomment to debug this:
+    // printf("lc = %u : %u (byte = %u)\n", expr.lineColumn.line, expr.lineColumn.column, expr.divot);
+    // printf("off = %u : %u\n", expr.startOffset, expr.endOffset);
+    // printf("name = %s\n", code->instructionAt(bc)->name());
 
     ZigStackFramePosition pos {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
@@ -66,43 +84,48 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .byte_position = (int)expr.divot,
     };
 
-    auto inst = code->instructionAt(bc);
-
-    /// JavaScriptCore places error divots at different places than v8
-    // Uncomment to debug this:
-    // printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
-    // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
-    // printf("name = %s\n", inst->name());
-
-    switch (inst->opcodeID()) {
-    case op_construct:
-    case op_construct_varargs:
-    case op_super_construct:
-    case op_super_construct_varargs:
-        // The divot by default is pointing at the `(` or the end of the class name.
-        // We want to point at the `new` keyword, which is conveniently at the
-        // expression start.
+    if (isConstruct(code, bc))
         adjustPositionBackwards(pos, expr.startOffset, code);
-        break;
-
-    default:
-        break;
-    }
 
     return pos;
 }
 
-ZigStackFramePosition getAdjustedPositionForStackFrame(const JSC::StackFrame& frame)
+ZigStackFramePosition getAdjustedLineColumnForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
-    if (!frame.hasLineAndColumnInfo() || !frame.hasBytecodeIndex()) {
-        return ZigStackFramePosition {
-            .line_zero_based = -1,
-            .column_zero_based = -1,
-            .byte_position = -1,
-        };
+    if (isConstruct(code, bc)) {
+        auto pos = getAdjustedPositionForBytecode(code, bc);
+        pos.byte_position = -1;
+        return pos;
     }
 
+    // Cached per bytecode index, unlike expressionInfoForBytecodeIndex, which decodes a whole
+    // chapter of expression info on every call.
+    auto lineColumn = code->lineColumnForBytecodeIndex(bc);
+    return ZigStackFramePosition {
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
+        .byte_position = -1,
+    };
+}
+
+static constexpr ZigStackFramePosition noPosition {
+    .line_zero_based = -1,
+    .column_zero_based = -1,
+    .byte_position = -1,
+};
+
+ZigStackFramePosition getAdjustedPositionForStackFrame(const JSC::StackFrame& frame)
+{
+    if (!frame.hasLineAndColumnInfo() || !frame.hasBytecodeIndex())
+        return noPosition;
     return getAdjustedPositionForBytecode(frame.codeBlock(), frame.bytecodeIndex());
+}
+
+ZigStackFramePosition getAdjustedLineColumnForStackFrame(const JSC::StackFrame& frame)
+{
+    if (!frame.hasLineAndColumnInfo() || !frame.hasBytecodeIndex())
+        return noPosition;
+    return getAdjustedLineColumnForBytecode(frame.codeBlock(), frame.bytecodeIndex());
 }
 
 } // namespace Bun

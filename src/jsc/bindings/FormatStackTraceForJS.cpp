@@ -266,7 +266,7 @@ WTF::String formatStackTrace(
         if (!frame.hasLineAndColumnInfo()) continue;
 
         // Same position as Bun.inspect and CallSite; source maps have a mapping at `new`, not at JSC's divot.
-        originalPositions[i] = Bun::getAdjustedPositionForStackFrame(frame);
+        originalPositions[i] = Bun::getAdjustedLineColumnForStackFrame(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {

@@ -2150,7 +2150,7 @@ describe("bundler", () => {
   // references to them are free identifiers and must be left alone. They used to
   // bind to the file's internal CommonJS symbols, which the bundler renamed to
   // `module_<file>` (never declared) and `exports_<file>` (the ESM namespace
-  // object), and `module.id` was inlined.
+  // object), `module.id` was inlined and `module.require()` became `require()`.
   itBundled("edgecase/ESMFileModuleAndExportsAreFreeIdentifiers", {
     files: {
       "/entry.ts": /* ts */ `
@@ -2169,15 +2169,58 @@ describe("bundler", () => {
             capture(typeof module),
             capture(typeof exports),
             typeof module === 'undefined' ? 'no module' : capture(module.id),
+            typeof module === 'undefined' ? 'no require' : capture(module.require('node:fs')),
             typeof exports === 'undefined' ? 'no exports' : capture(exports.foo),
             capture(require.main === module),
           ].join(', ');
         }
       `,
     },
-    capture: ["typeof module", "typeof exports", "module.id", "exports.foo", "false"],
+    capture: ["typeof module", "typeof exports", "module.id", 'module.require("node:fs")', "exports.foo", "false"],
     run: {
-      stdout: "undefined, undefined, no module, no exports, false",
+      stdout: "undefined, undefined, no module, no require, no exports, false",
+    },
+  });
+  // The same applies to assignments. A file with ESM exports that also assigns
+  // `module.exports`/`exports.x` behind a dual-mode guard stays an ES module with
+  // the assignments left as written. The assignments used to target the renamed
+  // internal symbols, and a file doing both used to be converted to CommonJS,
+  // dropping its `export` statements.
+  itBundled("edgecase/ESMFileWithGuardedCommonJSAssignmentsStaysESM", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from './assigns-module-exports';
+        import { b } from './assigns-exports';
+        import { c } from './assigns-both';
+        export const result = a + b + c;
+        console.log(result);
+      `,
+      "/assigns-module-exports.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        declare const module: any;
+        export const a = 1;
+        if (typeof module !== 'undefined') capture(module.exports = { a });
+      `,
+      "/assigns-exports.ts": /* ts */ `
+        declare const exports: any;
+        export const b = 2;
+        if (typeof exports !== 'undefined') capture(exports.b = b);
+      `,
+      "/assigns-both.ts": /* ts */ `
+        declare const module: any;
+        declare const exports: any;
+        export const c = 3;
+        if (typeof exports !== 'undefined') capture(exports.c = c);
+        if (typeof module !== 'undefined') capture(module.exports = { c });
+      `,
+    },
+    capture: ["module.exports = { a }", "exports.b = b", "exports.c = c", "module.exports = { c }"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+      api.expectFile("/out.js").not.toMatch(/\b(?:module|exports)_assigns/);
+    },
+    run: {
+      stdout: "6",
     },
   });
   itBundled("edgecase/ESMFileModuleAndExportsAreFreeIdentifiersMinified", {

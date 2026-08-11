@@ -3074,6 +3074,12 @@ console.log(resolve.length)
       );
     });
 
+    it("module.require() is only rewritten to require() where module is a CommonJS binding", () => {
+      expectPrinted_("const x = module.require('y')", 'const x = require("y")');
+      expectPrinted_("export const x = module.require('y')", 'export const x = module.require("y")');
+      expectPrinted_("await 0;\nconst x = module.require('y')", 'await 0;\nconst x = module.require("y")');
+    });
+
     it("jsx symbol should work", () => {
       expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });

@@ -2957,7 +2957,7 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
   SSL_CTX_up_ref(ctx);
-  /* Stash userdata on the SSL_CTX too so per-socket lookup via
+  /* Stash userdata on the SSL_CTX so per-socket lookup via
    * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
   us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);

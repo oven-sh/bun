@@ -1313,13 +1313,12 @@ struct us_quic_pending_connect_s {
     int port;
     int reject_unauthorized;
     struct addrinfo_request *ai_req;
-    void *user;
 };
 
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user)
+    struct us_quic_pending_connect_s **out_pending)
 {
     *out_qs = NULL;
     *out_pending = NULL;
@@ -1356,7 +1355,6 @@ int us_quic_socket_context_connect(
     pc->port = port;
     pc->reject_unauthorized = reject_unauthorized;
     pc->ai_req = ai_req;
-    pc->user = user;
     *out_pending = pc;
     return 0;
 }

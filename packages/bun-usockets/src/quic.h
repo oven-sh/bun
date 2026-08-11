@@ -88,7 +88,7 @@ struct addrinfo_request;
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user);
+    struct us_quic_pending_connect_s **out_pending);
 
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
     struct us_quic_pending_connect_s *pc);

@@ -135,8 +135,9 @@ describe("DOMException in Node.js environment", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({
+    expect({ stdout, stderr, exitCode }).toEqual({
       stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n',
+      stderr: "",
       exitCode: 0,
     });
   });

@@ -892,7 +892,7 @@ describe("bundler", () => {
     target: "bun",
   });
 
-  itBundled("minify/ErrorReturnedFromFunctionKeepsItsFrame", {
+  itBundled("minify/ReturnedConstructorKeepsItsFrame", {
     files: {
       "/entry.js": /* js */ `
         function makeError() {
@@ -902,14 +902,28 @@ describe("bundler", () => {
           const err = new TypeError("made");
           return err;
         }
-        const frames = [makeError, makeTypeError].map(make => make().stack.includes("at " + make.name + " "));
+        function makeArray(...lengths) {
+          return new Array(...lengths);
+        }
+        function thrownBy(make) {
+          try {
+            make(-1);
+          } catch (err) {
+            return err;
+          }
+        }
+        const frames = [
+          [makeError, makeError()],
+          [makeTypeError, makeTypeError()],
+          [makeArray, thrownBy(makeArray)],
+        ].map(([fn, err]) => err.stack.includes("at " + fn.name + " "));
         console.log(JSON.stringify(frames));
       `,
     },
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "[true,true]",
+      stdout: "[true,true,true]",
     },
   });
 
@@ -1011,6 +1025,8 @@ describe("bundler", () => {
         // Test Array constructor
         capture(new Array());
         capture(new Array(3));
+        capture(new Array(unknownValue));
+        capture(new Array(...unknownValue));
         capture(new Array(1, 2, 3));
         
         // Test Array with non-numeric single arguments (should convert to literal)
@@ -1024,6 +1040,7 @@ describe("bundler", () => {
         capture(new Object());
         capture(new Object(null));
         capture(new Object({ a: 1 }));
+        capture(new Object(unknownValue));
         
         // Test Function constructor
         capture(new Function("return 42"));
@@ -1046,7 +1063,11 @@ describe("bundler", () => {
     },
     capture: [
       "[]", // new Array() -> []
-      "Array(3)", // new Array(3) stays as Array(3) because it creates sparse array
+      // A single argument may be a length, so these cannot become literals. They are not turned
+      // into `Array(...)` calls either (see ErrorConstructorKeepsNew); `new` stays as written.
+      "new Array(3)",
+      "new Array(unknownValue)",
+      "new Array(...unknownValue)",
       `[
   1,
   2,
@@ -1070,7 +1091,7 @@ describe("bundler", () => {
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
-      // kept for the same reason as the Error constructors: the body's source origin comes from the calling frame
+      "new Object(unknownValue)", // nothing to fold into a literal; kept as written
       'new Function("return 42")',
       'new Function("a", "b", "return a + b")',
       'new RegExp("test")',
@@ -1115,8 +1136,8 @@ describe("bundler", () => {
       "[,,,,,,,,]", // new Array(8) -> [undefined x 8]
       "[,,,,,,,,,]", // new Array(9) -> [undefined x 9]
       "[,,,,,,,,,,]", // new Array(10) -> [undefined x 10]
-      "Array(11)", // new Array(11) -> Array(11)
-      "Array(4.5)", // new Array(4.5) is Array(4.5) because it's not an integer
+      "new Array(11)", // too long to spell out as a literal; kept as written
+      "new Array(4.5)", // not an integer; kept as written
     ],
     minifySyntax: true,
     minifyWhitespace: true,

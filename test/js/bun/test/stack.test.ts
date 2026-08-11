@@ -193,3 +193,18 @@ test("a function returning `new Error()` is in the error's stack", () => {
 
   expect(missingOwnFrame).toEqual([]);
 });
+
+test("a function whose returned `new Array()` throws is in the error's stack", () => {
+  function makeArray(...lengths: number[]) {
+    return new Array(...lengths);
+  }
+
+  let thrown: RangeError | undefined;
+  try {
+    makeArray(-1);
+  } catch (e) {
+    thrown = e as RangeError;
+  }
+
+  expect(thrown!.stack).toContain("\n    at makeArray (");
+});

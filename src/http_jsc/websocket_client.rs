@@ -200,6 +200,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// In tunnel mode `tcp` is detached: dropping the connection from this side
+    /// means closing the tunnel's socket after `clear_data()`, which releases
+    /// this struct's tunnel ref, so take one that outlives it first.
+    fn retain_tunnel(&self) -> Option<RetainedTunnel> {
+        self.proxy_tunnel.get().map(|tunnel| RetainedTunnel {
+            tunnel,
+            // SAFETY: `proxy_tunnel` holds a live ref on the tunnel.
+            _ref: unsafe { bun_ptr::ScopedRef::new(tunnel.as_ptr()) },
+        })
+    }
+
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) extern "C" fn cancel(this_ptr: *mut Self) {
@@ -214,25 +225,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the allocation alive past every re-entrant call below.
         let this = unsafe { &*this_ptr };
 
-        let had_tunnel = this.proxy_tunnel.get().is_some();
+        let tunnel = this.retain_tunnel();
         this.clear_data();
 
-        if SSL {
-            // we still want to send pending SSL buffer + close_notify
-            this.tcp.get().close(uws::CloseKind::Normal);
-        } else {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
-
-        // In tunnel mode tcp is .detached so close() above is a no-op and
-        // handle_close() never fires. Mirror what handle_close() does for
-        // the non-tunnel path: drop the C++ ref (if still held) via
-        // dispatch_abrupt_close so e.g. ws.terminate() — which calls
-        // cancel() then sets m_connectedWebSocketKind = None, bypassing
-        // the destructor's finalize() — does not leak. When reached via
-        // fail(), outgoing_websocket is already None and this is a no-op.
-        if had_tunnel {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+        match tunnel {
+            Some(tunnel) => {
+                tunnel.close_socket();
+                // That was the upgrade client's socket, so this struct's
+                // handle_close() never runs; release the C++ ref the way it
+                // would (a no-op when reached via fail()).
+                this.dispatch_abrupt_close(ErrorCode::Ended);
+            }
+            None => {
+                if SSL {
+                    // we still want to send pending SSL buffer + close_notify
+                    this.tcp.get().close(uws::CloseKind::Normal);
+                } else {
+                    this.tcp.get().close(uws::CloseKind::Failure);
+                }
+            }
         }
     }
 
@@ -1732,6 +1743,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
+        let tunnel = this.retain_tunnel();
         this.clear_data();
 
         // This is only called by outgoing_websocket.
@@ -1740,7 +1752,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             unsafe { Self::deref(this_ptr) };
         }
 
-        if !this.tcp.get().is_closed() {
+        if let Some(tunnel) = tunnel {
+            tunnel.close_socket();
+        } else if !this.tcp.get().is_closed() {
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if SSL {
                 this.tcp.get().close(uws::CloseKind::Normal);
@@ -1763,8 +1777,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = unsafe { &*this_ptr };
 
         let had_cpp = this.outgoing_websocket.take().is_some();
+        let tunnel = this.retain_tunnel();
         this.clear_data();
-        if !this.tcp.get().is_closed() {
+        if let Some(tunnel) = tunnel {
+            tunnel.close_socket();
+        } else if !this.tcp.get().is_closed() {
             this.tcp.get().close(uws::CloseKind::Failure);
         }
         if had_cpp {
@@ -1813,6 +1830,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         cost += this.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
         // This is under-estimated a little, as we don't include usockets context.
         cost
+    }
+}
+
+/// See [`WebSocket::retain_tunnel`].
+struct RetainedTunnel {
+    tunnel: NonNull<WebSocketProxyTunnel>,
+    _ref: bun_ptr::ScopedRef<WebSocketProxyTunnel>,
+}
+
+impl RetainedTunnel {
+    /// Callers run this after `clear_data()` has detached the tunnel from the
+    /// WebSocket, as [`WebSocketProxyTunnel::close_socket`] requires.
+    fn close_socket(&self) {
+        // SAFETY: `_ref` keeps the tunnel live across the re-entrant close.
+        unsafe { WebSocketProxyTunnel::close_socket(self.tunnel.as_ptr()) };
     }
 }
 

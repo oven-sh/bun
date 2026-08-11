@@ -905,6 +905,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
         if this.state == State::Done {
+            // Failing the connection in there closes our socket, and in this
+            // state the socket ref is the only thing keeping `this` alive.
+            let _guard = this.ref_guard();
             // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
             if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
@@ -1728,40 +1731,37 @@ impl<const SSL: bool> HTTPClient<SSL> {
         debug_assert!(this.is_same_socket(socket));
 
         // Forward to proxy tunnel if active
-        // SAFETY: short-lived `&mut` for the proxy borrow.
-        if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
-            if let Some(tunnel) = p.get_tunnel() {
-                // SAFETY: `p` holds a live ref on `tunnel`.
-                unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
-                // In .done state (after WebSocket upgrade), just handle tunnel writes
-                if this.state == State::Done {
-                    return;
-                }
+        if let Some(tunnel) = this.proxy.as_ref().and_then(WebSocketProxy::get_tunnel) {
+            // Draining can fail the connection, which runs `handle_close`
+            // (dropping `proxy`, i.e. our tunnel ref, and the socket ref on
+            // `this`) before `on_writable` returns.
+            let _guard = this.ref_guard();
+            let tunnel = tunnel.as_ptr();
+            // SAFETY: `proxy` holds a live ref on `tunnel`.
+            let _tunnel_guard = unsafe { bun_ptr::ScopedRef::new(tunnel) };
+            // SAFETY: ref guard above keeps the tunnel live.
+            unsafe { WebSocketProxyTunnel::on_writable(tunnel) };
 
-                // Flush any unwritten upgrade request bytes through the tunnel
-                if this.to_send_len == 0 {
-                    return;
-                }
-                // Bumps the intrusive refcount and derefs on Drop at every
-                // return path below.
-                let _guard = this.ref_guard();
-                // SAFETY: `p` holds a live ref on `tunnel`.
-                let wrote =
-                    match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), this.to_send()) } {
-                        Ok(n) => n,
-                        Err(_) => {
-                            // SAFETY: no `&mut Self` is live across this call.
-                            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
-                            return;
-                        }
-                    };
-                // SAFETY: short-lived `&mut` write.
-                unsafe {
-                    let to_send_len = &mut (*this.as_ptr()).to_send_len;
-                    *to_send_len -= wrote.min(*to_send_len);
-                }
+            // Past the upgrade there is nothing of ours to flush; before it,
+            // flush the rest of the request (a failure above zeroed it).
+            if this.state == State::Done || this.to_send_len == 0 {
                 return;
             }
+            // SAFETY: ref guard above keeps the tunnel live.
+            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel, this.to_send()) } {
+                Ok(n) => n,
+                Err(_) => {
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+                    return;
+                }
+            };
+            // SAFETY: short-lived `&mut` write.
+            unsafe {
+                let to_send_len = &mut (*this.as_ptr()).to_send_len;
+                *to_send_len -= wrote.min(*to_send_len);
+            }
+            return;
         }
 
         if this.to_send_len == 0 {

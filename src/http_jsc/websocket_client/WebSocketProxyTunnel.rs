@@ -37,7 +37,7 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::{CloseCode, NewSocketHandler, us_bun_verify_error_t};
 
 use super::websocket_upgrade_client::{
     HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient,
@@ -119,7 +119,9 @@ pub struct WebSocketProxyTunnel {
     connected_websocket: *mut WebSocketClient,
     /// SSL wrapper for TLS inside tunnel
     wrapper: Option<SslWrapperType>,
-    /// Socket reference (the proxy connection)
+    /// The proxy connection. Owned by the upgrade client, which takes the
+    /// handle back in [`Self::detach_upgrade_client`]; the connected WebSocket
+    /// (whose own `tcp` is detached) closes it through [`Self::close_socket`].
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
@@ -308,9 +310,8 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Snapshot backref pointers via short raw-ptr reads; the dispatch below may
-        // re-enter `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
-        // so no `&Self`/`&mut Self` may be live across it.
+        // Snapshot the backrefs: the dispatch below may re-enter any of the
+        // `*mut Self` methods, so no `&Self`/`&mut Self` may be live across it.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
             unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
@@ -436,13 +437,39 @@ impl WebSocketProxyTunnel {
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
-    /// do not re-enter the upgrade client's terminate/clearData path.
+    /// do not re-enter the upgrade client's terminate/clearData path. Its socket
+    /// goes with it, making a later [`Self::close_socket`] a no-op.
     ///
     /// # Safety
     /// Same contract as [`Self::clear_connected_web_socket`].
     pub(crate) unsafe fn detach_upgrade_client(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).upgrade_client = UpgradeClientUnion::None };
+        // SAFETY: caller contract: `this` is live; raw place writes, field-scoped.
+        unsafe {
+            (*this).upgrade_client = UpgradeClientUnion::None;
+            (*this).socket = SocketUnion::None;
+        }
+    }
+
+    /// The connected WebSocket's counterpart of closing its (detached) `tcp`:
+    /// the upgrade client that owns this socket otherwise only closes it when
+    /// the peer does, and its keep-alive holds the event loop until then. The
+    /// close runs the upgrade client's `handle_close` synchronously, which
+    /// drops its ref on this tunnel; a TLS hop is therefore not left waiting
+    /// for the peer's close_notify the way `Normal` would.
+    ///
+    /// # Safety
+    /// `this` must be live (the caller holds its own ref) and already detached
+    /// from its WebSocket by `WebSocket::clear_data`, since the upgrade
+    /// client's teardown shuts this tunnel down again.
+    pub(crate) unsafe fn close_socket(this: *mut Self) {
+        bun_core::scoped_log!(WebSocketProxyTunnel, "closeSocket");
+        // SAFETY: caller contract: `this` is live; field-scoped raw take.
+        let socket = unsafe { ptr::replace(ptr::addr_of_mut!((*this).socket), SocketUnion::None) };
+        match socket {
+            SocketUnion::Ssl(socket) => socket.close(CloseCode::FastShutdown),
+            SocketUnion::Tcp(socket) => socket.close(CloseCode::Failure),
+            SocketUnion::None => {}
+        }
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -569,7 +596,11 @@ impl WebSocketProxyTunnel {
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
     pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
-        // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
+        // A write error fires `on_close` → `WebSocket::fail`, which can drop
+        // every other ref on `this` (via `close_socket`) while `w` is in use.
+        // SAFETY: caller contract: `this` is live.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        // SAFETY: `this` is live; projection covers only `wrapper`.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {

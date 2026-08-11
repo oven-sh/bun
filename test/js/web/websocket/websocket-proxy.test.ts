@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
@@ -499,6 +500,174 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
 
     await promise;
     gc();
+  });
+
+  // In tunnel mode the connection to the proxy is owned by the upgrade client,
+  // not by the WebSocket client that JS talks to, so whether a client-side
+  // teardown actually closed it is only observable from the proxy's end.
+  async function proxyThatReportsClientClose(kind: "http" | "https") {
+    const server = kind === "http" ? createConnectProxy() : createTLSConnectProxy();
+    const sockets: net.Socket[] = [];
+    const clientClosed = new Promise<void>(resolve => {
+      server.once(kind === "http" ? "connection" : "secureConnection", (socket: net.Socket) => {
+        sockets.push(socket);
+        socket.once("close", () => resolve());
+      });
+    });
+    const port = await startProxy(server);
+    return {
+      url: `${kind}://127.0.0.1:${port}`,
+      clientClosed,
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  // A wss:// endpoint that completes the upgrade and then sends one frame with
+  // the reserved opcode 0x3, which the client has to fail the connection on.
+  // Sent together with the 101, the frame reaches the client as handshake
+  // overflow, which it processes from a microtask; sent in reply to a message
+  // from the client, it arrives as ordinary tunnel data, so the client fails
+  // the connection from inside the upgrade client's own data callback.
+  async function wssServerSendingInvalidFrame(delivery: "with the 101" | "in reply to a message") {
+    const invalidFrame = Buffer.from([0x83, 0x00]);
+    const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
+      let head = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        head = Buffer.concat([head, chunk]);
+        if (!head.includes("\r\n\r\n")) return;
+        const key = /Sec-WebSocket-Key:\s*(\S+)/i.exec(head.toString("latin1"))![1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        const response = Buffer.from(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        socket.removeAllListeners("data");
+        if (delivery === "with the 101") {
+          socket.on("data", () => {});
+          socket.write(Buffer.concat([response, invalidFrame]));
+        } else {
+          socket.once("data", () => socket.write(invalidFrame));
+          socket.write(response);
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
+  // `opened` rejects on any failure before the open event (the teardown under
+  // test only produces a close event), so a broken setup reports why instead
+  // of hanging on `await opened`.
+  function connect(url: string, options: Bun.WebSocketOptions, onOpen: (ws: WebSocket) => void = () => {}) {
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<number>();
+    const ws = new WebSocket(url, options);
+    ws.onopen = () => {
+      opened.resolve();
+      onOpen(ws);
+    };
+    ws.onerror = event => opened.reject(event);
+    ws.onclose = event => {
+      opened.reject(new Error(`closed before open: ${event.code} ${event.reason}`));
+      closed.resolve(event.code);
+    };
+    return { ws, opened: opened.promise, closed: closed.promise };
+  }
+
+  test.each([
+    ["synchronously in onopen", true],
+    ["after the open event", false],
+  ])("ws.terminate() closes the connection to the proxy (%s)", async (_, terminateInOpen) => {
+    using proxy = await proxyThatReportsClientClose("http");
+    const { ws, opened, closed } = connect(
+      `wss://127.0.0.1:${wssPort}`,
+      { proxy: proxy.url, tls: { rejectUnauthorized: false } },
+      ws => {
+        if (terminateInOpen) ws.terminate();
+      },
+    );
+
+    await opened;
+    if (!terminateInOpen) ws.terminate();
+
+    expect(await closed).toBe(1006);
+    await proxy.clientClosed;
+  });
+
+  test("ws.terminate() closes the connection to an HTTPS proxy", async () => {
+    using proxy = await proxyThatReportsClientClose("https");
+    const { ws, opened, closed } = connect(`wss://127.0.0.1:${wssPort}`, {
+      proxy: proxy.url,
+      // Both the proxy and the wss:// server use the self-signed test cert.
+      tls: { ca: tlsCerts.cert },
+    });
+
+    await opened;
+    ws.terminate();
+
+    expect(await closed).toBe(1006);
+    await proxy.clientClosed;
+  });
+
+  test.each(["with the 101", "in reply to a message"] as const)(
+    "failing the connection on a protocol error (invalid frame sent %s) closes the connection to the proxy",
+    async delivery => {
+      using server = await wssServerSendingInvalidFrame(delivery);
+      using proxy = await proxyThatReportsClientClose("http");
+      const { ws, opened, closed } = connect(`wss://127.0.0.1:${server.port}`, {
+        proxy: proxy.url,
+        tls: { rejectUnauthorized: false },
+      });
+
+      await opened;
+      if (delivery === "in reply to a message") ws.send("hello");
+
+      expect(await closed).toBe(1002);
+      await proxy.clientClosed;
+    },
+  );
+
+  test("process exits after ws.terminate() on a connection through a proxy", async () => {
+    // The upgrade client keeps the event loop alive for as long as its socket
+    // is open, so leaving the proxy connection open also kept the process up.
+    using proxy = await proxyThatReportsClientClose("http");
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("wss://127.0.0.1:${wssPort}", {
+           proxy: "${proxy.url}",
+           tls: { rejectUnauthorized: false },
+         });
+         ws.onclose = event => console.log("closed", event.code);
+         await new Promise(resolve => (ws.onopen = resolve));
+         console.log("open");
+         ws.terminate();`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "", no_proxy: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A connection that fails before opening also exits, but without "open".
+    expect(stdout).toBe("open\nclosed 1006\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

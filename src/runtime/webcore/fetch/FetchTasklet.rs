@@ -450,10 +450,8 @@ impl FetchTasklet {
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
-            // this side holds one of the two initial refs. The HTTP thread may still own its
-            // ref and be flushing (`start_request_stream` gets here with the request in
-            // flight); `clear_drain_callback` takes the buffer's mutex, so after it returns
-            // the HTTP thread can no longer call back into this tasklet through the buffer.
+            // this side holds one of the two initial refs. The HTTP thread may still be using
+            // its ref; `clear_drain_callback` synchronises with it through the buffer's mutex.
             unsafe { (*buffer.as_ptr()).clear_drain_callback() };
             ThreadSafeStreamBuffer::deref(buffer);
         }

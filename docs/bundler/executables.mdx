@@ -398,18 +398,6 @@ BUN_OPTIONS="--heap-prof-md" ./myapp
 BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 ```
 
-### Keeping the embedded source resident
-
-On Linux and macOS, once a standalone executable has loaded its entrypoint, Bun tells the kernel (via `madvise`) that the pages holding the embedded JavaScript source are no longer needed, which lowers the executable's resident memory. The pages are file-backed, so anything that reads the source later (a lazy `require()`, or resolving a stack trace) transparently pages it back in from the executable on disk.
-
-If that re-read is a problem for your deployment (for example, the executable runs from slow or removable storage), set `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE` when running the executable to keep the source pages resident:
-
-```bash terminal icon="terminal"
-BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1 ./myapp
-```
-
-This is a runtime setting read by the compiled executable, so it does not need to be set when running `bun build --compile`. It has no effect on other platforms, or when running scripts with `bun` directly, because the source pages are never released there in the first place.
-
 ---
 
 ## Automatic config loading

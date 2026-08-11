@@ -296,6 +296,7 @@ impl ShellMkdirTask {
 
     fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
+        let mut spill = Vec::new();
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
@@ -305,8 +306,23 @@ impl ShellMkdirTask {
             }
             bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
-            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
+                &[&this.cwd_path, &this.filepath],
+            )
         };
+
+        // `NodeFS` copies the path into a `PathBuffer` and expects its callers
+        // to have rejected anything that does not fit (`Valid::path_string_length`
+        // does this for `node:fs`); a longer path would be passed on as "" and
+        // reported as ENOENT.
+        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            this.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {

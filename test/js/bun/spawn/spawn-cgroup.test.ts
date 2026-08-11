@@ -126,22 +126,34 @@ describe.skipIf(!cg)("spawn({ cgroup })", () => {
     }
   });
 
+  function oomKills(): number {
+    const file = cg!.version === 2 ? "memory.events" : "memory.oom_control";
+    return Number(/^oom_kill (\d+)$/m.exec(readFileSync(join(cg!.dir, file), "utf8"))?.[1] ?? 0);
+  }
+
   test.skipIf(!cg?.canOOM)("a child that exceeds the cgroup memory limit is OOM-killed, not the parent", async () => {
+    // A small process fits: the limit is not what kills things by itself.
+    // (Not bunExe(): a debug build's startup footprint alone can exceed 64 MiB.)
+    {
+      await using ok = Bun.spawn({ cmd: ["sh", "-c", "echo fits"], cgroup: cg!.dir, stdout: "pipe", env: bunEnv });
+      const [stdout, exitCode] = await Promise.all([ok.stdout.text(), ok.exited]);
+      expect(stdout).toBe("fits\n");
+      expect(exitCode).toBe(0);
+    }
+    // `tail /dev/zero` buffers an endless "line": a portable unbounded allocator.
+    const before = oomKills();
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        // Touch well past the 64 MiB limit in 8 MiB steps so RSS actually grows.
-        `const keep = []; for (let i = 0; i < 64; i++) { const b = Buffer.allocUnsafe(8 << 20); b.fill(i); keep.push(b); } console.log("survived", keep.length);`,
-      ],
+      cmd: ["tail", "/dev/zero"],
       cgroup: cg!.dir,
       stdout: "pipe",
       stderr: "pipe",
       env: bunEnv,
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).not.toContain("survived");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Killed by the cgroup OOM killer, not by malloc failing (that would print "memory exhausted").
+    expect(stderr).toBe("");
     expect(proc.signalCode).toBe("SIGKILL");
+    expect(oomKills()).toBe(before + 1);
     expect(exitCode).not.toBe(0);
   });
 
@@ -165,7 +177,7 @@ describe.skipIf(!cg)("spawn({ cgroup })", () => {
 // These exercise the option's plumbing without root or a writable cgroupfs: a
 // plain directory is not a cgroup2 dir, so CLONE_INTO_CGROUP is refused and the
 // child falls back to writing "0" into <dir>/cgroup.procs before exec.
-describe.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () => {
+describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () => {
   test("child writes itself into <dir>/cgroup.procs before exec", async () => {
     using dir = tempDir("spawn-cgroup", { "cgroup.procs": "" });
     await using proc = Bun.spawn({
@@ -279,7 +291,9 @@ describe.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () => {
       } as any);
       child.on("message", resolve);
       expect(await promise).toBe("hi");
-      await new Promise(r => child.on("close", r));
+      const closed = Promise.withResolvers<unknown>();
+      child.on("close", closed.resolve);
+      await closed.promise;
       expect(readFileSync(procs, "utf8")).toBe("0");
     }
   });

@@ -1231,8 +1231,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(c) = &cgroup_dir
                     && err.syscall == sys::Tag::clone3
                 {
-                    let err = err.with_path(c.display_path());
-                    return Err(global_this.throw_value(err.to_js(global_this)));
+                    return Err(global_this.throw_value(c.blame(err).to_js(global_this)));
                 }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
@@ -2211,10 +2210,11 @@ struct OpenCgroup<'a> {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl OpenCgroup<'_> {
-    fn display_path(&self) -> &[u8] {
+    /// Attach whichever of path / fd the caller gave us.
+    fn blame(&self, err: sys::Error) -> sys::Error {
         match self.target {
-            CgroupTarget::Path(path) => path.as_bytes(),
-            CgroupTarget::DirFd(_) => b"cgroup.procs",
+            CgroupTarget::Path(path) => err.with_path(path.as_bytes()),
+            CgroupTarget::DirFd(fd) => err.with_fd(*fd),
         }
     }
 }
@@ -2262,8 +2262,7 @@ impl CgroupTarget {
         // Best-effort: a frozen destination would park the child before exec
         // and, through vfork, this thread with it. The kernel reports no error.
         if Self::is_frozen(opened.dir) {
-            let err = sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::open)
-                .with_path(opened.display_path());
+            let err = opened.blame(sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
             return Err(global.throw_value(err.to_js(global)));
         }
 

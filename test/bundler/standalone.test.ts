@@ -385,6 +385,7 @@ body { color: blue; }`,
     // fall back to normal bun executable compile (not standalone HTML)
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
+      outdir: String(dir),
       compile: true,
       target: "browser",
     });

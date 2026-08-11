@@ -3228,6 +3228,19 @@ declare module "bun" {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
+    /**
+     * Path of the executable to write. A relative path is resolved against
+     * `outdir`, or against the working directory when there is no `outdir`.
+     * Windows targets get a `.exe` suffix if the path has none.
+     *
+     * Defaults to the entrypoint's file name without its extension, written
+     * to the same place (`./src/cli.ts` produces `cli`), like
+     * `bun build --compile` without `--outfile`. An `index.*` entrypoint is
+     * named after its directory instead, or `index` when that name is taken
+     * by the directory itself (`./src/index.ts` built from the project root).
+     *
+     * Equivalent CLI flag: `--outfile`
+     */
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original

@@ -1271,6 +1271,8 @@ compile: {
 }
 ```
 
+Without an `outfile`, the executable is named after the entrypoint and written to the current working directory, or to `outdir` when one is set, just like `bun build --compile` without `--outfile`: `./src/cli.ts` produces `./cli` (`./cli.exe` for Windows targets). An `index.*` entrypoint is named after its directory instead (`./packages/cli/index.ts` produces `./cli`); when that name is taken by the directory itself, as with `./src/index.ts` built from the project root, the executable is named `index`. A relative `outfile` is resolved the same way, against `outdir` or the current working directory.
+
 ### Supported targets
 
 ```ts title="Bun.Build.CompileTarget" icon="/icons/typescript.svg"

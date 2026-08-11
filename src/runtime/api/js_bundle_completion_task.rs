@@ -191,6 +191,23 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
+/// Absolute path of the executable: `outfile` is relative to `outdir`, or to
+/// the working directory when there is no `outdir`.
+fn resolve_outfile<'a>(
+    top_level_dir: &'a [u8],
+    outdir: &'a [u8],
+    outfile: &'a [u8],
+    buf: &'a mut [u8],
+) -> &'a [u8] {
+    if !outdir.is_empty() {
+        join_abs_string_buf::<platform::Auto>(top_level_dir, buf, &[outdir, outfile])
+    } else if paths::is_absolute(outfile) {
+        outfile
+    } else {
+        join_abs_string_buf::<platform::Auto>(top_level_dir, buf, &[outfile])
+    }
+}
+
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
 #[inline]
 fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
@@ -310,29 +327,32 @@ impl JSBundleCompletionTask {
         // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
         // initialized during VM startup before any `Bun.build` is reachable.
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let outdir: &[u8] = &self.config.outdir.list;
+        let mut outfile: &[u8] = &compile_options.outfile.list;
+
+        // A default name taken from the entry point's directory (`src/index.ts`
+        // -> `src`) resolves to that directory itself whenever the build runs
+        // from its parent; fall back to `index` like `bun build --compile` does.
+        // Windows targets get `.exe` appended, so they cannot collide.
+        if compile_options.outfile_is_entry_dir_name
+            && compile_options.compile_target.os != OperatingSystem::Windows
+        {
+            let resolved = bun_core::ZBox::from_bytes(resolve_outfile(
+                top_level_dir,
+                outdir,
+                outfile,
+                &mut outbuf[..],
+            ));
+            if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &resolved).unwrap_or(false) {
+                outfile = b"index";
+            }
+        }
 
         // Always get an absolute path for the outfile to ensure it works
         // correctly with PE metadata operations.
         // Add .exe extension for Windows targets if not already present.
         let full_outfile_path: Box<[u8]> = {
-            let outdir_slice = &self.config.outdir.list;
-            let outfile_slice = &compile_options.outfile.list;
-            let joined: &[u8] = if !outdir_slice.is_empty() {
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outdir_slice, outfile_slice],
-                )
-            } else if paths::is_absolute(outfile_slice) {
-                outfile_slice
-            } else {
-                // For relative paths, ensure we make them absolute relative to the current working directory
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outfile_slice],
-                )
-            };
+            let joined = resolve_outfile(top_level_dir, outdir, outfile, &mut outbuf[..]);
             if compile_options.compile_target.os == OperatingSystem::Windows
                 && !joined.ends_with(b".exe")
             {

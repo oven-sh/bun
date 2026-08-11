@@ -249,7 +249,7 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
-        let mut was_renamed_from_index = false;
+        let mut outfile_is_entry_dir_name = false;
 
         if ctx.bundler_options.compile {
             if ctx.bundler_options.transform_only {
@@ -325,24 +325,12 @@ impl BuildCommand {
                 this_transpiler.options.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
-                    outfile = bun_paths::basename(&first_entry_point);
-                    let ext = bun_paths::extension(outfile);
-                    if !ext.is_empty() {
-                        outfile = &outfile[0..outfile.len() - ext.len()];
-                    }
-
-                    if outfile == b"index" {
-                        outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"index"),
+                    let default_outfile =
+                        bun_standalone_module_graph::StandaloneModuleGraph::default_outfile(
+                            &first_entry_point,
                         );
-                        was_renamed_from_index = outfile != b"index";
-                    }
-
-                    if outfile == b"bun" {
-                        outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
-                        );
-                    }
+                    outfile = default_outfile.name;
+                    outfile_is_entry_dir_name = default_outfile.is_dir_name;
                 }
 
                 // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
@@ -869,7 +857,7 @@ impl BuildCommand {
                     write!(&mut outfile_owned, "{}.exe", bstr::BStr::new(outfile))
                         .expect("unreachable");
                     outfile = &outfile_owned;
-                } else if was_renamed_from_index && outfile != b"index" {
+                } else if outfile_is_entry_dir_name {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
                     let mut zbuf = PathBuffer::uninit();
                     let n = outfile.len().min(zbuf.0.len() - 1);

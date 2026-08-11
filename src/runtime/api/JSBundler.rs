@@ -232,7 +232,13 @@ pub mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        /// `compile.outfile`, or the default name `Config::from_js` fills in.
+        /// Either way it is resolved by `JSBundleCompletionTask::do_compilation`:
+        /// against `outdir`, or the working directory when there is none.
         pub(crate) outfile: OwnedString,
+        /// `DefaultOutfile::is_dir_name` of a filled-in default; false for an
+        /// explicit `compile.outfile`.
+        pub(crate) outfile_is_entry_dir_name: bool,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
         pub(crate) autoload_bunfig: bool,
@@ -254,6 +260,7 @@ pub mod js_bundler {
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
+                outfile_is_entry_dir_name: false,
                 assets: Vec::new(),
                 autoload_dotenv: true,
                 autoload_bunfig: true,
@@ -1218,57 +1225,16 @@ pub mod js_bundler {
                     }
 
                     if compile.outfile.is_empty() {
-                        let entry_point: &[u8] = &this.entry_points.keys()[0];
-                        let mut outfile = bun_paths::basename(entry_point);
-                        let ext = bun_paths::extension(outfile);
-                        if !ext.is_empty() {
-                            outfile = &outfile[0..outfile.len() - ext.len()];
-                        }
-
-                        if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
-                        }
-
-                        if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
-                        }
+                        let outfile =
+                            StandaloneModuleGraph::default_outfile(&this.entry_points.keys()[0]);
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-                        if outfile == b"bun" || outfile == b"bunx" {
+                        if outfile.name == b"bun" || outfile.name == b"bunx" {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // NOTE: when no `outdir`/`outfile` was given, place the
-                        // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied. Resolving the
-                        // basename against the process-wide cwd instead would
-                        // make every `Bun.build({compile: true, entrypoints:
-                        // [tmp + "/app.js"]})` from any test process write the
-                        // *same* `<cwd>/app`, so concurrently-running test files
-                        // would race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). This keeps each
-                        // build's output inside its own (temp) directory and is
-                        // also the more intuitive default for a programmatic API.
-                        // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if this.outdir.is_empty()
-                            && !entry_dir.is_empty()
-                            && bun_paths::is_absolute(entry_dir)
-                        {
-                            compile.outfile.append_slice_exact(entry_dir)?;
-                            compile
-                                .outfile
-                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
-                        }
-                        compile.outfile.append_slice_exact(outfile)?;
+                        compile.outfile.append_slice_exact(outfile.name)?;
+                        compile.outfile_is_entry_dir_name = outfile.is_dir_name;
                     }
                 }
             }

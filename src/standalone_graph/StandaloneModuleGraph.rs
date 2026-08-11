@@ -132,6 +132,46 @@ pub fn target_base_public_path(
     }
 }
 
+/// See [`default_outfile`].
+pub struct DefaultOutfile<'a> {
+    pub name: &'a [u8],
+    /// `name` is the entry point's directory name. The executable is usually
+    /// written to that directory's parent (`bun build --compile ./src/index.ts`
+    /// from the project root), where the name is taken by the directory itself;
+    /// callers write `index` instead when it is.
+    pub is_dir_name: bool,
+}
+
+/// Name of the executable when compiling without an outfile: the first entry
+/// point's file name without its extension, except that `index` and `bun`
+/// entry points are named after their directory (`packages/cli/index.ts` ->
+/// `cli`), or `index` when there is no directory name to use (`./index.ts`).
+pub fn default_outfile(entry_point: &[u8]) -> DefaultOutfile<'_> {
+    let file_name = path::basename(entry_point);
+    let name = &file_name[..file_name.len() - path::extension(file_name).len()];
+    if !name.is_empty() && name != b"index" && name != b"bun" {
+        return DefaultOutfile {
+            name,
+            is_dir_name: false,
+        };
+    }
+
+    let dir_name: &[u8] = match path::dirname(entry_point) {
+        Some(dir) => path::basename(dir),
+        None => b"",
+    };
+    match dir_name {
+        b"" | b"." | b".." => DefaultOutfile {
+            name: b"index",
+            is_dir_name: false,
+        },
+        _ => DefaultOutfile {
+            name: dir_name,
+            is_dir_name: true,
+        },
+    }
+}
+
 pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
     str_.starts_with(BASE_PATH.as_bytes())
         || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))

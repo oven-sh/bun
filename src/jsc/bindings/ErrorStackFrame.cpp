@@ -13,8 +13,7 @@ static bool isLineTerminator(char16_t c)
     return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029;
 }
 
-/// Moves `pos` (an expression's divot) back `amount` code units to the start of the expression,
-/// recounting the line and column from the source when that crosses a line break.
+/// Moves the divot in `pos` back `amount` code units, recounting line/column when that crosses a line break.
 static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
 {
     if (amount <= 0 || pos.byte_position < amount)

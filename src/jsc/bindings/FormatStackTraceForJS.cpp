@@ -265,8 +265,7 @@ WTF::String formatStackTrace(
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        // Same position Bun.inspect (ZigException.cpp) and CallSite use. Source maps have a
-        // mapping at the start of a `new` expression, not at JSC's divot after the callee.
+        // Same position as Bun.inspect and CallSite; source maps have a mapping at `new`, not at JSC's divot.
         originalPositions[i] = Bun::getAdjustedPositionForStackFrame(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;

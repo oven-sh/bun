@@ -1027,6 +1027,7 @@ describe("bundler", () => {
         capture(new Array(3));
         capture(new Array(unknownValue));
         capture(new Array(...unknownValue));
+        capture(new Array(5, ...unknownValue));
         capture(new Array(1, 2, 3));
         
         // Test Array with non-numeric single arguments (should convert to literal)
@@ -1063,11 +1064,13 @@ describe("bundler", () => {
     },
     capture: [
       "[]", // new Array() -> []
-      // A single argument may be a length, so these cannot become literals. They are not turned
-      // into `Array(...)` calls either (see ErrorConstructorKeepsNew); `new` stays as written.
+      // A single argument (possibly what a spread leaves behind at runtime) may be a length, so these
+      // cannot become literals. They are not turned into `Array(...)` calls either (see
+      // ErrorConstructorKeepsNew); `new` stays as written.
       "new Array(3)",
       "new Array(unknownValue)",
       "new Array(...unknownValue)",
+      "new Array(5, ...unknownValue)",
       `[
   1,
   2,
@@ -1166,6 +1169,12 @@ describe("bundler", () => {
         const a3 = new Array(n);
         const a4 = Array(n);
         capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+
+        // A spread can leave a single number behind at runtime, and then it is a length
+        const none = [];
+        const a5 = new Array(5, ...none);
+        capture(a5.length === 5);
+        capture(0 in a5 === false);
         
         // Test Object semantics
         const o1 = new Object();
@@ -1194,6 +1203,8 @@ describe("bundler", () => {
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "a5.length === 5",
+      "0 in a5 === !1",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -1204,7 +1215,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

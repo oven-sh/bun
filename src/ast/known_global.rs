@@ -135,6 +135,16 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Array => {
+                // `new Array(5, ...rest)` is `new Array(5)`, a length, when `rest` is empty.
+                if e
+                    .args
+                    .slice()
+                    .iter()
+                    .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
+                {
+                    return None;
+                }
+
                 let n = e.args.len_u32();
 
                 match n {

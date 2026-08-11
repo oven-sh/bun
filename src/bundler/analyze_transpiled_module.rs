@@ -142,7 +142,7 @@ pub enum ModuleInfoError {
     BadModuleInfo,
 }
 
-/// All slice fields are **self-referential** views into `owner`
+/// All slice fields are **self-referential** views into `_owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
 /// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
 /// pointers) because Rust references cannot express the self-borrow.
@@ -160,22 +160,24 @@ pub struct ModuleInfoDeserialized {
     pub(crate) buffer: bun_ptr::RawSlice<StringID>,
     pub(crate) record_kinds: bun_ptr::RawSlice<RecordKind>,
     pub flags: Flags,
-    pub(crate) owner: Owner,
+    /// Backing storage of the views above; never read, only dropped with them
+    /// (`zig__ModuleInfoDeserialized__deinit`).
+    _owner: Owner,
 }
 
-pub enum Owner {
-    /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
-    ModuleInfo(*mut ModuleInfo),
+enum Owner {
+    /// Its internal vectors back the raw slice fields.
+    ModuleInfo {
+        _info: Box<ModuleInfo>,
+    },
     AllocatedSlice {
-        /// [`MODULE_INFO_ALIGN`]-aligned heap slice from [`dupe_aligned`];
-        /// freed in `deinit` via [`free_aligned_dup`].
-        slice: *mut [u8],
+        _bytes: AlignedDup,
     },
 }
 
 impl ModuleInfoDeserialized {
     // ── safe accessors ───────────────────────────────────────────────────
-    // All slice fields are non-null self-referential views into `self.owner`
+    // All slice fields are non-null self-referential views into `self._owner`
     // (see struct docs). They are initialized in every constructor (`create` /
     // `into_deserialized`), the backing allocation is immutable and outlives
     // `&self`, and no `&mut` alias to that storage is ever handed out — so
@@ -215,31 +217,6 @@ impl ModuleInfoDeserialized {
         self.record_kinds.slice()
     }
 
-    /// Consumes the heap allocation containing `self` (and, for
-    /// `Owner::ModuleInfo`, the enclosing `ModuleInfo`). Not `Drop` because it
-    /// deallocates the object itself and is invoked across FFI on a raw `*mut`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by [`Self::create`] (heap box) or by
-    /// [`ModuleInfoExt::into_deserialized`].
-    pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
-        // SAFETY: caller contract — see fn doc above.
-        unsafe {
-            match (*this).owner {
-                Owner::ModuleInfo(mi) => {
-                    // The `*mut ModuleInfo` is stored directly because the printer
-                    // crate's `ModuleInfo` no longer embeds this struct.
-                    drop(bun_core::heap::take(mi));
-                    drop(bun_core::heap::take(this));
-                }
-                Owner::AllocatedSlice { slice } => {
-                    free_aligned_dup(slice);
-                    drop(bun_core::heap::take(this));
-                }
-            }
-        }
-    }
-
     #[inline]
     fn eat<'a>(rem: &mut &'a [u8], len: usize) -> Result<&'a [u8], ModuleInfoError> {
         if rem.len() < len {
@@ -263,17 +240,8 @@ impl ModuleInfoDeserialized {
         // Copy into a `MODULE_INFO_ALIGN`-aligned buffer so the typed
         // sub-slices below (whose offsets the format pads to 4 bytes) are
         // properly aligned for `&[T]` materialisation.
-        let duped_raw: *mut [u8] = dupe_aligned(source);
-        // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| {
-            // SAFETY: `p` is the `dupe_aligned` result captured above and has
-            // not been freed — this guard only fires on the error path, before
-            // `ScopeGuard::into_inner` transfers ownership into `owner`.
-            unsafe { free_aligned_dup(p) }
-        });
-
-        // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
-        let mut rem: &[u8] = unsafe { &*duped_raw };
+        let duped = AlignedDup::new(source);
+        let mut rem: &[u8] = &duped;
 
         let record_kinds_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
         let record_kinds = bytes_as_slice::<RecordKind>(Self::eat(
@@ -310,14 +278,11 @@ impl ModuleInfoDeserialized {
         )?)?;
         let strings_buf: &[u8] = rem;
 
-        // Disarm the errdefer: ownership moves into the result.
-        let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
-
-        // All seven views borrow `duped_raw` (the boxed allocation moved into
-        // `owner` below); they stay valid and at a stable address for the
-        // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
-        // erases the borrow lifetime — the structural invariant is upheld by
-        // `owner` outliving the views.
+        // All seven views borrow `duped` (moved into `_owner` below); they
+        // stay valid and at a stable address for the lifetime of every
+        // `RawSlice` copied from this struct. `RawSlice::new` erases the borrow
+        // lifetime; the structural invariant is upheld by `_owner` outliving
+        // the views.
         Ok(Box::new(ModuleInfoDeserialized {
             strings_buf: bun_ptr::RawSlice::new(strings_buf),
             strings_lens: bun_ptr::RawSlice::new(strings_lens),
@@ -327,7 +292,7 @@ impl ModuleInfoDeserialized {
             buffer: bun_ptr::RawSlice::new(buffer),
             record_kinds: bun_ptr::RawSlice::new(record_kinds),
             flags,
-            owner: Owner::AllocatedSlice { slice: duped_raw },
+            _owner: Owner::AllocatedSlice { _bytes: duped },
         }))
     }
 
@@ -343,7 +308,7 @@ impl ModuleInfoDeserialized {
 
 /// Maximum element alignment appearing in the serialized format
 /// (`u32` / `StringID` / `FetchParameters`). The writer pads every multi-byte
-/// field to this boundary, and [`dupe_aligned`] allocates the backing buffer
+/// field to this boundary, and [`AlignedDup::new`] allocates the backing buffer
 /// at this alignment, so every typed sub-slice is properly aligned.
 const MODULE_INFO_ALIGN: usize = core::mem::align_of::<u32>();
 
@@ -355,41 +320,60 @@ const _: () = {
     assert!(core::mem::align_of::<RecordKind>() <= MODULE_INFO_ALIGN);
 };
 
-/// Allocate a [`MODULE_INFO_ALIGN`]-aligned copy of `source`.
-/// Paired with [`free_aligned_dup`].
-fn dupe_aligned(source: &[u8]) -> *mut [u8] {
-    if source.is_empty() {
-        // Non-null, well-aligned, len-0 — valid input for `&*` and for
-        // `free_aligned_dup` (which no-ops on len 0).
-        return core::ptr::slice_from_raw_parts_mut(MODULE_INFO_ALIGN as *mut u8, 0);
+/// Owned, immutable, [`MODULE_INFO_ALIGN`]-aligned heap copy of a serialized
+/// record; freed on drop.
+struct AlignedDup(NonNull<[u8]>);
+
+impl AlignedDup {
+    fn new(source: &[u8]) -> Self {
+        if source.is_empty() {
+            // Non-null and well-aligned, so `&*self` is valid; `drop` skips
+            // the dealloc for len 0.
+            let dangling = const {
+                NonNull::new(core::ptr::without_provenance_mut(MODULE_INFO_ALIGN)).unwrap()
+            };
+            return AlignedDup(NonNull::slice_from_raw_parts(dangling, 0));
+        }
+        let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
+            .expect("module-info buffer too large");
+        // SAFETY: layout has non-zero size (checked above).
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        let Some(ptr) = NonNull::new(ptr) else {
+            std::alloc::handle_alloc_error(layout)
+        };
+        // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
+        // valid readable slice; the regions cannot overlap.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr.as_ptr(), source.len()) };
+        AlignedDup(NonNull::slice_from_raw_parts(ptr, source.len()))
     }
-    let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
-        .expect("module-info buffer too large");
-    // SAFETY: layout has non-zero size (checked above).
-    let ptr = unsafe { std::alloc::alloc(layout) };
-    if ptr.is_null() {
-        std::alloc::handle_alloc_error(layout);
-    }
-    // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
-    // valid readable slice; the regions cannot overlap.
-    unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr, source.len()) };
-    core::ptr::slice_from_raw_parts_mut(ptr, source.len())
 }
 
-/// # Safety
-/// `slice` must have been returned by [`dupe_aligned`] and not yet freed.
-unsafe fn free_aligned_dup(slice: *mut [u8]) {
-    let len = slice.len();
-    if len == 0 {
-        return;
+impl core::ops::Deref for AlignedDup {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `new` produced either `len` initialized bytes or a non-null,
+        // aligned, len-0 pointer; nothing writes through it afterwards and it
+        // is freed only by `drop`, which cannot run while `&self` is borrowed.
+        unsafe { self.0.as_ref() }
     }
-    // SAFETY: caller contract — `slice` came from `dupe_aligned`, which
-    // allocated with this exact layout.
-    unsafe {
-        std::alloc::dealloc(
-            slice.cast::<u8>(),
-            std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
-        );
+}
+
+impl Drop for AlignedDup {
+    fn drop(&mut self) {
+        let len = self.0.len();
+        if len == 0 {
+            return;
+        }
+        // SAFETY: `new` allocated every non-empty dup with exactly this layout,
+        // and `self` is its sole owner.
+        unsafe {
+            std::alloc::dealloc(
+                self.0.as_ptr().cast::<u8>(),
+                std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
+            );
+        }
     }
 }
 
@@ -433,12 +417,12 @@ impl ModuleInfoExt for ModuleInfo {
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
         // The printer-crate `ModuleInfo`
         // exposes a borrowed `as_deserialized()`; here we materialise the
-        // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
+        // raw-pointer FFI shape and keep the `Box<ModuleInfo>` alive in `_owner`.
         if !self.finalized {
             let _ = self.finalize();
         }
-        // Reshaped for borrowck — capture lifetime-erased `RawSlice`
-        // views before `heap::into_raw(self)` consumes the box.
+        // Reshaped for borrowck: capture lifetime-erased `RawSlice`
+        // views before `self` moves into `_owner`.
         let (strings_buf, strings_lens, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
@@ -463,7 +447,7 @@ impl ModuleInfoExt for ModuleInfo {
             flags = f;
         }
         // All seven views point into the `Box<ModuleInfo>`'s vectors, moved into
-        // `owner` below; they stay valid and stable for the lifetime of every
+        // `_owner` below; they stay valid and stable for the lifetime of every
         // `RawSlice` copied from this struct.
         Box::new(ModuleInfoDeserialized {
             strings_buf,
@@ -474,7 +458,7 @@ impl ModuleInfoExt for ModuleInfo {
             buffer,
             record_kinds,
             flags,
-            owner: Owner::ModuleInfo(bun_core::heap::into_raw(self)),
+            _owner: Owner::ModuleInfo { _info: self },
         })
     }
 }
@@ -492,11 +476,10 @@ extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
 
 #[unsafe(no_mangle)]
 extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
-    // `ModuleInfoExt::into_deserialized`.
-    let info = unsafe { NonNull::new(info).unwrap_unchecked() };
-    // SAFETY: `info` is a valid, exclusively-owned pointer; `deinit` is its only destructor.
-    unsafe { ModuleInfoDeserialized::deinit(info.as_ptr()) }
+    // SAFETY: C++ passes, exactly once, the non-null pointer it received via
+    // `heap::into_raw` of the `Box` returned by `create` or
+    // `ModuleInfoExt::into_deserialized`; ownership returns here.
+    unsafe { bun_core::heap::destroy(info) }
 }
 
 #[unsafe(no_mangle)]

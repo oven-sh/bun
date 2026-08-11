@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use core::ptr;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
+use bun_collections::{HashMap, IdentityContext, SmallList, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
 use bun_ptr::tagged_pointer::TagType;
@@ -13,10 +13,67 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
+/// Owned, length-capped source-preview lines for one error code-frame site,
+/// so repeat `Bun.inspect(err)` skips the re-read/re-parse.
+pub(crate) struct CachedCodeFrame {
+    pub(crate) lines: SmallList<Box<[u8]>, { CachedCodeFrame::LINES }>,
+    /// Zero-based line number of `lines[0]`; subsequent entries count down.
+    pub(crate) start_line: i32,
+}
+
+impl CachedCodeFrame {
+    pub(crate) const LINES: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
+    pub(crate) const PRINTER_CLAMP: usize = crate::virtual_machine::CODE_FRAME_MAX_LINE_LENGTH;
+    /// Cap on raw bytes stored for a line the printer won't truncate.
+    const MAX_LINE_LEN: usize = Self::PRINTER_CLAMP + 256;
+    /// `source_index` sentinel for the non-external branch.
+    pub(crate) const NO_SOURCE_INDEX: u32 = u32::MAX;
+
+    #[inline]
+    pub(crate) fn inner_key(source_index: u32, line: i32) -> u64 {
+        ((source_index as u64) << 32) | (line as u32 as u64)
+    }
+
+    /// Returns the bytes to cache for `line` such that the code-frame printer
+    /// renders a cached hit identically to the miss-path's full `line`. The
+    /// printer normalizes with `trim(line, "\n")` then `trim_right(_, "\t ")`,
+    /// clamps to [`Self::PRINTER_CLAMP`] and adds a "... truncated" suffix
+    /// when the normalized length exceeds the clamp, with an early break when
+    /// the raw slice is empty. So: when the normalized line fits the clamp,
+    /// store the raw bytes (bounded only against pathological trailing
+    /// whitespace) so every printer branch including `is_empty()` sees what it
+    /// would on a miss; when it doesn't, store the already-normalized visible
+    /// prefix, extended to the next UTF-8 char boundary so `clone_utf8` on a
+    /// hit round-trips the bytes instead of substituting U+FFFD, plus one
+    /// non-whitespace sentinel byte so the hit's own normalize+clamp yields
+    /// the same prefix and still sees `len > clamp` regardless of interior
+    /// whitespace at the boundary.
+    pub(crate) fn line_for_cache(line: &[u8]) -> Box<[u8]> {
+        let normalized = bun_core::strings::trim_right(bun_core::trim(line, b"\n"), b"\t ");
+        if normalized.len() <= Self::PRINTER_CLAMP {
+            return Box::from(&line[..line.len().min(Self::MAX_LINE_LEN)]);
+        }
+        let mut end = Self::PRINTER_CLAMP;
+        while end < normalized.len() && normalized[end] & 0xC0 == 0x80 {
+            end += 1;
+        }
+        let mut v = Vec::with_capacity(end + 1);
+        v.extend_from_slice(&normalized[..end]);
+        v.push(b'.');
+        v.into_boxed_slice()
+    }
+}
+
+/// `wyhash(generated_source_url) -> (source_index, original_line) -> frame`.
+/// `None` inner value memoizes a miss.
+type CodeFrameInner = HashMap<u64, Option<CachedCodeFrame>, IdentityContext<u64>>;
+type CodeFrameCache = HashMap<u64, CodeFrameInner, IdentityContext<u64>>;
+
 pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
     pub(crate) mutex: Mutex,
+    line_cache: CodeFrameCache,
 }
 
 impl Default for SavedSourceMap {
@@ -24,6 +81,7 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
+            line_cache: CodeFrameCache::default(),
         }
     }
 }
@@ -129,6 +187,7 @@ impl SavedSourceMap {
     /// while the box holding the erased pair is owned by the table and freed
     /// by [`Self::release_value`] on replace / remove / drop.
     pub fn put_source_provider(&mut self, provider: AnySourceProvider, path: &[u8]) {
+        self.invalidate_code_frames_for(path);
         let boxed = bun_core::heap::into_raw(Box::new(provider));
         // bun.handleOom → drop wrapper; Rust HashMap insert aborts on OOM.
         if self.put_value(path, Value::init(boxed)).is_err() {
@@ -169,8 +228,64 @@ impl SavedSourceMap {
             // SAFETY: `old_value` was stored by us; the table's ownership of
             // it ends here.
             unsafe { Self::release_value(old_value) };
+            self.line_cache.remove(&key);
         }
         self.unlock();
+    }
+
+    /// `Some(n)` = `n` lines cloned into the out-slots (`0` for a memoized
+    /// miss); `None` = nothing recorded.
+    pub(crate) fn fill_code_frame_from_cache(
+        &mut self,
+        path_hash: u64,
+        source_index: u32,
+        line: i32,
+        source_lines: &mut [bun_core::String],
+        source_line_numbers: &mut [i32],
+    ) -> Option<u8> {
+        self.mutex.lock();
+        let result = self
+            .line_cache
+            .get(&path_hash)
+            .and_then(|inner| inner.get(&CachedCodeFrame::inner_key(source_index, line)))
+            .map(|entry| match entry {
+                None => 0u8,
+                Some(frame) => {
+                    let take = (frame.lines.len() as usize).min(source_lines.len());
+                    let mut n = frame.start_line;
+                    for (i, body) in frame.lines[..take].iter().enumerate() {
+                        source_lines[i] = bun_core::String::clone_utf8(body);
+                        source_line_numbers[i] = n;
+                        n -= 1;
+                    }
+                    take as u8
+                }
+            });
+        self.mutex.unlock();
+        result
+    }
+
+    /// Records a resolved (or unresolvable: `frame = None`) code frame.
+    pub(crate) fn put_cached_code_frame(
+        &mut self,
+        path_hash: u64,
+        source_index: u32,
+        line: i32,
+        frame: Option<CachedCodeFrame>,
+    ) {
+        self.mutex.lock();
+        self.line_cache
+            .entry(path_hash)
+            .or_default()
+            .insert(CachedCodeFrame::inner_key(source_index, line), frame);
+        self.mutex.unlock();
+    }
+
+    fn invalidate_code_frames_for(&mut self, path: &[u8]) {
+        let key = hash(path);
+        self.mutex.lock();
+        self.line_cache.remove(&key);
+        self.mutex.unlock();
     }
 }
 
@@ -239,6 +354,8 @@ impl SavedSourceMap {
                 // released before returning since no further table access follows.
             }
         }
+
+        self.invalidate_code_frames_for(source.path.text);
 
         // Note: every caller MOVES an owned
         // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),

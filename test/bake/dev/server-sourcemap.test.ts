@@ -1,6 +1,25 @@
 import { expect } from "bun:test";
 import { isASAN } from "harness";
-import { devTest } from "../bake-harness";
+import { Dev, devTest } from "../bake-harness";
+
+/**
+ * Matches a remapped stack frame such as `at myFunc (/abs/pages/a.tsx:7:13)`,
+ * with `line`/`column` being 1-based positions in the fixture source. `\w*`
+ * tolerates the bundler renaming a symbol (`doSomething` prints as
+ * `doSomething2`).
+ */
+function frame(fn: string, file: string, line: number, column: number) {
+  const path = file
+    .split("/")
+    .map(RegExp.escape)
+    .join(String.raw`[/\\]`);
+  return new RegExp(String.raw`\bat ${fn}\w* \(.*${path}:${line}:${column}\)`);
+}
+
+/** Dev server output so far, without the ANSI codes interleaved in stack frames. */
+function output(dev: Dev) {
+  return dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+}
 
 devTest("server-side source maps show correct error lines", {
   files: {
@@ -27,30 +46,19 @@ export async function getStaticPaths() {
   },
   framework: "react",
   async test(dev) {
-    // Make a request that will trigger the error
-    await dev.fetch("/test-error").catch(() => {});
+    await Promise.all([
+      dev.fetch("/test-error").catch(() => {}),
+      dev.output.waitForLine(/Test error for source maps!/),
+    ]);
 
-    // The output we saw shows the stack trace with correct source mapping
-    // We need to check that the error shows the right file:line:column
-    const lines = dev.output.lines.join("\n");
-
-    // Check that we got the error
-    expect(lines).toContain("Test error for source maps!");
-
-    // Check that the stack trace shows correct file and line numbers
-    // The source maps are working if we see the correct patterns
-    // We need to check for the patterns because ANSI codes might be embedded
-    // Strip ANSI codes for cleaner checking
-    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
-
-    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
-    // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
-    const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
-
-    expect(hasCorrectThrowLine).toBe(true);
-    // TODO: renable this when async stacktraces are enabled?
-    // expect(hasCorrectCallLine).toBe(true);
-    expect(hasCorrectFileName).toBe(true);
+    const out = output(dev);
+    // Line 7 is `  throw new Error(...)`. The async component rejects and React
+    // reads `error.stack` before the error is printed; that rendering puts
+    // construct frames at the callee (`Error`), whereas the sync pages below
+    // are printed at the `new` keyword.
+    expect(out).toMatch(frame("myFunc", "pages/[...slug].tsx", 7, 13));
+    // Line 2 is `  myFunc();`.
+    expect(out).toMatch(frame("MyPage", "pages/[...slug].tsx", 2, 3));
   },
   timeoutMultiplier: 2, // Give more time for the test
 });
@@ -95,16 +103,11 @@ export async function getStaticPaths() {
 
     await Promise.all([dev.fetch("/error-page").catch(() => {}), dev.output.waitForLine(/HMR error test/)]);
 
-    // Check source map points to correct lines after HMR
-    const lines = dev.output.lines.join("\n");
-    // Strip ANSI codes for cleaner checking
-    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
-
-    const hasCorrectThrowLine = cleanLines.includes("throwError") && cleanLines.includes("6:1");
-    const hasCorrectCallLine = cleanLines.includes("ErrorPage") && cleanLines.includes("1:16");
-
-    expect(hasCorrectThrowLine).toBe(true);
-    expect(hasCorrectCallLine).toBe(true);
+    const out = output(dev);
+    // Line 7 is `  throw new Error(...)`, reported at the `new` keyword.
+    expect(out).toMatch(frame("throwError", "pages/error-page.tsx", 7, 9));
+    // Line 2 is `  throwError();`.
+    expect(out).toMatch(frame("ErrorPage", "pages/error-page.tsx", 2, 3));
   },
 });
 
@@ -134,18 +137,13 @@ function helperFunction() {
   async test(dev) {
     await Promise.all([dev.fetch("/nested").catch(() => {}), dev.output.waitForLine(/Nested error/)]);
 
-    // Check that stack trace shows both files with correct lines
-    const lines = dev.output.lines.join("\n");
-    // Strip ANSI codes for cleaner checking
-    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
-
-    const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
-    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
-    const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
-
-    expect(hasUtilsThrowLine).toBe(true);
-    expect(hasUtilsCallLine).toBe(true);
-    expect(hasPageCallLine).toBe(true);
+    const out = output(dev);
+    // lib/utils.ts line 6 is `  throw new Error(...)`, reported at the `new` keyword.
+    expect(out).toMatch(frame("helperFunction", "lib/utils.ts", 6, 9));
+    // lib/utils.ts line 2 is `  return helperFunction();`.
+    expect(out).toMatch(frame("doSomething", "lib/utils.ts", 2, 10));
+    // pages/nested.tsx line 4 is `  const result = doSomething();`.
+    expect(out).toMatch(frame("NestedPage", "pages/nested.tsx", 4, 18));
   },
 });
 
@@ -190,13 +188,9 @@ devTest("server-side source maps stay correct across repeated reloads", {
         dev.output.waitForLine(new RegExp(`Churn error ${name}`)),
       ]);
 
-      // Strip ANSI codes; they interleave within stack-frame lines.
-      const cleanLines = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-      // The throwing function is declared on line 6 + i of round i's version
-      // of the source file; frames remap to the declaration position (see the
-      // `helperFunction`/`5:1` expectation above). `\w*` tolerates bundler
-      // symbol renaming (see `doSomething2` above).
-      expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:${6 + i}:1\\)`));
+      // Round i's version of the file has its `  throw new Error(...)` on
+      // line 7 + i.
+      expect(output(dev)).toMatch(frame(`churn${name}`, "pages/churn.tsx", 7 + i, 9));
     }
   },
   timeoutMultiplier: 2,

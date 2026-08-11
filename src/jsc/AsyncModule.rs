@@ -750,9 +750,9 @@ impl AsyncModule {
         });
     }
 
-    // write! into Vec<u8>
-    // is infallible here; `.ok()` collapses the `fmt::Result`, so this never
-    // actually returns Err — the wide Result is kept for call-site uniformity.
+    // Never returns Err: the `write!`s below go into a `Vec<u8>` and their
+    // results are discarded with `let _ =`. The `Result` return type is kept
+    // for call-site uniformity with `download_error`.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,

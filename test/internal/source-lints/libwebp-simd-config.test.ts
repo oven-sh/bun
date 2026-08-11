@@ -10,61 +10,18 @@
  * macOS x64 builds (clang-cl's _MSC_VER makes cpu.h imply the define on
  * Windows).
  *
- * Only libwebp.build(cfg) is exercised (no compiler involved), so this runs on
- * every platform.
+ * libwebp.build() only reads cfg.x64, so the spec is built from a partial
+ * Config (as test/js/bun/perf/linker-order.test.ts does); no toolchain or
+ * compiler is involved.
  */
 import { describe, expect, test } from "bun:test";
 
-import { resolveConfig, type Arch, type Toolchain } from "../../scripts/build/config.ts";
-import { libwebp } from "../../scripts/build/deps/libwebp.ts";
-import type { DirectBuild } from "../../scripts/build/source.ts";
+import type { Config } from "../../../scripts/build/config.ts";
+import { libwebp } from "../../../scripts/build/deps/libwebp.ts";
+import type { DirectBuild } from "../../../scripts/build/source.ts";
 
-/** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
-function mockToolchain(): Toolchain {
-  return {
-    cc: "/fake/llvm/bin/clang",
-    cxx: "/fake/llvm/bin/clang++",
-    hostCc: undefined,
-    hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
-    ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
-    ld: "/fake/llvm/bin/ld.lld",
-    ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
-    strip: "/fake/bin/strip",
-    llvmStrip: "/fake/llvm/bin/llvm-strip",
-    dsymutil: "/fake/llvm/bin/dsymutil",
-    bun: "/fake/bin/bun",
-    jsRuntime: "/fake/bin/bun",
-    esbuild: "/fake/bin/esbuild",
-    ccache: undefined,
-    cmake: "/fake/bin/cmake",
-    cargo: undefined,
-    cargoHome: undefined,
-    rustupHome: undefined,
-    msvcLinker: undefined,
-    rc: undefined,
-    mt: undefined,
-    nasm: undefined,
-  };
-}
-
-/**
- * libwebp's build spec for a Linux glibc release target of the given arch.
- * linuxSysroot is stubbed so resolveConfig's cross-arch block never throws,
- * whatever the host is.
- */
-function libwebpBuild(arch: Arch, baseline?: boolean): DirectBuild {
-  const cfg = resolveConfig(
-    { os: "linux", arch, abi: "gnu", buildType: "Release", baseline, linuxSysroot: "/fake/linux-sysroot" },
-    mockToolchain(),
-  );
-  const spec = libwebp.build(cfg);
+function libwebpBuild(x64: boolean): DirectBuild {
+  const spec = libwebp.build({ x64 } as Config);
   if (spec.kind !== "direct") throw new Error(`expected libwebp to be a direct build, got ${spec.kind}`);
   return spec;
 }
@@ -89,6 +46,13 @@ function sourcesWithFlag(spec: DirectBuild, flag: string): string[] {
     .sort();
 }
 
+/** The per-file flag each kernel-file suffix gets; every other file gets none. */
+const flagForSuffix: Array<[suffix: string, flag: string]> = [
+  ["_avx2.c", "-mavx2"],
+  ["_sse41.c", "-msse4.1"],
+  ["_sse2.c", "-msse2"],
+];
+
 const isaFlags: Record<string, string> = {
   WEBP_HAVE_SSE2: "-msse2",
   WEBP_HAVE_SSE41: "-msse4.1",
@@ -96,11 +60,8 @@ const isaFlags: Record<string, string> = {
 };
 
 describe("libwebp x86 SIMD wiring", () => {
-  test.each([
-    ["baseline", true],
-    ["non-baseline", false],
-  ])("x64 (%s) tells the dispatchers about every ISA level it builds kernels for", (_, baseline) => {
-    const spec = libwebpBuild("x64", baseline);
+  test("x64 tells the dispatchers about every ISA level it builds kernels for", () => {
+    const spec = libwebpBuild(true);
     expect(haveDefines(spec)).toEqual(["WEBP_HAVE_AVX2", "WEBP_HAVE_SSE2", "WEBP_HAVE_SSE41"]);
 
     // The define and the kernels have to travel together: a level that is
@@ -114,7 +75,7 @@ describe("libwebp x86 SIMD wiring", () => {
   });
 
   test("x64 defines WEBP_HAVE_AVX2 without raising any non-kernel TU above the baseline -march", () => {
-    const spec = libwebpBuild("x64");
+    const spec = libwebpBuild(true);
     const flags = perFileFlags(spec);
 
     // The dispatchers that consume WEBP_HAVE_AVX2 are built at the baseline
@@ -125,23 +86,15 @@ describe("libwebp x86 SIMD wiring", () => {
     expect(sourcesWithFlag(spec, "-mavx2")).toEqual(["src/dsp/lossless_avx2.c", "src/dsp/lossless_enc_avx2.c"]);
     expect(spec.cflags ?? []).not.toContain("-mavx2");
 
-    // Every per-file flag is the one matching the file's ISA suffix, and
-    // files without a suffix get none.
-    const expected = [...flags.keys()].map(path => {
-      const cflags = path.endsWith("_avx2.c")
-        ? ["-mavx2"]
-        : path.endsWith("_sse41.c")
-          ? ["-msse4.1"]
-          : path.endsWith("_sse2.c")
-            ? ["-msse2"]
-            : [];
-      return [path, cflags];
+    const expected = [...flags.keys()].map((path): [string, string[]] => {
+      const match = flagForSuffix.find(([suffix]) => path.endsWith(suffix));
+      return [path, match === undefined ? [] : [match[1]]];
     });
     expect([...flags]).toEqual(expected);
   });
 
   test("arm64 gets neither the x86 defines nor the x86 -m flags", () => {
-    const spec = libwebpBuild("aarch64");
+    const spec = libwebpBuild(false);
     expect(haveDefines(spec)).toEqual([]);
     expect(spec.sources.filter(s => typeof s !== "string")).toEqual([]);
     // The x86 kernel files are still listed; cpu.h turns them into stub Inits there.

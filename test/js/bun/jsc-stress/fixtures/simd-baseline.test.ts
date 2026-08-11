@@ -192,8 +192,9 @@ describe("WebP lossless: libwebp VP8GetCPUInfo runtime dispatch", () => {
   // libwebp's VP8L encoder and decoder pick SSE2 / SSE4.1 / AVX2 (x64) or
   // NEON kernels at init based on cpuid; the AVX2 ones are linked into the
   // baseline binary and must stay behind that check. 64 pixels wide so the
-  // 8-pixel-wide kernels run, with a gradient plus noise so the encoder uses
-  // the predictor and colour transforms (the bulk of the SIMD surface).
+  // 8-pixel-wide kernels run (and the decoder's per-row tails go through the
+  // kernels' SSE fallbacks), with a gradient plus noise so the colour
+  // transform, entropy and predictor kernels all run on both sides.
   function pngChunk(type: string, data: Uint8Array): Buffer {
     const typeAndData = Buffer.concat([Buffer.from(type, "latin1"), data]);
     const length = Buffer.alloc(4);
@@ -233,6 +234,17 @@ describe("WebP lossless: libwebp VP8GetCPUInfo runtime dispatch", () => {
     const webp = await new Bun.Image(png).webp({ lossless: true }).bytes();
     expect(Buffer.from(webp.subarray(12, 16)).toString("latin1")).toBe("VP8L");
     expect(await new Bun.Image(webp).metadata()).toEqual({ width, height, format: "webp" });
+
+    // libwebp's kernels are bit-exact across ISA levels, so the encoder must
+    // produce the same bytes here whichever tier cpuid selected: this file
+    // runs natively (AVX2 on current x64 CI, NEON on arm64) and under the
+    // no-AVX emulators in scripts/verify-baseline.ts (SSE4.1). Pinning the
+    // output makes those runs a cross-tier identity check. A libwebp bump
+    // that changes the encoder may legitimately move these two values.
+    expect(webp.length).toBe(1256);
+    expect(new Bun.CryptoHasher("sha256").update(webp).digest("hex")).toBe(
+      "42c1218d6ecca9090b109cf61e3fe003c4e30138e88c83e0e3460c2e5330a541",
+    );
 
     // Both PNGs are produced by the same encoder from what must be the same
     // pixels, so the lossless round-trip shows up as byte-identical output.

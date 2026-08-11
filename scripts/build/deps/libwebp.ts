@@ -16,9 +16,13 @@
  * and let the preprocessor prune. The x86 levels above the baseline need the
  * two-part wiring described at X86_ISAS below.
  *
- * Threading: WEBP_USE_THREAD is left OFF. The decoder/encoder are invoked
- * from Bun's worker pool already; libwebp's internal pthread pool would just
- * oversubscribe.
+ * Threading: WEBP_USE_THREAD is left OFF. Bun only uses the one-shot API
+ * (WebPDecodeRGBA, WebPEncodeRGBA, WebPEncodeLosslessRGBA), which never
+ * starts libwebp's worker threads either way; all the flag would add is a
+ * mutex around each dsp init body, and only on non-Windows targets (cpu.h
+ * drops it under _WIN32). The two init bodies that are not safe to run
+ * concurrently are instead latched once from src/runtime/image/codec_webp.rs,
+ * which covers every target.
  */
 
 import type { Dependency, DirectSource } from "../source.ts";

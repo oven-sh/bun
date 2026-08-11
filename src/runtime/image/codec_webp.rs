@@ -26,6 +26,31 @@ unsafe extern "C" {
         out: *mut *mut u8,
     ) -> usize;
     pub(crate) fn WebPFree(ptr: *mut c_void);
+    fn VP8LEncDspInit();
+}
+
+/// libwebp fills its per-ISA function-pointer tables from whichever codec call
+/// comes first, and in our build (no `WEBP_USE_THREAD`; on Windows libwebp
+/// never locks regardless) every thread that finds the flag unset runs the
+/// whole init body at once. That is only safe while the bodies are idempotent,
+/// and the two VP8L ones are not: `VP8LDspInitSSE2` / `VP8LEncDspInitSSE2`
+/// build the `*_SSE` tail tables by copying the live dispatch table, which a
+/// thread a few ns ahead may already have filled with the AVX2 kernels, and
+/// those kernels hand their <8-pixel tails to the `*_SSE` tables. A process
+/// that loses that race is left with predictor kernels that tail-call
+/// themselves forever: the next image using the predictor transform wedges a
+/// worker thread at 100% CPU.
+/// Run the init once, serialised, before any codec call; libwebp's own calls
+/// then find the flags set. `VP8LEncDspInit` nests `VP8LDspInit`, so this
+/// covers both tables. Every other dsp init body only stores fixed values, so
+/// concurrent re-runs of those are harmless.
+fn init_dsp() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        // SAFETY: no preconditions; writes only libwebp's own static tables,
+        // and `Once` keeps any other caller out until it returns.
+        unsafe { VP8LEncDspInit() }
+    });
 }
 
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
@@ -134,6 +159,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
+    init_dsp();
     // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
     let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
     if ptr.is_null() {
@@ -231,6 +257,7 @@ pub(crate) fn encode(
     lossless: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
+    init_dsp();
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     let len = if lossless {

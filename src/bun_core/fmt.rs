@@ -65,7 +65,7 @@ pub mod js_printer {
             input, &mut buf, quote, ascii_only, true, enc,
         )
         .map_err(|_| fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        super::write_bytes(f, &buf)
     }
 }
 use strum::IntoStaticStr;

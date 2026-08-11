@@ -2156,6 +2156,136 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
   }
 });
 
+// node's Http2Session#goawayCode / #goawayLastStreamID report the GOAWAY frame this side
+// received (0 / 0 until one arrives). Expected values below were checked against node v26.3.0.
+describe.concurrent("http2 session goawayCode / goawayLastStreamID", () => {
+  const goawayState = session => ({ goawayCode: session.goawayCode, goawayLastStreamID: session.goawayLastStreamID });
+  const noGoaway = { goawayCode: 0, goawayLastStreamID: 0 };
+
+  // One connected session, seen from both ends. The server answers every request immediately.
+  async function connectedPair() {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.respond({ ":status": 200 }, { endStream: true }));
+    const { promise: serverSessionPromise, resolve: onServerSession } = Promise.withResolvers();
+    server.once("session", onServerSession);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, onConnect);
+    client.on("error", () => {});
+    const serverSession = await serverSessionPromise;
+    serverSession.on("error", () => {});
+    await connected;
+    return { server, client, serverSession };
+  }
+
+  async function requestOnce(client) {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    await new Promise(resolve => req.once("close", resolve));
+  }
+
+  // Resolves with the 'goaway' event arguments and what the getters reported while it was emitted.
+  function goawayReceived(session) {
+    return new Promise(resolve =>
+      session.once("goaway", (code, lastStreamID) =>
+        resolve({ args: [code, lastStreamID], getters: goawayState(session) }),
+      ),
+    );
+  }
+
+  function closed(session) {
+    return new Promise(resolve => session.once("close", resolve));
+  }
+
+  it("are getters that report 0 / 0 on client and server sessions before any GOAWAY is received", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      expect(goawayState(client)).toEqual(noGoaway);
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+      for (const session of [client, serverSession]) {
+        for (const name of ["goawayCode", "goawayLastStreamID"]) {
+          let proto = Object.getPrototypeOf(session);
+          while (proto !== null && !Object.hasOwn(proto, name)) proto = Object.getPrototypeOf(proto);
+          const descriptor = proto === null ? undefined : Object.getOwnPropertyDescriptor(proto, name);
+          expect(typeof descriptor?.get).toBe("function");
+          expect(descriptor.set).toBeUndefined();
+        }
+      }
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("client session reports the code and last stream id of the GOAWAY the server sent", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      await requestOnce(client); // stream 1, so a Last-Stream-ID of 1 names a real stream
+      const received = goawayReceived(client);
+      const clientClosed = closed(client);
+      serverSession.goaway(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, 1);
+      // Sending a GOAWAY does not count as receiving one.
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, goawayLastStreamID: 1 };
+      expect(await received).toEqual({ args: [expected.goawayCode, expected.goawayLastStreamID], getters: expected });
+      // A GOAWAY with an error code destroys the receiving session; the values survive that.
+      await clientClosed;
+      expect(client.destroyed).toBe(true);
+      expect(goawayState(client)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("server session reports the code and last stream id of the GOAWAY the client sent", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      const received = goawayReceived(serverSession);
+      const serverSessionClosed = closed(serverSession);
+      // From a client, Last-Stream-ID names a server-initiated (even) stream.
+      client.goaway(http2.constants.NGHTTP2_CANCEL, 2);
+      expect(goawayState(client)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_CANCEL, goawayLastStreamID: 2 };
+      expect(await received).toEqual({ args: [expected.goawayCode, expected.goawayLastStreamID], getters: expected });
+      await serverSessionClosed;
+      expect(serverSession.destroyed).toBe(true);
+      expect(goawayState(serverSession)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("a graceful GOAWAY leaves goawayCode at 0 but still records the last stream id", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      await requestOnce(client);
+      const received = goawayReceived(client);
+      const clientClosed = closed(client);
+      // No explicit Last-Stream-ID: like node, the last stream the server processed (1) goes out.
+      serverSession.goaway();
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_NO_ERROR, goawayLastStreamID: 1 };
+      expect(await received).toEqual({ args: [0, 1], getters: expected });
+      // NO_ERROR starts a graceful close; with no streams left the session closes on its own.
+      await clientClosed;
+      expect(goawayState(client)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {

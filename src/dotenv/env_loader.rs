@@ -864,24 +864,11 @@ impl Loader {
     }
 }
 
-/// Returns true if a request to `hostname` should bypass the proxy according
-/// to `no_proxy_text`, the value of `NO_PROXY` (syntax per
-/// https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/).
-/// `host` is `hostname` plus `:port` when the URL carries one; entries with a
-/// port are matched against it. Both come straight from the URL, so an IPv6
-/// literal arrives bracketed (`http://[::1]/` gives `[::1]` and `[::1]:8080`).
-///
-/// Shared by the env-backed [`Loader::is_no_proxy`] (WebSocket, install,
-/// upgrade, ...) and `bun_http::ProxySettings`, which matches fetch's hop-0
-/// and redirect targets against a captured copy of the value.
+/// `hostname` comes from the URL (an IPv6 literal arrives as `[::1]`); `host` adds its `:port`.
 pub fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
     if hostname.is_empty() {
         return false;
     }
-    // NO_PROXY lists conventionally write an IPv6 address bare
-    // (`NO_PROXY=localhost,127.0.0.1,::1`: the form curl, Go and node:http
-    // read), while undici reads the bracketed form. Accept both by comparing
-    // the address with the brackets removed from each side.
     let ipv6_hostname = strip_ipv6_brackets(hostname);
 
     for item in strings::split(no_proxy_text, b",") {
@@ -899,9 +886,7 @@ pub fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> b
             }
         }
 
-        // `host:port` has a single colon; a bare IPv6 literal (`::1`,
-        // `2001:db8::1`) has several and carries no port; a bracketed IPv6
-        // literal carries a port only as `[...]:port`.
+        // One colon is host:port; more is a bare IPv6 address, which only takes a port bracketed.
         let has_port = if strings::starts_with_char(entry, b'[') {
             strings::index_of(entry, b"]:").is_some()
         } else {
@@ -916,8 +901,7 @@ pub fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> b
         }
 
         if let Some(address) = ipv6_hostname {
-            // An address has no domain suffix to match on: only the same
-            // address, written with or without brackets, bypasses.
+            // Entries spell the address bare (`::1`, as curl and Go read it) or `[::1]`; no suffix.
             let entry = strip_ipv6_brackets(entry).unwrap_or(entry);
             if strings::eql_case_insensitive_ascii(address, entry, true) {
                 return true;

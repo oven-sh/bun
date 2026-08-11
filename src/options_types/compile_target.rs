@@ -102,8 +102,7 @@ impl fmt::Display for BaselineFormatter {
 /// Why a `--target` string was rejected. `Display` is the CLI error message.
 #[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum ParseError<'a> {
-    /// `segment` is not an architecture, OS, CPU tier, libc or version. `input` is the string
-    /// that was parsed (everything after `bun`), echoed back in the message.
+    /// `segment` of `input` is not an architecture, OS, CPU tier, libc or version.
     UnsupportedSegment {
         segment: &'a [u8],
         input: &'a [u8],

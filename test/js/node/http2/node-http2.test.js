@@ -3592,10 +3592,15 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
 async function pushedHeaderBlocks(onStream, serverOptions) {
   const server = http2.createServer(serverOptions);
   server.on("stream", onStream);
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise((listening, failed) => {
+    server.once("error", failed);
+    server.listen(0, "127.0.0.1", listening);
+  });
+  let client;
   try {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     const { promise, resolve, reject } = Promise.withResolvers();
+    server.on("sessionError", reject);
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     client.on("error", reject);
     const blocks = [];
     client.on("stream", (pushed, headers, _flags, rawHeaders) => {
@@ -3618,9 +3623,9 @@ async function pushedHeaderBlocks(onStream, serverOptions) {
     req.on("end", resolve);
     req.resume();
     await promise;
-    client.close();
     return blocks;
   } finally {
+    client?.close();
     server.close();
   }
 }

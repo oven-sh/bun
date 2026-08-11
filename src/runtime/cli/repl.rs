@@ -2634,8 +2634,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     {
                         j -= 1;
                     }
-                    // `</tag>` closes a tag; `Map<K, V>` (word before `<`) closes a generic.
-                    // `a < b, c >` (no word before `<`) stays a comparison, so regex follows.
+                    // `</tag>` or `Map<K, V>` (word before `<`) ends an expression; `a < b` does not.
                     (j > 1 && code[j - 1] == b'/' && code[j - 2] == b'<')
                         || (j > 1 && code[j - 1] == b'<' && is_word_char(code[j - 2]))
                 } else {

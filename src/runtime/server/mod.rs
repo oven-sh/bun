@@ -3460,37 +3460,29 @@ impl RequestPools {
 /// leak); such a pool is kept, as the old `thread_local!` kept it, since the
 /// context's drop glue cannot run against the dead VM and freeing the array
 /// under it would only re-attribute what it owns in LeakSanitizer reports.
-/// [`KEPT_POOLS`] keeps those contexts reachable for LSan exactly as before.
+/// LSan is told it is kept on purpose, which also covers what it references,
+/// as the `thread_local!` did.
 impl Drop for RequestPools {
     fn drop(&mut self) {
         fn release<const SSL: bool, const DEBUG: bool, const H3: bool>(
             slot: &mut RequestPoolSlot<SSL, DEBUG, H3>,
-            kept: &core::cell::Cell<*const ()>,
         ) {
             let Some(pool) = slot.take() else { return };
             if pool.hive.is_empty() {
                 drop(pool);
             } else {
-                kept.set(core::ptr::from_ref(&*Box::leak(pool)).cast());
+                bun_core::asan::ignore_object(core::ptr::from_ref(Box::leak(pool)).cast());
             }
         }
-        KEPT_POOLS.with(|kept| {
-            release(&mut self.http, &kept[0]);
-            release(&mut self.https, &kept[1]);
-            release(&mut self.debug_http, &kept[2]);
-            release(&mut self.debug_https, &kept[3]);
-            release(&mut self.http_h3, &kept[4]);
-            release(&mut self.https_h3, &kept[5]);
-            release(&mut self.debug_http_h3, &kept[6]);
-            release(&mut self.debug_https_h3, &kept[7]);
-        });
+        release(&mut self.http);
+        release(&mut self.https);
+        release(&mut self.debug_http);
+        release(&mut self.debug_https);
+        release(&mut self.http_h3);
+        release(&mut self.https_h3);
+        release(&mut self.debug_http_h3);
+        release(&mut self.debug_https_h3);
     }
-}
-
-thread_local! {
-    /// One entry per [`RequestPools`] field; only LeakSanitizer reads them.
-    static KEPT_POOLS: [core::cell::Cell<*const ()>; 8] =
-        const { [const { core::cell::Cell::new(core::ptr::null()) }; 8] };
 }
 
 macro_rules! impl_server_pools {

@@ -622,8 +622,7 @@ describe.skipIf(!isASAN)("Bun.serve request pools are released with the VM that 
   // freed with the VM's body pool), which ASAN reports. Malloc=1 puts JSC's
   // allocations on the system allocator too, so ASAN also sees the destructor
   // touching the dead VM; leak detection has to be off with it (it surfaces
-  // process-lifetime WTF allocations), and the kept pool is expected to
-  // outlive the worker thread anyway. The next cell covers the pool itself.
+  // process-lifetime WTF allocations). The next cell covers the pool itself.
   test.concurrent(
     "terminate() with a request still in flight",
     () =>
@@ -662,13 +661,14 @@ describe.skipIf(!isASAN)("Bun.serve request pools are released with the VM that 
 
   // The same situation on the main thread, which BUN_DESTRUCT_VM_ON_EXIT (set
   // for every leak-checked test on the ASAN lane) tears down at exit. The kept
-  // pool stays reachable from the thread, so whatever the unreleased context
-  // still references (its server, and depending on how far the request got its
-  // Request, Response, ...) stays as invisible to LSan as it was while the pool
+  // pool is declared to LSan as kept on purpose, so whatever the unreleased
+  // context still references (its server, and depending on how far the request
+  // got its Request, Response, ...) stays as invisible as it was while the pool
   // lived in a thread_local; freeing the pool instead would report all of it
-  // against unrelated allocation sites in every test exiting in this state. The
-  // server is the reference every such context holds, so the cell runs with the
-  // suppressions that would normally hide a server removed.
+  // against unrelated allocation sites in every test exiting in this state, and
+  // merely parking a pointer to it somewhere is not enough (optimized builds
+  // dropped that store). The server is the reference every such context holds,
+  // so the cell runs with the suppressions that would normally hide one removed.
   test.concurrent(
     "main thread exits with a request still in flight",
     () =>

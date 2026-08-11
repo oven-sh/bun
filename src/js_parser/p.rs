@@ -2847,19 +2847,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
 
-        // An `export` keyword or top-level `await` makes the file ESM regardless
-        // of anything else (see `exports_kind` in `parse_entry`), and an ESM file
-        // has no `exports`/`module` bindings: the bundler only declares these
-        // symbols for CommonJS-wrapped files and reuses `exports_ref` as the ESM
-        // namespace object. So keep them out of the scope and let a bare
-        // `exports`/`module` resolve like any other global (printed as-is,
-        // replaceable by `--define`). The symbols still exist because the linker
-        // and `export =` use them by ref.
-        //
-        // Unlike `is_file_considered_to_have_esm_exports`, `options.module_type`
-        // is not consulted: a `.mjs`/`"type": "module"` file without ESM syntax
-        // is still classified by whether it uses `module`/`exports`, which needs
-        // the bindings.
+        // `export` or top-level `await` makes the file ESM regardless of `module`/
+        // `exports` usage (see `exports_kind` in `parse_entry`; `module_type` alone
+        // does not), so those are not bindings there: user references stay free
+        // identifiers. The linker and `export =` still use the symbols by ref.
         if self.esm_export_keyword.len > 0 || self.top_level_await_keyword.len > 0 {
             self.exports_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"exports");
             self.module_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"module");

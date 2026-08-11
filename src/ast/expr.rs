@@ -2717,9 +2717,7 @@ impl EqlKindT for StrictEql {
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
     fn arena(&self) -> &Bump;
-    /// Whether an identifier bound to `ref_` is CommonJS `module` (the file's
-    /// binding, or a free `module` in a file with ESM exports), for the
-    /// `require.main === module` rewrite.
+    /// Is `ref_` the `module` operand of `require.main === module`?
     fn is_module_ref(&self, ref_: Ref) -> bool;
 }
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).

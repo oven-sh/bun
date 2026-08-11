@@ -89,11 +89,8 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     }
 }
 
-/// Replace `require.main === module` (any of the four equality operators) with
-/// `import.meta.main`. Both operands disappear: `require.main` is the
-/// `ERequireMain` on the right (equality operands were reordered above) and
-/// `module` is the identifier on the left, which is either the CommonJS
-/// `module_ref` or, in a file with ESM exports, an unbound `module`.
+/// `require.main === module` (any equality operator) becomes `import.meta.main`.
+/// `ERequireMain` was reordered to the right, so the `module` identifier is `e_.left`.
 fn fold_require_main_and_module<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     e_: &E::Binary,
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,

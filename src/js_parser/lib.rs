@@ -260,9 +260,7 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
         if !ref_.is_symbol() {
             return false;
         }
-        // A file with ESM exports has no `module` binding (see
-        // `prepare_for_visit_pass`), so its `require.main === module` refers to
-        // an unbound `module`. Keep rewriting that to `import.meta.main`.
+        // Files with ESM exports leave `module` unbound (see `prepare_for_visit_pass`).
         let symbol = &self.symbols[ref_.inner_index() as usize];
         symbol.kind == bun_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"module"
     }

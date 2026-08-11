@@ -27,42 +27,46 @@ export async function importBun(): Promise<string> {
 
 async function requireBun(platform: Platform): Promise<string> {
   const module = `${owner}/${platform.bin}`;
-  function resolveBun() {
-    const exe = require.resolve(join(module, platform.exe));
-    const { exitCode, stderr, stdout } = spawn(exe, ["--version"]);
-    if (exitCode === 0) {
-      return exe;
-    }
-    throw new Error(stderr || stdout);
-  }
   try {
-    return resolveBun();
+    return checkBun(require.resolve(join(module, platform.exe)));
   } catch (cause) {
-    debug("resolveBun failed", cause);
+    debug("resolve failed", cause);
     error(
       `Failed to find package "${module}".`,
       `You may have used the "--no-optional" flag when running "npm install".`,
     );
   }
-  const cwd = join("node_modules", module);
+  const dst = join(__dirname, "node_modules", module);
   try {
-    installBun(platform, cwd);
+    installBun(platform, dst);
   } catch (cause) {
     debug("installBun failed", cause);
     error(`Failed to install package "${module}" using "npm install".`, cause);
     try {
-      await downloadBun(platform, cwd);
+      await downloadBun(platform, dst);
     } catch (cause) {
       debug("downloadBun failed", cause);
       error(`Failed to download package "${module}" from "registry.npmjs.org".`, cause);
     }
   }
-  return resolveBun();
+  // Not require.resolve() again: when `bun install` runs this script without node installed,
+  // it runs under bun, whose resolver remembers that the lookup above failed.
+  return checkBun(join(dst, platform.exe));
+}
+
+function checkBun(exe: string): string {
+  const { exitCode, stderr, stdout } = spawn(exe, ["--version"]);
+  if (exitCode === 0) {
+    return exe;
+  }
+  throw new Error(stderr || stdout);
 }
 
 function installBun(platform: Platform, dst: string): void {
   const module = `${owner}/${platform.bin}`;
-  const cwd = tmp();
+  // Inside this package rather than the system temporary directory, which can be a different
+  // file system that the rename below cannot move the package out of.
+  const cwd = tmp(__dirname);
   try {
     write(join(cwd, "package.json"), "{}");
     const { exitCode, stdout, stderr } = spawn(

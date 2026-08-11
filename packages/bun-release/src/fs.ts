@@ -12,9 +12,8 @@ export function basename(...paths: (string | string[])[]): string {
   return path.basename(join(...paths));
 }
 
-export function tmp(): string {
-  const tmpdir = process.env["RUNNER_TEMP"] ?? os.tmpdir();
-  const dir = fs.mkdtempSync(join(tmpdir, "bun-"));
+export function tmp(parent: string = process.env["RUNNER_TEMP"] ?? os.tmpdir()): string {
+  const dir = fs.mkdtempSync(join(parent, "bun-"));
   debug("tmp", dir);
   return dir;
 }

@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { buildSync } from "esbuild";
-import { chmodSync, readFileSync } from "fs";
+import { chmodSync, existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDir, type DirectoryTree } from "harness";
 import path from "path";
 import { gzipSync } from "zlib";
 import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
 
-// The `bun` npm package's postinstall, bundled with esbuild as upload-npm.ts does and run with
-// node as npm does, in a project that installed bun without its optionalDependencies:
-// node_modules/bun holds the package and the platform package @oven/<bin> is missing. The
-// script then has to get the platform package with `npm install`, and failing that, by
-// downloading its tarball from the registry.
-const node = nodeExe();
+// The `bun` npm package's postinstall, bundled with esbuild as upload-npm.ts does, run in a
+// project that installed bun without its optionalDependencies: node_modules/bun holds the
+// package and the platform package @oven/<bin> is missing. The script then has to get the
+// platform package with `npm install`, and failing that, by downloading its tarball from the
+// registry. npm runs the script with node; `bun install` on a machine without node runs it
+// with bun standing in for node; so it is run with both.
 const packageDir = path.join(import.meta.dir, "..", "..", "..", "packages", "bun-release");
 const version = "1.0.0";
 const [platform] = supportedPlatforms;
@@ -39,7 +39,7 @@ globalThis.fetch = async url => {
 };
 `;
 
-// resolveBun() runs the installed binary with --version, so the fixture binary has to be
+// The script runs the installed binary with --version, so the fixture binary has to be
 // runnable: a shell script on POSIX, and on Windows (where it is spawned as bin/bun.exe) the
 // bun running this test.
 const binary: Buffer = isWindows ? readFileSync(bunExe()) : Buffer.from("#!/bin/sh\nexit 0\n");
@@ -63,33 +63,34 @@ function tarball(files: Record<string, Buffer | string>): Buffer {
 
 const tgz = tarball({ "package.json": JSON.stringify({ name: pkg, version }), [platform.exe]: binary });
 
-// installBun() runs `npm install <pkg>@<version>` in an empty temporary directory and moves
-// node_modules/<pkg> out of it. These stand in for npm there, as node scripts since PATH holds
-// nothing but them. Windows never runs them: without a shell node only spawns .exe/.com files,
-// which rules out the real npm (an npm.cmd) too, so there every `npm install` fails before
-// running anything.
-const failingNpm: DirectoryTree = {
-  "fake-bin/npm": `#!${node}\nconsole.error("npm ERR! code E404");\nprocess.exit(1);\n`,
-};
-const installingNpm: DirectoryTree = {
-  "binary": binary,
-  "fake-bin/npm": ({ root }) => {
-    const exe = path.posix.join("node_modules", pkg, platform.exe);
-    return `#!${node}
+// installBun() runs `npm install <pkg>@<version>` in a scratch directory and moves
+// node_modules/<pkg> out of it. These stand in for npm there, as scripts for the runtime under
+// test since PATH holds nothing but them. Windows never runs them (a file without an extension
+// is not executable there), so there every `npm install` fails before running anything, which
+// is also what happens in production: node does not run npm.cmd without a shell.
+function failingNpm(runtime: string): DirectoryTree {
+  return { "fake-bin/npm": `#!${runtime}\nconsole.error("npm ERR! code E404");\nprocess.exit(1);\n` };
+}
+function installingNpm(runtime: string): DirectoryTree {
+  const exe = path.posix.join("node_modules", pkg, platform.exe);
+  return {
+    "binary": binary,
+    "fake-bin/npm": ({ root }) => `#!${runtime}
 const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(path.join(root, "npm-cwd"))}, process.cwd());
 fs.mkdirSync(${JSON.stringify(path.posix.dirname(exe))}, { recursive: true });
 fs.copyFileSync(${JSON.stringify(path.join(root, "binary"))}, ${JSON.stringify(exe)});
 fs.chmodSync(${JSON.stringify(exe)}, 0o755);
-`;
-  },
-};
+`,
+  };
+}
 
 // The script's PATH is replaced with fake-bin. On Windows process.env spells the variable
 // `Path`, and Bun.spawn gives the child the first of two keys differing only in case, so the
 // inherited key has to go rather than be shadowed by `PATH`.
 const envWithoutPath = Object.fromEntries(Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "PATH"));
 
-async function postinstall(name: string, options: { npm?: DirectoryTree; tarball?: Buffer }) {
+async function postinstall(runtime: string, name: string, options: { npm?: DirectoryTree; tarball?: Buffer }) {
   const bunPackage: DirectoryTree = {
     "install.js": installJs,
     "fetch.cjs": fetchCjs,
@@ -104,64 +105,94 @@ async function postinstall(name: string, options: { npm?: DirectoryTree; tarball
     "node_modules": { bun: bunPackage },
   });
   const root = String(dir);
+  const bunPackageDir = path.join(root, "node_modules", "bun");
   if (options.npm) chmodSync(path.join(root, "fake-bin", "npm"), 0o755);
   await using proc = Bun.spawn({
-    cmd: [node!, "-r", "./fetch.cjs", "install.js"],
-    cwd: path.join(root, "node_modules", "bun"),
+    cmd: [runtime, "-r", "./fetch.cjs", "install.js"],
+    cwd: bunPackageDir,
     env: { ...envWithoutPath, PATH: path.join(root, "fake-bin") },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const bin = readFileSync(path.join(root, "node_modules", "bun", "bin", "bun.exe"));
-  return { stdout, stderr, exitCode, bin };
+  const npmCwd = path.join(root, "npm-cwd");
+  return {
+    stdout,
+    stderr,
+    exitCode,
+    bin: readFileSync(path.join(bunPackageDir, "bin", "bun.exe")),
+    // Everything the script left in its own directory, so a scratch directory would show up.
+    files: readdirSync(bunPackageDir).sort(),
+    // Where installingNpm()'s npm was run, relative to the script's directory.
+    npmCwd: existsSync(npmCwd) ? path.relative(bunPackageDir, readFileSync(npmCwd, "utf8")) : undefined,
+  };
 }
 
 const notFound = `Failed to find package "${pkg}". You may have used the "--no-optional" flag when running "npm install".`;
 const npmFailed = `Failed to install package "${pkg}" using "npm install".`;
 
-describe.skipIf(!node).concurrent("bun npm package postinstall", () => {
-  test('downloads the tarball from the registry when "npm install" fails', async () => {
-    const { stdout, stderr, exitCode, bin } = await postinstall("download", { npm: failingNpm, tarball: tgz });
-    expect(stderr).toContain(notFound);
-    expect(stderr).toContain(npmFailed);
-    // The reported error carries npm's output, except on Windows where npm never ran (see failingNpm).
-    if (!isWindows) expect(stderr).toContain("npm ERR! code E404");
-    expect(stderr).not.toContain("Failed to download");
-    expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
-    expect(bin.equals(binary)).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+for (const [name, runtime] of [
+  ["node", nodeExe()],
+  ["bun", bunExe()],
+] as const) {
+  describe.skipIf(!runtime).concurrent(`bun npm package postinstall run with ${name}`, () => {
+    test('downloads the tarball from the registry when "npm install" fails', async () => {
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-download`, {
+        npm: failingNpm(runtime!),
+        tarball: tgz,
+      });
+      expect(stderr).toContain(notFound);
+      expect(stderr).toContain(npmFailed);
+      // The reported error carries npm's output, except on Windows where npm never ran (see failingNpm).
+      if (!isWindows) expect(stderr).toContain("npm ERR! code E404");
+      expect(stderr).not.toContain("Failed to download");
+      expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
+      expect(bin.equals(binary)).toBe(true);
+      expect(files).toEqual(["bin", "bun.tgz", "fetch.cjs", "install.js", "node_modules"]);
+      expect(exitCode).toBe(0);
+    });
 
-  test("downloads the tarball from the registry when npm is not installed", async () => {
-    const { stdout, stderr, exitCode, bin } = await postinstall("no-npm", { tarball: tgz });
-    expect(stderr).toContain(notFound);
-    expect(stderr).toContain(npmFailed);
-    expect(stderr).not.toContain("Failed to download");
-    expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
-    expect(bin.equals(binary)).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+    test("downloads the tarball from the registry when npm is not installed", async () => {
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-no-npm`, { tarball: tgz });
+      expect(stderr).toContain(notFound);
+      expect(stderr).toContain(npmFailed);
+      expect(stderr).not.toContain("Failed to download");
+      expect(stdout).toBe(`fetch ${tarballUrl(platform)}\n`);
+      expect(bin.equals(binary)).toBe(true);
+      expect(files).toEqual(["bin", "bun.tgz", "fetch.cjs", "install.js", "node_modules"]);
+      expect(exitCode).toBe(0);
+    });
 
-  test('fails and reports both attempts when "npm install" and the download fail', async () => {
-    const { stdout, stderr, exitCode, bin } = await postinstall("neither", { npm: failingNpm });
-    for (const { bin } of supportedPlatforms) {
-      expect(stderr).toContain(`Failed to find package "@oven/${bin}".`);
-      expect(stderr).toContain(`Failed to install package "@oven/${bin}" using "npm install".`);
-      expect(stderr).toContain(`Failed to download package "@oven/${bin}" from "registry.npmjs.org".`);
-    }
-    expect(stderr).toContain('Error: Failed to install package "bun"');
-    expect(stdout).toBe(supportedPlatforms.map(platform => `fetch ${tarballUrl(platform)}\n`).join(""));
-    expect(bin.toString()).toBe("placeholder");
-    expect(exitCode).toBe(1);
-  });
+    test('fails and reports both attempts when "npm install" and the download fail', async () => {
+      const { stdout, stderr, exitCode, bin, files } = await postinstall(runtime!, `${name}-neither`, {
+        npm: failingNpm(runtime!),
+      });
+      for (const { bin } of supportedPlatforms) {
+        expect(stderr).toContain(`Failed to find package "@oven/${bin}".`);
+        expect(stderr).toContain(`Failed to install package "@oven/${bin}" using "npm install".`);
+        expect(stderr).toContain(`Failed to download package "@oven/${bin}" from "registry.npmjs.org".`);
+      }
+      expect(stderr).toContain('Failed to install package "bun"');
+      expect(stdout).toBe(supportedPlatforms.map(platform => `fetch ${tarballUrl(platform)}\n`).join(""));
+      expect(bin.toString()).toBe("placeholder");
+      expect(files).toEqual(["bin", "fetch.cjs", "install.js"]);
+      expect(exitCode).toBe(1);
+    });
 
-  // `npm install` cannot succeed on Windows (see failingNpm).
-  test.skipIf(isWindows)('uses the package "npm install" installed without downloading', async () => {
-    const { stdout, stderr, exitCode, bin } = await postinstall("npm", { npm: installingNpm, tarball: tgz });
-    expect(stderr).toBe(`${notFound}\n`);
-    expect(stdout).toBe("");
-    expect(bin.equals(binary)).toBe(true);
-    expect(exitCode).toBe(0);
+    // `npm install` cannot succeed on Windows (see failingNpm).
+    test.skipIf(isWindows)('uses the package "npm install" installed without downloading', async () => {
+      const { stdout, stderr, exitCode, bin, files, npmCwd } = await postinstall(runtime!, `${name}-npm`, {
+        npm: installingNpm(runtime!),
+        tarball: tgz,
+      });
+      expect(stderr).toBe(`${notFound}\n`);
+      expect(stdout).toBe("");
+      expect(bin.equals(binary)).toBe(true);
+      // npm ran in a scratch directory directly inside the script's own directory (so on the
+      // same file system as the node_modules the package is moved to), since removed.
+      expect(npmCwd).toMatch(/^bun-[^/\\]+$/);
+      expect(files).toEqual(["bin", "bun.tgz", "fetch.cjs", "install.js", "node_modules"]);
+      expect(exitCode).toBe(0);
+    });
   });
-});
+}

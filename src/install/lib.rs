@@ -707,7 +707,7 @@ impl RunCommand {
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {
                             // As in the POSIX EEXIST branch; a rebuilt binary is a different file.
-                            let matches = image_stat.as_ref().is_some_and(|image| {
+                            let keep = image_stat.as_ref().is_none_or(|image| {
                                 bun_sys::openat_windows(
                                     bun_sys::Fd::cwd(),
                                     &target_path_buffer[..link_len],
@@ -720,7 +720,7 @@ impl RunCommand {
                                     link.st_dev == image.st_dev && link.st_ino == image.st_ino
                                 })
                             });
-                            if matches || replaced {
+                            if keep || replaced {
                                 break;
                             }
                             let _ = win::DeleteFileBun(

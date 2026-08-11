@@ -1140,14 +1140,21 @@ describe.concurrent("bun run", () => {
       // writes `stop`. A busy loop on purpose: a process that removes and
       // recreates the shim leaves it missing for only a few syscalls, so sample
       // as fast as possible. Deliberately import-free: in debug builds, loading
-      // node:fs alone takes most of a second.
+      // node:fs alone takes most of a second. The deadline is longer than any
+      // per-test timeout, so it only matters if the test run itself was killed
+      // and could not stop this process.
       "watch.js": `
         const shim = Bun.which("node");
+        const deadline = Date.now() + 5 * 60_000;
         console.log(shim);
         while (Bun.file("stop").size === 0) {
           if (Bun.which("node") !== shim) {
             console.log("missing");
             process.exit(1);
+          }
+          if (Date.now() > deadline) {
+            console.log("deadline");
+            process.exit(2);
           }
         }
         console.log("ok");

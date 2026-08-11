@@ -1,4 +1,3 @@
-use core::any::Any;
 use core::cell::Cell;
 use core::ffi::c_char;
 
@@ -128,7 +127,7 @@ impl CryptoHasher {
     ) -> Option<Box<CryptoHasher>> {
         match other_handle {
             CryptoHasher::Zig(other) => {
-                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
+                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().clone())));
                 Some(hasher)
             }
             CryptoHasher::Evp(other) => {
@@ -190,7 +189,7 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
     pub fn extern_digest_size(&self) -> u32 {
         match self {
-            CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
+            CryptoHasher::Zig(inner) => inner.get().digest_length() as u32,
             CryptoHasher::Evp(inner) => inner.get().size() as u32,
             _ => 0,
         }
@@ -200,8 +199,8 @@ impl CryptoHasher {
     pub fn extern_is_xof(&self) -> bool {
         match self {
             CryptoHasher::Zig(inner) => matches!(
-                inner.get().algorithm,
-                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+                inner.get(),
+                CryptoHasherZig::Shake128(_) | CryptoHasherZig::Shake256(_)
             ),
             _ => false,
         }
@@ -315,7 +314,7 @@ impl CryptoHasher {
                 Some(hmac) => hmac.size() as f64,
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
-            CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
+            CryptoHasher::Zig(inner) => inner.get().digest_length() as f64,
         }))
     }
 
@@ -323,7 +322,7 @@ impl CryptoHasher {
     pub(crate) fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let tag: &'static [u8] = match this {
             CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Zig(inner) => inner.get().algorithm().tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
                 None => return Err(Self::throw_hmac_consumed(global)),
@@ -678,7 +677,7 @@ impl CryptoHasher {
                     }
                 })));
             }
-            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().copy())),
+            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().clone())),
         };
         Ok(copied.to_js(global))
     }
@@ -805,15 +804,22 @@ impl CryptoHasher {
 // CryptoHasherZig
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CryptoHasherZig {
-    pub(crate) algorithm: evp::Algorithm,
-    pub(crate) state: Box<dyn Any>,
-    pub(crate) digest_length: u8,
+/// The variant is the algorithm. Each state is boxed (Keccak states are a few
+/// hundred bytes), like the `Evp` arm of `CryptoHasher`.
+#[derive(Clone)]
+pub enum CryptoHasherZig {
+    Sha3_224(Box<Sha3_224>),
+    Sha3_256(Box<Sha3_256>),
+    Sha3_384(Box<Sha3_384>),
+    Sha3_512(Box<Sha3_512>),
+    Shake128(Box<Shake128>),
+    Shake256(Box<Shake256>),
+    Blake2s256(Box<Blake2s256>),
 }
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Default + Clone {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -898,6 +904,43 @@ macro_rules! for_each_zig_algo {
         $mac!(Shake128   $(, $($args)*)?);
         $mac!(Shake256   $(, $($args)*)?);
         $mac!(Blake2s256 $(, $($args)*)?);
+    };
+}
+
+/// Exhaustive `match` over a `CryptoHasherZig`; every arm binds the boxed
+/// state to `$state` and names its `ZigHashAlgo` type `$algo`.
+macro_rules! match_zig_algo {
+    ($hasher:expr, |$state:tt: $algo:ident| $body:expr) => {
+        match $hasher {
+            CryptoHasherZig::Sha3_224($state) => {
+                type $algo = Sha3_224;
+                $body
+            }
+            CryptoHasherZig::Sha3_256($state) => {
+                type $algo = Sha3_256;
+                $body
+            }
+            CryptoHasherZig::Sha3_384($state) => {
+                type $algo = Sha3_384;
+                $body
+            }
+            CryptoHasherZig::Sha3_512($state) => {
+                type $algo = Sha3_512;
+                $body
+            }
+            CryptoHasherZig::Shake128($state) => {
+                type $algo = Shake128;
+                $body
+            }
+            CryptoHasherZig::Shake256($state) => {
+                type $algo = Shake256;
+                $body
+            }
+            CryptoHasherZig::Blake2s256($state) => {
+                type $algo = Blake2s256;
+                $body
+            }
+        }
     };
 }
 
@@ -1033,14 +1076,9 @@ impl CryptoHasherZig {
     pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {
         let algorithm = evp::lookup_ignore_case(name)?;
         macro_rules! arm {
-            ($ty:ty, $alg:expr) => {
-                if $alg == <$ty as ZigHashAlgo>::ALGORITHM {
-                    let handle = CryptoHasherZig {
-                        algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
-                        state: Box::new(<$ty as ZigHashAlgo>::init()),
-                        digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
-                    };
-                    return Some(handle);
+            ($algo:ident, $alg:expr) => {
+                if $alg == <$algo as ZigHashAlgo>::ALGORITHM {
+                    return Some(Self::$algo(Box::new(<$algo as ZigHashAlgo>::init())));
                 }
             };
         }
@@ -1048,35 +1086,16 @@ impl CryptoHasherZig {
         None
     }
 
-    fn update(&mut self, bytes: &[u8]) {
-        macro_rules! arm {
-            ($ty:ty, $self:expr, $bytes:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
-                    // SAFETY: tag matches type stored in `state` (set in init/constructor).
-                    let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
-                    return <$ty as ZigHashAlgo>::update(state, $bytes);
-                }
-            };
-        }
-        for_each_zig_algo!(arm, self, bytes);
-        unreachable!();
+    fn algorithm(&self) -> evp::Algorithm {
+        match_zig_algo!(self, |_: A| A::ALGORITHM)
     }
 
-    fn copy(&self) -> CryptoHasherZig {
-        macro_rules! arm {
-            ($ty:ty, $self:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
-                    let state = $self.state.downcast_ref::<$ty>().expect("unreachable");
-                    return CryptoHasherZig {
-                        algorithm: $self.algorithm,
-                        state: Box::new(state.clone()),
-                        digest_length: $self.digest_length,
-                    };
-                }
-            };
-        }
-        for_each_zig_algo!(arm, self);
-        unreachable!();
+    fn digest_length(&self) -> u8 {
+        match_zig_algo!(self, |_: A| A::DIGEST_LENGTH)
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        match_zig_algo!(self, |state: A| A::update(state, bytes))
     }
 
     fn final_with_len<'a>(
@@ -1084,22 +1103,15 @@ impl CryptoHasherZig {
         output_digest_slice: &'a mut [u8],
         res_len: usize,
     ) -> &'a mut [u8] {
-        macro_rules! arm {
-            ($ty:ty, $self:expr, $out:expr, $len:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
-                    let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
-                    <$ty as ZigHashAlgo>::final_(state, $out);
-                    *state = <$ty as ZigHashAlgo>::init();
-                    return &mut $out[0..$len];
-                }
-            };
-        }
-        for_each_zig_algo!(arm, self, output_digest_slice, res_len);
-        unreachable!();
+        match_zig_algo!(self, |state: A| {
+            A::final_(state, output_digest_slice);
+            **state = A::init();
+        });
+        &mut output_digest_slice[0..res_len]
     }
 
     fn final_<'a>(&mut self, output_digest_slice: &'a mut [u8]) -> &'a mut [u8] {
-        let len = self.digest_length as usize;
+        let len = self.digest_length() as usize;
         self.final_with_len(output_digest_slice, len)
     }
 }

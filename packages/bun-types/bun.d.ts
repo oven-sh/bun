@@ -2793,11 +2793,8 @@ declare module "bun" {
       | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
     /**
-     * Platform to build a standalone executable for, optionally followed by
-     * `-v<major>.<minor>.<patch>` to embed that version of Bun instead of the
-     * one running the build.
-     *
-     * Equivalent CLI flag: `--target` (with `--compile`)
+     * A {@link Platform}, optionally followed by `-v<major>.<minor>.<patch>` to
+     * embed that version of Bun instead of the one running the build.
      *
      * @example "bun-linux-x64"
      * @example "bun-linux-arm64-android"
@@ -3246,6 +3243,14 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
+    /**
+     * Platform to build the executable for, optionally pinned to a Bun version
+     * with a `-v<major>.<minor>.<patch>` suffix. Defaults to the platform and
+     * version of the Bun running the build; anything else is downloaded from
+     * npm the first time it is used.
+     *
+     * Equivalent CLI flag: `--target`
+     */
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;

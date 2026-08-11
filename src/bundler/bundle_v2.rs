@@ -5167,14 +5167,9 @@ pub mod bv2_impl {
             })
         }
 
-        /// Writes a metafile (JSON or markdown) requested through a `metafile`
-        /// path to disk and appends it to `output_files`.
-        ///
-        /// The path is resolved the same way as `compile.outfile`: a relative
-        /// path is relative to `outdir` (or to the working directory when there
-        /// is no `outdir`), an absolute path is used as-is. The resolved path is
-        /// stored as the output path so the `BuildArtifact` reports the file that
-        /// was actually written.
+        /// Resolves `file_path` like `compile.outfile` (against `outdir`, else the
+        /// working directory; absolute paths as-is), writes the metafile there and
+        /// appends it to `output_files`.
         fn write_metafile_output(
             &mut self,
             output_files: &mut Vec<options::OutputFile>,

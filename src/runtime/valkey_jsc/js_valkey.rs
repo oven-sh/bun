@@ -1317,8 +1317,6 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
-        // Not necessarily a subscriber here: an earlier ack may already have left
-        // subscriber mode, or this client never entered it (`punsubscribe()`).
         debug_assert!(self.this_value.get().is_strong());
 
         self.client_mut().on_writable();

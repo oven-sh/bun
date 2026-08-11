@@ -420,13 +420,13 @@ impl Value {
 
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
-    pub(crate) year: u16,
-    pub(crate) month: u8,
-    pub(crate) day: u8,
-    pub(crate) hour: u8,
-    pub(crate) minute: u8,
-    pub(crate) second: u8,
-    pub(crate) microsecond: u32,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
 }
 
 impl DateTime {

@@ -826,6 +826,13 @@ fn step_group(
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if !group.executing {
+                let (start, end) = (group.sequence_start, group.sequence_end);
+                if this.sequences[start..end].iter().all(|s| s.test_entry.is_none()) {
+                    if let Some(runner) = super::jest::Jest::runner() {
+                        // best-effort; a failure surfaces via write_snapshot_file()? at file-close.
+                        let _ = runner.snapshots.flush_current_file();
+                    }
+                }
                 Execution::on_group_started(global_this);
                 group.executing = true;
             }

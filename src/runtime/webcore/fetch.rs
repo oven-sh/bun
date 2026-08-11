@@ -231,7 +231,8 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 /// The `Response` for a `file:` URL wraps a blob that opens the file lazily, so
 /// `fetch()` itself has to check the path; otherwise a path that cannot be read
 /// still gets a 200 and the error only surfaces from the body reader. Returns
-/// the JS error for `fetch()` to reject with.
+/// the error for `fetch()` to reject with: the system error as a `TypeError`,
+/// the shape every other `fetch()` rejection has (see `ValueError::SystemTypeError`).
 ///
 /// Only conditions under which the read is certain to fail are checked (the
 /// path does not stat, or is a directory). `stat` rather than an eager `open`:
@@ -257,7 +258,8 @@ fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> 
     };
     // `stat` attached the scratch copy of the path (`\\?\`-prefixed on
     // Windows); report the path as the blob holds it.
-    Some(err.with_path(path.slice()).to_js(global_this))
+    let system_error: jsc::SystemError = err.with_path(path.slice()).to_system_error().into();
+    Some(system_error.to_type_error_instance(global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

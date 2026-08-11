@@ -1793,9 +1793,23 @@ it("fetch() file:// works", async () => {
 });
 
 describe.concurrent("fetch() file:// that cannot be read", () => {
+  const isRoot = !isWindows && process.getuid?.() === 0;
   // The file: branch keeps the URL's forward slashes in the path it reports,
   // which only differs from path.join() on Windows.
   const reportedPath = (p: string) => (isWindows ? p.replaceAll("\\", "/") : p);
+
+  async function rejection(input: string | URL | Request): Promise<unknown> {
+    const error = await fetch(input).then(
+      () => {
+        throw new Error("fetch() resolved");
+      },
+      (error: unknown) => error,
+    );
+    // Every fetch() failure is a TypeError (a network error in fetch spec
+    // terms); the system error fields ride along on it.
+    expect(error).toBeInstanceOf(TypeError);
+    return error;
+  }
 
   it("rejects with ENOENT when the file does not exist", async () => {
     using dir = tempDir("fetch-file-url", { "exists.txt": "exists" });
@@ -1803,7 +1817,7 @@ describe.concurrent("fetch() file:// that cannot be read", () => {
     const url = pathToFileURL(missing);
 
     for (const input of [url.href, url, new Request(url)]) {
-      await expect(fetch(input)).rejects.toMatchObject({
+      expect(await rejection(input)).toMatchObject({
         code: "ENOENT",
         syscall: "stat",
         path: reportedPath(missing),
@@ -1818,14 +1832,60 @@ describe.concurrent("fetch() file:// that cannot be read", () => {
   it("rejects with EISDIR when the path is a directory", async () => {
     using dir = tempDir("fetch-file-url-dir", {});
 
-    await expect(fetch(pathToFileURL(String(dir)))).rejects.toMatchObject({
+    expect(await rejection(pathToFileURL(String(dir)))).toMatchObject({
       code: "EISDIR",
       syscall: "read",
       path: reportedPath(String(dir)),
     });
   });
 
-  it.skipIf(isWindows)("still resolves for special files such as /dev/null", async () => {
+  it.skipIf(isWindows || isRoot)("rejects with EACCES when a parent directory cannot be searched", async () => {
+    using dir = tempDir("fetch-file-url-eacces", { "locked/file.txt": "secret" });
+    const locked = join(String(dir), "locked");
+    const file = join(locked, "file.txt");
+
+    chmodSync(locked, 0o000);
+    try {
+      expect(await rejection(pathToFileURL(file))).toMatchObject({
+        code: "EACCES",
+        syscall: "stat",
+        path: reportedPath(file),
+      });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
+
+  it.skipIf(isWindows || isRoot)("leaves a permission check on the file itself to the body read", async () => {
+    // Only what stat() reports is checked before the Response is created.
+    // access(2) can disagree with open(2), so a file that stats but cannot be
+    // opened still resolves and the open error comes from the body, as before.
+    using dir = tempDir("fetch-file-url-mode", { "file.txt": "secret" });
+    const file = join(String(dir), "file.txt");
+    chmodSync(file, 0o000);
+
+    const response = await fetch(pathToFileURL(file));
+    expect(response.status).toBe(200);
+    await expect(response.text()).rejects.toMatchObject({
+      code: "EACCES",
+      syscall: "open",
+      path: reportedPath(file),
+    });
+  });
+
+  it.skipIf(isWindows)("resolves for a FIFO without opening it", async () => {
+    using dir = tempDir("fetch-file-url-fifo", {});
+    const fifo = join(String(dir), "pipe");
+    mkfifo(fifo);
+
+    // Nothing ever writes to the pipe, so an implementation that opened the
+    // path up front instead of stat()ing it would block here. The body is
+    // deliberately left unread.
+    const response = await fetch(pathToFileURL(fifo));
+    expect(response.status).toBe(200);
+  });
+
+  it.skipIf(isWindows)("resolves for a character device", async () => {
     const response = await fetch("file:///dev/null");
     expect([response.status, await response.text()]).toEqual([200, ""]);
   });
@@ -1843,7 +1903,7 @@ describe.concurrent("fetch() file:// that cannot be read", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("");
-    expect(stderr).toContain("ENOENT");
+    expect(stderr).toContain("TypeError: ENOENT");
     expect(stderr).toContain(reportedPath(missing));
     expect(exitCode).toBe(1);
   });

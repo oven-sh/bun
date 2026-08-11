@@ -1,7 +1,8 @@
 import { udpSocket } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isMacOS, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -643,3 +644,65 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
+
+// bsd_recvmmsg's per-message recvmsg fallback (macOS < 15.6, or forced via
+// BUN_FEATURE_FLAG_DISABLE_SENDRECVMSG_X) must keep datagrams already received
+// in the current batch when a later recvmsg in the same batch returns a
+// non-EAGAIN error, matching recvmmsg(2)/recvmsg_x semantics. Previously it
+// returned the raw error and the already-received datagrams were dropped.
+test.skipIf(!isMacOS || !socketFaultInjection.available())(
+  "recvmsg fallback: mid-batch recvmsg error keeps already-received datagrams",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const out = (s) => process.stdout.write(s + "\\n");
+        const client = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data(_socket, data) {
+              out("DATA: " + Buffer.from(data).toString());
+              client.close();
+              server.close();
+            },
+            error(_socket, err) {
+              out("ERROR: " + err.code);
+            },
+          },
+        });
+        const server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        // Fail the 2nd recvmsg on this fd (i=1 in bsd_recvmmsg's loop) with
+        // ECONNREFUSED. i=0 will have already filled recvbuf[0] with the real
+        // datagram below; the fixed code returns i (1) instead of -1.
+        fault.set({ syscall: "recvmsg", action: "errno", errno: "ECONNREFUSED", after: 1, repeat: 1 });
+        server.send("hello", client.port, "127.0.0.1");
+        // Nothing else to do; the data/error handler closes both sockets.
+        // If neither fires (drop), the test runner's default timeout fails the
+        // parent test, not this subprocess.
+        setTimeout(() => {
+          out("TIMEOUT");
+          client.close();
+          server.close();
+        }, 5000).unref();
+      `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_SENDRECVMSG_X: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    // Before the fix: stdout is "ERROR: ECONNREFUSED" (datagram dropped).
+    // After the fix: stdout is "DATA: hello" (datagram delivered; the mid-batch
+    // error is consumed, matching recvmmsg(2) semantics).
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "DATA: hello", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);

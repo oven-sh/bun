@@ -242,6 +242,9 @@ pub mod feature_flag {
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
+    // Force the per-message recvmsg/sendmsg fallback on macOS instead of the
+    // batched recvmsg_x/sendmsg_x syscalls (as if running on macOS < 15.6).
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SENDRECVMSG_X, "BUN_FEATURE_FLAG_DISABLE_SENDRECVMSG_X", {});
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});

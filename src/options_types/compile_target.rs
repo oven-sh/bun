@@ -238,6 +238,19 @@ impl CompileTarget {
         }
     }
 
+    /// Whether a separate `-baseline` package is published for this target
+    /// (see `platforms` in packages/bun-release/src/platform.ts). Only the x64
+    /// builds of macOS, Windows and glibc/musl Linux have one; arm64, Android
+    /// and FreeBSD ship a single binary.
+    fn has_baseline_package(&self) -> bool {
+        self.arch == Architecture::X64
+            && match self.os {
+                OperatingSystem::Linux => self.libc != Libc::Android,
+                OperatingSystem::Mac | OperatingSystem::Windows => true,
+                OperatingSystem::Freebsd | OperatingSystem::Wasm => false,
+            }
+    }
+
     pub fn try_from(input_: &[u8]) -> Result<CompileTarget, ParseError> {
         let mut this = CompileTarget::default();
         let input = strings::trim(input_, b" \t\r");
@@ -323,8 +336,9 @@ impl CompileTarget {
             let _ = found_arch;
         }
 
-        // there is no baseline arm64.
-        if this.baseline && this.arch == Architecture::Arm64 {
+        // Otherwise the download URL and cache name would point at a package
+        // that does not exist; "-baseline" resolves to the one binary there is.
+        if this.baseline && !this.has_baseline_package() {
             this.baseline = false;
         }
 

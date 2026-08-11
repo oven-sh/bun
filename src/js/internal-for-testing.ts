@@ -737,17 +737,14 @@ export const stringsInternals = {
   ) => string,
 };
 
-/**
- * Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order.
- * `firstFamily` is what the loopback-name path passes to keep AI_ADDRCONFIG's family at the head of the list.
- */
+/** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
 export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 3) as (
   hostname: string,
   addresses: string[],
   firstFamily?: 4 | 6,
 ) => number[];
 
-/** The names the connect-path resolver exempts from AI_ADDRCONFIG's loopback filtering ("localhost" and below). */
+/** The names the connect-path resolver treats as loopback names ("localhost" and below); see `add_filtered_loopback_family`. */
 export const dnsIsLocalhostName = $newRustFunction(
   "runtime/dns_jsc/dns.rs",
   "internal.isLocalhostNameForTesting",

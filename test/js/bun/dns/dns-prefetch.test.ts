@@ -58,7 +58,7 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
 // The end-to-end tests after that fail without the fix on such a host and are
 // plain regression coverage everywhere else.
 describe("loopback names and AI_ADDRCONFIG", () => {
-  test("names that are exempt from the filter", () => {
+  test("names that get the filtered loopback family added back", () => {
     const names = [
       "localhost",
       "LOCALHOST",
@@ -117,7 +117,7 @@ describe("loopback names and AI_ADDRCONFIG", () => {
       expect(await response.text()).toBe("::1");
     });
 
-    // getaddrinfo() is case-insensitive, so the exemption has to be too.
+    // getaddrinfo() is case-insensitive, so the name check has to be too.
     test.concurrent.each(["localhost", "LOCALHOST"])("Bun.connect({ hostname: %j })", async hostname => {
       using listener = Bun.listen({ port: 0, hostname: "::1", socket: { data() {} } });
       using socket = await Bun.connect({ hostname, port: listener.port, socket: { data() {} } });

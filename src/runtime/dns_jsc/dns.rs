@@ -2398,8 +2398,7 @@ pub mod internal {
         hints_copy
     }
 
-    /// "localhost" or a name under it (RFC 6761 §6.3), the same set `normalize_dns_name`
-    /// special-cases for `dns.lookup`.
+    /// "localhost" or a name under it (RFC 6761 §6.3), as `normalize_dns_name` special-cases for `dns.lookup`.
     fn is_localhost_name(host: &[u8]) -> bool {
         const LOCALHOST: &[u8] = b"localhost";
         let Some(prefix_len) = host.len().checked_sub(LOCALHOST.len()) else {
@@ -2410,8 +2409,7 @@ pub mod internal {
             && (prefix.is_empty() || prefix.ends_with(b"."))
     }
 
-    /// `bun:internal-for-testing`: [`is_localhost_name`]. What it changes about a
-    /// real lookup is only observable on a host where AI_ADDRCONFIG filters loopback.
+    /// `bun:internal-for-testing`: [`is_localhost_name`], whose effect on a real lookup only shows on a host where AI_ADDRCONFIG filters loopback.
     pub(crate) fn is_localhost_name_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -2424,23 +2422,7 @@ pub mod internal {
         Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
     }
 
-    /// glibc's AI_ADDRCONFIG judges each family by the machine's non-loopback
-    /// addresses, so where ::1 is the only IPv6 address (a container, typically) it
-    /// drops the `::1 localhost` line of /etc/hosts even though ::1 is up, and a
-    /// listener bound to the name sits exactly there (`bsd_create_listen_socket`
-    /// prefers that line). macOS libinfo exempts localhost from its equivalent
-    /// filter and musl's AI_ADDRCONFIG probes loopback itself; for glibc, a loopback
-    /// name whose filtered answer holds a single family gets the unfiltered answer.
-    ///
-    /// Returns the filtered answer's family so it stays at the head of the list:
-    /// the other loopback family is only ever an extra candidate, and a consumer
-    /// that takes just the first entry (`us_quic_connect_result`) connects where it
-    /// did before. `AF_UNSPEC` when the answer was left alone.
-    ///
-    /// # Safety
-    /// `*addrinfo` must be the non-null list a successful `getaddrinfo()` call with
-    /// `hints`, `host_ptr` and `service` returned; on return it is again a list the
-    /// caller owns and frees.
+    /// glibc's AI_ADDRCONFIG drops a family present only on loopback, so a localhost name answered with one family gets the unfiltered list; returns the answered family to keep at the head, else `AF_UNSPEC`.
     #[cfg(not(windows))]
     unsafe fn add_filtered_loopback_family(
         hints: &mut AddrInfo,
@@ -2451,7 +2433,9 @@ pub mod internal {
         if hints.ai_family != netc::AF_UNSPEC {
             return netc::AF_UNSPEC;
         }
-        // SAFETY: `*addrinfo` is a getaddrinfo()-owned list per the contract above.
+        // SAFETY: the caller passes the non-null list a successful getaddrinfo() with
+        // `hints`, `host_ptr` and `service` returned, and frees whatever list is left
+        // in `*addrinfo` on return.
         let filtered_family = unsafe { (**addrinfo).ai_family };
         let mut node = *addrinfo;
         while !node.is_null() {
@@ -2573,11 +2557,7 @@ pub mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    //
-    // `first_family` takes index 0 and the even slots; `AF_UNSPEC` means the
-    // family the list itself starts with. The slot arithmetic below is a
-    // bijection for any split, including one where `first_family` matches no
-    // entry at all.
+    // `first_family` takes index 0 and the even slots (AF_UNSPEC: the list's own leading family); the slot arithmetic is a bijection for any split.
     fn process_results(info: *mut AddrInfo, first_family: c_int) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
@@ -2940,9 +2920,8 @@ pub mod internal {
 
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
-    /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it. The
-    /// optional `firstFamily` (4 or 6) is what `add_filtered_loopback_family`
-    /// passes for a loopback name.
+    /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
+    /// The optional `firstFamily` (4 or 6) is what `add_filtered_loopback_family` passes for a loopback name.
     pub(crate) fn seed_cache_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,

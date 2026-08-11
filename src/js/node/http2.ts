@@ -3454,6 +3454,10 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_AUTHORITY] === undefined && parentRequestHeaders) {
       headers[HTTP2_HEADER_AUTHORITY] = parentRequestHeaders[HTTP2_HEADER_AUTHORITY];
     }
+    // Before the promised id is reserved, so that a pushStream() made from inside a value's
+    // toString() reserves and announces its stream first (see toWireHeaders). Like node, a throwing
+    // coercion throws from pushStream() itself rather than reaching the callback.
+    const wireHeaders = toWireHeaders(headers);
     const pushId = parser.getNextStream();
     if (pushId === -1) {
       throw $ERR_HTTP2_OUT_OF_STREAMS();
@@ -3471,7 +3475,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     let pushResult;
     try {
-      pushResult = parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+      pushResult = parser.pushPromise(this.id, pushId, wireHeaders, sensitiveNames);
     } catch (err) {
       // pushPromise() throws synchronously on an invalid header block. The pushed stream was
       // already created by getNextStream's streamStart; tear it down without an error so the
@@ -4067,6 +4071,51 @@ function buildSensitiveNames(headers, sensitives) {
     }
   }
   return map;
+}
+
+// Objects are the only header values whose coercion runs user code (toString/valueOf/
+// Symbol.toPrimitive); primitives are left to the native validator, which keeps its exact error
+// behavior for undefined/null/symbol values.
+function coerceHeaderValue(value) {
+  const type = typeof value;
+  return (type === "object" && value !== null) || type === "function" ? `${value}` : value;
+}
+
+// The header block request()/pushStream() hand to the native encoder. The encoder coerces each
+// value while encoding, i.e. after the caller has taken a stream id, so a value whose toString()
+// calls request()/pushStream() again would take the next id yet reach the wire first (RFC 9113
+// §5.1.1 requires ids to increase on the wire; nghttp2 ignores the lower one), with the two blocks'
+// HPACK table updates interleaved. Like node's buildNgHeaderString, coerce everything in JS before
+// an id is taken. Arrays are always copied so native only reads fresh arrays of primitives. The
+// input is not mutated: the object form backs sentHeaders, which node leaves uncoerced as well.
+function toWireHeaders(headers) {
+  if ($isArray(headers)) {
+    // Raw [name, value, ...] form: names are coerced natively as well.
+    const list: any[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      list[i] = coerceHeaderValue(headers[i]);
+    }
+    return list;
+  }
+  let wire = null;
+  const keys = ObjectKeys(headers);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = headers[key];
+    let wireValue;
+    if ($isArray(value)) {
+      wireValue = [];
+      for (let j = 0; j < value.length; j++) {
+        wireValue[j] = coerceHeaderValue(value[j]);
+      }
+    } else {
+      wireValue = coerceHeaderValue(value);
+      if (wireValue === value) continue;
+    }
+    if (wire === null) wire = { ...headers };
+    wire[key] = wireValue;
+  }
+  return wire === null ? headers : wire;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -6381,6 +6430,12 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      // Before this request is queued or takes a stream id, so that a request() made from inside a
+      // value's toString() is submitted (or queued) ahead of this one (see toWireHeaders). The raw
+      // (array) form is kept because it preserves duplicate-header interleaving the object form
+      // cannot represent; `headers` itself backs sentHeaders and the diagnostics channels.
+      const wireHeaders = toWireHeaders(rawHeadersList !== null ? rawHeadersList : headers);
+
       // A request made before the socket finished connecting, or while the peer's
       // SETTINGS_MAX_CONCURRENT_STREAMS limit leaves no slot, is not submitted yet — node returns
       // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
@@ -6401,15 +6456,7 @@ class ClientHttp2Session extends Http2Session {
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
-        // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
-        // object form cannot represent; the object form is what diagnostics channels publish.
-        this.#pendingRequests.push({
-          req,
-          headers,
-          wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
-          sensitiveNames,
-          options,
-        });
+        this.#pendingRequests.push({ req, headers, wireHeaders, sensitiveNames, options });
         // node corks every Http2Stream until its native handle is assigned; same here so
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();
@@ -6431,7 +6478,6 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
-      const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
       } else {

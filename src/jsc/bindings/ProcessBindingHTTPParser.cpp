@@ -7,26 +7,13 @@ namespace Bun {
 
 using namespace JSC;
 
-// reifyStaticProperty, which calls the builders below, does not check for exceptions.
-static JSArray* constructMethodsArray(VM& vm, JSGlobalObject* globalObject, unsigned length)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, length);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return nullptr;
-    }
-    return methods;
-}
-
 static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSArray* methods = constructMethodsArray(vm, globalObject, 35);
-    if (!methods) [[unlikely]]
-        return jsUndefined();
+    JSArray* methods = constructEmptyArray(globalObject, nullptr, 35);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \
@@ -40,10 +27,10 @@ static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
 static JSValue ProcessBindingHTTPParser_allMethods(VM& vm, JSObject* binding)
 {
     JSGlobalObject* globalObject = binding->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSArray* methods = constructMethodsArray(vm, globalObject, 47);
-    if (!methods) [[unlikely]]
-        return jsUndefined();
+    JSArray* methods = constructEmptyArray(globalObject, nullptr, 47);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int index = 0;
 #define FOR_EACH_METHOD(num, name, string) \

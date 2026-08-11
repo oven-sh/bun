@@ -16,14 +16,15 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // The tree's shape is a check as the very next statement:
 //   JSArray* array = constructEmptyArray(globalObject, nullptr, 2);
 //   RETURN_IF_EXCEPTION(scope, {});
-// Lazy property builders, which cannot propagate, branch on scope.exception()
-// instead (Process_stubEmptyArray in BunProcess.cpp). This lint requires the
-// statements following every stored call to be checks of the scope or of the
-// result, ending in one that leaves the function or loop body (a check that
-// only asserts or logs does not protect the use after it); returning the
-// result untouched also counts, since the caller then holds the same contract.
-// It models the stored-result flavor only; passing the call inline as an
-// argument is a different shape.
+// (under a TopExceptionScope in static-table PropertyCallback builders, whose
+// callers in Lookup.cpp propagate an empty result; constructVersions in
+// BunProcess.cpp is one). A few builders branch on scope.exception() and
+// report instead. This lint requires the statements following every stored
+// call to be checks of the scope or of the result, ending in one that leaves
+// the function or loop body (a check that only asserts or logs does not
+// protect the use after it); returning the result untouched also counts,
+// since the caller then holds the same contract. It models the stored-result
+// flavor only; passing the call inline as an argument is a different shape.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const cxxSources = globAllSources().cxx;
@@ -181,7 +182,7 @@ for (const abs of cxxSources) {
   for (const { line, ident, next } of scanSource(await file(abs).text())) {
     offenders.push(
       `${source}:${line}: \`${ident} = constructEmptyArray(..)\` is not followed by an exception check (next statement: \`${next}\`) → ` +
-        `add RETURN_IF_EXCEPTION(scope, ..) right after it, or branch on scope.exception() in a lazy property builder`,
+        `add RETURN_IF_EXCEPTION(scope, ..) right after it`,
     );
   }
 }
@@ -275,7 +276,7 @@ const ignores: { label: string; cpp: string }[] = [
     cpp: `void f() {\n    auto* values = constructEmptyArray(globalObject, nullptr, 0); RETURN_IF_EXCEPTION(scope, {});\n    return values;\n}\n`,
   },
   {
-    label: "the lazy property builder shape",
+    label: "a branch on the scope that returns",
     cpp: `void f() {\n    JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);\n    if (auto* exception = scope.exception()) [[unlikely]] {\n        (void)scope.tryClearException();\n        return JSC::jsUndefined();\n    }\n    return array;\n}\n`,
   },
   {

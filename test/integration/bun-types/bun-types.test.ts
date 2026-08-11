@@ -112,6 +112,66 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
   return fixtureDir;
 }
 
+// Runs on debug builds too: spawning tsc over a file or two is cheap, unlike the
+// in-process LanguageService runs in `typeTest`.
+async function tsc(name: string, files: Record<string, string>) {
+  const checkDir = join(TEMP_DIR, name);
+  const tsconfig = structuredClone(sourceTsconfig);
+  tsconfig.include = Object.keys(files);
+  tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+  await mkdir(checkDir, { recursive: true });
+  await makeTree(checkDir, { ...files, "tsconfig.json": JSON.stringify(tsconfig, null, 2) });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+    env: bunEnv,
+    cwd: checkDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+}
+
+/**
+ * The fenced code blocks of every `@example` tag on the members of the named
+ * interfaces in a bun-types declaration file, as one `.ts` file per example.
+ * Each file starts with a comment pointing back at the tag it came from.
+ */
+function jsdocExamples(declarationFile: string, interfaceNames: string[]): Record<string, string> {
+  const path = join(BUN_TYPES_PACKAGE_ROOT, declarationFile);
+  const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+  const examples: Record<string, string> = {};
+
+  function visit(node: ts.Node) {
+    if (!ts.isInterfaceDeclaration(node) || !interfaceNames.includes(node.name.text)) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+
+    for (const member of node.members) {
+      if (!member.name || !ts.isIdentifier(member.name)) continue;
+
+      let index = 0;
+      for (const tag of ts.getJSDocTags(member)) {
+        if (tag.tagName.text !== "example") continue;
+
+        const fence = /^```\w*\n([\s\S]*?)^```/m.exec(ts.getTextOfJSDocComment(tag.comment) ?? "");
+        if (!fence) continue;
+
+        const { line } = source.getLineAndCharacterOfPosition(tag.getStart());
+        examples[`${node.name.text}.${member.name.text}.${index++}.ts`] =
+          `// packages/bun-types/${declarationFile}:${line + 1}\n${fence[1]}\n`;
+      }
+    }
+  }
+
+  visit(source);
+  return examples;
+}
+
 function typeTest(name: string, config: TypeTestConfig) {
   // This file only tests the bun-types .d.ts, not bun's own code. Driving the
   // TypeScript LanguageService in-process under a debug build is ~40x slower,
@@ -358,37 +418,35 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
     test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+      const result = await tsc("mmap-options-check", {
         "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
       });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
+  });
+
+  describe("Bun.build", () => {
+    // The @example blocks are what editors show on hover, so they have to be
+    // valid against the types they document. The `compile` examples used to
+    // pass targets without the "bun-" prefix and put `outfile` at the top
+    // level, neither of which the types (or the runtime) accept.
+    //
+    // Explicit timeout: parsing the 10k-line bun.d.ts in-process takes a few
+    // seconds on a debug build (well under 1s on release).
+    test("JSDoc examples type-check against the declared types", async () => {
+      const examples = jsdocExamples("bun.d.ts", ["BuildConfig", "CompileBuildOptions", "BuildOutput"]);
+      expect(Object.keys(examples)).toContain("BuildConfig.compile.0.ts");
+
+      const result = await tsc("build-jsdoc-examples-check", examples);
+
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    }, 30_000);
   });
 
   describe("Test Globals", () => {

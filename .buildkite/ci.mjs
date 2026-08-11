@@ -398,6 +398,33 @@ function getLinkBunAgent(platform, options) {
   });
 }
 
+// TEMPORARY (2026-08-10): the bare-metal macOS fleet behind `test-darwin` is
+// offline being reimaged. Until it is back, darwin tests run on Buildkite-hosted
+// M4 agents in this queue instead. Hosted agents are Apple Silicon only and the
+// queue is pinned to a single macOS 26 image, so only the aarch64 `latest` lane
+// can run there; and they bill per minute, so darwin tests run on main (the
+// canary gate) or when a commit subject opts in with `[macos tests]`, not on
+// every PR push. A manual (UI) build that picks a darwin lane in the options
+// form is its own opt-in. To go back to the fleet, revert the commit that added
+// this block: it also restores the tag-based `test-darwin` selector in
+// getTestAgent() and drops the filter in getPipeline().
+const darwinHostedQueue = "test-darwin-hosted";
+
+/**
+ * @returns {boolean}
+ */
+function darwinTestsEnabled() {
+  return isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+}
+
+/**
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function isRunnableDarwinTestPlatform(platform) {
+  return platform.os !== "darwin" || (platform.arch === "aarch64" && platform.tier === "latest");
+}
+
 /**
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -407,17 +434,9 @@ function getTestAgent(platform, options) {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
-    // major version. arm64 splits into `latest` (current macOS) + `previous`
-    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
-    // box — because the tier split bottlenecked the smaller pool and Intel
-    // can't run latest anyway.
-    return {
-      queue: `test-${os}`,
-      os,
-      arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
-    };
+    // Hosted agents carry none of the fleet's os/arch/release-tier tags; the
+    // queue is the whole selector. See darwinHostedQueue above.
+    return { queue: darwinHostedQueue };
   }
 
   // TODO: delete this block when we upgrade to mimalloc v3
@@ -845,7 +864,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    // darwin: 10 while on hosted agents (see darwinHostedQueue), which scale
+    // one agent per shard; it was 2 for the bare-metal fleet's few boxes per
+    // lane. Each shard repeats ~2 min of checkout + artifact + install, so
+    // going much wider mostly buys setup time.
+    parallelism: os === "darwin" ? 10 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
@@ -1575,7 +1598,12 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  const relevantTestPlatforms = includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan");
+  // Darwin is further narrowed while the fleet is offline (see darwinHostedQueue):
+  // no darwin tests at all unless enabled, and only the lane hosted agents can
+  // run when it is.
+  const relevantTestPlatforms = (includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan"))
+    .filter(platform => platform.os !== "darwin" || darwinTestsEnabled())
+    .filter(isRunnableDarwinTestPlatform);
   /** @type {string[]} */
   const testStepKeys = [];
   {

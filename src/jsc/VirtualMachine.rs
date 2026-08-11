@@ -5647,7 +5647,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{self, Tag};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -6119,7 +6119,7 @@ impl VirtualMachine {
                 global_ref,
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
-            if !matches!(tag.tag, TagPayload::NativeCode) {
+            if !matches!(tag.tag, Tag::NativeCode) {
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
                 } else {

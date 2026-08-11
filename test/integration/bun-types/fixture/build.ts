@@ -66,3 +66,32 @@ Bun.build({
     },
   ],
 });
+
+// BuildConfig.metafile accepts every form the runtime accepts: a boolean, a path
+// for the JSON metafile, or separate paths for the JSON and markdown metafiles.
+expectAssignable<Bun.BuildConfig["metafile"]>(true);
+expectAssignable<Bun.BuildConfig["metafile"]>("meta.json");
+expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json" });
+expectAssignable<Bun.BuildConfig["metafile"]>({ markdown: "meta.md" });
+expectAssignable<Bun.BuildConfig["metafile"]>({ json: "meta.json", markdown: "meta.md" });
+// @ts-expect-error - only json and markdown can be written
+expectAssignable<Bun.BuildConfig["metafile"]>({ yaml: "meta.yaml" });
+
+Bun.build({
+  entrypoints: ["hey"],
+  outdir: "out",
+  metafile: "meta.json",
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  outdir: "out",
+  metafile: { json: "meta.json", markdown: "meta.md" },
+}).then(result => {
+  expectType(result.metafile).is<Bun.BuildMetafile | undefined>();
+  for (const output of result.outputs) {
+    if (output.kind === "metafile-json" || output.kind === "metafile-markdown") {
+      expectType(output.path).is<string>();
+    }
+  }
+});

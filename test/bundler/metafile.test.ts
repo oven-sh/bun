@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -799,8 +801,142 @@ describe("Bun.build metafile option variants", () => {
   });
 });
 
-// CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
+describe("Bun.build metafile paths", () => {
+  const files = {
+    "entry.js": `import { foo } from "./foo.js"; console.log(foo);`,
+    "foo.js": `export const foo = "hello";`,
+  };
+
+  function metafileOutputs(result: Awaited<ReturnType<typeof Bun.build>>, root: string) {
+    return result.outputs
+      .filter(output => output.kind.startsWith("metafile-"))
+      .map(output => ({ kind: output.kind, path: relative(root, output.path) }));
+  }
+
+  test.concurrent("relative paths are resolved against outdir", async () => {
+    using dir = tempDir("metafile-path-outdir", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      metafile: { json: "meta/graph.json", markdown: "meta/graph.md" },
+    });
+
+    expect(metafileOutputs(result, String(dir))).toEqual([
+      { kind: "metafile-json", path: join("dist", "meta", "graph.json") },
+      { kind: "metafile-markdown", path: join("dist", "meta", "graph.md") },
+    ]);
+    expect(readdirSync(`${dir}/dist/meta`).sort()).toEqual(["graph.json", "graph.md"]);
+  });
+
+  test.concurrent("an absolute string path is written there, not under outdir", async () => {
+    using dir = tempDir("metafile-path-absolute-string", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      metafile: `${dir}/report/meta.json`,
+    });
+
+    expect(metafileOutputs(result, String(dir))).toEqual([
+      { kind: "metafile-json", path: join("report", "meta.json") },
+    ]);
+    expect(readdirSync(`${dir}/dist`)).toEqual(["entry.js"]);
+    const written = JSON.parse(await Bun.file(`${dir}/report/meta.json`).text());
+    expect(Object.keys(written.outputs)).toEqual(Object.keys(result.metafile!.outputs));
+  });
+
+  test.concurrent("absolute json and markdown paths are written there, not under outdir", async () => {
+    using dir = tempDir("metafile-path-absolute-object", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      metafile: { json: `${dir}/report/meta.json`, markdown: `${dir}/report/meta.md` },
+    });
+
+    expect(metafileOutputs(result, String(dir))).toEqual([
+      { kind: "metafile-json", path: join("report", "meta.json") },
+      { kind: "metafile-markdown", path: join("report", "meta.md") },
+    ]);
+    expect(readdirSync(`${dir}/dist`)).toEqual(["entry.js"]);
+    expect(readdirSync(`${dir}/report`).sort()).toEqual(["meta.json", "meta.md"]);
+    expect(await Bun.file(`${dir}/report/meta.md`).text()).toContain("# Bundle Analysis Report");
+  });
+
+  test.concurrent("the artifacts read back the files that were written", async () => {
+    using dir = tempDir("metafile-path-artifact-contents", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: { json: `${dir}/report/meta.json`, markdown: `${dir}/report/meta.md` },
+    });
+
+    const [json, markdown] = result.outputs.filter(output => output.kind.startsWith("metafile-"));
+    expect(await json.json()).toEqual(result.metafile);
+    expect(await markdown.text()).toBe(await Bun.file(`${dir}/report/meta.md`).text());
+  });
+
+  test.concurrent("without outdir, relative paths are resolved against the working directory", async () => {
+    using dir = tempDir("metafile-path-cwd", {
+      ...files,
+      "build-fixture.ts": `
+        const withOutdir = await Bun.build({
+          entrypoints: ["./entry.js"],
+          outdir: "./dist",
+          metafile: "meta.json",
+        });
+        const withoutOutdir = await Bun.build({
+          entrypoints: ["./entry.js"],
+          metafile: { json: "report/meta.json", markdown: "report/meta.md" },
+        });
+        const paths = (result: Bun.BuildOutput) =>
+          result.outputs.filter(output => output.kind.startsWith("metafile-")).map(output => output.path);
+        console.log(JSON.stringify([...paths(withOutdir), ...paths(withoutOutdir)]));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const paths: string[] = JSON.parse(stdout);
+    expect(paths.map(path => relative(String(dir), path))).toEqual([
+      join("dist", "meta.json"),
+      join("report", "meta.json"),
+      join("report", "meta.md"),
+    ]);
+    expect(exitCode).toBe(0);
+
+    expect(readdirSync(`${dir}/dist`).sort()).toEqual(["entry.js", "meta.json"]);
+    expect(readdirSync(`${dir}/report`).sort()).toEqual(["meta.json", "meta.md"]);
+    expect(JSON.parse(await Bun.file(`${dir}/report/meta.json`).text())).toHaveProperty("inputs");
+  });
+
+  test.concurrent("a metafile that cannot be written fails the build", async () => {
+    using dir = tempDir("metafile-path-unwritable", {
+      ...files,
+      "not-a-dir": "",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      metafile: `${dir}/not-a-dir/meta.json`,
+      throw: false,
+    });
+
+    expect(result.logs.map(log => log.message)).toEqual([expect.stringContaining("writing metafile")]);
+    expect(result.logs[0].message).toContain("meta.json");
+    expect(result.success).toBe(false);
+  });
+});
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

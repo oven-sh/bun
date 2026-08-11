@@ -5137,27 +5137,23 @@ pub mod bv2_impl {
                 _ => None,
             };
 
-            // Write metafile outputs to disk and add them as OutputFiles.
-            // Metafile paths are relative to outdir, like all other output files.
-            // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
-            let outdir = &self.linker.resolver().opts.output_dir;
-            if !self.linker.options.metafile_json_path.is_empty() {
+            let json_path = self.linker.options.metafile_json_path;
+            if !json_path.is_empty() {
                 if let Some(mf) = &metafile {
-                    write_metafile_output(
+                    self.write_metafile_output(
                         &mut output_files,
-                        outdir,
-                        self.linker.options.metafile_json_path,
+                        json_path,
                         mf,
                         crate::options::OutputKind::MetafileJson,
                     )?;
                 }
             }
-            if !self.linker.options.metafile_markdown_path.is_empty() {
+            let markdown_path = self.linker.options.metafile_markdown_path;
+            if !markdown_path.is_empty() {
                 if let Some(md) = &metafile_markdown {
-                    write_metafile_output(
+                    self.write_metafile_output(
                         &mut output_files,
-                        outdir,
-                        self.linker.options.metafile_markdown_path,
+                        markdown_path,
                         md,
                         crate::options::OutputKind::MetafileMarkdown,
                     )?;
@@ -5170,64 +5166,66 @@ pub mod bv2_impl {
                 metafile_markdown,
             })
         }
-    }
 
-    /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
-    /// Metafile paths are relative to outdir, like all other output files.
-    fn write_metafile_output(
-        output_files: &mut Vec<options::OutputFile>,
-        outdir: &[u8],
-        file_path: &[u8],
-        content: &[u8],
-        output_kind: crate::options::OutputKind,
-    ) -> Result<(), Error> {
-        if !outdir.is_empty() {
-            // Open the output directory and write the metafile relative to it,
-            // routed through `bun_sys::File`.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = bun_paths::resolve_path::join_string_buf::<
-                bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path]);
-            // Create parent directories if needed (relative to outdir).
-            let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(
-                joined,
-            );
-            if !parent.is_empty() {
-                let _ = bun_sys::mkdir_recursive(parent);
+        /// Writes a metafile (JSON or markdown) requested through a `metafile`
+        /// path to disk and appends it to `output_files`.
+        ///
+        /// The path is resolved the same way as `compile.outfile`: a relative
+        /// path is relative to `outdir` (or to the working directory when there
+        /// is no `outdir`), an absolute path is used as-is. The resolved path is
+        /// stored as the output path so the `BuildArtifact` reports the file that
+        /// was actually written.
+        fn write_metafile_output(
+            &mut self,
+            output_files: &mut Vec<options::OutputFile>,
+            file_path: &[u8],
+            content: &[u8],
+            output_kind: crate::options::OutputKind,
+        ) -> Result<(), Error> {
+            let dest_path: Box<[u8]> = {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                Box::from(bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::platform::Auto,
+                >(
+                    self.transpiler.fs().top_level_dir,
+                    &mut buf[..],
+                    &[&*self.transpiler.options.output_dir, file_path],
+                ))
+            };
+
+            if let Err(err) = bun_sys::File::make_open(
+                &dest_path,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o664,
+            )
+            .and_then(|file| file.write_all(content))
+            {
+                self.linker.log_mut().add_sys_error(
+                    &err,
+                    format_args!("writing metafile {}", bun_core::fmt::quote(&dest_path)),
+                );
+                return Err(Error::WriteFailed);
             }
-            let mut zbuf = bun_paths::path_buffer_pool::get();
-            let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
-            match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
-                Ok(()) => {}
-                Err(err) => {
-                    bun_core::warn!(
-                        "Failed to write metafile to '{}': {}",
-                        bstr::BStr::new(file_path),
-                        err
-                    );
-                }
-            }
+
+            let is_json = output_kind == crate::options::OutputKind::MetafileJson;
+            output_files.push(options::OutputFile::init(crate::output_file::Options {
+                loader: if is_json { Loader::Json } else { Loader::File },
+                input_loader: if is_json { Loader::Json } else { Loader::File },
+                input_path: Box::<[u8]>::from(if is_json {
+                    b"metafile.json".as_slice()
+                } else {
+                    b"metafile.md".as_slice()
+                }),
+                output_path: dest_path,
+                data: crate::output_file::OptionsData::Saved(content.len()),
+                output_kind,
+                is_executable: false,
+                side: None,
+                entry_point_index: None,
+                ..Default::default()
+            }));
+            Ok(())
         }
-
-        // Add as OutputFile so it appears in result.outputs
-        let is_json = output_kind == crate::options::OutputKind::MetafileJson;
-        output_files.push(options::OutputFile::init(crate::output_file::Options {
-            loader: if is_json { Loader::Json } else { Loader::File },
-            input_loader: if is_json { Loader::Json } else { Loader::File },
-            input_path: Box::<[u8]>::from(if is_json {
-                b"metafile.json".as_slice()
-            } else {
-                b"metafile.md".as_slice()
-            }),
-            output_path: Box::<[u8]>::from(file_path),
-            data: crate::output_file::OptionsData::Saved(content.len()),
-            output_kind,
-            is_executable: false,
-            side: None,
-            entry_point_index: None,
-            ..Default::default()
-        }));
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {

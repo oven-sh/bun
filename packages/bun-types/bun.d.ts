@@ -3150,13 +3150,26 @@ declare module "bun" {
     files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
 
     /**
-     * Generate a JSON file containing metadata about the build.
+     * Generate metadata about the build: every input and output file, its size,
+     * and the imports between them. Use it for bundle analysis, visualization,
+     * or integration with other tools.
      *
-     * The metafile contains information about inputs, outputs, imports, and exports
-     * which can be used for bundle analysis, visualization, or integration with
-     * other tools.
+     * `true`, a string, or an object makes the metafile available as
+     * {@link BuildOutput.metafile}. A string or an object also writes it to disk:
      *
-     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     * - `true`: only expose it as {@link BuildOutput.metafile}
+     * - `string`: also write the JSON metafile to this path
+     * - `{ json?: string; markdown?: string }`: also write the JSON metafile and/or a
+     *   markdown report of the module graph to these paths
+     *
+     * Paths are resolved like {@link CompileBuildOptions.outfile}: a relative path is
+     * relative to {@link BuildConfig.outdir} (or to the working directory when there is
+     * no `outdir`), an absolute path is used as-is. Files written this way are also
+     * included in {@link BuildOutput.outputs} with a {@link BuildArtifact.kind} of
+     * `"metafile-json"` or `"metafile-markdown"`.
+     *
+     * The `bun build --metafile <path>` and `--metafile-md <path>` CLI flags resolve
+     * their paths relative to the working directory.
      *
      * @default false
      *
@@ -3168,18 +3181,47 @@ declare module "bun" {
      *   metafile: true,
      * });
      *
-     * // Write metafile to disk for analysis
-     * if (result.metafile) {
-     *   await Bun.write('./dist/meta.json', result.metafile);
+     * for (const [path, output] of Object.entries(result.metafile!.outputs)) {
+     *   console.log(`${path}: ${output.bytes} bytes`);
      * }
+     * ```
      *
-     * // Parse and analyze the metafile
-     * const meta = JSON.parse(result.metafile!);
-     * console.log('Input files:', Object.keys(meta.inputs));
-     * console.log('Output files:', Object.keys(meta.outputs));
+     * @example
+     * ```ts
+     * // Writes ./dist/meta.json
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: 'meta.json',
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Writes ./dist/meta.json and ./dist/meta.md
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: {
+     *     json: 'meta.json',
+     *     markdown: 'meta.md',
+     *   },
+     * });
      * ```
      */
-    metafile?: boolean;
+    metafile?:
+      | boolean
+      | string
+      | {
+          /**
+           * Path to write the JSON metafile to.
+           */
+          json?: string;
+          /**
+           * Path to write a markdown report of the module graph to.
+           */
+          markdown?: string;
+        };
 
     outdir?: string;
 
@@ -3809,7 +3851,11 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+    /**
+     * `"metafile-json"` and `"metafile-markdown"` are the files written when
+     * {@link BuildConfig.metafile} is a string or an object.
+     */
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "metafile-json" | "metafile-markdown";
     sourcemap: BuildArtifact | null;
   }
 
@@ -3828,7 +3874,7 @@ declare module "bun" {
      * - **outputs**: every generated file with its byte size, the inputs that
      *   contributed to it, imports between chunks, and exports
      *
-     * Only present when {@link BuildConfig.metafile} is `true`.
+     * Only present when {@link BuildConfig.metafile} is `true`, a string, or an object.
      *
      * Use it for bundle size analysis, inspecting the dependency graph, or as
      * input to bundle analyzer tools.

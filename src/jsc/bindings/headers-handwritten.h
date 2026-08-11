@@ -477,12 +477,7 @@ ALWAYS_INLINE void BunString::deref()
 
 namespace Bun {
 
-// Frames built on the C++ side for Bun__remapStackFramePositions. Each frame
-// owns a ref on its strings; the remap derefs the source_url it was given and
-// stores a freshly allocated one when a source map renames the file, so the
-// strings left in the frames are released here once the caller is done reading
-// them. Frames behind ZigStackTrace::frames_ptr are released by the Rust side,
-// which is why this is not a destructor on ZigStackFrame itself.
+// Frames built here for Bun__remapStackFramePositions, which may swap in a freshly allocated source_url; frames behind ZigStackTrace::frames_ptr are released by Rust instead.
 class OwnedZigStackFrames {
     WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
 

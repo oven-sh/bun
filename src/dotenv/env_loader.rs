@@ -22,8 +22,7 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
-/// The `.env*` files `Loader::load_default_files` probes for, declared in the
-/// order `print_loaded` lists them.
+/// Declaration order is the order `print_loaded` lists the files in.
 #[derive(enumset::EnumSetType)]
 pub(crate) enum DefaultEnvFile {
     DevelopmentLocal,
@@ -737,9 +736,6 @@ impl Loader {
         self.try_load_default(dir, dir_handle, DefaultEnvFile::Env, value_buffer)
     }
 
-    /// Probe `dir` for a known `.env*` filename and, if present, load it and
-    /// bump the analytics counter. Shared body for the eight call sites in
-    /// `load_default_files`.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,

@@ -2075,6 +2075,47 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
+/// One property of the `env` option, formatted as the `KEY=VALUE` line handed
+/// to the child. On Windows a property whose value is `undefined` is kept as a
+/// bare `KEY` so that it still claims its name in `dedupe_env_names_windows`;
+/// it is never passed to the child.
+struct EnvLine {
+    line: ZBox,
+    key_len: usize,
+}
+
+impl EnvLine {
+    fn key(&self) -> &[u8] {
+        &self.line.as_bytes()[..self.key_len]
+    }
+
+    /// `None` when the property's value was `undefined`.
+    fn value(&self) -> Option<&[u8]> {
+        self.line.as_bytes().get(self.key_len + 1..)
+    }
+}
+
+/// Windows environment variable names are case-insensitive and the child
+/// resolves a name to the first matching entry of its environment block, so
+/// `{ ...process.env, PATH }` (which `process.env` spells `Path` there) would
+/// otherwise silently keep the parent's value. Keep one entry per name, picking
+/// the same one as node's `child_process` (mirrored in
+/// `src/js/node/child_process.ts`): the first key in lexicographic order, so
+/// `PATH` beats `Path` beats `path` whatever the insertion order. An
+/// `undefined` property takes part in this and, when it wins, removes the
+/// variable, exactly as in node.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L715-L738
+fn dedupe_env_names_windows(lines: &mut Vec<EnvLine>) {
+    fn cmp_names(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+        a.iter()
+            .map(u8::to_ascii_uppercase)
+            .cmp(b.iter().map(u8::to_ascii_uppercase))
+    }
+    // Own property names are distinct, so the byte-wise tie-break is total.
+    lines.sort_unstable_by(|a, b| cmp_names(a.key(), b.key()).then_with(|| a.key().cmp(b.key())));
+    lines.dedup_by(|later, first| cmp_names(later.key(), first.key()).is_eq());
+}
+
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
 /// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
@@ -2095,75 +2136,91 @@ fn append_envp_from_js(
     )?;
     // drops at scope exit (was `defer object_iter.deinit()`).
 
+    let mut lines: Vec<EnvLine> = Vec::with_capacity(object_iter.len);
+    while let Some(key) = object_iter.next()? {
+        let value = object_iter.value;
+        if value.is_undefined() && !cfg!(windows) {
+            continue;
+        }
+
+        // PERF: per-entry allocation — profile if it shows up on a hot path.
+        let mut buf: Vec<u8> = Vec::new();
+        write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
+        let key_len = buf.len();
+
+        if !value.is_undefined() {
+            let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+
+            // Check for null bytes in env key and value (security: prevent null byte injection)
+            if key.index_of_ascii_char(0).is_some() {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
+                            key.to_zig_string(),
+                            key.to_zig_string()
+                        ),
+                    )
+                    .throw());
+            }
+            if value_bunstr.index_of_ascii_char(0).is_some() {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
+                            key.to_zig_string(),
+                            value_bunstr.to_zig_string()
+                        ),
+                    )
+                    .throw());
+            }
+
+            write!(&mut buf, "={}", value_bunstr.to_zig_string())
+                .map_err(|_| JsError::OutOfMemory)?;
+        }
+
+        lines.push(EnvLine {
+            line: ZBox::from_vec(buf),
+            key_len,
+        });
+    }
+
+    if cfg!(windows) {
+        dedupe_env_names_windows(&mut lines);
+    }
+
     envp.reserve_exact(
-        (object_iter.len +
+        (lines.len() +
             // +1 incase there's IPC
             // +1 for null terminator
             2)
         .saturating_sub(envp.len()),
     );
-    storage.reserve(object_iter.len);
-    while let Some(key) = object_iter.next()? {
-        let value = object_iter.value;
-        if value.is_undefined() {
+    storage.reserve(lines.len());
+    for entry in lines {
+        let Some(value) = entry.value() else {
             continue;
-        }
-
-        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
-
-        // Check for null bytes in env key and value (security: prevent null byte injection)
-        if key.index_of_ascii_char(0).is_some() {
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        key.to_zig_string()
-                    ),
-                )
-                .throw());
-        }
-        if value_bunstr.index_of_ascii_char(0).is_some() {
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        value_bunstr.to_zig_string()
-                    ),
-                )
-                .throw());
-        }
-
-        // PERF: per-entry allocation — profile if it shows up on a hot path.
-        let line: ZBox = {
-            let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
-                .map_err(|_| JsError::OutOfMemory)?;
-            ZBox::from_vec(buf)
         };
 
         // Windows environment variable names are case-insensitive: an env
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
-        let line_bytes = line.as_bytes();
-        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
         let is_path_key = if cfg!(windows) {
-            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+            strings::eql_case_insensitive_ascii(entry.key(), b"PATH", true)
         } else {
-            &line_bytes[..key_end] == b"PATH"
+            entry.key() == b"PATH"
         };
-        if is_path_key && key_end < line_bytes.len() {
-            // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
-            // outlives every read of `*path`), and `ZBox` is heap-backed so the
-            // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
+        if is_path_key {
+            // SAFETY: `entry.line` is moved into `storage` below (a `Vec<ZBox>`
+            // that outlives every read of `*path`), and `ZBox` is heap-backed so
+            // the bytes don't move when the `ZBox` value itself is moved.
+            *path = unsafe { bun_ptr::detach_lifetime(value) };
         }
 
-        envp.push(line.as_ptr());
-        storage.push(line);
+        envp.push(entry.line.as_ptr());
+        storage.push(entry.line);
     }
     Ok(())
 }

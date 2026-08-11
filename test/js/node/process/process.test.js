@@ -2298,6 +2298,29 @@ describe("default warning printer survives a failing stderr", () => {
     expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive\n$/);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
+
+  // An emitter that is not a Writable has no _writableState for the write callback to read,
+  // so the printer must not hand it one. 'beforeExit' only runs if nothing threw later.
+  it.concurrent("process.stderr replaced by an EventEmitter mock whose write() calls back", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { EventEmitter } = require("node:events");
+         process.stderr = Object.assign(new EventEmitter(), {
+           write(s, cb) { console.log("mock:" + s.trimEnd()); if (cb) setImmediate(cb); return true; },
+         });
+         process.emitWarning("w");
+         process.on("beforeExit", () => console.log("alive", process.stderr.listenerCount("error")));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive 0\n$/);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
 });
 
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {

@@ -661,12 +661,13 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     // Node's writeOut goes through console.error, whose kWriteToConsole (ported in
     // ConsoleObject.ts) keeps a failing stderr from taking the process down: a sync throw
     // (files, TTYs) is swallowed and an async 'error' (EPIPE on a pipe) gets a one-shot noop
-    // listener. Same here, or `bun x.js 2>&1 | head` dies on its first warning. A bare
-    // `{ write }` stand-in for process.stderr has no 'error' event to guard, so it just
-    // gets the write.
-    const isEmitter = typeof stream.once === "function";
+    // listener. Same here, or `bun x.js 2>&1 | head` dies on its first warning. The guard is
+    // written against the Writable contract (a failed write calls back with the error, then
+    // emits 'error'); any other stand-in for process.stderr, such as a test's bare { write }
+    // or an EventEmitter with a write method, just gets the plain write it always got.
+    const isWritable = stream._writableState !== undefined;
     try {
-      if (isEmitter) {
+      if (isWritable) {
         if (stream.listenerCount("error") === 0) stream.once("error", noop);
         stream.write(message + "\n", err => {
           if (err !== null && !stream._writableState.errorEmitted && stream.listenerCount("error") === 0) {
@@ -685,7 +686,7 @@ export function createOnWarning(process, redirectPath, disabledArr) {
       )
         throw e;
     } finally {
-      if (isEmitter) stream.removeListener("error", noop);
+      if (isWritable) stream.removeListener("error", noop);
     }
   }
 

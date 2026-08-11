@@ -963,7 +963,9 @@ describe("Bun.build metafile paths", () => {
       throw: false,
     });
 
-    expect(result.logs.map(log => log.message)).toEqual([expect.stringContaining("writing metafile")]);
+    expect(result.logs.map(log => log.message)).toEqual([
+      expect.stringContaining("File name too long: writing metafile"),
+    ]);
     expect(result.success).toBe(false);
   });
 

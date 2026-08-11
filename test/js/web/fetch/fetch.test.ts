@@ -3195,73 +3195,11 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
   }
 }, 60_000);
 
-it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
-  // Surplus bytes past the declared Content-Length mean the connection's framing can
-  // no longer be trusted: anything still buffered on (or later delivered to) that
-  // socket would be parsed as the response to whichever request next reuses it from
-  // the keep-alive pool. The mis-framed response itself is still delivered (truncated
-  // to its declared length), but the connection must be closed instead of pooled.
-  let connections = 0;
-  const sockets: net.Socket[] = [];
-  const server = net.createServer(socket => {
-    connections++;
-    sockets.push(socket);
-    let buffered = "";
-    socket.on("data", data => {
-      buffered += data.toString("latin1");
-      while (true) {
-        const headerEnd = buffered.indexOf("\r\n\r\n");
-        if (headerEnd === -1) break;
-        const head = buffered.slice(0, headerEnd);
-        buffered = buffered.slice(headerEnd + 4);
-        const path = head.split("\r\n")[0].split(" ")[1];
-        if (path === "/overshoot") {
-          // Declares 5 body bytes but sends those 5 plus a complete pipelined
-          // "injected" response that the declared framing never accounted for.
-          socket.write(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello" +
-              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
-          );
-        } else {
-          socket.write(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!",
-          );
-        }
-      }
-    });
-  });
-  await once(server.listen(0, "localhost"), "listening");
-  const { port } = server.address() as AddressInfo;
-
-  try {
-    // The mis-framed response is still delivered, truncated to its declared length.
-    const first = await fetch(`http://localhost:${port}/overshoot`);
-    expect(await first.text()).toBe("hello");
-
-    // The follow-up request must go out on a fresh connection, so it can never be
-    // answered by the leftover "injected" bytes on the desynchronized socket.
-    const second = await fetch(`http://localhost:${port}/after`);
-    expect(await second.text()).toBe("legit!");
-    expect(connections).toBe(2);
-
-    // A correctly framed keep-alive response is still pooled and reused.
-    const third = await fetch(`http://localhost:${port}/again`);
-    expect(await third.text()).toBe("legit!");
-    expect(connections).toBe(2);
-  } finally {
-    for (const socket of sockets) socket.destroy();
-    server.close();
-  }
-});
-
 it("does not reuse a keep-alive connection when bytes follow a response that ended at its header block", async () => {
-  // A 204/304, a Content-Length: 0 response, any response to HEAD, and a followed
-  // 3xx are complete once their header block is in. Bytes after that in the same
-  // packet are the bodyless counterpart of the Content-Length overshoot above: the
-  // connection's framing can no longer be trusted, so the response is delivered but
-  // the connection must be closed instead of going back to the pool (this includes
-  // the redirect path, which pools the socket before following the Location).
-  // Without trailing bytes each of these responses must still be pooled and reused.
+  // Bodyless counterpart of the Content-Length overshoot test below. Each of these
+  // responses is complete once its header block is in (the followed 3xx through the
+  // redirect path, which pools the socket itself), so trailing bytes must cost the
+  // connection while the same responses without them must still be pooled.
   const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
   const responses: Record<string, { head: string; junk: string }> = {
     "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },
@@ -3355,9 +3293,7 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
         const before = connections;
         const response = await fetch(`${origin}${path}${junk ? "?junk" : ""}`, init?.());
         const body = await response.text();
-        // The follow-up request must never be served by the connection that
-        // carried the mis-framed response (and whatever else it may still deliver),
-        // while a cleanly framed bodyless response must keep its connection pooled.
+        // newConnections counts what this response plus the follow-up request opened.
         const followUp = await fetch(`${origin}/legit`);
         expect(await followUp.text()).toBe("legit!");
         results.push({
@@ -3382,6 +3318,65 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
       { request: "/303 + trailing bytes", status: 200, body: "legit!", newConnections: 1 },
       { request: "/303", status: 200, body: "legit!", newConnections: 0 },
     ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
+it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
+  // Surplus bytes past the declared Content-Length mean the connection's framing can
+  // no longer be trusted: anything still buffered on (or later delivered to) that
+  // socket would be parsed as the response to whichever request next reuses it from
+  // the keep-alive pool. The mis-framed response itself is still delivered (truncated
+  // to its declared length), but the connection must be closed instead of pooled.
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) break;
+        const head = buffered.slice(0, headerEnd);
+        buffered = buffered.slice(headerEnd + 4);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        if (path === "/overshoot") {
+          // Declares 5 body bytes but sends those 5 plus a complete pipelined
+          // "injected" response that the declared framing never accounted for.
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello" +
+              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+          );
+        } else {
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!",
+          );
+        }
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    // The mis-framed response is still delivered, truncated to its declared length.
+    const first = await fetch(`http://localhost:${port}/overshoot`);
+    expect(await first.text()).toBe("hello");
+
+    // The follow-up request must go out on a fresh connection, so it can never be
+    // answered by the leftover "injected" bytes on the desynchronized socket.
+    const second = await fetch(`http://localhost:${port}/after`);
+    expect(await second.text()).toBe("legit!");
+    expect(connections).toBe(2);
+
+    // A correctly framed keep-alive response is still pooled and reused.
+    const third = await fetch(`http://localhost:${port}/again`);
+    expect(await third.text()).toBe("legit!");
+    expect(connections).toBe(2);
   } finally {
     for (const socket of sockets) socket.destroy();
     server.close();

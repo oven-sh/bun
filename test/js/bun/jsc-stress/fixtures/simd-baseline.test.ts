@@ -6,6 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { crc32, deflateSync } from "node:zlib";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -184,6 +185,60 @@ describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
     const utf8Buf = Buffer.from(latin1Str, "utf-8");
     expect(utf8Buf.length).toBeGreaterThan(256);
     expect(utf8Buf.toString("utf-8").length).toBe(256);
+  });
+});
+
+describe("WebP lossless: libwebp VP8GetCPUInfo runtime dispatch", () => {
+  // libwebp's VP8L encoder and decoder pick SSE2 / SSE4.1 / AVX2 (x64) or
+  // NEON kernels at init based on cpuid; the AVX2 ones are linked into the
+  // baseline binary and must stay behind that check. 64 pixels wide so the
+  // 8-pixel-wide kernels run, with a gradient plus noise so the encoder uses
+  // the predictor and colour transforms (the bulk of the SIMD surface).
+  function pngChunk(type: string, data: Uint8Array): Buffer {
+    const typeAndData = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(typeAndData));
+    return Buffer.concat([length, typeAndData, crc]);
+  }
+
+  const width = 64;
+  const height = 16;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  const rows = Buffer.alloc(height * (1 + width * 4));
+  let seed = 0x9e3779b9;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const offset = y * (1 + width * 4) + 1 + x * 4;
+      rows[offset] = (x * 4 + (seed & 7)) & 255;
+      rows[offset + 1] = (y * 16 + ((seed >>> 8) & 7)) & 255;
+      rows[offset + 2] = (x * 2 + y * 3 + ((seed >>> 16) & 7)) & 255;
+      rows[offset + 3] = y < height / 2 ? 255 : 128;
+    }
+  }
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(rows)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
+
+  test("encode + decode round-trips every pixel", async () => {
+    const webp = await new Bun.Image(png).webp({ lossless: true }).bytes();
+    expect(Buffer.from(webp.subarray(12, 16)).toString("latin1")).toBe("VP8L");
+    expect(await new Bun.Image(webp).metadata()).toEqual({ width, height, format: "webp" });
+
+    // Both PNGs are produced by the same encoder from what must be the same
+    // pixels, so the lossless round-trip shows up as byte-identical output.
+    const viaWebp = await new Bun.Image(webp).png().bytes();
+    const viaPng = await new Bun.Image(png).png().bytes();
+    expect(viaWebp).toEqual(viaPng);
   });
 });
 

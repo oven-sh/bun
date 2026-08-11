@@ -3058,7 +3058,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // the writer's lifetime. The caller MUST rederive its own
         // `&mut BufferPrinter` from the raw pointer after
         // `print_with_source_map` returns (see jsc_hooks.rs). See
-        // `printer_ptr()` for why this is not a `&mut`-returning accessor.
+        // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());

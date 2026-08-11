@@ -541,7 +541,7 @@ pub(crate) fn install_hoisted_packages(
                 manager: mgr,
             };
 
-            // Whenever the event loop wakes up, we need to call `runTasks`
+            // Whenever the event loop wakes up, we need to call `run_tasks`
             // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
             // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
             // SAFETY: `mgr` is derived from the live exclusive `this` borrow;

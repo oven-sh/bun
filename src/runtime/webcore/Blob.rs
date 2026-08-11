@@ -1965,7 +1965,7 @@ impl BlobExt for Blob {
         // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`. Explicit
         // `&mut *` forces the inherent `Blob::to_js(&mut self)` (which calls
         // `calculate_estimated_byte_size` and routes S3 blobs to
-        // `S3File.toJSUnchecked`) over the by-value `JsClass::to_js`.
+        // `s3_file::to_js_unchecked`) over the by-value `JsClass::to_js`.
         unsafe { BlobExt::to_js(&*ptr, global_this) }
     }
 
@@ -3691,7 +3691,7 @@ impl BlobExt for Blob {
                         bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
                         bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
                     };
-                    // SAFETY: the ctor hook (`webcore::blob::store::stdio_store_ctor`)
+                    // SAFETY: the ctor hook (`__bun_stdio_blob_store_new`)
                     // returns `Box::<Store>::into_raw` — non-null, live for the
                     // process lifetime, and laid out as `Store`.
                     let store = unsafe {

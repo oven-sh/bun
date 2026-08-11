@@ -266,7 +266,7 @@ impl StatWatcherScheduler {
         // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
         let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
         // SAFETY: `this` is live — the caller holds a ref (`set_interval`'s
-        // BACKREF, or `update_timer`'s `ParentRef`).
+        // BACKREF, or `StatWatcherTimerUpdate`'s `ParentRef`).
         let elt = unsafe { core::ptr::addr_of_mut!((*this).event_loop_timer) };
 
         // if the interval is 0 means that we stop the timer
@@ -630,7 +630,7 @@ impl StatWatcher {
             }
         };
         // SAFETY: `raw` was produced by `into_raw` above (or on a prior call) and
-        // the VM ref keeps it alive; bump the count for the caller's `dupeRef()`.
+        // the VM ref keeps it alive; bump the count for the caller's `RefPtr`.
         unsafe { RefPtr::init_ref(raw) }
     }
 
@@ -764,7 +764,7 @@ impl StatWatcher {
         // `path` freed by ZBox Drop below.
 
         // SAFETY: the caller is the sole owner (refcount hit zero, or the
-        // error-path scopeguard in `do_watch` holds the only reference);
+        // error-path scopeguard in `init` holds the only reference);
         // heap::take reclaims and drops the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }

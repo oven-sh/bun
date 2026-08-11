@@ -1354,7 +1354,7 @@ impl Subprocess<'_> {
 
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `computeHasPendingActivity` to drop
+            // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.

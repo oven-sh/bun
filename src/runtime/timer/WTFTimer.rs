@@ -230,8 +230,8 @@ impl WTFTimer {
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };
-        // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
-        // the paired free.
+        // SAFETY: allocated via `heap::into_raw` in `WTFTimer__create`, so
+        // `heap::take` is the paired free.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }

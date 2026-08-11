@@ -239,14 +239,14 @@ impl NetworkTask {
             if committed || (ok_status && big_enough && result.fail.is_none()) {
                 if result.has_more {
                     if !chunk.is_empty() {
-                        // The drain task is scheduled by `onChunk`
+                        // The drain task is scheduled by `on_chunk`
                         // (guarded by its own `draining` atomic) so it
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays
                         // balanced: this NetworkTask is never pushed to
                         // `async_network_task_queue` once committed, so
-                        // its `incrementPendingTasks()` is satisfied by
+                        // its `increment_pending_tasks()` is satisfied by
                         // the extract Task that `TarballStream.finish()`
                         // publishes to `resolve_tasks`.
                         // SAFETY: `this` is live; the HTTP thread is its sole writer here.
@@ -608,7 +608,7 @@ impl NetworkTask {
                 let appended = header_builder.content.append(last_modified);
                 // SAFETY: lifetime extension — the appended slice points into
                 // `header_builder.content`'s heap buffer, which is moved into
-                // `self.unsafe_http_client.request_header_buf` below and
+                // `self.unsafe_http_client.client.header_buf` below and
                 // outlives the request. Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 last_modified = unsafe { bun_ptr::detach_lifetime(appended) };

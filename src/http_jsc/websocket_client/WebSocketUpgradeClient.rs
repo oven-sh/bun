@@ -1576,7 +1576,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
             if v.try_reserve_exact(overflow_len).is_err() {
-                // OOM here terminates with `invalid_response` rather than
+                // OOM here terminates with `InvalidResponse` rather than
                 // aborting the process.
                 // SAFETY: no `&mut Self` is live across this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
@@ -1658,7 +1658,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Normal (non-tunnel) mode — original code path. Transfer the
-        // custom `us_ssl_ctx_t` to the connected WebSocket (it must outlive
+        // custom `SslCtxOwned` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
         // SAFETY: short-lived `&mut` for the field take.

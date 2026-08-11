@@ -3828,7 +3828,7 @@ impl RunCommand {
             .map(|k| -> &'static [u8] {
                 // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
                 // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
+                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
                 // never runs `Drop`, so the boxed bytes live until process
                 // exit and erasing to `'static` is sound.
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }

@@ -529,7 +529,7 @@ impl Map {
         // non-null source index and a non-SourceContentsSlice tag was emitted
         // by the parser as an index into this table (`declare_symbol` /
         // `new_symbol` write `inner_index = symbols.len()` then push) or
-        // minted by the linker (`LinkerGraph::generate_symbol`, which appends
+        // minted by the linker (`LinkerGraph::generate_new_symbol`, which appends
         // to the same per-source Vec). Both indices are therefore in-bounds.
         // The bundler never fabricates Refs from untrusted input.
         //

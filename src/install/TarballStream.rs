@@ -1075,7 +1075,7 @@ impl TarballStream {
     unsafe fn populate_result(&mut self, task: *mut Task) {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
-        // for streaming tarballs (set by `enqueueExtractNPMPackage`).
+        // for streaming tarballs (set by `enqueue_extract_npm_package`).
         unsafe {
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {

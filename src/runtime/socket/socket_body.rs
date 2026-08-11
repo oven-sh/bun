@@ -4359,8 +4359,8 @@ impl DuplexUpgradeContext {
             // SAFETY: fn contract; take the tls out (disjoint field).
             if let Some(tls) = unsafe { (*this).tls.take() } {
                 // Pre-open error (e.g. the duplex emitted non-Buffer data
-                // before the queued `.StartTLS` task ran). `handleConnectError`
-                // → `markInactive` releases `tls.handlers`; null `tls` so the
+                // before the queued `.StartTLS` task ran). `handle_connect_error`
+                // → `mark_inactive` releases `tls.handlers`; null `tls` so the
                 // still-queued `.StartTLS` → `onOpen` — and any further
                 // duplex events — skip the TLSSocket instead of hitting
                 // `has_handlers() == false` in `onOpen`.
@@ -4477,7 +4477,7 @@ impl DuplexUpgradeContext {
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
                     // SAFETY: `this` is live; short-lived `&mut` for `take`.
                     if let Some(tls) = unsafe { (*this).tls.take() } {
-                        // `handleConnectError` consumes our +1 — `tls.socket`
+                        // `handle_connect_error` consumes our +1 — `tls.socket`
                         // is `InternalSocket::UpgradedDuplex` (set before
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
@@ -4491,7 +4491,7 @@ impl DuplexUpgradeContext {
                         let p = tls.into_this_ptr();
                         TLSSocket::handle_connect_error(p, errno, 0);
                     }
-                    // `startTLS`/`startTLSWithCTX` failed before the
+                    // `start_tls`/`start_tls_with_ctx` failed before the
                     // SSLWrapper was assigned, so its close callback
                     // was never registered and nothing will schedule
                     // `.Close`. Same as the `tls == null` early-return

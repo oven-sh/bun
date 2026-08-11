@@ -880,6 +880,11 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(arraySuffix.stdout)).not.toContain("SyntaxError");
       expect(arraySuffix.exitCode).toBe(0);
 
+      const intersection = await runRepl(["q = (92 as unknown as Record<string, A & B> / 2); q", ".exit"]);
+      expect(stripAnsi(intersection.stdout)).toContain("46");
+      expect(stripAnsi(intersection.stdout)).not.toContain("SyntaxError");
+      expect(intersection.exitCode).toBe(0);
+
       // A comma-separated comparison is not a generic, so the `/` starts a regex.
       const comparison = await runRepl(["q = (1 < 2, 3 > /\"/.test('\"')); q", ".exit"]);
       expect(stripAnsi(comparison.stdout)).toContain("true");

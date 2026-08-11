@@ -2649,6 +2649,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                                     | b':'
                                     | b','
                                     | b'|'
+                                    | b'&'
                                     | b'['
                                     | b']'
                                     | b'>'

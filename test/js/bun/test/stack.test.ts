@@ -206,8 +206,12 @@ describe("SyntaxError .stack", () => {
   // error whose frames died. Re-capturing from a different file than that location must not
   // turn it into a <parse> frame. The error is constructed in a function attributed to
   // another file; a fresh function each time so the GC case has something to collect.
-  const constructElsewhere = () =>
-    (new Function('return new SyntaxError("made elsewhere");\n//# sourceURL=elsewhere.js') as () => SyntaxError)();
+  const constructElsewhere = () => {
+    const construct = new Function(
+      'return new SyntaxError("made elsewhere");\n//# sourceURL=elsewhere.js',
+    ) as () => SyntaxError;
+    return { err: construct(), construct: new WeakRef(construct) };
+  };
 
   const recaptured = (err: SyntaxError) => {
     Error.captureStackTrace(err);
@@ -215,16 +219,23 @@ describe("SyntaxError .stack", () => {
   };
 
   test("a structuredClone()d SyntaxError re-captured from another file has no <parse> frame", () => {
-    expect(recaptured(structuredClone(constructElsewhere()))).toEqual({
+    expect(recaptured(structuredClone(constructElsewhere().err))).toEqual({
       stack: "SyntaxError: made elsewhere\n    at recaptured (file:NN:NN)\n    at <anonymous> (file:NN:NN)",
       sourceURL: expect.stringContaining("stack.test.ts"),
     });
   });
 
   test("a SyntaxError whose frames were collected, re-captured from another file, has no <parse> frame", async () => {
-    const err = constructElsewhere();
-    await gcTick();
-    await gcTick();
+    const { err, construct } = constructElsewhere();
+    // The finalizer only runs once the function in the error's frames is actually collected.
+    // Nothing can be read off `err` to check that without materializing it, so watch the
+    // function instead. deref() keeps its target alive for the rest of the current job, which
+    // is why each check is followed by two ticks: the second one collects in a fresh job.
+    for (let i = 0; construct.deref() !== undefined; i++) {
+      expect(i).toBeLessThan(10);
+      await gcTick();
+      await gcTick();
+    }
     expect(recaptured(err)).toEqual({
       stack: "SyntaxError: made elsewhere\n    at recaptured (file:NN:NN)\n    at <anonymous> (file:NN:NN)",
       sourceURL: expect.stringContaining("stack.test.ts"),

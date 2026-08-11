@@ -1956,6 +1956,7 @@ function parseOptions(
   const tlsOption = options.tls || options.ssl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
+    tls = undefined;
   } else if (!tlsOption || typeof tlsOption === "boolean" || $isObject(tlsOption)) {
     tls = tlsOption || tls;
   } else {

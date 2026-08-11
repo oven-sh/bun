@@ -143,11 +143,8 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
-    /// Symlink entries accepted so far. They are only written to disk after
-    /// every other entry (`deferred_symlinks`), and later entries whose path
-    /// traverses one of them are skipped.
-    #[cfg(unix)]
-    created_symlinks: Vec<Vec<u8>>,
+    /// Symlink entries accepted so far; written to disk only after every
+    /// other entry.
     #[cfg(unix)]
     deferred_symlinks: Vec<bun_libarchive::DeferredSymlink>,
 
@@ -260,8 +257,6 @@ impl TarballStream {
             resolved_github_dirname: b"",
             want_first_dirname,
             npm_mode,
-            #[cfg(unix)]
-            created_symlinks: Vec::new(),
             #[cfg(unix)]
             deferred_symlinks: Vec::new(),
             bytes_received: 0,
@@ -856,17 +851,6 @@ impl TarballStream {
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
-        // Reject any entry whose path traverses a symlink created earlier in
-        // this extraction; the kernel would follow it and the entry could land
-        // outside the extraction root. Same defense as the buffered extractor
-        // in `Archiver::extract_to_dir`.
-        #[cfg(unix)]
-        if bun_libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
-            self.phase = Phase::WantData;
-            self.out_fd = None;
-            return Ok(());
-        }
-
         match kind {
             FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
@@ -881,7 +865,6 @@ impl TarballStream {
                             path_slice,
                             entry.symlink().as_bytes(),
                         ));
-                    self.created_symlinks.push(path_slice.to_vec());
                 }
                 self.phase = Phase::WantData;
                 self.out_fd = None;
@@ -893,11 +876,7 @@ impl TarballStream {
                 // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
-                #[cfg(unix)]
-                let nofollow = !self.created_symlinks.is_empty();
-                #[cfg(not(unix))]
-                let nofollow = false;
-                let fd = open_output_file(dest, path, path_slice, mode, nofollow)?;
+                let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1354,20 +1333,8 @@ fn open_output_file(
     path: OSPathZ,
     path_slice: &[OSPathChar],
     mode: Mode,
-    nofollow: bool,
 ) -> crate::Result<Fd> {
-    // `path_traverses_created_symlink` is a lexical check: on filesystems that
-    // alias differently-encoded names (Unicode NFC/NFD normalization on
-    // APFS/HFS+), a path component can reach a created symlink without
-    // byte-matching its recorded path. Once this extraction has created any
-    // symlink, ask the kernel to refuse to follow symlinks while opening file
-    // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets. Same defense as the
-    // buffered extractor in `Archiver::extract_to_dir`.
-    let flags = if nofollow {
-        O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW_ANY
-    } else {
-        O::WRONLY | O::CREAT | O::TRUNC
-    };
+    let flags = O::WRONLY | O::CREAT | O::TRUNC;
     #[cfg(windows)]
     {
         let _ = mode;

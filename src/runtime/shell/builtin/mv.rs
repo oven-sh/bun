@@ -530,11 +530,14 @@ impl ShellMvBatchedTask {
             return bun_sys::unlinkat(src_dir, src);
         }
 
+        // Windows `lstatat` never reports S_IFLNK; follow there so a reparse-point source fails the dev/ino compare.
+        let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
+
         if S::ISDIR(mode) {
             let sd = Dir::from_fd(shell_openat(
                 src_dir,
                 src,
-                O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
+                O::RDONLY | O::DIRECTORY | src_nofollow,
                 0,
             )?);
             let sst = bun_sys::fstat(sd.fd())?;
@@ -584,7 +587,7 @@ impl ShellMvBatchedTask {
         let in_ = File::openat(
             src_dir,
             src.as_bytes(),
-            O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+            O::RDONLY | O::CLOEXEC | src_nofollow,
             0,
         )?;
         let fst = bun_sys::fstat(in_.fd())?;

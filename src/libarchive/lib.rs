@@ -1053,64 +1053,19 @@ fn is_symlink_target_safe(
     !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
 
-/// Returns true if any leading component of `path` (including the full path)
-/// matches a symlink already created by this extraction. `is_symlink_target_safe`
-/// is purely lexical, so once a symlink is on disk the kernel will follow it
-/// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
-/// rejected rather than resolved.
-#[cfg(unix)]
-pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
-    if created_symlinks.is_empty() {
-        return false;
-    }
-    let sep = b'/';
-    let mut end = 0usize;
-    while end <= path.len() {
-        if end == path.len() || path[end] == sep {
-            let prefix = &path[..end];
-            // Compare case-insensitively: on case-insensitive filesystems (APFS
-            // default on macOS) an entry `LINK/x` traverses a symlink stored as
-            // `link`, but a byte-exact compare would miss it.
-            if !prefix.is_empty()
-                && created_symlinks
-                    .iter()
-                    .any(|s| strings::eql_case_insensitive_ascii_check_length(s, prefix))
-            {
-                return true;
-            }
-        }
-        end += 1;
-    }
-    false
-}
-
 #[cfg(unix)]
 pub struct DeferredSymlink {
-    path: Vec<u8>,
-    target: Vec<u8>,
+    path: bun_core::ZBox,
+    target: bun_core::ZBox,
 }
 
 #[cfg(unix)]
 impl DeferredSymlink {
     pub fn new(path: &[u8], target: &[u8]) -> Self {
-        let mut path_z = Vec::with_capacity(path.len() + 1);
-        path_z.extend_from_slice(path);
-        path_z.push(0);
-        let mut target_z = Vec::with_capacity(target.len() + 1);
-        target_z.extend_from_slice(target);
-        target_z.push(0);
         Self {
-            path: path_z,
-            target: target_z,
+            path: bun_core::ZBox::from_bytes(path),
+            target: bun_core::ZBox::from_bytes(target),
         }
-    }
-
-    pub fn path(&self) -> &[u8] {
-        &self.path[..self.path.len() - 1]
-    }
-
-    pub fn target(&self) -> &[u8] {
-        &self.target[..self.target.len() - 1]
     }
 }
 
@@ -1130,7 +1085,7 @@ fn open_dir_with_stat(dir_fd: Fd, sub_path: &[u8]) -> Option<(Fd, bun_sys::Stat)
 pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
     let mut parents: Vec<Option<bun_sys::Stat>> = Vec::with_capacity(symlinks.len());
     for symlink in symlinks {
-        let dirname = bun_paths::dirname_simple(symlink.path());
+        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
         if dirname.is_empty() {
             parents.push(None);
             continue;
@@ -1144,12 +1099,13 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
 
     let mut created: u32 = 0;
     for (symlink, expected) in symlinks.iter().zip(parents) {
-        let dirname = bun_paths::dirname_simple(symlink.path());
-        let target = ZStr::from_slice_with_nul(&symlink.target);
+        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
+        let target = symlink.target.as_zstr();
         let result = if dirname.is_empty() {
-            bun_sys::symlinkat(target, dir_fd, ZStr::from_slice_with_nul(&symlink.path))
+            bun_sys::symlinkat(target, dir_fd, symlink.path.as_zstr())
         } else {
-            let name = ZStr::from_slice_with_nul(&symlink.path[dirname.len() + 1..]);
+            let name =
+                ZStr::from_slice_with_nul(&symlink.path.as_bytes_with_nul()[dirname.len() + 1..]);
             match (open_dir_with_stat(dir_fd, dirname), expected) {
                 (Some((parent, st)), Some(expected))
                     if st.st_dev == expected.st_dev && st.st_ino == expected.st_ino =>
@@ -1165,7 +1121,7 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                     if log {
                         bun_core::warn!(
                             "Skipping symlink whose parent directory changed during extraction: {}\n",
-                            bstr::BStr::new(symlink.path()),
+                            bstr::BStr::new(symlink.path.as_bytes()),
                         );
                     }
                     continue;
@@ -1178,8 +1134,8 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                 if log {
                     bun_core::warn!(
                         "Skipping symlink that could not be created: {} -> {}\n",
-                        bstr::BStr::new(symlink.path()),
-                        bstr::BStr::new(symlink.target()),
+                        bstr::BStr::new(symlink.path.as_bytes()),
+                        bstr::BStr::new(symlink.target.as_bytes()),
                     );
                 }
             }

@@ -1482,7 +1482,10 @@ impl QuicSession {
                 true
             }
         };
-        self.peer_cert_rejected.set(!cert_ok);
+        if !cert_ok {
+            self.peer_cert_rejected.set(true);
+        }
+        let open_allowed = ok && !self.peer_cert_rejected.get();
         let peer_frame_size = if !ok || self.conn.get().is_null() {
             0
         } else {
@@ -1495,7 +1498,7 @@ impl QuicSession {
         self.with_state(|s| {
             s.handshake_completed = ok as u8;
             s.handshake_confirmed = ok as u8;
-            s.stream_open_allowed = (ok && cert_ok) as u8;
+            s.stream_open_allowed = open_allowed as u8;
             s.max_datagram_size = peer_frame_size
                 .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
                 .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
@@ -2413,6 +2416,7 @@ lsquic_callback! {
         if ok && !session.is_server.get() && session.reject_unverified_peer.get() {
             session.capture_hsk_snapshot();
             if session.peer_verification_refused() {
+                session.peer_cert_rejected.set(true);
                 session.self_close.with_mut(|s| {
                     *s = Some((
                         false,

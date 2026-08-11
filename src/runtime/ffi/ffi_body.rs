@@ -2370,13 +2370,10 @@ impl CompilerRT {
             return;
         }
         for _ in 0..8 {
-            let mut name_buf = PathBuffer::uninit();
-            let Ok(name) =
-                Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-            else {
+            let Some(name) = Self::fresh_compiler_rt_dir_name() else {
                 return;
             };
-            match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
+            match bun_sys::mkdirat(tmpdir.fd(), name.as_zstr(), 0o700) {
                 Ok(()) => {}
                 Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
                 Err(_) => return,
@@ -2387,6 +2384,31 @@ impl CompilerRT {
             };
             let _ = Self::populate_compiler_rt_dir(&dir);
             return;
+        }
+    }
+
+    /// Random name for a freshly created header directory. The Windows shape
+    /// keeps the leading characters and the extension random, so a generated
+    /// short (8.3) alias of the directory is random as well.
+    fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
+        #[cfg(unix)]
+        {
+            let mut name_buf = PathBuffer::uninit();
+            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
+                .ok()?;
+            Some(ZBox::from_bytes(name.as_bytes()))
+        }
+        #[cfg(windows)]
+        {
+            let mut name = Vec::new();
+            write!(
+                &mut name,
+                "{}-bun-cc.{}",
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+                bun_fmt::truncated_hash32(bun_core::fast_random()),
+            )
+            .ok()?;
+            Some(ZBox::from_vec(name))
         }
     }
 

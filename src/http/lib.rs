@@ -1435,7 +1435,12 @@ pub(crate) fn print_request(
         Protocol::Http2 => "HTTP/2",
         Protocol::Http3 => "HTTP/3",
     };
-    bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
+    bun_core::pretty_errorln!(
+        "> {} {} {}",
+        ver,
+        BStr::new(request.method),
+        bun_core::fmt::redacted_npm_url(url),
+    );
     for header in request.headers {
         let name = header.name();
         if strings::eql_case_insensitive_ascii(name, b"authorization", true)

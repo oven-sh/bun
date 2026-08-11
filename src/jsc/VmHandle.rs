@@ -668,50 +668,25 @@ struct PosterData {
     kind: LoopKind,
 }
 
-unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
-    // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
-    let d = unsafe { &*data.cast::<PosterData>() };
-    d.handle.post(d.kind, task)
+impl bun_event_loop::JsPost for PosterData {
+    fn post(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.handle.post(self.kind, task)
+    }
+    fn embedded_work_scheduled(&self) {
+        self.handle.embedded_work_scheduled()
+    }
+    fn embedded_work_finished(&self) {
+        self.handle.embedded_work_finished()
+    }
 }
-unsafe fn poster_clone(data: *const ()) -> *const () {
-    // SAFETY: as above; bump the Arc count and hand out the same pointer.
-    unsafe { Arc::increment_strong_count(data.cast::<PosterData>()) };
-    data
-}
-unsafe fn poster_drop(data: *const ()) {
-    // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
-    unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
-}
-unsafe fn poster_embedded_scheduled(data: *const ()) {
-    // SAFETY: as `poster_post`.
-    unsafe { &*data.cast::<PosterData>() }
-        .handle
-        .embedded_work_scheduled();
-}
-unsafe fn poster_embedded_finished(data: *const ()) {
-    // SAFETY: as `poster_post`.
-    unsafe { &*data.cast::<PosterData>() }
-        .handle
-        .embedded_work_finished();
-}
-static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
-    post: poster_post,
-    embedded_work_scheduled: poster_embedded_scheduled,
-    embedded_work_finished: poster_embedded_finished,
-    clone: poster_clone,
-    drop: poster_drop,
-};
 
 impl VmHandle {
     /// An erased poster for `kind`, for code that cannot name `VmHandle`.
     pub fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(Arc::new(PosterData {
+        bun_event_loop::JsPoster::new(Arc::new(PosterData {
             handle: self.clone(),
             kind,
         }))
-        .cast::<()>();
-        // SAFETY: `data`/vtable pair as documented on `JsPoster::from_raw`.
-        unsafe { bun_event_loop::JsPoster::from_raw(data, &POSTER_VTABLE) }
     }
 }
 
@@ -878,7 +853,13 @@ impl IsolatedPosterInner {
         }
     }
 
-    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+    pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
+        bun_event_loop::JsPoster::new(Arc::clone(this))
+    }
+}
+
+impl bun_event_loop::JsPost for IsolatedPosterInner {
+    fn post(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
         let open = self.open.load(Ordering::SeqCst);
         if open {
@@ -895,33 +876,8 @@ impl IsolatedPosterInner {
         }
     }
 
-    pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(Arc::clone(this)).cast::<()>();
-        // SAFETY: data/vtable pair per `JsPoster::from_raw`.
-        unsafe { bun_event_loop::JsPoster::from_raw(data, &ISOLATED_POSTER_VTABLE) }
-    }
+    // An isolated loop is driven to completion synchronously by its creator on
+    // the JS thread (spawnSync), so its VM cannot tear down under its work.
+    fn embedded_work_scheduled(&self) {}
+    fn embedded_work_finished(&self) {}
 }
-
-unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
-    // SAFETY: leaked Arc<IsolatedPosterInner>.
-    unsafe { &*data.cast::<IsolatedPosterInner>() }.post(task)
-}
-unsafe fn isolated_clone(data: *const ()) -> *const () {
-    // SAFETY: as above.
-    unsafe { Arc::increment_strong_count(data.cast::<IsolatedPosterInner>()) };
-    data
-}
-unsafe fn isolated_drop(data: *const ()) {
-    // SAFETY: as above.
-    unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
-}
-// An isolated loop is driven to completion synchronously by its creator on
-// the JS thread (spawnSync), so its VM cannot tear down under its work.
-unsafe fn isolated_embedded_noop(_data: *const ()) {}
-static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
-    post: isolated_post,
-    embedded_work_scheduled: isolated_embedded_noop,
-    embedded_work_finished: isolated_embedded_noop,
-    clone: isolated_clone,
-    drop: isolated_drop,
-};

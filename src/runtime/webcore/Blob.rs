@@ -7126,12 +7126,9 @@ macro_rules! impl_file_closer {
             }
 
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
+                use ::bun_io::IntrusiveIoRequest as _;
                 // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-                let this = unsafe {
-                    <$T as ::bun_io::IntrusiveIoRequest>::from_io_request(::core::ptr::from_mut(
-                        request,
-                    ))
-                };
+                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
                 fn on_done(ctx: *mut ()) {
                     // SAFETY: ctx is `self as *mut Self` set below.
                     let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
@@ -7156,11 +7153,11 @@ macro_rules! impl_file_closer {
             // in `on_io_request_closed` and is guaranteed live.
             #[allow(clippy::not_unsafe_ptr_arg_deref)]
             fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
+                use ::bun_threading::IntrusiveWorkTask as _;
                 // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
                 // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
                 // recover parent.
-                let this =
-                    unsafe { <$T as ::bun_threading::IntrusiveWorkTask>::from_task_ptr(task) };
+                let this = unsafe { $T::from_task_ptr(task) };
                 // SAFETY: `this` is the live parent (see above); scoped access.
                 unsafe { (*this).close_after_io = false };
                 // SAFETY: as above; exclusive borrow scoped to the call.

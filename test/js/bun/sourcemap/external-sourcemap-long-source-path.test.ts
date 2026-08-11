@@ -77,3 +77,21 @@ describe.concurrent("external source map whose `sources` entry is longer than a 
     }
   }
 });
+
+// Control for the cases above: when the joined path fits and the file exists,
+// the preview is read from it. The source deliberately has an extension bun
+// has no loader for: when the read is skipped, bun falls back to loading the
+// source path as a module, which for a .js/.ts file would print the same file
+// and mask the difference, while for .coffee it prints entry.js instead.
+test.concurrent("uncaught error previews the original source read from the joined path", async () => {
+  using dir = tempDir("sourcemap-source-preview", {
+    ...fixture("original.coffee", "", `throw t();\n`),
+    "original.coffee": "ORIGINAL_LINE_1\nORIGINAL_LINE_2\nORIGINAL_LINE_3\nORIGINAL_LINE_4\n",
+  });
+  const { stdout, stderr, exitCode } = await run(String(dir));
+  expect(stdout).toBe("");
+  expect(stderr).toContain("ORIGINAL_LINE_3");
+  expect(stderr).not.toContain("new Error(");
+  expect(stderr).toContain(`at t (${join(String(dir), "original.coffee")}:3`);
+  expect(exitCode).toBe(1);
+});

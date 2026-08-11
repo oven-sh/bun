@@ -265,6 +265,7 @@ describe.concurrent("Bun.file() body that cannot be read rejects with a TypeErro
     expect(err).toBeInstanceOf(TypeError);
     expect(err).toMatchObject({
       code: "ENOENT",
+      errno: expect.any(Number),
       syscall: "open",
       path: expect.stringContaining("missing.txt"),
     });
@@ -277,7 +278,12 @@ describe.concurrent("Bun.file() body that cannot be read rejects with a TypeErro
     const request = new Request("http://127.0.0.1:1/", { method: "POST", body: Bun.file(path) });
     const err = await earlyRejection(fetch(request));
     expect(err).toBeInstanceOf(TypeError);
-    expect(err).toMatchObject({ code: "ENOENT", syscall: "open" });
+    expect(err).toMatchObject({
+      code: "ENOENT",
+      errno: expect.any(Number),
+      syscall: "open",
+      path: expect.stringContaining("missing.txt"),
+    });
   });
 
   test("directory (open succeeds, read fails)", async () => {
@@ -285,14 +291,16 @@ describe.concurrent("Bun.file() body that cannot be read rejects with a TypeErro
 
     const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(String(dir)) }));
     expect(err).toBeInstanceOf(TypeError);
-    expect(err).toMatchObject({ code: "EISDIR", syscall: "read" });
+    expect(err).toMatchObject({ code: "EISDIR", errno: expect.any(Number), syscall: "read" });
   });
 
   test("file descriptor that is not open (dup fails)", async () => {
-    const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(1 << 30) }));
+    const fd = 1 << 30;
+
+    const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(fd) }));
     expect(err).toBeInstanceOf(TypeError);
-    // Windows reports a different errno for a descriptor number that was never
-    // opened; posix dup() fails with EBADF.
-    if (!isWindows) expect(err).toMatchObject({ code: "EBADF" });
+    expect(err).toMatchObject({ code: expect.any(String), errno: expect.any(Number) });
+    // Windows does not report EBADF for a descriptor number that was never opened.
+    if (!isWindows) expect(err).toMatchObject({ code: "EBADF", fd });
   });
 });

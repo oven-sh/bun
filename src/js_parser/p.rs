@@ -2097,6 +2097,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SReturn(mut ret) => {
                     if let Some(value) = ret.value.as_mut() {
+                        // Don't turn `const r = f(); return r;` into the tail call
+                        // `return f();` the user didn't write (see
+                        // `has_call_in_tail_position`). Only when bundling, where the
+                        // user asked for minified output, is the saved binding worth the
+                        // frame; the runtime transpiler forces `minify_syntax` on.
+                        if !self.options.bundle
+                            && self.has_call_in_tail_position(replacement)
+                            && self.is_ref_in_tail_position(*value, r#ref)
+                        {
+                            return false;
+                        }
                         break 'brk js_ast::StoreRef::from_bump(value);
                     }
                 }
@@ -2188,12 +2199,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         'outer: {
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
-                    if ident.ref_.eql(r#ref)
-                        || self.symbols[ident.ref_.inner_index() as usize]
-                            .link
-                            .get()
-                            .eql(r#ref)
-                    {
+                    if self.identifier_is_use_of(ident, r#ref) {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
                     }
@@ -2716,6 +2722,77 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Otherwise we should stop trying to substitute past this point
         Substitution::Failure(expr)
+    }
+
+    fn identifier_is_use_of(&self, ident: E::Identifier, r#ref: Ref) -> bool {
+        ident.ref_.eql(r#ref)
+            || self.symbols[ident.ref_.inner_index() as usize]
+                .link
+                .get()
+                .eql(r#ref)
+    }
+
+    /// Whether evaluating `expr` ends in a call, i.e. substituting it into a
+    /// `return` value's tail position would make that call a tail call.
+    ///
+    /// JSC implements proper tail calls: in strict mode code (every ES module),
+    /// a call in tail position replaces the caller's frame, so the caller is
+    /// missing from every stack trace captured inside the callee. Tail position
+    /// propagates through the same operators as in JSC's bytecode generator:
+    /// the last operand of `,` and the right operand of `||`, `&&` and `??`,
+    /// and both branches of `?:`. `new`, `await`, `yield` and `import()` are
+    /// never tail calls.
+    fn has_call_in_tail_position(&self, expr: Expr) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return false;
+        }
+        match expr.data {
+            js_ast::ExprData::ECall(_)
+            | js_ast::ExprData::ERequireString(_)
+            | js_ast::ExprData::ERequireResolveString(_) => true,
+            js_ast::ExprData::ETemplate(template) => template.tag.is_some(),
+            js_ast::ExprData::EBinary(binary) => {
+                Self::is_tail_position_operator(binary.op)
+                    && self.has_call_in_tail_position(binary.right)
+            }
+            js_ast::ExprData::EIf(if_expr) => {
+                self.has_call_in_tail_position(if_expr.yes)
+                    || self.has_call_in_tail_position(if_expr.no)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the single use of `ref` is in tail position of `expr`, a
+    /// `return` value (see `has_call_in_tail_position`).
+    fn is_ref_in_tail_position(&self, expr: Expr, r#ref: Ref) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return false;
+        }
+        match expr.data {
+            js_ast::ExprData::EIdentifier(ident) => self.identifier_is_use_of(ident, r#ref),
+            js_ast::ExprData::EBinary(binary) => {
+                Self::is_tail_position_operator(binary.op)
+                    && self.is_ref_in_tail_position(binary.right, r#ref)
+            }
+            js_ast::ExprData::EIf(if_expr) => {
+                self.is_ref_in_tail_position(if_expr.yes, r#ref)
+                    || self.is_ref_in_tail_position(if_expr.no, r#ref)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_tail_position_operator(op: js_ast::op::Code) -> bool {
+        matches!(
+            op,
+            js_ast::op::Code::BinComma
+                | js_ast::op::Code::BinLogicalOr
+                | js_ast::op::Code::BinLogicalAnd
+                | js_ast::op::Code::BinNullishCoalescing
+        )
     }
 
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {

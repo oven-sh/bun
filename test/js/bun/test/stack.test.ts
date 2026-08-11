@@ -121,6 +121,31 @@ test("throwing inside an error suppresses the error and continues printing prope
   expect(exitCode).toBe(1);
 });
 
+// Modules are strict mode code, where JSC turns `return f()` into a proper tail call and `f` no
+// longer sees the returning function on the stack. The transpiler inlines single-use bindings, so
+// without care `const r = f(); return r;` becomes exactly that tail call.
+test("a function returning a call's result through a binding is in the callee's stack", () => {
+  function captureStack() {
+    return new Error("captured").stack!;
+  }
+  function viaConst() {
+    const result = captureStack();
+    return result;
+  }
+  function viaConditional(flag = true) {
+    const result = /* @__PURE__ */ captureStack();
+    return flag ? result : "";
+  }
+
+  const frames = (stack: string) =>
+    stack
+      .split("\n")
+      .slice(1, 3)
+      .map(line => line.trim().split(" ")[1]);
+  expect(frames(viaConst())).toEqual(["captureStack", "viaConst"]);
+  expect(frames(viaConditional())).toEqual(["captureStack", "viaConditional"]);
+});
+
 test("Async functions frame should be included in stack trace", async () => {
   async function foo() {
     return await bar();

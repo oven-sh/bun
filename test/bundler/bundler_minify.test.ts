@@ -1398,6 +1398,47 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // When the user asks for minified output, a single-use binding is inlined into the `return`
+  // even though that makes the call a tail call (esbuild does the same).
+  itBundled("minify/InlineSingleUseBindingIntoReturn", {
+    files: {
+      "/entry.js": /* js */ `
+        export function wrap() {
+          const result = inner();
+          return result;
+        }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("return inner();");
+      expect(code).not.toContain("result");
+    },
+  });
+
+  // Without bundling this is the runtime transpiler's configuration (`bun run`/`bun test` force
+  // minify-syntax on for bun targets). There the binding stays: `return inner();` would be a tail
+  // call the user never wrote, and JSC would drop `wrap`'s frame from stacks captured in `inner`.
+  itBundled("minify/KeepSingleUseBindingBeforeReturnWhenNotBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        export function wrap() {
+          const result = inner();
+          return result;
+        }
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/const result = inner\(\);\s*return result;/);
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

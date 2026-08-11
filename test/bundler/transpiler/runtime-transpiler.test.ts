@@ -210,6 +210,133 @@ test("math.pow", () => {
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
 
+// The runtime transpiler has minify-syntax on, which inlines a single-use `const`/`let` into the
+// statement that uses it. Rewriting `const r = f(); return r;` into `return f();` creates a tail
+// call the user never wrote: JSC implements proper tail calls in strict mode code (every ES
+// module), so the returning function's frame would be gone from every stack trace captured inside
+// `f`. The binding has to stay whenever the initializer ends in a call and the use is the value
+// being returned. Everything else keeps getting inlined.
+describe("single-use inlining does not create tail calls", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+
+  function transpileBody(body: string): string {
+    const code = transpiler.transformSync(`function hello(c, x) {\n${body}\n}`);
+    const lines = code.trim().split("\n");
+    expect(lines[0]).toBe("function hello(c, x) {");
+    expect(lines.at(-1)).toBe("}");
+    return lines
+      .slice(1, -1)
+      .map(line => line.trim())
+      .join(" ");
+  }
+
+  test.each([
+    ["const r = f(); return r;", "const r = f(); return r;"],
+    ["let r = f(); return r;", "let r = f(); return r;"],
+    ["const r = x.f(); return r;", "const r = x.f(); return r;"],
+    ["const r = f.call(x); return r;", "const r = f.call(x); return r;"],
+    ["const r = f?.(); return r;", "const r = f?.(); return r;"],
+    ["const r = f()(); return r;", "const r = f()(); return r;"],
+    ["const r = f`x`; return r;", "const r = f`x`; return r;"],
+    ['const r = require("./x"); return r;', 'const r = require("./x"); return r;'],
+    ['const r = require.resolve("./x"); return r;', 'const r = require.resolve("./x"); return r;'],
+    ["const r = c ? f() : g(); return r;", "const r = c ? f() : g(); return r;"],
+    ["const r = c ? 1 : g(); return r;", "const r = c ? 1 : g(); return r;"],
+    ["const r = c || f(); return r;", "const r = c || f(); return r;"],
+    ["const r = c && f(); return r;", "const r = c && f(); return r;"],
+    ["const r = c ?? f(); return r;", "const r = c ?? f(); return r;"],
+    ["const r = (g(), f()); return r;", "const r = (g(), f()); return r;"],
+    // `a` is inlined into `b`'s initializer, which then has to stay.
+    ["const a = f(); const b = a; return b;", "const b = f(); return b;"],
+    // A side-effect free initializer may be substituted into a branch of the returned expression,
+    // and those branches are tail positions too.
+    ["const r = /* @__PURE__ */ f(); return c ? r : 0;", "const r = f(); return c ? r : 0;"],
+    ["const r = /* @__PURE__ */ f(); return c || r;", "const r = f(); return c || r;"],
+    ["const r = /* @__PURE__ */ f(); return c ?? r;", "const r = f(); return c ?? r;"],
+  ])("keeps the binding: %s", (input, expected) => {
+    expect(transpileBody(input)).toBe(expected);
+  });
+
+  test.each([
+    // The use is not the returned value, so the call does not end up in tail position.
+    ["const r = f(); return r.x;", "return f().x;"],
+    ["const r = f(); return r();", "return f()();"],
+    ["const r = f(); return r + 1;", "return f() + 1;"],
+    ["const r = f(); return !r;", "return !f();"],
+    ["const r = f(); return r ? 1 : 2;", "return f() ? 1 : 2;"],
+    ["const r = f(); return r || c;", "return f() || c;"],
+    ["const r = f(); return [r];", "return [f()];"],
+    ["const r = f(); throw r;", "throw f();"],
+    ["const r = f(); r.x;", "f().x;"],
+    ["const r = f(); if (r) g();", "if (f()) g();"],
+    // The initializer does not end in a call.
+    ["const r = new F(); return r;", "return new F;"],
+    ["const r = f().x; return r;", "return f().x;"],
+    ["const r = f() + 1; return r;", "return f() + 1;"],
+    ["const r = f() ? 1 : 2; return r;", "return f() ? 1 : 2;"],
+    ["const r = f() || c; return r;", "return f() || c;"],
+    ["const r = `${f()}`; return r;", "return `${f()}`;"],
+    ['const r = import("./x"); return r;', 'return import("./x");'],
+    ["const r = c; return r;", "return c;"],
+    ["const r = 1; return r;", "return 1;"],
+  ])("still inlines: %s", (input, expected) => {
+    expect(transpileBody(input)).toBe(expected);
+  });
+
+  test("the initializer of an awaited call is still inlined", () => {
+    const code = transpiler.transformSync("async function hello() { const r = await f(); return r; }");
+    expect(code).toContain("return await f();");
+  });
+
+  // Nothing in this file's source says it is strict mode code (no import/export, no "use strict"),
+  // but a `.mjs` file is still evaluated as a module, so JSC still tail calls in it.
+  test.concurrent("the returning function stays in the stack trace", async () => {
+    using dir = tempDir("transpiler-inlined-tail-call", {
+      "chain.mjs": /* js */ `
+        function captureStack() {
+          return new Error("captured").stack;
+        }
+        function viaConst() {
+          const r = captureStack();
+          return r;
+        }
+        function* viaGenerator() {
+          const r = captureStack();
+          return r;
+        }
+        const viaArrow = () => {
+          const r = captureStack();
+          return r;
+        };
+        const frames = stack => stack.split("\\n").slice(1, 3).map(line => line.trim().split(" ")[1]);
+        console.log(JSON.stringify({
+          viaConst: frames(viaConst()),
+          viaGenerator: frames(viaGenerator().next().value),
+          viaArrow: frames(viaArrow()),
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "chain.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      viaConst: ["captureStack", "viaConst"],
+      viaGenerator: ["captureStack", "viaGenerator"],
+      viaArrow: ["captureStack", "viaArrow"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("unterminated string literals in large files", () => {
   test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
     using dir = tempDir("transpiler-long-unterminated-js", {

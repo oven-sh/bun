@@ -222,7 +222,7 @@ impl Routes {
         &mut self,
         _: &[u8],
         url_path: &URLPath,
-        params: &'p mut route_param::List<'p>,
+        params: &mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
@@ -265,7 +265,6 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: std::ptr::from_mut(params),
                     name: index.name,
                     pathname: url_path.pathname,
                     file_path: index.abs_path.as_bytes(),
@@ -281,7 +280,6 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: std::ptr::from_mut(params),
                 name: route.name,
                 pathname: url_path.pathname,
                 file_path: route.abs_path.as_bytes(),
@@ -1069,26 +1067,19 @@ pub struct Match<'a> {
     pub file_path: &'a [u8],
     /// route name, like `"posts/[id]"`
     pub name: &'a [u8],
-
-    // NOTE: raw `*mut` (not `&'a mut`).
-    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
-    // `&'a mut List` here would be invalidated under Stacked Borrows the
-    // moment any `&mut MatchedRoute` is taken.
-    pub params: *mut route_param::List<'a>,
     pub query_string: &'a [u8],
 }
 
 impl<'a> Match<'a> {
-    /// Widen all borrowed slices to `'static` for self-referential storage.
+    /// Widen all borrowed slices to `'static`.
     ///
     /// Field-by-field move (no bitwise reinterpret). Used by `MatchedRoute`
-    /// (bun_runtime), which moves the backing `pathname_backing` buffer into
-    /// the same heap-stable `Box` that holds this `Match` — see the SAFETY
-    /// note at that call site for the full invariant.
+    /// (bun_runtime), which stores the result next to the `pathname_backing`
+    /// buffer it borrows; see the SAFETY note at that call site for the full
+    /// invariant.
     ///
     /// # Safety
-    /// Caller guarantees every borrowed slice (and `*params`' element slices)
-    /// outlives the returned value.
+    /// Caller guarantees every borrowed slice outlives the returned value.
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn detach_lifetime(self) -> Match<'static> {
@@ -1105,9 +1096,6 @@ impl<'a> Match<'a> {
             pathname: d(self.pathname),
             file_path: d(self.file_path),
             name: d(self.name),
-            // Raw pointer; lifetime parameter on the pointee is phantom for the
-            // pointer value itself.
-            params: self.params.cast::<route_param::List<'static>>(),
             query_string: d(self.query_string),
         }
     }

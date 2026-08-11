@@ -215,11 +215,16 @@ describe("scheduling order", () => {
     registerRustRules(n, cfg);
     // Stands in for the ~1100 dep objects emitBun emits before emitRust().
     n.rule("cc", { command: "cc $out" });
-    n.build({ outputs: [resolve(buildDir, "obj/vendor/dep.c.o")], rule: "cc", inputs: [] });
+    const depObject = resolve(buildDir, "obj/vendor/dep.c.o");
+    n.build({ outputs: [depObject], rule: "cc", inputs: [] });
     const [lib] = emitRust(n, cfg, { codegenInputs: [], codegenOrderOnly: [], rustSources: [], vendorStamps: [] });
 
+    // n.rel() is how the writer spells both paths (native separators).
     const order = buildOrder(n.toString());
-    expect(order.indexOf(n.rel(lib!))).toBeLessThan(order.indexOf("obj/vendor/dep.c.o"));
+    const libIndex = order.indexOf(n.rel(lib!));
+    const depIndex = order.indexOf(n.rel(depObject));
+    expect({ libFound: libIndex >= 0, depFound: depIndex >= 0 }).toEqual({ libFound: true, depFound: true });
+    expect(libIndex).toBeLessThan(depIndex);
     expect(SchedulePriority.cargo).toBeGreaterThan(SchedulePriority.unifiedBundle);
   });
 

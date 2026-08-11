@@ -154,13 +154,6 @@ panic = "abort"
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
 
-# Release with debuginfo retained for `perf record` / flamegraphs. Same opt
-# level as release; binary is large but profilable.
-[profile.release-profiling]
-inherits = "release"
-debug = "line-tables-only"
-strip = "none"
-
 # `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
 # `bun install`. Zig built it freestanding ReleaseFast (no libc,

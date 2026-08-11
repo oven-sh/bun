@@ -15,6 +15,16 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
+// The inspectee pauses and answers Debugger.evaluateOnCallFrame through JSC's
+// InjectedScript, which has unchecked exception scopes in the prebuilt WebKit
+// (see the note at the top of test/js/node/inspector/inspector.test.ts). Under
+// validateExceptionChecks (the ASAN lane) that aborts the child and the socket
+// closes with 1006 before anything is observed, so strip it for the child only.
+const inspecteeEnv = (() => {
+  const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+  return env;
+})();
+
 async function runDebuggerProbe(extraArgs: readonly string[], expectedSourceType: string | null) {
   using dir = tempDir("inspect-buntranspiledmodule", {
     "mod.test.ts": `import { test, expect } from "bun:test";
@@ -34,7 +44,7 @@ test("t", () => { expect(x).toBe(1); });
       ...extraArgs,
       join(String(dir), "mod.test.ts"),
     ],
-    env: bunEnv,
+    env: inspecteeEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

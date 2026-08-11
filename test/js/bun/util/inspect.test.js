@@ -928,3 +928,93 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("exceptions thrown while walking properties", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Bun.$ is the first entry of Bun's property table and its initializer calls
+  // into JS, which throws once the JS stack is exhausted. The lookup then
+  // reports the property as missing with the exception still pending, and the
+  // walk has to drop it before looking at the next property: otherwise every
+  // later lookup fails too (and debug builds assert on the stale exception).
+  it.concurrent("lazy property initializer throwing in the middle of Bun.inspect(Bun)", async () => {
+    const result = await run(`
+      let result;
+      function recurse() {
+        try {
+          recurse();
+        } catch (e) {
+          // Only the innermost frame, right at the stack limit, runs this.
+          if (result === undefined) {
+            try {
+              // Either the walk finishes and the properties after $ are still
+              // there, or it gives up with a RangeError of its own.
+              result = "string " + Bun.inspect(Bun, { depth: 0 }).includes("Archive");
+            } catch (err) {
+              result = err.name;
+            }
+          }
+        }
+      }
+      recurse();
+      console.log(result, typeof Bun.$);
+    `);
+    expect(result).toEqual({
+      stdout: expect.stringMatching(/^(string true|RangeError) function\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("Proxy get trap throwing for a property found through the prototype chain", async () => {
+    const result = await run(`
+      const proto = new Proxy(
+        { inherited: 2 },
+        {
+          get(target, key, receiver) {
+            if (key === "inherited") throw new Error("get trap");
+            return Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      const object = Object.create(proto);
+      object.own = 1;
+      console.log(Bun.inspect(object));
+    `);
+    expect(result).toEqual({
+      stdout: "{\n  own: 1,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("Proxy getPrototypeOf trap throwing while walking the prototype chain", async () => {
+    const result = await run(`
+      const proto = new Proxy(
+        { inherited: 2 },
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf trap");
+          },
+        },
+      );
+      const object = Object.create(proto);
+      object.own = 1;
+      console.log(Bun.inspect(object));
+    `);
+    expect(result).toEqual({
+      stdout: "{\n  own: 1,\n  inherited: 2,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

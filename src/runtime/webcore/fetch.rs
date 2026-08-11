@@ -368,8 +368,7 @@ fn reject_on_exception(
     Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
-/// A request body that cannot be read is a network error in fetch terms, so it
-/// rejects with the same `TypeError` shape as `FetchTasklet::on_reject`.
+/// Same `TypeError` shape as the network errors from `FetchTasklet::on_reject`.
 fn request_body_file_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSValue {
     jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
 }

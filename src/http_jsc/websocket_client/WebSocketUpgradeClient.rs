@@ -1615,6 +1615,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: short-lived `&mut` for the field take.
                     let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
 
+                    // Switch to forwarding before entering C++. did_connect_with_tunnel
+                    // dispatches `open`, and an open handler that spins the event loop
+                    // (expect().resolves, a debugger pause) delivers socket data to
+                    // handle_data while this frame is on the stack; with the state
+                    // still `Reading` and `outgoing_websocket` taken, handle_data
+                    // would fail the client and close the socket. In `Done` it hands
+                    // the bytes to the tunnel, whose SSL engine is still inside the
+                    // pass that decrypted the 101 and so queues them until that pass
+                    // resumes, by which point C++ has attached the connected WebSocket.
+                    // Same order as the non-tunnel arm below, which detaches the socket
+                    // before did_connect.
+                    // SAFETY: short-lived write.
+                    unsafe { (*this).state = State::Done };
+
                     // Create the WebSocket client with the tunnel
                     // SAFETY: live C++ back-reference.
                     unsafe {
@@ -1630,9 +1644,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         )
                     };
 
-                    // Switch state to connected - handle_data will forward to tunnel
-                    // SAFETY: short-lived write.
-                    unsafe { (*this).state = State::Done };
                     // SAFETY: drops the outgoing_websocket ref; no `&mut Self` is live.
                     unsafe { Self::deref(this) };
                 } else if tcp.is_closed() {

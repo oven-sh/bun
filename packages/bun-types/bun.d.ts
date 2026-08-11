@@ -2772,17 +2772,31 @@ declare module "bun" {
 
   namespace Build {
     type Architecture = "x64" | "arm64" | "aarch64";
-    type Libc = "glibc" | "musl";
+    type Libc = "glibc" | "musl" | "android";
     type SIMD = "baseline" | "modern";
-    type CompileTarget =
+    type Platform =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}`
       | `bun-linux-${Architecture}-${Libc}`
       | `bun-linux-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
+      | `bun-linux-${Architecture}-${Libc}-${SIMD}`
+      | `bun-freebsd-${Architecture}`
       | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
+    /**
+     * Platform to build a standalone executable for, optionally followed by
+     * `-v<major>.<minor>.<patch>` to embed that version of Bun instead of the
+     * one running the build.
+     *
+     * Equivalent CLI flag: `--target` (with `--compile`)
+     *
+     * @example "bun-linux-x64"
+     * @example "bun-linux-arm64-android"
+     * @example "bun-darwin-arm64-v1.2.3"
+     */
+    type CompileTarget = Platform | `${Platform}-v${number}.${number}.${number}`;
   }
 
   /**

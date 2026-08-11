@@ -632,9 +632,10 @@ export function rawDebug() {
   } catch {}
 }
 
-export function installOnWarningListener(process, redirectPath, disabledArr) {
-  // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning,
-  // registered as a real 'warning' listener so removeAllListeners('warning') silences it.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
+// The 'warning' listener itself is a native trampoline registered when `process` is created
+// (BunProcess.cpp); this builds the printer it forwards to on the first warning.
+export function createOnWarning(process, redirectPath, disabledArr) {
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -658,7 +659,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
     process.stderr.write(message + "\n");
   }
 
-  function onWarning(warning) {
+  return function onWarning(warning) {
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
@@ -689,11 +690,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
       );
     }
-  }
-
-  // prependListener: user listeners added before the first emitWarning must
-  // still fire *after* the print, matching Node's bootstrap ordering.
-  process.prependListener("warning", onWarning);
+  };
 }
 
 export function loadEnvFile(path) {

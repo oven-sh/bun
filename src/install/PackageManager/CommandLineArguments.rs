@@ -360,7 +360,6 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 pub struct CommandLineArguments {
     pub(crate) cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
-    pub(crate) token: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
     pub(crate) network_concurrency: Option<u16>,
@@ -443,7 +442,6 @@ impl Default for CommandLineArguments {
         Self {
             cache_dir: None,
             lockfile: b"",
-            token: b"",
             global: false,
             config: None,
             network_concurrency: None,

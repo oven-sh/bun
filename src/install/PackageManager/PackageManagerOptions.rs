@@ -1,7 +1,9 @@
 use crate::bun_schema::api as Api;
+use bstr::BStr;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Output, env_var, fmt as bun_fmt, strings};
 use bun_paths::PathBuffer;
+use core::fmt;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -395,6 +397,42 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
+/// Registry credentials are copied into the `Authorization` header byte for
+/// byte, so a CR, LF or NUL inside one would end that header line and turn the
+/// rest of the value into extra headers (or a second request) on every
+/// registry request. Every credential `load()` stores passes through here;
+/// `source` says where it was configured.
+fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<()> {
+    if !strings::contains_any(value, b"\r\n\0") {
+        return Ok(());
+    }
+    Output::err_generic("the auth token {} contains a newline or NUL byte", source);
+    Err(crate::Error::InstallFailed)
+}
+
+/// `Scope::from_api` is where `.npmrc` / bunfig credentials (including
+/// `$ENV_VAR` indirections and `:_authToken=` URL suffixes) take their final
+/// value, so the scope is checked as soon as it is built.
+fn load_scope(
+    name: &[u8],
+    registry: Api::NpmRegistry,
+    env: &mut DotEnvLoader,
+) -> crate::Result<Npm::registry::Scope> {
+    let scope = Npm::registry::Scope::from_api(name, registry, env)?;
+    let registry_url = bun_fmt::redacted_npm_url(scope.url.href());
+    for credential in [&*scope.token, &*scope.auth] {
+        if name.is_empty() {
+            check_credential(credential, format_args!("for registry \"{registry_url}\""))?;
+        } else {
+            check_credential(
+                credential,
+                format_args!("for the @{} registry \"{registry_url}\"", BStr::new(name)),
+            )?;
+        }
+    }
+    Ok(scope)
+}
+
 impl Options {
     pub(crate) fn load(
         &mut self,
@@ -406,7 +444,7 @@ impl Options {
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> crate::Result<()> {
         let mut base = Api::NpmRegistry::default();
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
@@ -423,7 +461,7 @@ impl Options {
         }
         // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
-        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
+        self.scope = load_scope(b"", base.clone(), env)?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
@@ -441,7 +479,7 @@ impl Options {
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry, env)?,
+                        load_scope(name, registry, env)?,
                     )?;
                 }
             }
@@ -620,7 +658,7 @@ impl Options {
                             token,
                             ..Default::default()
                         };
-                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        self.scope = load_scope(b"", api_registry, env)?;
                         break;
                     }
                 }
@@ -637,6 +675,7 @@ impl Options {
             for token_key in TOKEN_KEYS {
                 if let Some(token) = env.get(token_key) {
                     if !token.is_empty() {
+                        check_credential(token, format_args!("in ${}", BStr::new(token_key)))?;
                         self.scope.token = token.into();
                         break;
                     }
@@ -708,10 +747,6 @@ impl Options {
 
             if cli.exact {
                 self.enable.set(Enable::EXACT_VERSIONS, true);
-            }
-
-            if !cli.token.is_empty() {
-                self.scope.token = cli.token.into();
             }
 
             if cli.no_save {

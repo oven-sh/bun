@@ -3773,13 +3773,6 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
-            // The response ends with its header block (HEAD, 204/304,
-            // Content-Length: 0). Skipped when reuse is already off, which
-            // includes the redirect case whose discarded 3xx body may be in
-            // `to_read`.
-            if self.state.flags.allow_keepalive {
-                self.on_bytes_past_response_end(to_read.len());
-            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;
@@ -4533,15 +4526,9 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `count` bytes arrived after the point where the response's framing
-    /// (Content-Length, the terminating chunk, or a header block that cannot
-    /// be followed by a body) says the response ends. Requests are never
-    /// pipelined, so they belong to no request of ours and the connection's
-    /// framing can no longer be trusted: it must be closed, not pooled, or
-    /// they (and whatever the origin sends next) would be read as the reply to
-    /// the next request that reuses it.
+    /// Nothing is pipelined, so bytes past the framed end of a response desynchronize the socket.
     fn on_bytes_past_response_end(&mut self, count: usize) {
-        if count > 0 {
+        if count > 0 && self.state.flags.allow_keepalive {
             bun_core::scoped_log!(
                 fetch,
                 "{} bytes past the end of the response, disabling keep-alive",
@@ -4679,12 +4666,11 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `undecoded` is the non-negative return of `phr_decode_chunked`: the
-    /// number of bytes that followed the terminating chunk and trailer section.
-    fn on_last_chunk(&mut self, undecoded: isize) {
-        debug_assert!(undecoded >= 0);
+    /// `bytes_after_terminator` is the non-negative return of `phr_decode_chunked`.
+    fn on_last_chunk(&mut self, bytes_after_terminator: isize) {
+        debug_assert!(bytes_after_terminator >= 0);
         self.state.flags.received_last_chunk = true;
-        self.on_bytes_past_response_end(undecoded.unsigned_abs());
+        self.on_bytes_past_response_end(bytes_after_terminator.unsigned_abs());
     }
 
     fn handle_response_body_chunked_encoding_from_multiple_packets(

@@ -3254,15 +3254,40 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
   }
 });
 
-// A complete extra response appended after the end of a legitimate one. Nothing we sent
-// asked for it, so a client that keeps the connection would read it (or whatever the
-// origin sends next) as the reply to the next request it pools onto that socket.
-const INJECTED_RESPONSE = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
+it("does not reuse a keep-alive connection whose chunked response carried bytes past the terminating chunk", async () => {
+  // The chunked analogue of the Content-Length overshoot above: anything the origin
+  // sends after the zero-length chunk that ends the body belongs to no request of ours,
+  // so the connection's framing can no longer be trusted. The response itself is still
+  // delivered, but the connection must be closed instead of being returned to the
+  // keep-alive pool, where the next request to reuse it would be answered by whatever
+  // followed the terminator.
+  const injected = Buffer.from(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+    "latin1",
+  );
+  const chunkedResponse = (payload: Buffer, headers: string = "") =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${headers}Transfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n` +
+          `${payload.length.toString(16)}\r\n`,
+        "latin1",
+      ),
+      payload,
+      Buffer.from("\r\n0\r\n\r\n", "latin1"),
+    ]);
+  // The chunked decoder runs in one of two modes depending on whether a packet fits the
+  // 16 KiB scratch buffer and on the content encoding; one overshoot per combination.
+  const largeBody = Buffer.alloc(64 * 1024, "x").toString();
+  const responses: Record<string, Buffer> = {
+    "/legit": chunkedResponse(Buffer.from("legit!")),
+    "/overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), injected]),
+    "/overshoot-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), injected]),
+    "/overshoot-gzip": Buffer.concat([
+      chunkedResponse(gzipSync(Buffer.from("hello")), "Content-Encoding: gzip\r\n"),
+      injected,
+    ]),
+  };
 
-// Serves canned raw HTTP/1.1 responses keyed by request line ("GET /path") and counts
-// accepted connections, which is how the tests below observe whether fetch() pooled the
-// previous connection or closed it.
-async function rawResponseServer(responses: Record<string, string | Buffer>) {
   let connections = 0;
   const sockets: net.Socket[] = [];
   const server = net.createServer(socket => {
@@ -3275,123 +3300,40 @@ async function rawResponseServer(responses: Record<string, string | Buffer>) {
       while (true) {
         const headerEnd = buffered.indexOf("\r\n\r\n");
         if (headerEnd === -1) break;
-        const [method, path] = buffered.slice(0, headerEnd).split("\r\n")[0].split(" ");
+        const head = buffered.slice(0, headerEnd);
         buffered = buffered.slice(headerEnd + 4);
-        socket.write(responses[`${method} ${path}`]);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        socket.write(responses[path]);
       }
     });
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
-  return {
-    // Issues the requests one after another and records the connection count once each
-    // response has been read, by which point its socket has either been pooled or closed.
-    async run(requests: string[]) {
-      const results: Array<[request: string, body: string, connections: number]> = [];
-      for (const request of requests) {
-        const [method, path] = request.split(" ");
-        const response = await fetch(`http://127.0.0.1:${port}${path}`, { method });
-        results.push([request, await response.text(), connections]);
-      }
-      return results;
-    },
-    [Symbol.dispose]() {
-      for (const socket of sockets) socket.destroy();
-      server.close();
-    },
-  };
-}
 
-it("does not reuse a keep-alive connection whose chunked response carried bytes past the terminating chunk", async () => {
-  // The chunked analogue of the Content-Length overshoot above: the response itself is
-  // still delivered, but the connection must be closed instead of pooled.
-  const chunkedResponse = (payload: Buffer, headers: string = "") =>
-    Buffer.concat([
-      Buffer.from(
-        `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${headers}Transfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n` +
-          `${payload.length.toString(16)}\r\n`,
-        "latin1",
-      ),
-      payload,
-      Buffer.from("\r\n0\r\n\r\n", "latin1"),
+  try {
+    const results: Array<[path: string, body: string, connections: number]> = [];
+    for (const path of ["/overshoot", "/legit", "/overshoot-large", "/legit", "/overshoot-gzip", "/legit", "/legit"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`);
+      const body = await response.text();
+      results.push([path, body === largeBody ? "<large body>" : body, connections]);
+    }
+    // Every mis-framed response is still delivered in full, the request following each
+    // one has to open a new connection, and a correctly framed chunked response is still
+    // pooled (each overshoot after the first, and the final request, reuse the connection
+    // that carried the preceding /legit response).
+    expect(results).toEqual([
+      ["/overshoot", "hello", 1],
+      ["/legit", "legit!", 2],
+      ["/overshoot-large", "<large body>", 2],
+      ["/legit", "legit!", 3],
+      ["/overshoot-gzip", "hello", 3],
+      ["/legit", "legit!", 4],
+      ["/legit", "legit!", 4],
     ]);
-  const injected = Buffer.from(INJECTED_RESPONSE, "latin1");
-  // The chunked decoder runs in one of two modes depending on whether a packet fits the
-  // 16 KiB scratch buffer and on the content encoding; one overshoot per combination.
-  const largeBody = Buffer.alloc(64 * 1024, "x").toString();
-  using server = await rawResponseServer({
-    "GET /legit": chunkedResponse(Buffer.from("legit!")),
-    "GET /overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), injected]),
-    "GET /overshoot-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), injected]),
-    "GET /overshoot-gzip": Buffer.concat([
-      chunkedResponse(gzipSync(Buffer.from("hello")), "Content-Encoding: gzip\r\n"),
-      injected,
-    ]),
-  });
-
-  const results = await server.run([
-    "GET /overshoot",
-    "GET /legit",
-    "GET /overshoot-large",
-    "GET /legit",
-    "GET /overshoot-gzip",
-    "GET /legit",
-    "GET /legit",
-  ]);
-  // Every mis-framed response is still delivered in full, the request following each
-  // one has to open a new connection, and a correctly framed chunked response is still
-  // pooled (each overshoot after the first, and the final request, reuse the connection
-  // that carried the preceding /legit response).
-  for (const result of results) if (result[1] === largeBody) result[1] = "<large body>";
-  expect(results).toEqual([
-    ["GET /overshoot", "hello", 1],
-    ["GET /legit", "legit!", 2],
-    ["GET /overshoot-large", "<large body>", 2],
-    ["GET /legit", "legit!", 3],
-    ["GET /overshoot-gzip", "hello", 3],
-    ["GET /legit", "legit!", 4],
-    ["GET /legit", "legit!", 4],
-  ]);
-});
-
-it("does not reuse a keep-alive connection when bytes follow a response that cannot have a body", async () => {
-  // A 204, a Content-Length: 0 response and any response to HEAD end with their header
-  // block (RFC 9112 section 6.3), so bytes after it are the same framing violation as
-  // above, just without a body decoder in the way to notice them.
-  using server = await rawResponseServer({
-    "GET /legit": "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!",
-    "GET /no-content": "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n" + INJECTED_RESPONSE,
-    "GET /empty": "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n" + INJECTED_RESPONSE,
-    // A body on a HEAD response is itself the violation: it is not part of the message.
-    "HEAD /head": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello",
-    "GET /no-content-ok": "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n",
-    "HEAD /head-ok": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n",
-  });
-
-  const results = await server.run([
-    "GET /no-content",
-    "GET /legit",
-    "GET /empty",
-    "GET /legit",
-    "HEAD /head",
-    "GET /legit",
-    "GET /no-content-ok",
-    "HEAD /head-ok",
-    "GET /legit",
-  ]);
-  // Same trajectory as the chunked case; the two well-formed bodiless responses at the
-  // end must still be pooled and reused.
-  expect(results).toEqual([
-    ["GET /no-content", "", 1],
-    ["GET /legit", "legit!", 2],
-    ["GET /empty", "", 2],
-    ["GET /legit", "legit!", 3],
-    ["HEAD /head", "", 3],
-    ["GET /legit", "legit!", 4],
-    ["GET /no-content-ok", "", 4],
-    ["HEAD /head-ok", "", 4],
-    ["GET /legit", "legit!", 4],
-  ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
 });
 
 // https://github.com/oven-sh/bun/issues/16682

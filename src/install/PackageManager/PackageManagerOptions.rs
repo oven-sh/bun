@@ -462,8 +462,6 @@ impl Options {
         // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
         self.scope = load_scope(b"", base.clone(), env)?;
-        // `did_override_default_scope` is set at the end of this fn;
-        // on the OOM error path the field is irrelevant (process aborts).
 
         if let Some(config) = bun_install_ref {
             if let Some(cache_directory) = config.cache_directory.as_deref() {

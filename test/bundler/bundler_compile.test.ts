@@ -62,6 +62,9 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+  // --compile inlines `process.versions.bun` as the exact `Bun.version` string of
+  // this binary, "-debug" suffix included on debug builds. Unlike the CLI banners
+  // (which print the version without "-debug"), nothing needs stripping here.
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -69,7 +72,7 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version}") {
           process.exitCode = 0;
         }
       `,
@@ -88,8 +91,7 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
-        if (another === "${Bun.version.replaceAll("-debug", "")}") {
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version}") {
           process.exitCode = 0;
         }
       `,

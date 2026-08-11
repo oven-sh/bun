@@ -172,11 +172,13 @@ url.host()       // bun_core::String — the hostname WITHOUT the port (opposite
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```
 
-`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
-`hostname()`, which returns the host WITH the port (also the opposite of JS
-`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
-are effectively swapped relative to their JS namesakes.
+`bun_jsc::URL` is a re-export of `bun_url::whatwg::URL`; the JS-value entry
+points (`href_from_js`, `from_js`) come from the `bun_jsc::UrlJsc` extension
+trait. Whole-string conversions are free functions in `bun_url`
+(`href_from_string`, `join`, `file_url_from_string`; the file-URL pair also
+has by-value `URL::` associated forms). `whatwg::URL::hostname()` returns the
+host WITH the port, so `host` and `hostname` are swapped relative to their JS
+namesakes.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

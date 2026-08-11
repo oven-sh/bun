@@ -2360,6 +2360,107 @@ it("removeAllListeners('warning') silences the default print", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
+// Node registers onWarning at bootstrap (pre_execution.js setupWarningHandler),
+// so it is already in the listener list before user code runs. Verified against
+// node v24.18.0: every script below prints the same thing there.
+describe("default 'warning' listener is registered at startup", () => {
+  const env = { ...bunEnv, NODE_NO_WARNINGS: undefined };
+
+  async function run(cmd, extraEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: extraEnv ? { ...env, ...extraEnv } : env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("removeAllListeners('warning') before the first warning silences the print", async () => {
+    expect(await run(["-e", `process.removeAllListeners("warning"); process.emitWarning("hidden");`])).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a user listener installed after removeAllListeners is the only consumer", async () => {
+    expect(
+      await run([
+        "-e",
+        `process.removeAllListeners("warning");
+         process.on("warning", w => console.log("user:" + w.name + ":" + w.message));
+         process.emitWarning("hidden");`,
+      ]),
+    ).toEqual({ stdout: "user:Warning:hidden\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("is observable via listenerCount/listeners and removable by reference", async () => {
+    expect(
+      await run([
+        "-e",
+        `const [onWarning, ...rest] = process.listeners("warning");
+         console.log(JSON.stringify({ count: process.listenerCount("warning"), name: onWarning.name, rest: rest.length }));
+         process.removeListener("warning", onWarning);
+         console.log(process.listenerCount("warning"));
+         process.emitWarning("hidden");`,
+      ]),
+    ).toEqual({ stdout: `{"count":1,"name":"onWarning","rest":0}\n0\n`, stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("prints before a user listener added later runs", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `process.on("warning", () => process.stderr.write("user-listener\\n"));
+       process.emitWarning("shown");`,
+    ]);
+    expect(stderr).toMatch(
+      /^\(node:\d+\) Warning: shown\n\(Use `.*--trace-warnings \.\.\.` to show where the warning was created\)\nuser-listener\n$/,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {
+    const { stdout, stderr, exitCode } = await run(["-e", `process.emit("warning", new Error("bare"));`]);
+    expect(stderr).toMatch(/^\(node:\d+\) Error: bare\n\(Use `.*--trace-warnings/);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent.each([
+    ["--no-warnings", ["--no-warnings"], undefined],
+    ["NODE_NO_WARNINGS=1", [], { NODE_NO_WARNINGS: "1" }],
+  ])("%s registers no default listener but user listeners still fire", async (_, flags, extraEnv) => {
+    expect(
+      await run(
+        [
+          ...flags,
+          "-e",
+          `console.log(process.listenerCount("warning"));
+           process.on("warning", w => console.log("user:" + w.message));
+           process.emitWarning("quiet");`,
+        ],
+        extraEnv,
+      ),
+    ).toEqual({ stdout: "0\nuser:quiet\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("each worker_threads Worker gets its own default listener", async () => {
+    const worker = `const { parentPort } = require("node:worker_threads");
+       const before = process.listenerCount("warning");
+       process.removeAllListeners("warning");
+       process.emitWarning("hidden-in-worker");
+       setImmediate(() => parentPort.postMessage(before + ":" + process.listenerCount("warning")));`;
+    expect(
+      await run([
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         new Worker(${JSON.stringify(worker)}, { eval: true }).on("message", m => console.log(m));`,
+      ]),
+    ).toEqual({ stdout: "1:0\n", stderr: "", exitCode: 0 });
+  });
+});
+
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {
   await using proc = Bun.spawn({
     cmd: [

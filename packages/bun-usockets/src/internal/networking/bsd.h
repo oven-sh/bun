@@ -57,6 +57,9 @@ struct bsd_addr_t {
 };
 
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
+/* Datagrams one readable event delivers at most (libuv's per-event budget for
+ * a udp handle); why in us_internal_dispatch_ready_poll. */
+#define LIBUS_UDP_MAX_RECV_PER_EVENT (4 * LIBUS_UDP_RECV_COUNT)
 
 #ifdef __APPLE__
 /*

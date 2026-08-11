@@ -906,6 +906,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 break;
             }
 
+            /* Bounded (as libuv's uv__udp_recvmsg is) rather than read until
+             * EAGAIN: on_data may answer what it was handed (QUIC acks the
+             * flight it read and refills the window those acks freed), and a
+             * peer that answers within the time on_data takes never lets the
+             * socket read empty, so the loop sat here, not running timers,
+             * immediates or any other poll, for as long as the exchange
+             * lasted. The poll is level-triggered: whatever is left is read
+             * on the next iteration. */
+            int recv_budget = LIBUS_UDP_MAX_RECV_PER_EVENT;
+
 #if defined(__linux__)
             /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
              * (port unreachable, host unreachable, TTL exceeded, ...) is
@@ -957,12 +967,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             const int run_recv = events & LIBUS_SOCKET_READABLE;
 #endif
             if (run_recv && !u->closed) {
-
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
                     if (npackets > 0) {
+                        recv_budget -= npackets;
                         u->on_data(u, &recvbuf, npackets);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
@@ -1009,7 +1019,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         break;
                     }
-                } while (!u->closed);
+                } while (!u->closed && recv_budget > 0);
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
@@ -1032,8 +1042,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * EAGAIN (which means the error queue is already drained,
              * leaving a residual EPOLLERR). Otherwise the socket stays
              * open so the user can keep sending/receiving after a
-             * transient ICMP error. */
-            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
+             * transient ICMP error. A read loop that stopped on its budget
+             * never got as far as EAGAIN; the still-pending EPOLLERR is
+             * judged on the next event instead. */
+            if (error && !recv_error_surfaced && !recv_would_block_only && recv_budget > 0 && !u->closed) {
                 us_udp_socket_close(u);
             }
 #else

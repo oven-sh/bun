@@ -513,6 +513,67 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A readable event used to recvmmsg until EAGAIN. A peer that answers each
+  // batch within the time the data handler takes (QUIC: the acks we read free
+  // window, we fill it, the peer acks that) then never let the socket read
+  // empty, and nothing else in the process (timers, immediates, other sockets)
+  // ran until the exchange was over. An event now hands over at most 32
+  // datagrams, libuv's budget, and the rest waits for the next iteration. The
+  // burst below is queued in the kernel before the loop polls at all, so what
+  // each iteration delivers depends on nothing but that budget.
+  test("a readable event delivers at most 32 datagrams before the loop turns", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const N = 100;
+        let received = 0;
+        const server = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: { data() { received++; } },
+        });
+        const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        const payload = [];
+        for (let i = 0; i < N; i++) payload.push("x", server.port, "127.0.0.1");
+        const sent = client.sendMany(payload);
+        if (sent !== N) throw new Error("sendMany accepted " + sent + " of " + N);
+        // Datagrams delivered between consecutive immediates, i.e. by one poll
+        // of the loop. (The first immediate runs before the first poll, and
+        // sendto over loopback queues synchronously, so by then the whole burst
+        // is either in the socket's queue or dropped; the iteration cap only
+        // turns a drop into a readable failure instead of a hang.)
+        const perIteration = [];
+        let seen = 0;
+        let iterations = 0;
+        (function iteration() {
+          if (received > seen) perIteration.push(received - seen);
+          seen = received;
+          if (seen === N || ++iterations === 1000) {
+            server.close();
+            client.close();
+            console.log(JSON.stringify(perIteration));
+            return;
+          }
+          setImmediate(iteration);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([32, 32, 32, 4]);
+    expect(exitCode).toBe(0);
+  });
+
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can
   // connect or disconnect the socket; sendMany must snapshot the connection

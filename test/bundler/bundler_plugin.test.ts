@@ -544,6 +544,32 @@ describe("bundler", () => {
       },
     };
   });
+  // An onResolve callback that declines every import sends resolution through
+  // the plugin fallback path. The loader from the import attribute is still part
+  // of the module's identity there: the same file imported as text and as JSON
+  // is two modules.
+  itBundled("plugin/ResolveFallthroughSameFileDifferentLoaders", {
+    files: {
+      "index.ts": /* ts */ `
+        import { asText } from "./as-text";
+        import { asJson } from "./as-json";
+        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+      `,
+      "as-text.ts": /* ts */ `
+        import data from "./data.json" with { type: "text" };
+        export const asText = data;
+      `,
+      "as-json.ts": /* ts */ `
+        import data from "./data.json";
+        export const asJson = data;
+      `,
+      "data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+  });
   itBundled("plugin/ManyFiles", ({ root }) => {
     const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));

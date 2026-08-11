@@ -112,9 +112,8 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 /// seconds unit `transportParams.maxIdleTimeout` uses.
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
 pub(super) const MS_PER_SEC: u64 = 1_000;
-/// lsquic.h `es_cc_algo`. Never lsquic's own default, adaptive (3): it picks
-/// BBRv1 off a handshake RTT that here measures event-loop ticks, and BBRv1
-/// then pins cwnd at its 4-packet floor whenever the loop is busy.
+/// lsquic.h `es_cc_algo`. Adaptive (3, lsquic's default) is never used: on a
+/// loop-ticked engine it picks BBRv1, which then pins cwnd at its floor.
 const CC_ALGO_CUBIC: c_uint = 1;
 const CC_ALGO_BBR: c_uint = 2;
 

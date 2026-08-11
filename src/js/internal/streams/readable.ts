@@ -1725,8 +1725,7 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-// Node installs these from lib/stream.js. Here net, tls, crypto, child_process and _stream_*
-// load this module without going through node:stream, so they are installed with the class.
+// Node does this in lib/stream.js; here not every user of Readable loads node:stream.
 const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
 const opStreamKeys = ObjectKeys(streamReturningOperators);
 for (let i = 0; i < opStreamKeys.length; i++) {

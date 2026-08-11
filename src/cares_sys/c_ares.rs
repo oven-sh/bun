@@ -762,17 +762,10 @@ impl Channel {
             // channel to call ares_set_servers_ports). Letting the 127.0.0.1
             // default stand means setServers() works as the documented workaround.
             //
-            // Node sets ARES_FLAG_NOCHECKRESP here; we deliberately don't. Without
-            // it, c-ares treats SERVFAIL/NOTIMP/REFUSED as a per-server failure and
-            // falls through to the next configured nameserver like glibc's
-            // res_send, which matters because (unlike Node) our default
-            // dns.lookup backend on Linux is c-ares (#37377). If every server
-            // fails, the rcode still surfaces as the final error.
-            //
-            // flags must stay explicit (ARES_OPT_FLAGS in the optmask): when the
-            // mask bit is absent, ares_init defaults flags to ARES_FLAG_EDNS,
-            // adding an OPT RR to every query — a wire-level change Node
-            // doesn't make.
+            // Unlike Node we don't set ARES_FLAG_NOCHECKRESP, so c-ares retries
+            // SERVFAIL/NOTIMP/REFUSED on the next nameserver like glibc (#37377).
+            // flags stays explicit: omitting ARES_OPT_FLAGS would make ares_init
+            // default to ARES_FLAG_EDNS.
             flags: 0,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the

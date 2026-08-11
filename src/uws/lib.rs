@@ -1140,15 +1140,11 @@ pub mod ssl_wrapper {
             }
         }
 
-        /// Pumps the engine. Not re-entrant: callbacks call back in (owners
-        /// write from `on_data`/`on_handshake`, a synchronous peer feeds
-        /// `receive_data` from the write callback), and a nested pass would hand
-        /// the owner the next decrypted chunk while it is still inside its
-        /// callback for the previous one (the WebSocket client parses with its
-        /// cursor on the stack). A nested call only flushes the ciphertext its
-        /// caller queued (owners may tear the wrapper down right after a final
-        /// write) and the outermost call runs another pass, like node's
-        /// `TLSWrap::Cycle`.
+        /// Not re-entrant. A call made from inside a pass's callback (a write
+        /// from `on_data`, a synchronous peer feeding `receive_data`) flushes the
+        /// ciphertext queued so far and schedules another pass; decrypting there
+        /// would hand the owner the next chunk while it is still inside its
+        /// callback for the previous one.
         fn handle_traffic(&self) {
             if self.traffic.get() != Traffic::Idle {
                 log!("handleTraffic re-entered, flushing and deferring to the outer pass");
@@ -1176,10 +1172,9 @@ pub mod ssl_wrapper {
                 // drain the input BIO first
                 self.handle_writing(&mut buffer);
 
-                // drain the output BIO in loop, because read can trigger writing and vice versa.
-                // Stop once a callback re-entered: bytes a synchronous peer fed in may be
-                // handshake bytes, which only update_handshake_state reports, so the next
-                // pass has to start from there.
+                // drain the output BIO in loop, because read can trigger writing and vice versa
+                // Once a callback re-entered, the next pass takes over: the bytes it fed in
+                // may belong to the handshake, which only update_handshake_state reports.
                 while self.traffic.get() == Traffic::Running
                     && self.has_pending_read()
                     && self.handle_reading(&mut buffer)

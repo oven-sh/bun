@@ -2774,6 +2774,13 @@ declare module "bun" {
     type Architecture = "x64" | "arm64" | "aarch64";
     type Libc = "glibc" | "musl" | "android";
     type SIMD = "baseline" | "modern";
+    /**
+     * Platforms a standalone executable can be built for. Covers the spellings
+     * used by the docs and by the published `@oven/bun-*` package names; the
+     * runtime additionally accepts the same segments in any order. Unlike
+     * {@link CompileTarget}, a `Platform` never carries a version suffix, so
+     * this union stays finite.
+     */
     type Platform =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-${Architecture}-${SIMD}`

@@ -8,6 +8,8 @@ import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
 
+import { platforms } from "../../../packages/bun-release/src/platform";
+
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
@@ -401,6 +403,20 @@ describe("@types/bun integration test", () => {
       const result = await tsc("build-fixture-check", {
         "build.ts": await Bun.file(join(FIXTURE_SOURCE_DIR, "build.ts")).text(),
         "utilities.ts": await Bun.file(join(FIXTURE_SOURCE_DIR, "utilities.ts")).text(),
+      });
+
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    // `--target` downloads `@oven/<bin>` for the bins in packages/bun-release/src/platform.ts,
+    // so a bin added there has to be a valid target here too.
+    test("every published platform is a CompileTarget", async () => {
+      const result = await tsc("published-platforms-check", {
+        "platforms.ts": platforms
+          .map(
+            ({ bin }) => `"${bin}" satisfies Bun.Build.Platform;\n"${bin}-v1.2.3" satisfies Bun.Build.CompileTarget;`,
+          )
+          .join("\n"),
       });
 
       expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });

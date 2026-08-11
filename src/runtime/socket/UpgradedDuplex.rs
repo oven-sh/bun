@@ -241,22 +241,24 @@ impl UpgradedDuplex {
             _ => return,
         };
 
+        // `on_error` hands the value to the JS error handler, so it must be the
+        // thrown value (`take_error`), not the `JSC::Exception` cell wrapping it.
         if let Some(data) = data {
             let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
-                    (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
             };
             buffer.ensure_still_alive();
 
             if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
     }

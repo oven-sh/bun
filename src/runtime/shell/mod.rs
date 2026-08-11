@@ -144,12 +144,14 @@ pub use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
 pub mod ast {
-    pub use bun_shell_parser::parse::SmolList;
+    use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
     pub use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
+    /// `If::cond`, `If::then`, and each `If::else_parts` entry.
+    pub(crate) type StmtList = SmolList<'static, Stmt, 1>;
     pub type Expr = p::Expr<'static>;
     pub(crate) type Binary = p::Binary<'static>;
     pub type Pipeline = p::Pipeline<'static>;

@@ -771,7 +771,9 @@ snapshotTest("TLS verification derived from the builder's environment is re-deri
 snapshotTest(
   "a .env value the builder's environ shadowed reaches a launch whose environ lacks it, as a normal boot would",
   async () => {
-    using dir = tempDir("bun-snapshot-env-shadowed", { ".env": "SHADOWED=from-dotenv\nPLAIN=plain-dotenv\n" });
+    using dir = tempDir("bun-snapshot-env-shadowed", {
+      ".env": "SHADOWED=from-dotenv\nPLAIN=plain-dotenv\nDERIVED=${PLAIN}/v1\n",
+    });
     using launchDir = tempDir("bun-snapshot-env-shadowed-launch", {}); // no .env here: whatever a launch sees came through the snapshot
     const img = join(String(dir), "s.snapshot");
     const fixture = join(import.meta.dir, "env-shadowed-fixture.js");
@@ -779,7 +781,12 @@ snapshotTest(
       await using p = Bun.spawn({
         cmd: [bunExe(), fixture],
         cwd: String(dir),
-        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, SHADOWED: "from-builder-environ" },
+        env: {
+          ...buildEnv,
+          BUN_STARTUP_SNAPSHOT_OUT: img,
+          SHADOWED: "from-builder-environ",
+          DERIVED: "from-builder-environ",
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -799,8 +806,10 @@ snapshotTest(
       expect(code).toBe(0);
       return out.trim();
     };
-    expect(await launch({})).toBe("[js] SHADOWED=from-dotenv PLAIN=plain-dotenv");
-    expect(await launch({ SHADOWED: "from-launch" })).toBe("[js] SHADOWED=from-launch PLAIN=plain-dotenv"); // the launch's environ still wins
+    expect(await launch({})).toBe("[js] SHADOWED=from-dotenv PLAIN=plain-dotenv DERIVED=plain-dotenv/v1");
+    expect(await launch({ SHADOWED: "from-launch" })).toBe(
+      "[js] SHADOWED=from-launch PLAIN=plain-dotenv DERIVED=plain-dotenv/v1",
+    ); // the launch's environ still wins
   },
 );
 

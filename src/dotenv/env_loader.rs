@@ -1276,6 +1276,7 @@ impl<'a> Parser<'a> {
         map: &mut Map,
     ) -> Result<(), AllocError> {
         let mut count = map.map.count();
+        let shadowed_start = map.shadowed_by_process.len();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1313,6 +1314,14 @@ impl<'a> Parser<'a> {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
                     };
+                }
+                idx += 1;
+            }
+            let mut idx = shadowed_start;
+            while idx < map.shadowed_by_process.len() {
+                let current: Box<[u8]> = map.shadowed_by_process[idx].1.clone();
+                if let Some(expanded) = self.expand_value(map, &current)? {
+                    map.shadowed_by_process[idx].1 = Box::from(expanded);
                 }
                 idx += 1;
             }

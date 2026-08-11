@@ -3,7 +3,6 @@
 #include "root.h"
 #include "StartupSnapshot.h"
 #if BUN_STARTUP_SNAPSHOT_TOOLING && BUN_STARTUP_SNAPSHOT_SUPPORTED
-#include <wtf/CryptographicallyRandomNumber.h>
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/ExecutableAllocator.h>
@@ -51,27 +50,16 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <pthread.h>
 #if OS(DARWIN)
 #include <mach/mach.h>
 #include <sys/sysctl.h>
-#include <crt_externs.h>
-#include <spawn.h>
-#include <termios.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <sys/ucontext.h>
-#include <signal.h>
-#include <libkern/OSCacheControl.h>
-#include <pthread.h>
 #include <mach/mach_vm.h>
 #include <mach-o/dyld.h>
-#include <uuid/uuid.h>
 #include <mach-o/loader.h>
-#include <mach-o/getsect.h>
-#include <pthread.h>
 #include <wtf/Threading.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/SourceCode.h>
@@ -82,16 +70,6 @@
 #ifndef MAP_JIT
 #define MAP_JIT 0
 #endif
-#include <JavaScriptCore/Completion.h>
-#include <zstd.h>
-#include <dlfcn.h>
-#include <hwy/targets.h>
-#include "wtf/SIMDUTF.h"
-#include <signal.h>
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <termios.h>
 #include <unistd.h>
 #if OS(DARWIN)
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength();

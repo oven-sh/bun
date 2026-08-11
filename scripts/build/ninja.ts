@@ -136,11 +136,16 @@ export class Ninja {
   private readonly ninjaVersion: string;
 
   private readonly lines: string[] = [];
-  /** `rule` blocks. Written before every build statement so prioritized statements can reference any rule. */
-  private readonly ruleLines: string[] = [];
+  /**
+   * `rule` blocks and top-level variables. Written before every build
+   * statement, so where a statement ends up in the file (which `priority`
+   * changes) never affects which rules and variables it can see.
+   */
+  private readonly declarations: string[] = [];
   /** Build statements with a `priority`, written ahead of `lines` (see BuildNode.priority). */
   private readonly prioritized: { priority: number; text: string }[] = [];
   private readonly ruleNames = new Set<string>();
+  private readonly variableNames = new Set<string>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
   private readonly defaults: string[] = [];
@@ -166,10 +171,17 @@ export class Ninja {
     return relative(this.buildDir, path);
   }
 
-  /** Define a top-level ninja variable. */
+  /**
+   * Define a top-level ninja variable. Visible to every build statement
+   * regardless of emission order (see `declarations`), which is also why a
+   * name can only be defined once: ninja would otherwise give statements
+   * different values depending on where they land in the file.
+   */
   variable(name: string, value: string): void {
     assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name), `Invalid ninja variable name: ${name}`);
-    this.lines.push(`${name} = ${ninjaEscapeVarValue(value)}`);
+    assert(!this.variableNames.has(name), `Duplicate ninja variable: ${name}`);
+    this.variableNames.add(name);
+    this.declarations.push(`${name} = ${ninjaEscapeVarValue(value)}`, "");
   }
 
   /** Add a comment line to the output. */
@@ -197,7 +209,7 @@ export class Ninja {
     assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
     this.ruleNames.add(name);
 
-    const out = this.ruleLines;
+    const out = this.declarations;
     out.push(`rule ${name}`);
     out.push(`  command = ${spec.command}`);
     if (spec.description !== undefined) {
@@ -372,7 +384,7 @@ export class Ninja {
           ]
         : [];
 
-    return [...header, ...poolLines, ...this.ruleLines, ...prioritizedLines, ...this.lines, ...defaultLines].join("\n");
+    return [...header, ...poolLines, ...this.declarations, ...prioritizedLines, ...this.lines, ...defaultLines].join("\n");
   }
 
   /**

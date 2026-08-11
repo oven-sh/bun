@@ -177,17 +177,23 @@ describe("scheduling order", () => {
     n.build({ outputs: ["plain-1"], rule: "early", inputs: [] });
     n.build({ outputs: ["low-a"], rule: "early", inputs: [], priority: 100, vars: { flags: "-a" }, pool: "console" });
     n.build({ outputs: ["plain-2"], rule: "early", inputs: [] });
-    // Registered after statements that get hoisted above it: rules must
-    // still all precede the first build statement or ninja rejects the file.
-    n.rule("late", { command: "late $out" });
+    // Declared after statements that get hoisted above them: rules must
+    // still all precede the first build statement or ninja rejects the file,
+    // and a top-level variable defined this late must still be visible to
+    // the hoisted statements that reference it.
+    n.rule("late", { command: "late $late_flags $out" });
+    n.variable("late_flags", "-x");
     n.build({ outputs: ["high"], rule: "late", inputs: [], priority: 300 });
     n.build({ outputs: ["low-b"], rule: "early", inputs: [], priority: 100 });
     const out = n.toString();
 
     expect(buildOrder(out)).toEqual(["high", "low-a", "low-b", "plain-1", "plain-2"]);
-    expect(out.indexOf("rule late")).toBeLessThan(out.indexOf("build high"));
+    const firstBuild = out.indexOf("\nbuild ");
+    expect(out.indexOf("rule late")).toBeLessThan(firstBuild);
+    expect(out.indexOf("late_flags = -x")).toBeLessThan(firstBuild);
     // Priority only moves a statement; its body is written unchanged.
     expect(out).toContain("build low-a: early\n  pool = console\n  flags = -a\n");
+    expect(() => n.variable("late_flags", "-y")).toThrow("Duplicate ninja variable: late_flags");
   });
 
   test("without priorities the writer keeps emission order and emits no scheduling section", () => {

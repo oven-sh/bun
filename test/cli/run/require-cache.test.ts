@@ -11,9 +11,9 @@ import { join } from "path";
 // CodeBlock metadata table that is reported to the GC while collection is
 // deferred, so whether a collection actually runs between loads depends on
 // concurrent JIT timing, and mimalloc keeps pages mapped for a while after the
-// blocks in them are freed. Together those moved RSS by 60-180 MB between two
-// gc(true) calls with nothing retained (the alpine x64 and macOS CI failures of
-// this file), while liveBytes() stayed within 4 MB.
+// blocks in them are freed. Together those moved RSS by 60-500 MB between two
+// gc(true) calls with nothing retained (the alpine and macOS CI failures of this
+// file), while liveBytes() stayed within 7 MB.
 //
 // ASAN builds allocate through the system allocator, which the heap walk does
 // not see, so they keep the RSS bound.
@@ -36,15 +36,17 @@ const leakFixturePrelude = `
 
 // Leaking one copy of index.js's output per load adds at least ~44 MB in the
 // smallest fixture (100 KB x 400 loads; the long-export-name fixtures add
-// hundreds of MB). The noise floor is the most recently loaded module's
-// unlinked bytecode occasionally surviving gc(true): ~3 MB.
+// hundreds of MB). The noise floor is one load's worth of compilation state
+// that the concurrent JIT thread has not let go of yet when the second
+// measurement is taken (it never shows up with BUN_JSC_useConcurrentJIT=0):
+// ~3.5 MB on x64 and up to ~6.5 MB on aarch64 in CI.
 function leakFixtureCheck(asanRssMB: number) {
   return `
           const after = measure();
           const liveDiff = after.live - baseline.live;
           const rssDiff = after.rss - baseline.rss;
           console.log("live diff", (liveDiff / 1024 / 1024).toFixed(1), "MB,", "RSS diff", (rssDiff / 1024 / 1024) | 0, "MB");
-          if (${isASAN} ? rssDiff > ${asanRssMB} * 1024 * 1024 : liveDiff > 16 * 1024 * 1024) {
+          if (${isASAN} ? rssDiff > ${asanRssMB} * 1024 * 1024 : liveDiff > 24 * 1024 * 1024) {
             throw new Error("Memory leak detected");
           }
 `;

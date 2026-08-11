@@ -35,7 +35,7 @@ pub mod options {
     }
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub(crate) enum CheckLength {
+    pub enum CheckLength {
         AssumeAlwaysLessThanMaxPath,
         CheckForGreaterThanMaxPath,
     }
@@ -80,7 +80,9 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
-        pub(crate) const CHECK: u8 = 1;
+        /// Pass as the `CHECK` const param (or convert with
+        /// [`Path::into_checked`]) when unbounded input gets appended.
+        pub const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             if v == 0 {
@@ -852,6 +854,24 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// nominally distinct, hence this explicit conversion.
     #[inline]
     pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
+        self.reinterpret()
+    }
+
+    /// Reinterpret this path as length-checked: from here on `append` and
+    /// friends return `Err(MaxPathExceeded)` for input that does not fit
+    /// instead of panicking. For paths built with the `ASSUME`-only helpers
+    /// (`PathLike`) that are about to receive unbounded input, e.g. the
+    /// entries of a directory walk. Like `SEP_OPT`, `CHECK` only selects how
+    /// later mutations behave, so this is a no-op move.
+    #[inline]
+    pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
+        self.reinterpret()
+    }
+
+    #[inline]
+    fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
+        self,
+    ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
         // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
         // Rust gives no layout-compat guarantee between distinct const-generic
         // instantiations. Rebuilding field-by-field is layout-agnostic and

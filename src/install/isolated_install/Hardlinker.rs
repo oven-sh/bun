@@ -7,21 +7,26 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
-#[cfg(windows)]
-use bun_paths::path_options::AssumeOk as _;
+//
+// The walker's entry paths get appended to these per entry, and the walker
+// opens every directory relative to its parent, so an entry path can be longer
+// than any path buffer. `CheckLength::CHECK` turns that into `ENAMETOOLONG`
+// for the package (what the hoisted linker reports for the same tree) instead
+// of an out-of-bounds write in `append`.
+use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
-type OsPath = Path<
-    OSPathChar,
-    { bun_paths::path_options::Kind::ANY },
-    { bun_paths::path_options::PathSeparators::AUTO },
->;
+type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 
 pub(crate) struct Hardlinker {
     pub(crate) src: OsAbsPath,
     pub(crate) dest: OsPath,
     pub(crate) walker: Walker,
+}
+
+fn name_too_long() -> sys::Error {
+    sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::link)
 }
 
 impl Hardlinker {
@@ -97,25 +102,27 @@ impl Hardlinker {
 
                 // A `path.save()` ResetScope would hold `&mut Path` and keep
                 // `self.src`/`self.dest` exclusively borrowed for the rest of
-                // the iteration. Capture the saved length directly and restore
+                // the iteration. Capture the saved lengths directly and restore
                 // via `set_length` after the body (and before any error return)
                 // so the truncation happens on every exit.
                 let src_saved_len = self.src.len();
-                // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
-                // `Err(MaxPathExceeded)` arm is statically unreachable -- see
-                // `path_options::AssumeOk`.
-                self.src.append(entry.path.as_slice()).assume_ok();
-
                 let dest_saved_len = self.dest.len();
-                self.dest.append(entry.path.as_slice()).assume_ok();
 
                 let err: Option<sys::Error> = 'body: {
+                    if self.src.append(entry.path.as_slice()).is_err()
+                        || self.dest.append(entry.path.as_slice()).is_err()
+                    {
+                        break 'body Some(name_too_long());
+                    }
+
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = sys::make_path::make_path::<u16>(
+                            if let sys::Result::Err(mkdir_err) = sys::make_path::make_path::<u16>(
                                 &sys::Dir::cwd(),
                                 self.dest.slice(),
-                            );
+                            ) {
+                                break 'body Some(mkdir_err);
+                            }
                         }
                         EntryKind::File => {
                             let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
@@ -136,6 +143,15 @@ impl Hardlinker {
                                     dest_slice,
                                 ]
                             };
+                            // `join_string_buf_w_same` and `add_nt_path_prefix_if_needed`
+                            // write into the pooled buffers unchecked: the parts, a
+                            // separator per part, the `\??\` prefix and the NUL must fit.
+                            let needed_len =
+                                dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
+                                    + bun_paths::windows::NT_OBJECT_PREFIX.len();
+                            if needed_len > destfile_path_buf2.len() {
+                                break 'body Some(name_too_long());
+                            }
                             let joined = bun_paths::resolve_path::join_string_buf_w_same::<
                                 bun_paths::platform::Windows,
                             >(
@@ -246,12 +262,19 @@ impl Hardlinker {
                 // `len()` and restore via `set_length()` after the body so the
                 // truncation runs on every exit.
                 let dest_saved_len = self.dest.len();
-                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: fire-and-forget
 
                 let err: Option<sys::Error> = 'body: {
+                    if self.dest.append(entry.path.as_bytes()).is_err() {
+                        break 'body Some(name_too_long());
+                    }
+
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = Fd::cwd().make_path(self.dest.slice());
+                            if let sys::Result::Err(mkdir_err) =
+                                Fd::cwd().make_path(self.dest.slice())
+                            {
+                                break 'body Some(mkdir_err);
+                            }
                         }
                         EntryKind::File => {
                             match sys::linkat(

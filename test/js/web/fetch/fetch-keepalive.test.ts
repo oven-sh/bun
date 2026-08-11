@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -467,88 +467,103 @@ test.concurrent.each([
 // arrives while the request body is still going out leaves the connection
 // mid-message. The next request has to dial a new connection; written onto the
 // old one, its request line would land inside the unfinished upload, which the
-// server below reports with a 299. The stream body never ends, and the byte
-// body is far larger than the loopback socket buffers, so in both cases the
-// reply is processed with part of the body still unsent.
-test.concurrent.each([
+// server below reports with a 299. The stream body never ends. The byte body
+// is far larger than the loopback socket buffers on Linux and macOS, so bun
+// gets the reply with most of it still unsent; Windows' loopback accepts the
+// whole 64 MiB into kernel buffers at once, even with the peer not reading, so
+// there the request really is fully sent and reusing the connection is
+// legitimate (the server then sees the full body followed by the request).
+const earlyReplyCases: [
+  label: string,
+  earlyReply: string,
+  body: string,
+  first: [number, string],
+  onWindows: boolean,
+][] = [
   [
     "303 while a ReadableStream body is still open",
     "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\n\r\n",
     "new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(4)); return new Promise(() => {}); } })",
     [200, "GET:0"],
+    true,
   ],
   [
     "303 while a 64 MiB byte body is still being written",
     "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\n\r\n",
     "new Uint8Array(64 * 1024 * 1024)",
     [200, "GET:0"],
+    false,
   ],
   [
     "200 while a 64 MiB byte body is still being written",
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
     "new Uint8Array(64 * 1024 * 1024)",
     [200, ""],
+    false,
   ],
-])("a connection answered early (%s) is not pooled", async (_, earlyReply, body, first) => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      import net from "node:net";
-      let connections = 0;
-      const server = net.createServer(sock => {
-        connections++;
-        sock.on("error", () => {});
-        let buf = "";
-        let answeredEarly = false;
-        sock.on("data", d => {
-          const chunk = d.toString("latin1");
-          if (answeredEarly) {
-            // Only the rest of the upload may follow the early reply.
-            if (chunk.includes("GET /legit ")) {
-              sock.write("HTTP/1.1 299 Poisoned\\r\\nContent-Length: 0\\r\\n\\r\\n");
+];
+for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
+  test.concurrent.skipIf(isWindows && !onWindows)(`a connection answered early (${label}) is not pooled`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import net from "node:net";
+        let connections = 0;
+        const server = net.createServer(sock => {
+          connections++;
+          sock.on("error", () => {});
+          let buf = "";
+          let answeredEarly = false;
+          sock.on("data", d => {
+            const chunk = d.toString("latin1");
+            if (answeredEarly) {
+              // Only the rest of the upload may follow the early reply.
+              if (chunk.includes("GET /legit ")) {
+                sock.write("HTTP/1.1 299 Poisoned\\r\\nContent-Length: 0\\r\\n\\r\\n");
+              }
+              return;
             }
-            return;
-          }
-          buf += chunk;
-          const end = buf.indexOf("\\r\\n\\r\\n");
-          if (end === -1) return;
-          const head = buf.slice(0, end);
-          buf = "";
-          if (head.startsWith("POST /upload ")) {
-            answeredEarly = true;
-            sock.write(${JSON.stringify(earlyReply)});
-          } else {
-            const len = Number(/^content-length:\\s*(\\d+)/im.exec(head)?.[1] ?? 0);
-            const res = head.split(" ")[0] + ":" + len;
-            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + res.length + "\\r\\n\\r\\n" + res);
-          }
+            buf += chunk;
+            const end = buf.indexOf("\\r\\n\\r\\n");
+            if (end === -1) return;
+            const head = buf.slice(0, end);
+            buf = "";
+            if (head.startsWith("POST /upload ")) {
+              answeredEarly = true;
+              sock.write(${JSON.stringify(earlyReply)});
+            } else {
+              const len = Number(/^content-length:\\s*(\\d+)/im.exec(head)?.[1] ?? 0);
+              const res = head.split(" ")[0] + ":" + len;
+              sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + res.length + "\\r\\n\\r\\n" + res);
+            }
+          });
         });
-      });
-      server.listen(0, "127.0.0.1");
-      await new Promise(r => server.on("listening", r));
-      const origin = "http://127.0.0.1:" + server.address().port;
+        server.listen(0, "127.0.0.1");
+        await new Promise(r => server.on("listening", r));
+        const origin = "http://127.0.0.1:" + server.address().port;
 
-      const res1 = await fetch(origin + "/upload", { method: "POST", duplex: "half", body: ${body} });
-      const first = [res1.status, await res1.text()];
-      const res2 = await fetch(origin + "/legit");
-      const second = [res2.status, await res2.text()];
-      console.log(JSON.stringify({ first, second, connections }));
-      process.exit(0);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+        const res1 = await fetch(origin + "/upload", { method: "POST", duplex: "half", body: ${body} });
+        const first = [res1.status, await res1.text()];
+        const res2 = await fetch(origin + "/legit");
+        const second = [res2.status, await res2.text()];
+        console.log(JSON.stringify({ first, second, connections }));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-  expect({ result, exitCode }).toEqual({
-    // The 303 rows' hop and the 200 row's follow-up fetch each dial the second
-    // connection; the follow-up in the 303 rows then reuses the hop's.
-    result: { first, second: [200, "GET:0"], connections: 2 },
-    exitCode: 0,
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      // The 303 rows' hop and the 200 row's follow-up fetch each dial the second
+      // connection; the follow-up in the 303 rows then reuses the hop's.
+      result: { first, second: [200, "GET:0"], connections: 2 },
+      exitCode: 0,
+    });
   });
-});
+}

@@ -23,7 +23,7 @@ pub struct Stream {
     /// session's `by_http_id` index can be maintained after `client` has been
     /// cleared (terminal delivery nulls `client` before `remove_stream`).
     /// `None` for clients without an abort-signal store (not indexed).
-    pub(crate) async_http_id: Option<u32>,
+    pub(crate) async_http_id: Option<u64>,
     // BACKREF: weak back-pointer, cleared before terminal callbacks.
     // Lifetime-erased — the stream never reads borrowed fields through this.
     pub(crate) client: Option<NonNull<HTTPClient<'static>>>,
@@ -122,7 +122,7 @@ impl Drop for Stream {
 impl Stream {
     pub(crate) fn new(
         id: u32,
-        async_http_id: Option<u32>,
+        async_http_id: Option<u64>,
         client: Option<NonNull<HTTPClient<'static>>>,
         send_window: i32,
     ) -> Box<Self> {

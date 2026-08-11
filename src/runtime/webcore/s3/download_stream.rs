@@ -42,7 +42,7 @@ pub struct S3HttpDownloadStreamingTask {
     /// Captured once on the main thread before the request is queued so the cancel
     /// path can call `schedule_shutdown_by_id` without dereferencing `http` (which
     /// `update_state` overwrites on the HTTP thread under `mutex`).
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
 }
 
 // Hot-dispatch tag for `ConcurrentTask::from`.

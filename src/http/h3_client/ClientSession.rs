@@ -123,7 +123,7 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
+    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u64, ended: bool) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -144,7 +144,7 @@ impl ClientSession {
         false
     }
 
-    pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
+    pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u64) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -252,7 +252,7 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u64) -> bool {
         // `fail` mutates `pending`, so it cannot be called while the iterator
         // holds `&self.pending`, and only one entry can match — so locate
         // first via raw-ptr reads, then act.

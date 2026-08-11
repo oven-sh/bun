@@ -58,6 +58,7 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_er
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
 
+pub use bun_http_jsc::headers_jsc::async_http_skip_ids as http_async_http_testing_ap_is_skip_ids;
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 

@@ -1,5 +1,5 @@
-//! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
-//! free of JSC types.
+//! JSC bridges for `bun.http.{Headers,AsyncHTTP,H2Client,H3Client}`. Keeps
+//! `src/http/` free of JSC types.
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -145,6 +145,22 @@ pub fn to_fetch_headers(
     .ok_or(JsError::Thrown)
 }
 
+struct AsyncHTTPTestingAPIs;
+
+impl AsyncHTTPTestingAPIs {
+    /// `skipIds(count)`: see `bun_http::async_http::skip_ids_for_testing`.
+    fn skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let [count] = frame.arguments_as_array::<1>();
+        if !count.is_number() {
+            return Err(global.throw_invalid_arguments(format_args!("skipIds expects a number")));
+        }
+        let count = count.to_int64().max(0) as u64;
+        Ok(JSValue::js_number_from_uint64(
+            bun_http::async_http::skip_ids_for_testing(count),
+        ))
+    }
+}
+
 struct H2TestingAPIs;
 
 impl H2TestingAPIs {
@@ -196,9 +212,14 @@ impl H3TestingAPIs {
     }
 }
 
-/// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
-/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` them (associated fns aren't importable items).
+/// Free-fn aliases of [`AsyncHTTPTestingAPIs::skip_ids`] /
+/// [`H2TestingAPIs::live_counts`] / [`H3TestingAPIs::quic_live_counts`] so
+/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
+/// aren't importable items).
+#[inline]
+pub fn async_http_skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    AsyncHTTPTestingAPIs::skip_ids(global, frame)
+}
 #[inline]
 pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H2TestingAPIs::live_counts(global, frame)

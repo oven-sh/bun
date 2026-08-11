@@ -408,7 +408,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// misses: a request parked in `PendingConnect.waiters` (coalesced
     /// onto a leader's in-flight TLS connect) never registered a socket,
     /// so it can only be found by scanning here.
-    pub(crate) fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
+    pub(crate) fn abort_pending_h2_waiter(&mut self, async_http_id: u64) -> bool {
         if !SSL {
             return false;
         }

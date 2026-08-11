@@ -62,6 +62,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ffi.rs": "runtime/ffi/ffi.rs",
   "h2_frame_parser.rs": "runtime/api/bun/h2_frame_parser.rs",
   "hosted_git_info.rs": "install/hosted_git_info.rs",
+  "http/AsyncHTTP.rs": "http/AsyncHTTP.rs",
   "http/H2Client.rs": "http/H2Client.rs",
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",

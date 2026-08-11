@@ -1393,6 +1393,7 @@ test("a Connection: close response still closes when its cork slot is evicted wh
     new WebSocket(`ws://127.0.0.1:${server.port}/ws`),
     new WebSocket(`ws://127.0.0.1:${server.port}/ws`),
   ];
+  for (const ws of wsClients) ws.onerror = event => bothOpen.reject(new Error(`websocket client ${event.type}`));
   await bothOpen.promise;
 
   let received = "";

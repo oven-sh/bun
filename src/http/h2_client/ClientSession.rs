@@ -80,7 +80,7 @@ pub struct ClientSession {
     /// (`stream_body_by_http_id` / `resume_receive_by_http_id` /
     /// `drain_response_body_by_http_id` / `abort_by_http_id`) resolve in O(1)
     /// instead of scanning every live stream on the session.
-    pub(crate) by_http_id: ArrayHashMap<u32, *mut Stream>,
+    pub(crate) by_http_id: ArrayHashMap<u64, *mut Stream>,
     pub(crate) next_stream_id: u31,
     /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
     pub(crate) expecting_continuation: u31,
@@ -283,7 +283,7 @@ impl ClientSession {
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted; see [`Self::abort_request`].
-    pub(crate) fn abort_by_http_id(this: SessionPtr, async_http_id: u32) {
+    pub(crate) fn abort_by_http_id(this: SessionPtr, async_http_id: u64) {
         Self::enter(this, |s| s.abort_request(async_http_id));
     }
 
@@ -291,20 +291,20 @@ impl ClientSession {
     /// [`Self::stream_request_body`].
     pub(crate) fn stream_body_by_http_id(
         this: SessionPtr,
-        async_http_id: u32,
+        async_http_id: u64,
         message: WriteMessageType,
     ) {
         Self::enter(this, |s| s.stream_request_body(async_http_id, message));
     }
 
     /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
-    pub(crate) fn resume_receive_by_http_id(this: SessionPtr, async_http_id: u32) {
+    pub(crate) fn resume_receive_by_http_id(this: SessionPtr, async_http_id: u64) {
         Self::enter(this, |s| s.resume_receive(async_http_id));
     }
 
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`; see
     /// [`Self::drain_response_body`].
-    pub(crate) fn drain_response_body_by_http_id(this: SessionPtr, async_http_id: u32) {
+    pub(crate) fn drain_response_body_by_http_id(this: SessionPtr, async_http_id: u64) {
         Self::enter(this, |s| s.drain_response_body(async_http_id));
     }
 
@@ -686,13 +686,13 @@ impl ClientSession {
     /// stream pointer (owned by `self.streams`) so callers can re-borrow
     /// `&mut self` afterwards without an outstanding shared borrow.
     #[inline]
-    fn stream_for_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
+    fn stream_for_http_id(&self, async_http_id: u64) -> Option<*mut Stream> {
         self.by_http_id.get(&async_http_id).copied()
     }
 
     /// A body consumer attached on the JS side: flush any body bytes that arrived between
     /// metadata delivery and `getReader()`.
-    fn drain_response_body(&mut self, async_http_id: u32) {
+    fn drain_response_body(&mut self, async_http_id: u64) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
         };
@@ -701,7 +701,7 @@ impl ClientSession {
         }
     }
 
-    fn resume_receive(&mut self, async_http_id: u32) {
+    fn resume_receive(&mut self, async_http_id: u64) {
         if self.stream_for_http_id(async_http_id).is_none() {
             return;
         }
@@ -715,7 +715,7 @@ impl ClientSession {
 
     /// New request body bytes (or end-of-body) are available in the request's
     /// ThreadSafeStreamBuffer.
-    fn stream_request_body(&mut self, async_http_id: u32, message: WriteMessageType) {
+    fn stream_request_body(&mut self, async_http_id: u64, message: WriteMessageType) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
         };
@@ -1001,7 +1001,7 @@ impl ClientSession {
 
     /// RST_STREAMs (or unparks and fails) the one aborted request; siblings
     /// continue.
-    fn abort_request(&mut self, async_http_id: u32) {
+    fn abort_request(&mut self, async_http_id: u64) {
         // Find the index via a raw-ptr field read first, then swap_remove, so
         // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
         // is materialised during iteration.

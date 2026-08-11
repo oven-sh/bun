@@ -1901,6 +1901,222 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
+/// The snapshot holds pointers into exactly these payload bytes, so they are reused verbatim with the snapshot appended page-aligned; `min_len` pads the result to the payload size already in the file, since the Mach-O injector can only grow.
+pub fn append_startup_snapshot_to_serialized(
+    bytes: &[u8],
+    snapshot: &[u8],
+    min_len: usize,
+) -> Option<Vec<u8>> {
+    if bytes.len() < size_of::<Offsets>() + TRAILER.len()
+        || &bytes[bytes.len() - TRAILER.len()..] != TRAILER
+    {
+        return None;
+    }
+    let body_len = bytes.len() - size_of::<Offsets>() - TRAILER.len();
+    // SAFETY: bounds checked; Offsets is repr(C) POD.
+    let mut offsets: Offsets =
+        unsafe { core::ptr::read_unaligned(bytes[body_len..].as_ptr().cast::<Offsets>()) };
+    const BLOB_HEADER_BYTES: usize = size_of::<u64>();
+    let pad = (EMBEDDED_SNAPSHOT_ALIGN
+        - ((BLOB_HEADER_BYTES + body_len) % EMBEDDED_SNAPSHOT_ALIGN))
+        % EMBEDDED_SNAPSHOT_ALIGN;
+    let mut out =
+        Vec::with_capacity(body_len + pad + snapshot.len() + size_of::<Offsets>() + TRAILER.len());
+    out.extend_from_slice(&bytes[..body_len]);
+    out.resize(body_len + pad, 0);
+    offsets.flags.remove(Flags::STARTUP_SNAPSHOT_BUILD_BITS);
+    // The trailer addresses the payload with 32-bit fields; anything larger would be recorded truncated and mapped wrong.
+    let (Ok(offset), Ok(length)) = (u32::try_from(body_len + pad), u32::try_from(snapshot.len()))
+    else {
+        return None;
+    };
+    offsets.snapshot = StringPointer { offset, length };
+    out.extend_from_slice(snapshot);
+    let tail = size_of::<Offsets>() + TRAILER.len();
+    if out.len() + tail < min_len {
+        out.resize(min_len - tail, 0);
+    }
+    offsets.byte_count = out.len();
+    // SAFETY: Offsets is repr(C) POD.
+    out.extend_from_slice(unsafe {
+        core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
+    });
+    out.extend_from_slice(TRAILER);
+    Some(out)
+}
+
+/// A compiled executable's payload as it sits in the file: `[body][pad][snapshot]?[Offsets][TRAILER]`.
+struct ExecutablePayload {
+    file: Vec<u8>,
+    payload_start: usize,
+    offsets_pos: usize,
+    offsets: Offsets,
+}
+
+fn read_executable_payload(exe_path: &[u8]) -> Result<ExecutablePayload, CompileResult> {
+    let file = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
+        .map_err(|err| {
+            CompileResult::fail_fmt(format_args!(
+                "could not read {}: {}",
+                bstr::BStr::new(exe_path),
+                err
+            ))
+        })?;
+    // The payload's trailer is the last TRAILER occurrence in the file (the section is the last thing before __LINKEDIT / appended on ELF).
+    let tpos = bun_core::strings::last_index_of(&file, TRAILER).ok_or_else(|| {
+        CompileResult::fail_fmt(format_args!(
+            "{} is not a `bun build --compile` executable",
+            bstr::BStr::new(exe_path)
+        ))
+    })?;
+    if tpos < size_of::<Offsets>() {
+        return Err(CompileResult::fail_fmt(format_args!(
+            "corrupt trailer in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    let offsets_pos = tpos - size_of::<Offsets>();
+    // SAFETY: bounds checked; Offsets is repr(C) POD.
+    let offsets: Offsets =
+        unsafe { core::ptr::read_unaligned(file[offsets_pos..].as_ptr().cast::<Offsets>()) };
+    if offsets.byte_count > offsets_pos {
+        return Err(CompileResult::fail_fmt(format_args!(
+            "corrupt payload length in {}",
+            bstr::BStr::new(exe_path)
+        )));
+    }
+    Ok(ExecutablePayload {
+        payload_start: offsets_pos - offsets.byte_count,
+        file,
+        offsets_pos,
+        offsets,
+    })
+}
+
+/// Re-emit `exe_path` (used as its own template) with `payload` in place of its current one, through the normal inject/sign path.
+fn rewrite_executable(
+    exe_path: &[u8],
+    payload: &[u8],
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    // The file's own format picks the injector: the step may be pointed at another OS's executable, which must survive the (failing) attempt intact.
+    let mut target = CompileTarget::default();
+    let mut magic = [0u8; 4];
+    if let Ok(file) = bun_sys::File::openat(Fd::cwd(), exe_path, bun_sys::O::RDONLY, 0)
+        && file.read(&mut magic).is_ok()
+    {
+        target.os = match &magic {
+            [0x7f, b'E', b'L', b'F'] => CompileTargetOs::Linux,
+            [b'M', b'Z', ..] => CompileTargetOs::Windows,
+            _ => CompileTargetOs::Mac,
+        };
+    }
+    to_executable(
+        &target,
+        &[],
+        out_dir,
+        b"",
+        out_name,
+        env,
+        Format::Esm,
+        &WindowsOptions::default(),
+        b"",
+        Some(exe_path),
+        Flags::default(),
+        Some(payload),
+    )
+}
+
+/// Mark (or, with empty `flags`, unmark) the executable so that running it takes its snapshot (`Flags::TAKE_STARTUP_SNAPSHOT`); only the trailer word changes.
+pub fn set_startup_snapshot_build_flags(
+    exe_path: &[u8],
+    flags: Flags,
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    let exe = match read_executable_payload(exe_path) {
+        Ok(exe) => exe,
+        Err(failure) => return Ok(failure),
+    };
+    let mut offsets = exe.offsets;
+    offsets.flags.remove(Flags::STARTUP_SNAPSHOT_BUILD_BITS);
+    offsets
+        .flags
+        .insert(flags & Flags::STARTUP_SNAPSHOT_BUILD_BITS);
+    if offsets.flags == exe.offsets.flags {
+        return Ok(CompileResult::Success);
+    }
+    let mut payload = exe.file
+        [exe.payload_start..exe.offsets_pos + size_of::<Offsets>() + TRAILER.len()]
+        .to_vec();
+    let rel = exe.offsets_pos - exe.payload_start;
+    // SAFETY: Offsets is repr(C) POD; `rel..rel+size` is where it was read from.
+    payload[rel..rel + size_of::<Offsets>()].copy_from_slice(unsafe {
+        core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
+    });
+    drop(exe);
+    rewrite_executable(exe_path, &payload, out_dir, out_name, env)
+}
+
+/// Embed a snapshot into an existing compiled executable (replacing any previous one) and clear the `TAKE_STARTUP_SNAPSHOT` marking.
+pub fn embed_startup_snapshot_into_executable(
+    exe_path: &[u8],
+    snapshot: &[u8],
+    out_dir: Fd,
+    out_name: &[u8],
+    env: &mut bun_dotenv::Loader,
+) -> crate::Result<CompileResult> {
+    let exe = match read_executable_payload(exe_path) {
+        Ok(exe) => exe,
+        Err(failure) => return Ok(failure),
+    };
+    let offsets = exe.offsets;
+    let full = &exe.file[exe.payload_start..exe.offsets_pos + size_of::<Offsets>() + TRAILER.len()];
+    let previous_payload_len = if offsets.snapshot.length != 0 {
+        full.len()
+    } else {
+        0
+    };
+    // Rebuild the snapshot-less form (body, then a cleared Offsets) and append to that.
+    let stripped: Vec<u8>;
+    let payload: &[u8] = if offsets.snapshot.length != 0 {
+        let body_end = offsets.snapshot.offset as usize;
+        if body_end > offsets.byte_count {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "corrupt snapshot offsets in {}",
+                bstr::BStr::new(exe_path)
+            )));
+        }
+        let mut cleared = offsets;
+        cleared.snapshot = StringPointer::default();
+        cleared.byte_count = body_end;
+        let mut out = Vec::with_capacity(body_end + size_of::<Offsets>() + TRAILER.len());
+        out.extend_from_slice(&full[..body_end]);
+        // SAFETY: Offsets is repr(C) POD.
+        out.extend_from_slice(unsafe {
+            core::slice::from_raw_parts((&raw const cleared).cast::<u8>(), size_of::<Offsets>())
+        });
+        out.extend_from_slice(TRAILER);
+        stripped = out;
+        &stripped
+    } else {
+        full
+    };
+    let Some(new_payload) =
+        append_startup_snapshot_to_serialized(payload, snapshot, previous_payload_len)
+    else {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "could not append the snapshot (payload trailer not recognized, or the snapshot or payload exceeds 4 GiB)"
+        )));
+    };
+    drop(exe);
+    rewrite_executable(exe_path, &new_payload, out_dir, out_name, env)
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -1913,23 +2129,28 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
+    prebuilt_payload: Option<&[u8]>,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    let bytes = match to_bytes(
-        module_prefix,
-        output_files,
-        output_format,
-        compile_exec_argv,
-        flags,
-        None,
-    ) {
-        Ok(b) => b,
-        Err(e) => {
-            return Ok(CompileResult::fail_fmt(format_args!(
-                "failed to generate module graph bytes: {}",
-                bstr::BStr::new(e.name())
-            )));
+    let bytes: Vec<u8> = if let Some(p) = prebuilt_payload {
+        p.to_vec()
+    } else {
+        match to_bytes(
+            module_prefix,
+            output_files,
+            output_format,
+            compile_exec_argv,
+            flags,
+            None,
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(CompileResult::fail_fmt(format_args!(
+                    "failed to generate module graph bytes: {}",
+                    bstr::BStr::new(e.name())
+                )));
+            }
         }
     };
     if bytes.is_empty() {

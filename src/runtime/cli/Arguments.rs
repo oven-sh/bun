@@ -444,6 +444,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--snapshot <STR>?           After --compile, run the executable once and embed a snapshot of it, so later launches resume instead of booting. 'auto' (default: taken once startup drains) or 'manual' (the app calls Bun.startupSnapshot.take())"
+        ),
+        parse_param!(
+            "--snapshot-io <STR>         What the app may touch while its snapshot is taken: 'strict' (default: nothing), 'local' (files, subprocesses, local sockets) or 'network' (that too); every use is reported"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -1638,7 +1644,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if cmd == CommandTag::BuildCommand {
-        if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
+        // `bun build --snapshot --outfile app` (no entrypoints) is the snapshot step alone, on an executable built earlier.
+        if opts.entry_points.is_empty()
+            && !ctx.bundler_options.bake
+            && ctx.bundler_options.compile_startup_snapshot
+                == bun_options_types::context::CompileStartupSnapshot::Off
+        {
             bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
                 bun_core::Global::package_json_version_with_sha
@@ -2042,6 +2053,41 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(mode) = args.option(b"--snapshot") {
+        ctx.bundler_options.compile_startup_snapshot = match mode {
+            b"" | b"auto" => bun_options_types::context::CompileStartupSnapshot::Auto,
+            b"manual" => bun_options_types::context::CompileStartupSnapshot::Manual,
+            other => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: --snapshot expects 'auto' or 'manual', got \"{}\"",
+                    BStr::new(other)
+                );
+                Global::exit(1);
+            }
+        };
+    }
+    if let Some(io) = args.option(b"--snapshot-io") {
+        if ctx.bundler_options.compile_startup_snapshot
+            == bun_options_types::context::CompileStartupSnapshot::Off
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --snapshot-io only applies together with --snapshot"
+            );
+            Global::exit(1);
+        }
+        ctx.bundler_options.compile_startup_snapshot_io = match io {
+            b"strict" => bun_options_types::context::CompileStartupSnapshotIo::Strict,
+            b"local" => bun_options_types::context::CompileStartupSnapshotIo::Local,
+            b"network" => bun_options_types::context::CompileStartupSnapshotIo::Network,
+            other => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: --snapshot-io expects 'strict', 'local' or 'network', got \"{}\"",
+                    BStr::new(other)
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 

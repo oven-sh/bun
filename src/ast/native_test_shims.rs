@@ -1,13 +1,12 @@
-//! mimalloc symbols this crate's `cargo test` binary references through the
-//! `TapeAlloc::Arena` arm (in either profile); mimalloc itself is only linked
-//! into bun. The tests use `TapeAlloc::Global`, and nothing in the binary can
-//! create a heap (`mi_heap_new` is not even referenced), so these are never
-//! called. Never compiled into the real build.
+//! mimalloc symbols the `TapeAlloc::Arena` arm makes this crate's `cargo test`
+//! binary reference; mimalloc is only linked into bun. Never compiled into the
+//! real build.
 
 use core::ffi::c_void;
 
 use bun_alloc::mimalloc::Heap;
 
+/// Unreachable: the test binary does not reference `mi_heap_new`, so no test can hold an arena.
 fn no_mimalloc_in_test_binary(symbol: &str) -> ! {
     unreachable!("{symbol} called, but bun_ast's test binary does not link mimalloc")
 }

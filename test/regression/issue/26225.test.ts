@@ -1,5 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+// Loading form-data (and the mime-db table behind it) in the child takes ~3s on
+// a debug build, which is most of the default per-test budget.
+setDefaultTimeout(30_000);
 
 // Test for GitHub issue #26225
 // Multipart uploads using form-data + node-fetch@2 + fs.createReadStream() are truncated

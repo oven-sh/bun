@@ -4655,6 +4655,24 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// `undecoded` is the non-negative return of `phr_decode_chunked`: bytes
+    /// that followed the terminating chunk and trailer section. Requests are
+    /// never pipelined, so those bytes belong to no request of ours; as with
+    /// the Content-Length overshoot in `handle_response_body`, the framing of
+    /// the connection can no longer be trusted and it must not be pooled.
+    fn on_last_chunk(&mut self, undecoded: isize) {
+        debug_assert!(undecoded >= 0);
+        self.state.flags.received_last_chunk = true;
+        if undecoded > 0 {
+            bun_core::scoped_log!(
+                fetch,
+                "{} bytes after the last chunk, disabling keep-alive",
+                undecoded
+            );
+            self.state.flags.allow_keepalive = false;
+        }
+    }
+
     fn handle_response_body_chunked_encoding_from_multiple_packets(
         &mut self,
         incoming_data: &[u8],
@@ -4721,7 +4739,7 @@ impl<'a> HTTPClient<'a> {
             }
             // Done
             _ => {
-                self.state.flags.received_last_chunk = true;
+                self.on_last_chunk(pret);
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4799,7 +4817,7 @@ impl<'a> HTTPClient<'a> {
             }
             // Done
             _ => {
-                self.state.flags.received_last_chunk = true;
+                self.on_last_chunk(pret);
                 self.handle_response_body_from_single_packet(buffer)?;
                 debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
                 self.report_progress(buffer.len());

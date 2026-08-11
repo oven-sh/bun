@@ -761,7 +761,13 @@ impl Channel {
             // ENOSERVER, which breaks dns.setServers() (it needs an initialized
             // channel to call ares_set_servers_ports). Letting the 127.0.0.1
             // default stand means setServers() works as the documented workaround.
-            flags: ARES_FLAG_NOCHECKRESP,
+            //
+            // Node sets ARES_FLAG_NOCHECKRESP here; we deliberately don't. Without
+            // it, c-ares treats SERVFAIL/NOTIMP/REFUSED as a per-server failure and
+            // falls through to the next configured nameserver like glibc's
+            // res_send, which matters because (unlike Node) our default
+            // dns.lookup backend on Linux is c-ares (#37377). If every server
+            // fails, the rcode still surfaces as the final error.
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
             // callback derefs as shared (`&*const`) and the implementor mutates via
@@ -772,8 +778,7 @@ impl Channel {
             ..Default::default()
         };
 
-        let optmask: c_int =
-            ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+        let optmask: c_int = ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -1926,8 +1931,6 @@ impl Error {
     }
 }
 
-pub(crate) const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
-pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;

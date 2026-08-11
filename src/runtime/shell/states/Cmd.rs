@@ -12,10 +12,11 @@ use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
-use crate::shell::subproc::{ShellIO, SpawnArgs};
+use crate::shell::subproc::{CmdHandle, ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
+use core::ptr::NonNull;
 
 pub struct Cmd {
     pub(crate) base: Base,
@@ -66,16 +67,17 @@ impl Cmd {
 }
 
 pub struct SubprocExec {
-    pub(crate) child: *mut ShellSubprocess,
+    /// The `heap::alloc`'d subprocess owned by this `Cmd` and reclaimed in
+    /// [`Cmd::deinit`]. `None` from staging in `transition_to_exec` until
+    /// `spawn_async` writes it through its out pointer.
+    pub(crate) child: Option<NonNull<ShellSubprocess>>,
     pub(crate) buffered_closed: BufferedIoClosed,
-    /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
-    /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
-    /// trampoline. The `Cmd` lives inside `interp.nodes`, so we stash the
-    /// indices and
-    /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
-    /// to drive.
-    pub(crate) interp: *mut Interpreter,
-    pub(crate) this_id: NodeId,
+    /// How the `&mut self` subprocess callbacks (`buffered_output_close` /
+    /// `on_exit`) resume this `Cmd`, which lives inside `interp.nodes` and so
+    /// cannot reach the trampoline from `self`. `None` until the spawn call
+    /// has returned: a callback that fires synchronously inside the spawn only
+    /// records its result, and `transition_to_exec` resumes instead.
+    pub(crate) resume: Option<CmdHandle>,
 }
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
@@ -550,22 +552,21 @@ impl Cmd {
         // Stage the exec slot *before* spawning so PipeReader / process-exit
         // callbacks (which deref `cmd_parent.exec`) see a populated `Subproc`
         // with the correct `child` once `spawn_async` writes through
-        // `out_subproc`. `interp` is left null until `spawn_async` and the
+        // `out_subproc`. `resume` is left `None` until `spawn_async` and the
         // `did_exit_immediately` handling have returned: a synchronous
         // `Cmd::on_exit` (process exit handler) or `Cmd::buffered_output_close`
         // (an eager `read_all` on a pipe erroring inside the spawn) would
         // otherwise drive the trampoline (`Yield::run(&*interp)`) while this
         // frame still holds `&Interpreter`, tearing the Cmd down (and freeing
-        // `child`) underneath the live `subproc` borrow. With `interp` null,
+        // `child`) underneath the live `subproc` borrow. With `resume` unset,
         // both record `exit_code`/`state = Done` and return; we resume via
         // the Yield we hand back below.
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
-            child: core::ptr::null_mut(),
+            child: None,
             buffered_closed,
-            interp: core::ptr::null_mut(),
-            this_id: this,
+            resume: None,
         }));
 
         // Derive the raw backrefs `spawn_async` needs from a single
@@ -579,7 +580,7 @@ impl Cmd {
         // `cmd_parent` is `(interp, NodeId)` rather than the spec's `*ShellCmd`
         // — the Cmd lives inline in `interp.nodes: Vec<Node>`, and a raw
         // `*mut Cmd` would dangle on the next `alloc_node` reallocation.
-        let child_out: *mut *mut ShellSubprocess = {
+        let child_out: *mut Option<NonNull<ShellSubprocess>> = {
             let cmd = interp.as_cmd_mut(this);
             spawn_args.argv.reserve_exact(cmd.args.len() + 1);
             for arg in &cmd.args {
@@ -592,7 +593,7 @@ impl Cmd {
                 _ => unreachable!(),
             }
         };
-        let cmd_parent = crate::shell::subproc::CmdHandle {
+        let cmd_parent = CmdHandle {
             // SAFETY: `interp_ptr` is the live owning Interpreter (from
             // `&mut Interpreter` above); single-threaded, write provenance.
             interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
@@ -617,21 +618,23 @@ impl Cmd {
 
         if let Err(e) = spawn_result {
             drop(arena);
-            // Revert exec so `deinit` doesn't free a null `child`.
+            // Revert exec: a failed `spawn_async` owns the teardown of its
+            // subprocess, so `deinit` must not act on anything it wrote into
+            // `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
             return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
         // across the call.
-        let child: *mut ShellSubprocess = match &interp.as_cmd(this).exec {
+        let child = match &interp.as_cmd(this).exec {
             Exec::Subproc(sub) => sub.child,
             _ => unreachable!(),
         };
         // SAFETY: `spawn_async` Ok ⇒ wrote a live `heap::alloc` subprocess
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
-        let subproc = unsafe { &mut *child };
+        let subproc = unsafe { child.unwrap_unchecked().as_mut() };
         subproc.r#ref();
         drop(arena);
 
@@ -646,14 +649,14 @@ impl Cmd {
             }
         }
 
-        // Publish the interpreter backref now that all synchronous spawn-time
+        // Publish the resume handle now that all synchronous spawn-time
         // callbacks have returned, so subsequent async pipe-close /
         // process-exit notifications can drive the trampoline themselves. If a
         // synchronous callback already finished the command (`state = Done`),
-        // resume here instead — the callback couldn't, with `interp` null.
+        // resume here instead: the callback couldn't, with `resume` unset.
         let me = interp.as_cmd_mut(this);
         if let Exec::Subproc(exec) = &mut me.exec {
-            exec.interp = interp_ptr;
+            exec.resume = Some(cmd_parent);
         }
         if matches!(me.state, CmdState::Done) {
             return Yield::Next(this);
@@ -859,12 +862,14 @@ impl Cmd {
             let me = interp.as_cmd_mut(this);
             match &mut me.exec {
                 Exec::Builtin(b) => b.defuse_array_buf_pins(),
-                Exec::Subproc(sub) if !sub.child.is_null() => {
-                    // SAFETY: `child` is the live heap::alloc'd subprocess;
-                    // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                Exec::Subproc(sub) => {
+                    if let Some(child) = sub.child {
+                        // SAFETY: `child` is the live heap::alloc'd subprocess;
+                        // the call only writes its own fields.
+                        unsafe { ShellSubprocess::defuse_array_buffer_unpins(child.as_ptr()) };
+                    }
                 }
-                _ => {}
+                Exec::None => {}
             }
         }
         Self::deinit(interp, this);
@@ -888,29 +893,30 @@ impl Cmd {
         match exec {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
-            Exec::Subproc(sub) if !sub.child.is_null() => {
-                // SAFETY: `child` was set by `initSubproc` from a
-                // `heap::alloc(ShellSubprocess)` and stays valid until this
-                // drop. Single-threaded. Reclaiming the box runs
-                // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
-                unsafe {
-                    let child = sub.child;
-                    if !(*child).has_exited() {
-                        let _ = (*child).try_kill(9);
+            // `child` is still `None` if the spawn failed before the
+            // subprocess box was returned: nothing to tear down.
+            Exec::Subproc(sub) => {
+                if let Some(child) = sub.child {
+                    let child = child.as_ptr();
+                    // SAFETY: `child` was set by `initSubproc` from a
+                    // `heap::alloc(ShellSubprocess)` and stays valid until this
+                    // drop. Single-threaded. Reclaiming the box runs
+                    // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
+                    unsafe {
+                        if !(*child).has_exited() {
+                            let _ = (*child).try_kill(9);
+                        }
+                        (*child).unref::<true>();
+                        // Stop any still-active stdio before the drop (only the
+                        // VM-shutdown path reaches here in flight).
+                        #[cfg(not(windows))]
+                        ShellSubprocess::deinit_in_flight_io(child);
+                        drop(bun_core::heap::take(child));
                     }
-                    (*child).unref::<true>();
-                    // Stop any still-active stdio before the drop (only the
-                    // VM-shutdown path reaches here in flight).
-                    #[cfg(not(windows))]
-                    ShellSubprocess::deinit_in_flight_io(child);
-                    drop(bun_core::heap::take(child));
                 }
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
-            // `Exec::Subproc` with null `child`: spawn failed before the
-            // subprocess box was returned. Nothing to tear down.
-            Exec::Subproc(_) => {}
         }
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
@@ -920,9 +926,9 @@ impl Cmd {
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
     // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
-    // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
-    // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
-    // `PipeReader::run_yield` without aliasing `&Interpreter` against
+    // these via `&mut self`. The NodeId-arena port stashes a `CmdHandle`
+    // (`SubprocExec::resume`) so the resulting `Yield` can be driven by the
+    // caller's `PipeReader::run_yield` without aliasing `&Interpreter` against
     // `&mut self`.
 
     /// True once the command has both an exit code and (for subprocesses)
@@ -964,19 +970,19 @@ impl Cmd {
             // `*mut Interpreter` it already holds, landing in `Cmd::next` →
             // `CmdState::Done` → `interp.child_done(...)`.
             self.state = CmdState::Done;
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
+            let resume = match &self.exec {
+                Exec::Subproc(sub) => sub.resume,
                 // Only the subprocess path calls this; builtin output goes
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
-            // Same gate as `on_exit`: `exec.interp` stays null until the spawn
+            // Same gate as `on_exit`: `resume` stays `None` until the spawn
             // returns, so a Yield run here would reach `Cmd::deinit` and free the
             // `ShellSubprocess` still on the spawn frame. `transition_to_exec` resumes.
-            if interp.is_null() {
-                return Yield::suspended();
-            }
-            return Yield::Next(this_id);
+            return match resume {
+                Some(handle) => Yield::Next(handle.id),
+                None => Yield::suspended(),
+            };
         }
         Yield::suspended()
     }
@@ -992,8 +998,10 @@ impl Cmd {
             return;
         };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
-        // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
+        // SAFETY: pipe readers exist only once `spawn_async` has stored the
+        // subprocess in `child`, which stays live (owned by this Cmd) until
+        // `deinit`.
+        let child = unsafe { sub.child.unwrap_unchecked().as_mut() };
         // Tee into the JS-side captured buffer if stdout is an fd with a
         // `captured` slot and the redirect didn't send stdout elsewhere.
         if let IoOutKind::Fd(fd) = &self.io.stdout {
@@ -1028,8 +1036,8 @@ impl Cmd {
             return;
         };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
-        // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
+        // SAFETY: as in `buffered_output_close_stdout`.
+        let child = unsafe { sub.child.unwrap_unchecked().as_mut() };
         if let IoOutKind::Fd(fd) = &self.io.stderr {
             // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
             // owning `ShellExecEnv` and no other borrow of it is live here.
@@ -1059,20 +1067,19 @@ impl Cmd {
         if has_finished {
             self.state = CmdState::Done;
             // `self` lives inside `interp.nodes`, so resume via the stashed
-            // backrefs.
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
+            // handle.
+            let resume = match &self.exec {
+                Exec::Subproc(sub) => sub.resume,
                 _ => return,
             };
-            if interp.is_null() {
+            let Some(handle) = resume else {
                 return;
-            }
-            // SAFETY: `interp` outlives every spawned subprocess (it owns the
-            // arena slot containing `self`). `&mut self` is dead by NLL after
-            // this point so the `&Interpreter` borrow does not alias it.
-            // The caller (`ShellSubprocess::on_process_exit`) does not touch
+            };
+            // `&mut self` is dead by NLL after this point so the `&Interpreter`
+            // borrow (it owns the arena slot containing `self`) does not alias
+            // it. The caller (`ShellSubprocess::on_process_exit`) does not touch
             // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &*interp });
+            Yield::Next(handle.id).run(&handle.interp);
         }
     }
 }

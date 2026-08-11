@@ -604,7 +604,7 @@ impl ShellSubprocess {
         // to initialize the object. Raw (not `&mut`) so the caller can pass an
         // address inside the `Cmd` arena slot without holding a `&mut` borrow
         // across this re-entrant call.
-        out: *mut *mut Self,
+        out: *mut Option<core::ptr::NonNull<Self>>,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
         let mut spawn_args = spawn_args_;
@@ -633,7 +633,7 @@ impl ShellSubprocess {
         // We have to use an out pointer because this function may invoke callbacks that expect a
         // fully initialized parent object. Writing to this out pointer may be the last step needed
         // to initialize the object.
-        out_subproc: *mut *mut Self,
+        out_subproc: *mut Option<core::ptr::NonNull<Self>>,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
         // Owns the `K=V\0` storage when inheriting the parent env. The struct
@@ -794,14 +794,15 @@ impl ShellSubprocess {
         // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
         // (they store it on StaticPipeWriter / PipeReader as a backref).
         let mut slot = Box::<Subprocess>::new_uninit();
-        let subprocess: *mut Subprocess = slot.as_mut_ptr();
+        let child = core::ptr::NonNull::from(&mut *slot).cast::<Subprocess>();
+        let subprocess: *mut Subprocess = child.as_ptr();
         // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
         // the heap-stable `Box<SubprocExec>` staged by the caller before this
         // call; no `&` to that slot is live (the caller's `&mut Cmd` borrow
         // ended before the call). Written *before* any callback below
         // (`watch`/`start`/`read_all`) so re-entrant `Cmd` callbacks see a
         // populated `exec.subproc.child`.
-        unsafe { *out_subproc = subprocess };
+        unsafe { *out_subproc = Some(child) };
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,

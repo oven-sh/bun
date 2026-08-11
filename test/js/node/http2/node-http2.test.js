@@ -2741,6 +2741,9 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
   const readState = ({ nextStreamID, lastProcStreamID }) => [nextStreamID, lastProcStreamID];
   const server = http2.createServer();
   const serverSide = Promise.withResolvers();
+  const pushed = Promise.withResolvers();
+  const failure = Promise.withResolvers();
+  server.on("sessionError", failure.reject);
   server.on("stream", (stream, headers) => {
     if (headers[":path"] !== "/first") {
       stream.respond();
@@ -2763,10 +2766,10 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
       seen["set 105 (odd)"] = set(105);
       seen["set 50 (below next)"] = set(50);
       seen["set 100 (equal to next)"] = set(100);
-      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
-        if (err) return serverSide.reject(err);
-        pushed.respond();
-        pushed.end();
+      stream.pushStream({ ":path": "/pushed" }, (err, pushedStream) => {
+        if (err) return failure.reject(err);
+        pushedStream.respond();
+        pushedStream.end();
       });
       seen["after pushStream"] = session.state.nextStreamID;
       seen["set 50 after pushStream"] = set(50);
@@ -2776,39 +2779,34 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
       seen["set 2 ** 31 - 2 (highest even)"] = set(2 ** 31 - 2);
       serverSide.resolve(seen);
     } catch (err) {
-      serverSide.reject(err);
+      failure.reject(err);
     }
     stream.respond();
     stream.end();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  try {
-    await new Promise((resolve, reject) => {
-      client.once("connect", resolve);
-      client.once("error", reject);
+  client.on("error", failure.reject);
+  client.once("stream", (pushedStream, pushHeaders) => {
+    pushedStream.resume();
+    pushed.resolve({ id: pushedStream.id, path: pushHeaders[":path"] });
+  });
+  const set = id => {
+    client.setNextStreamID(id);
+    return client.state.nextStreamID;
+  };
+  const request = path =>
+    new Promise((resolve, reject) => {
+      const req = client.request({ ":path": path });
+      let status;
+      req.on("error", reject);
+      req.on("response", responseHeaders => (status = responseHeaders[":status"]));
+      req.on("close", () => resolve({ id: req.id, status }));
+      req.resume();
+      req.end();
     });
-    const pushed = new Promise(resolve =>
-      client.once("stream", (pushedStream, pushHeaders) => {
-        pushedStream.resume();
-        resolve({ id: pushedStream.id, path: pushHeaders[":path"] });
-      }),
-    );
-    const set = id => {
-      client.setNextStreamID(id);
-      return client.state.nextStreamID;
-    };
-    const request = path =>
-      new Promise((resolve, reject) => {
-        const req = client.request({ ":path": path });
-        let status;
-        req.on("error", reject);
-        req.on("response", responseHeaders => (status = responseHeaders[":status"]));
-        req.on("close", () => resolve({ id: req.id, status }));
-        req.resume();
-        req.end();
-      });
-
+  const run = async () => {
+    await new Promise(resolve => client.once("connect", resolve));
     const seen = { "initial [next, lastProc]": readState(client.state) };
     client.setNextStreamID(1);
     seen["set 1 (equal to next) [next, lastProc]"] = readState(client.state);
@@ -2827,8 +2825,11 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
     seen["set 2 ** 31 + 1 (not 31-bit)"] = set(2 ** 31 + 1);
     seen["set 2 ** 32 - 1 (not 31-bit)"] = set(2 ** 32 - 1);
     seen["set 2 ** 31 - 1 (highest odd)"] = set(2 ** 31 - 1);
+    return { client: seen, server: await serverSide.promise, pushed: await pushed.promise };
+  };
 
-    expect({ client: seen, server: await serverSide.promise, pushed: await pushed }).toEqual({
+  try {
+    expect(await Promise.race([run(), failure.promise])).toEqual({
       client: {
         "initial [next, lastProc]": [1, 0],
         "set 1 (equal to next) [next, lastProc]": [1, 0],

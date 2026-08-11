@@ -245,7 +245,10 @@ impl CompileTarget {
     fn has_baseline_package(&self) -> bool {
         self.arch == Architecture::X64
             && match self.os {
-                OperatingSystem::Linux => self.libc != Libc::Android,
+                OperatingSystem::Linux => match self.libc {
+                    Libc::Default | Libc::Musl => true,
+                    Libc::Android => false,
+                },
                 OperatingSystem::Mac | OperatingSystem::Windows => true,
                 OperatingSystem::Freebsd | OperatingSystem::Wasm => false,
             }

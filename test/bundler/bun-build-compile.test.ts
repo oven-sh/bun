@@ -223,7 +223,9 @@ describe("compile target -baseline resolution", () => {
     ["bun-freebsd-x64-baseline-v1.2.3", "bun-freebsd-x64-v1.2.3"],
     ["bun-freebsd-baseline-v1.2.3", "bun-freebsd-x64-v1.2.3"],
     ["bun-linux-arm64-musl-baseline-v1.2.3", "bun-linux-aarch64-musl-v1.2.3"],
-    // These do publish a -baseline package, so the suffix is kept.
+    // These do publish a -baseline package, so the suffix is kept. A linux target without a libc
+    // segment inherits the libc of the bun running the build, and CI runs this file on alpine too.
+    ["bun-linux-x64-baseline-v1.2.3", isMusl ? "bun-linux-x64-musl-baseline-v1.2.3" : "bun-linux-x64-baseline-v1.2.3"],
     ["bun-linux-x64-musl-baseline-v1.2.3", "bun-linux-x64-musl-baseline-v1.2.3"],
     ["bun-darwin-x64-baseline-v1.2.3", "bun-darwin-x64-baseline-v1.2.3"],
     ["bun-windows-x64-baseline-v1.2.3", "bun-windows-x64-baseline-v1.2.3"],

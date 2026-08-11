@@ -1227,16 +1227,15 @@ impl FFI {
                     } else {
                         compile_c.source.first().as_bytes()
                     };
-                    writeln!(
+                    let _ = writeln!(
                         &mut combined,
                         "{} errors while compiling {}",
                         compile_c.deferred_errors.len(),
                         BStr::new(file_for_err)
-                    )
-                    .ok();
+                    );
 
                     for deferred_error in compile_c.deferred_errors.iter() {
-                        writeln!(&mut combined, "{}", BStr::new(deferred_error)).ok();
+                        let _ = writeln!(&mut combined, "{}", BStr::new(deferred_error));
                     }
 
                     return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
@@ -1569,13 +1568,12 @@ impl FFI {
                             let dlerror_msg = get_dl_error();
 
                             let mut msg = Vec::new();
-                            write!(
+                            let _ = write!(
                                 &mut msg,
                                 "Failed to open library \"{}\": {}",
                                 BStr::new(name),
                                 BStr::new(&dlerror_msg)
-                            )
-                            .ok();
+                            );
                             let system_error = SystemError {
                                 code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED").into(),
                                 message: bun_core::String::clone_utf8(&msg).into(),

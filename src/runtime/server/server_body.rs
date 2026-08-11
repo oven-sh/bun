@@ -3281,7 +3281,7 @@ where
                     port: None,
                 };
                 let mut s = Vec::new();
-                write!(&mut s, "https://{}", fmt).ok();
+                let _ = write!(&mut s, "https://{}", fmt);
                 s
             });
             let path = ReqLike::url(req);
@@ -3641,7 +3641,7 @@ where
         //   }
         // }
         let mut json_string = Vec::new();
-        write!(
+        let _ = write!(
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
@@ -3649,8 +3649,7 @@ where
                 Default::default()
             ),
             uuid,
-        )
-        .ok();
+        );
 
         resp.write_status(b"200 OK");
         resp.write_header(b"Content-Type", b"application/json");

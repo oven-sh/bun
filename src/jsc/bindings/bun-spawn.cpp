@@ -3,8 +3,8 @@
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 #include <fcntl.h>
+#include <atomic>
 #include <cstring>
-#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -18,6 +18,7 @@
 #if OS(LINUX)
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#include <sched.h>
 #endif
 
 extern char** environ;
@@ -110,6 +111,7 @@ typedef struct bun_spawn_request_t {
     uint32_t gid; // setgid(gid) in the child before exec when set_gid is true
     bool set_uid;
     bool set_gid;
+    int cgroup_fd; // -1 = unset; Linux: directory fd of the cgroup the child starts in
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -124,6 +126,105 @@ static inline void rawExit(int status)
 #endif
     _exit(status);
 }
+
+#if OS(LINUX)
+
+#ifndef __NR_clone3
+#define __NR_clone3 435
+#endif
+#ifndef CLONE_INTO_CGROUP
+#define CLONE_INTO_CGROUP 0x200000000ULL
+#endif
+
+struct bun_clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+};
+
+// clone3() with vfork semantics: the child runs fn(arg) on the *parent's*
+// stack (args->stack == 0, CLONE_VM|CLONE_VFORK) and must not return. This
+// cannot go through syscall(2) — the child would pop the wrapper's frame and
+// then scribble over the return address the suspended parent still needs — so,
+// like every libc's vfork.S, the return path touches no stack.
+// Returns the child pid, or -errno.
+extern "C" long bun_clone3_vfork(bun_clone_args* args, size_t size, void (*fn)(void*), void* arg);
+
+#if CPU(X86_64)
+asm(".pushsection .text\n"
+    ".globl bun_clone3_vfork\n"
+    ".type bun_clone3_vfork,@function\n"
+    "bun_clone3_vfork:\n"
+    "    movq %rdx, %r8\n" // fn  (rdx/rcx are not preserved across syscall)
+    "    movq %rcx, %r9\n" // arg
+    "    movl $435, %eax\n"
+    "    syscall\n"
+    "    testq %rax, %rax\n"
+    "    jz 1f\n"
+    "    ret\n"
+    "1:  xorl %ebp, %ebp\n"
+    "    andq $-16, %rsp\n"
+    "    movq %r9, %rdi\n"
+    "    callq *%r8\n"
+    "    movl $127, %edi\n"
+    "    movl $231, %eax\n" // exit_group
+    "    syscall\n"
+    "    hlt\n"
+    ".size bun_clone3_vfork, .-bun_clone3_vfork\n"
+    ".popsection\n");
+#elif CPU(ARM64)
+asm(".pushsection .text\n"
+    ".globl bun_clone3_vfork\n"
+    ".type bun_clone3_vfork,%function\n"
+    "bun_clone3_vfork:\n"
+    "    mov x5, x2\n" // fn
+    "    mov x6, x3\n" // arg
+    "    mov x8, #435\n"
+    "    svc #0\n"
+    "    cbz x0, 1f\n"
+    "    ret\n"
+    "1:  mov x29, #0\n"
+    "    mov x30, #0\n"
+    "    mov x0, x6\n"
+    "    blr x5\n"
+    "    mov x0, #127\n"
+    "    mov x8, #94\n" // exit_group
+    "    svc #0\n"
+    "    brk #0\n"
+    ".size bun_clone3_vfork, .-bun_clone3_vfork\n"
+    ".popsection\n");
+#else
+extern "C" long bun_clone3_vfork(bun_clone_args*, size_t, void (*)(void*), void*)
+{
+    return -ENOSYS;
+}
+#endif
+
+template<typename Fn>
+static void cloneTrampoline(void* ctx)
+{
+    (*static_cast<Fn*>(ctx))();
+}
+
+// Kernels < 5.3 and common container seccomp profiles return ENOSYS for
+// clone3; don't keep asking.
+static std::atomic<bool> clone3Unavailable { false };
+
+#if __has_feature(address_sanitizer)
+// What compiler-rt's vfork interceptor calls in the parent: the child ran
+// instrumented code on our stack, so its frame poison is still in the shadow.
+extern "C" __attribute__((weak)) void __asan_handle_vfork(void* sp);
+#endif
+
+#endif
 
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
@@ -154,30 +255,17 @@ extern "C" ssize_t posix_spawn_bun(
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 #endif
 
-    // On Linux, use vfork() for performance, with a fallback to fork()
-    // if vfork fails (e.g. blocked by seccomp on platforms like OHOS).
-    // On other Unix platforms (macOS, FreeBSD), use fork() directly.
 #if OS(LINUX) && !defined(__OHOS__)
     volatile int child_errno = 0;
-    bool use_fork_fallback = false;
-    int saved_dumpable = -1;
-#endif
-
-    pid_t child;
-#if OS(LINUX) && !defined(__OHOS__)
     // The vfork child shares this mm, and set*id in the child resets the
     // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
     // Save it so the parent can restore it once vfork returns, like Go's
     // forkAndExecInChild1 and systemd's safe_fork_full do.
-    saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
-    child = vfork();
-    if (child == -1) {
-        use_fork_fallback = true;
-        child = fork();
-    }
-#else
-    child = fork();
+    int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
+    volatile bool cgroup_failed = false;
+    bool join_cgroup_in_child = false;
 #endif
+    pid_t child = -1;
 
 #if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
     const auto childFailed = [&]() -> ssize_t {
@@ -213,6 +301,19 @@ extern "C" ssize_t posix_spawn_bun(
         for (int i = 0; i < NSIG; i++) {
             sigaction(i, &sa, 0);
         }
+
+#if OS(LINUX) && !defined(__OHOS__)
+        // cgroup v1 / pre-5.7 fallback. First, so every page the exec'd image
+        // touches is charged to the cgroup. Writing "0" moves the writer.
+        if (join_cgroup_in_child) {
+            int procs = openat(request->cgroup_fd, "cgroup.procs", O_WRONLY | O_CLOEXEC);
+            if (procs < 0 || write(procs, "0", 1) != 1) {
+                cgroup_failed = true;
+                return childFailed();
+            }
+            close(procs);
+        }
+#endif
 
         // Make "detached" work, or set up PTY as controlling terminal
         if (request->detached || request->pty_slave_fd >= 0) {
@@ -353,22 +454,10 @@ extern "C" ssize_t posix_spawn_bun(
 #if defined(__OHOS__)
         // chdir()-then-exec() into a different binary leaves that binary's
         // own getcwd() syscall broken for EL2-sandbox paths (EACCES walking
-        // the parent chain) -- a real-device kernel/sandbox limitation
-        // (confirmed with a from-scratch repro with no Bun involved at all;
-        // does not reproduce in the CI container), not a bug in the
-        // chdir/exec sequence above. Shells never hit the broken syscall:
-        // they trust an inherited $PWD when stat($PWD) matches stat(".") and
-        // skip calling getcwd() entirely. This process only chdir()'d above
-        // without updating $PWD to match, so the exec'd program inherits a
-        // stale $PWD (or none), fails that check, and falls through to the
-        // broken kernel call. Fixed at this one shared funnel -- every spawn
-        // call site (Bun.spawn, npm lifecycle scripts, `bun run`, ...) goes
-        // through here -- rather than at any single JS-facing binding.
-        //
+        // the parent chain) -- a real-device kernel/sandbox limitation.
         // OHOS uses fork() (not vfork() -- see the fork/vfork branch above),
         // so the child has its own address space and plain stack arrays are
-        // safe here; avoiding heap allocation matches the rest of this
-        // function's async-signal-safety discipline.
+        // safe here.
         char pwdBuf[PATH_MAX + 5]; // "PWD=" + PATH_MAX + NUL
         constexpr size_t kMaxEnvEntries = 1024;
         char* newEnvp[kMaxEnvEntries + 2];
@@ -380,12 +469,6 @@ extern "C" ssize_t posix_spawn_bun(
                 if (envp[count] == nullptr) {
                     size_t out = 0;
                     for (size_t i = 0; i < count; i++) {
-                        // Drop any existing PWD -- it's either stale (the
-                        // parent's cwd, which no longer matches after the
-                        // chdir() above) or, if a caller set it to something
-                        // else on purpose, it still has to lose: chdir()
-                        // already changed the real cwd, so $PWD must track it
-                        // or nothing here is self-consistent.
                         if (strncmp(envp[i], "PWD=", 4) == 0) continue;
                         newEnvp[out++] = envp[i];
                     }
@@ -412,13 +495,65 @@ extern "C" ssize_t posix_spawn_bun(
         return -1;
     };
 
+#if OS(LINUX) && !defined(__OHOS__)
+    if (request->cgroup_fd >= 0 && clone3Unavailable.load(std::memory_order_relaxed)) {
+        join_cgroup_in_child = true;
+    } else if (request->cgroup_fd >= 0) {
+        // cgroup v2: the child is created inside the cgroup. Migrating it after
+        // the fact (writing cgroup.procs) takes cgroup_threadgroup_rwsem for
+        // write — an RCU grace period on >= 6.0 kernels — with this thread
+        // parked in vfork for the duration.
+        bun_clone_args args = {};
+        args.flags = CLONE_VM | CLONE_VFORK | CLONE_INTO_CGROUP;
+        args.exit_signal = SIGCHLD;
+        args.cgroup = static_cast<uint64_t>(request->cgroup_fd);
+        long rc = bun_clone3_vfork(&args, sizeof(args), cloneTrampoline<decltype(startChild)>, (void*)&startChild);
+        if (rc >= 0) {
+#if __has_feature(address_sanitizer)
+            if (__asan_handle_vfork) {
+                void* sp;
+#if CPU(X86_64)
+                asm volatile("movq %%rsp, %0" : "=r"(sp));
+#else
+                asm volatile("mov %0, sp" : "=r"(sp));
+#endif
+                __asan_handle_vfork(sp);
+            }
+#endif
+            child = static_cast<pid_t>(rc);
+        } else if (rc == -ENOSYS || rc == -EBADF || rc == -EINVAL || rc == -E2BIG || rc == -EOPNOTSUPP || rc == -EPERM) {
+            // No clone3 (old kernel / seccomp), or not a cgroup2 directory.
+            if (rc == -ENOSYS) {
+                clone3Unavailable.store(true, std::memory_order_relaxed);
+            }
+            join_cgroup_in_child = true;
+        } else {
+            // EBUSY (subtree_control set), EACCES (delegation), ENOENT
+            // (rmdir'd), EAGAIN (pids.max) ... — all about the destination.
+            errno = static_cast<int>(-rc);
+            cgroup_failed = true;
+        }
+    }
+    // Otherwise vfork(): the parent is suspended until the child calls exec
+    // or _exit, so exec failure is visible via child_errno without the
+    // self-pipe trick. POSIX restricts vfork children to _exit()/exec*(), but
+    // Linux permits the setup we need (setsid, ioctl, dup2, ...) before exec.
+    if (child == -1 && !cgroup_failed) {
+        child = vfork();
+        if (child == 0) {
+            return startChild();
+        }
+    }
+#else
+    // On macOS/FreeBSD/OHOS, we use fork() (vfork is blocked by seccomp on
+    // OHOS). This path requires the self-pipe trick to detect exec failures.
+    child = fork();
     if (child == 0) {
-#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
         // Close read end in child
         close(errpipe[0]);
-#endif
         return startChild();
     }
+#endif
 
 #if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
     // macOS/FreeBSD/OHOS fork() path: use self-pipe trick to detect exec failure
@@ -464,17 +599,10 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     // Linux vfork() path: parent resumes after child calls exec or _exit
-    // We can detect exec failure via the volatile child_errno variable.
-    // When vfork() was not available and fork() was used instead, the
-    // error comes through fork_errpipe.
+    // We can detect exec failure via the volatile child_errno variable
     if (child != -1) {
-        if (use_fork_fallback) {
-            // Fork fallback: no shared memory, so exec failure detection
-            // is best-effort. Assume exec succeeded.
-            res = 0;
-            if (pid) *pid = child;
-        } else if (child_errno != 0) {
-            // Child failed to exec — it set child_errno and called _exit()
+        if (child_errno != 0) {
+            // Child failed to exec - it set child_errno and called _exit()
             // Reap the zombie child process
             wait4(child, NULL, 0, NULL);
             res = child_errno;
@@ -486,8 +614,12 @@ extern "C" ssize_t posix_spawn_bun(
             }
         }
     } else {
-        // fork/vfork() failed
+        // vfork() failed
         res = errno;
+    }
+    // Negative: joining the cgroup failed, not the spawn proper.
+    if (cgroup_failed) {
+        res = -res;
     }
 
     // PR_SET_DUMPABLE only accepts SUID_DUMP_DISABLE (0) / SUID_DUMP_USER (1);

@@ -1,8 +1,8 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
-import { describe, expect, test } from "bun:test";
+import type { Subprocess } from "bun";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tls } from "harness";
-import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
@@ -16,6 +16,15 @@ const COUNT = 256; // 16 MiB
 const TOTAL = CHUNK * COUNT;
 
 type Kind = "h1" | "h1-chunked" | "h1-gzip" | "h1-tls" | "h2" | "h3";
+
+// serve("h3") registers its subprocess here before waiting for the URL, so a
+// server that never reports one (the test times out inside serve(), and its
+// `await using` never binds) is still reaped. These tests are concurrent, so
+// the runner does not kill a timed-out test's children itself.
+const h3Servers: Subprocess[] = [];
+afterAll(() => {
+  for (const proc of h3Servers) proc.kill();
+});
 
 async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: () => number } & AsyncDisposable> {
   let sent = 0;
@@ -93,6 +102,7 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
       stdout: "pipe",
       stderr: "pipe",
     });
+    h3Servers.push(proc);
     const stderr = proc.stderr.text();
     const { value: url, done } = await forEachLine(proc.stdout).next();
     if (done) throw new Error(`h3 server exited ${await proc.exited}: ${await stderr}`);
@@ -107,7 +117,10 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
   }
 
   // h1 / h1-chunked / h1-gzip / h1-tls
-  const gz = kind === "h1-gzip" ? gzipSync(randomBytes(CHUNK * count)) : null;
+  // Stored blocks (level 0) keep the wire the same size as the body, which is
+  // what makes the gzip variant stream like the others; actually compressing
+  // 16 MiB took ~2 s of this busy process's main thread under a debug build.
+  const gz = kind === "h1-gzip" ? gzipSync(Buffer.alloc(CHUNK * count, 65), { level: 0 }) : null;
   const handler = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
     res.on("error", () => {});
     if (gz) {

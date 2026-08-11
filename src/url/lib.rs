@@ -130,8 +130,7 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(String::borrow_utf8(input))
         }
-        /// By-value associated forms of the file-URL conversions, for callers
-        /// holding a `String` they are done with.
+        /// By-value associated forms of the free file-URL conversions.
         pub fn file_url_from_string(str: String) -> String {
             let mut input = str;
             URL__getFileURLString(&mut input)
@@ -167,13 +166,11 @@ pub mod whatwg {
         pub fn password(&self) -> String {
             URL__password(self)
         }
-        /// Returns the host WITHOUT the port (the opposite of JS `host`; the
-        /// with-port form is [`URL::hostname`]).
+        /// The host WITHOUT the port (opposite of JS `host`; with-port form is [`URL::hostname`]).
         pub fn host(&self) -> String {
             URL__host(self)
         }
-        /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
-        /// is guaranteed to be within the `u16` range.
+        /// `u32::MAX` when the port is unset; otherwise within the `u16` range.
         pub fn port(&self) -> u32 {
             URL__port(self)
         }
@@ -183,12 +180,10 @@ pub mod whatwg {
         pub fn deinit(&mut self) {
             URL__deinit(self)
         }
-        /// Raw-pointer form of [`URL::deinit`] for callers releasing an owned
-        /// `NonNull<URL>` (scopeguards).
+        /// Raw-pointer form of [`URL::deinit`].
         ///
         /// # Safety
-        /// `this` must be a valid owned pointer from `from_string`/`from_utf8`/
-        /// `from_js`, freed exactly once.
+        /// `this` must be an owned pointer from `from_string`/`from_utf8`/`from_js`, freed once.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is valid and owned.
             unsafe { URL__deinit(&mut *this) }

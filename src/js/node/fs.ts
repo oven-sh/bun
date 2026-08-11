@@ -304,6 +304,9 @@ var access = function access(path, mode, callback) {
           length = buffer.byteLength - offsetOrOptions,
           position = null,
         } = offsetOrOptions ?? {});
+      } else if (typeof offsetOrOptions === "function") {
+        // fs.write(fd, buffer, callback)
+        offsetOrOptions = 0;
       }
 
       fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
@@ -517,8 +520,10 @@ var access = function access(path, mode, callback) {
     try {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
-        if (typeof offset === "object" && offset !== null) {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+        // `null` takes the options path, discarding `length` and `position`:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L884-L890
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
           return fs.writeSync(fd, buffer, offset, length, position);
         }
         return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);

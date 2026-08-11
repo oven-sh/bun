@@ -5153,6 +5153,14 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
+        // Every candidate below is built in a PathBuffer: `cleaned`, the "./"-prefixed
+        // copy, and `check_path`'s `<path>/index` probe (the longest; its join may also
+        // use one spare byte). A specifier that does not fit is simply not remapped;
+        // ordinary resolution bounds its own buffers.
+        if input_path.len() + BROWSER_MAP_INDEX_SUFFIX.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+
         // Normalize the path so we can compare against it without getting confused by "./"
         let cleaned = self
             .fs_ref()
@@ -6716,6 +6724,10 @@ pub(crate) struct BrowserMapPath<'b> {
     pub(crate) map: &'b BrowserMap,
 }
 
+/// The longest thing the browser-map lookup appends to a candidate path; it
+/// sizes the length guard in `Resolver::check_browser_map`.
+const BROWSER_MAP_INDEX_SUFFIX: &str = const_format::concatcp!(SEP_STR, "index");
+
 impl<'b> BrowserMapPath<'b> {
     /// On a match only `self.remapped` is updated; the matched candidate may
     /// borrow threadlocal scratch buffers and must never be stored back into
@@ -6762,10 +6774,7 @@ impl<'b> BrowserMapPath<'b> {
 
         let index_path: &[u8] = {
             let trimmed = strings::trim_right(path_to_check, &[SEP]);
-            let parts = [
-                trimmed,
-                const_format::concatcp!(SEP_STR, "index").as_bytes(),
-            ];
+            let parts = [trimmed, BROWSER_MAP_INDEX_SUFFIX.as_bytes()];
             ResolvePath::join_string_buf(
                 bufs!(tsconfig_base_url),
                 &parts,

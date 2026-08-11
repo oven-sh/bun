@@ -2601,8 +2601,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 if j > 0 && matches!(code[j - 1], b')' | b']' | b'}' | b'"' | b'\'' | b'`') {
                     true
                 } else if j > 0 && is_word_char(code[j - 1]) {
-                    // `x !` is postfix; `return !` is a prefix after a keyword,
-                    // unless the keyword lookalike is a member name (`o.in!`).
+                    // `x !` and `o.in!` are postfix; `return !` is a prefix.
                     let end = j;
                     while j > 0 && is_word_char(code[j - 1]) {
                         j -= 1;
@@ -2624,8 +2623,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 if j > 0 && code[j - 1] == b'/' {
                     true
                 } else if j > 0 && is_word_char(code[j - 1]) {
-                    // A tag/type name (dotted, hyphenated, or namespaced) is one
-                    // preceded by `<` or `/`; `a > /re/` is not.
+                    // A tag/type name (dots/hyphens/colons ok) follows `<` or `/`; `a >` does not.
                     while j > 0
                         && (is_word_char(code[j - 1]) || matches!(code[j - 1], b'.' | b'-' | b':'))
                     {

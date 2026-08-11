@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
-import { join } from "path";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
+import { join, sep } from "path";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -766,6 +766,147 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+describe.concurrent("compile with an outfile longer than a path buffer", () => {
+  // The executable's path (`outdir` + `compile.outfile`) is resolved into a fixed-size
+  // path buffer. That used to be unchecked, so an over-long value took the whole
+  // process down instead of failing the build:
+  //   panic: range end index 5022 out of range for slice of length 4095
+  // Hence every case here runs in a child process. 100_000 bytes is longer than the
+  // buffer on every platform (about 96 KiB on Windows); 5000, the length from the
+  // report, is longer than it on POSIX only (4 KiB on Linux, 1 KiB on macOS). On
+  // Windows a 5000-byte name fits the buffer and fails later, when the file is moved.
+  const lengths = isWindows ? [100_000] : [5000, 100_000];
+
+  // `options` is evaluated in the child with `long` (the over-long string), `dir`
+  // (the temp directory) and `sep` in scope; `shown` is the path the error quotes.
+  const variants: Record<string, { options: string; shown: (long: string, dir: string) => string }> = {
+    "relative compile.outfile": {
+      options: `{ compile: { outfile: long } }`,
+      shown: long => long,
+    },
+    "compile.outfile inside outdir": {
+      options: `{ outdir: "dist", compile: { outfile: long } }`,
+      shown: long => `dist${sep}${long}`,
+    },
+    "short compile.outfile inside an over-long outdir": {
+      options: `{ outdir: long, compile: { outfile: "app" } }`,
+      shown: long => `${long}${sep}app`,
+    },
+    "absolute compile.outfile": {
+      options: `{ compile: { outfile: dir + sep + long } }`,
+      shown: (long, dir) => `${dir}${sep}${long}`,
+    },
+  };
+
+  const matrix = Object.keys(variants).flatMap(name => lengths.map(length => [name, length] as const));
+
+  test.each(matrix)("Bun.build: %s of %d bytes fails the build", async (name, length) => {
+    const { options, shown } = variants[name];
+    using dir = tempDir("build-compile-long-outfile", {
+      "app.js": `console.log("never compiled");`,
+    });
+    const long = Buffer.alloc(length, "a").toString();
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const long = Buffer.alloc(${length}, "a").toString();
+         const dir = ${JSON.stringify(String(dir))};
+         const sep = ${JSON.stringify(sep)};
+         const result = await Bun.build({ entrypoints: ["./app.js"], throw: false, ...${options} });
+         console.log(JSON.stringify({
+           success: result.success,
+           outputs: result.outputs.length,
+           logs: result.logs.map(log => log.message),
+         }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      outputs: 0,
+      logs: [`Failed to resolve compile.outfile "${shown(long, String(dir))}": ENAMETOOLONG`],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build: the default throw rejects with the same error", async () => {
+    using dir = tempDir("build-compile-long-outfile-throw", {
+      "app.js": `console.log("never compiled");`,
+    });
+    const long = Buffer.alloc(100_000, "a").toString();
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const long = Buffer.alloc(100_000, "a").toString();
+         try {
+           await Bun.build({ entrypoints: ["./app.js"], compile: { outfile: long } });
+           console.log("resolved");
+         } catch (error) {
+           console.log(JSON.stringify({
+             name: error.constructor.name,
+             message: error.message,
+             errors: error.errors.map(e => e.message),
+           }));
+         }`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "AggregateError",
+      message: "Bundle failed",
+      errors: [`Failed to resolve compile.outfile "${long}": ENAMETOOLONG`],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The CLI hands --outfile to the same executable writer without resolving it first,
+  // so this exercises the writer's own handling of an over-long name. 5000 bytes still
+  // fits in a command line on every platform (100_000 would not on Windows) and exceeds
+  // the buffers involved: a 4 KiB join buffer on Windows, PATH_MAX-sized ones on POSIX.
+  test("bun build --compile --outfile of 5000 bytes fails instead of crashing", async () => {
+    using dir = tempDir("build-compile-long-outfile-cli", {
+      "app.js": `console.log("never compiled");`,
+    });
+    const long = Buffer.alloc(5000, "a").toString();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", long],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (isWindows) {
+      // Resolved against the cwd and given the .exe suffix, then rejected by the OS.
+      expect(stderr).toContain("failed to move executable to ");
+      expect(stderr).toContain(`${sep}${long}.exe: `);
+    } else {
+      expect(stderr).toContain(` to ${long}: ENAMETOOLONG`);
+      // The temporary copy of the executable is removed again on failure.
+      expect(readdirSync(String(dir))).toEqual(["app.js"]);
+    }
+    expect(exitCode).toBe(1);
+  }, 60_000);
 });
 
 // file command test works well

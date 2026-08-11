@@ -27,7 +27,7 @@ use bun_jsc::WorkPool;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf_checked, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::BackRef;
 use bun_ptr::RefCount;
@@ -315,23 +315,25 @@ impl JSBundleCompletionTask {
         // correctly with PE metadata operations.
         // Add .exe extension for Windows targets if not already present.
         let full_outfile_path: Box<[u8]> = {
-            let outdir_slice = &self.config.outdir.list;
-            let outfile_slice = &compile_options.outfile.list;
-            let joined: &[u8] = if !outdir_slice.is_empty() {
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outdir_slice, outfile_slice],
-                )
-            } else if paths::is_absolute(outfile_slice) {
-                outfile_slice
+            let outdir_slice: &[u8] = &self.config.outdir.list;
+            let outfile_slice: &[u8] = &compile_options.outfile.list;
+            let parts: &[&[u8]] = if outdir_slice.is_empty() {
+                &[outfile_slice]
             } else {
-                // For relative paths, ensure we make them absolute relative to the current working directory
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outfile_slice],
-                )
+                &[outdir_slice, outfile_slice]
+            };
+            // An absolute outfile goes through the join too: everything downstream
+            // (`to_bytes`, `to_executable`) copies pieces of this path into fixed
+            // path buffers, so the bound has to hold for every branch.
+            let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
+                top_level_dir,
+                &mut outbuf[..],
+                parts,
+            ) else {
+                return CompileResult::fail_fmt(format_args!(
+                    "Failed to resolve compile.outfile {}: ENAMETOOLONG",
+                    bun_core::fmt::quote(&parts.join(&SEP))
+                ));
             };
             if compile_options.compile_target.os == OperatingSystem::Windows
                 && !joined.ends_with(b".exe")

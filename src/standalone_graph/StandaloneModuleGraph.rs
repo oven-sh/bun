@@ -1949,10 +1949,28 @@ pub fn to_executable(
                 )));
             }
         };
-        let dest_path = if bun_paths::is_absolute(outfile) {
+        let mut dest_buf = bun_paths::path_buffer_pool::get();
+        let dest_path: &[u8] = if bun_paths::is_absolute(outfile) {
             outfile
         } else {
-            path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
+            // `outfile` is `--outfile` verbatim, and the thread-local buffer behind
+            // `join_abs_string` is 4 KiB, far less than a `PathBuffer` on Windows.
+            match path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                cwd_path,
+                &mut dest_buf[..],
+                &[outfile],
+            ) {
+                Some(p) => p,
+                None => {
+                    if fd != Fd::INVALID {
+                        fd.close();
+                    }
+                    return Ok(CompileResult::fail_fmt(format_args!(
+                        "failed to move executable to {}: ENAMETOOLONG",
+                        bstr::BStr::new(outfile)
+                    )));
+                }
+            }
         };
 
         // Convert paths to Windows UTF-16
@@ -2058,12 +2076,13 @@ pub fn to_executable(
         };
         let mut temp_posix_buf = PathBuffer::uninit();
         let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
-        let outfile_basename = bun_paths::basename(outfile);
-        let mut outfile_posix_buf = PathBuffer::uninit();
-        let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
+        // Not `resolve_path::z` into a `PathBuffer`: `--outfile` is unbounded user
+        // input, and `z` turns a name that does not fit into "" (so the rename
+        // reports ENOENT, or panics in debug builds) instead of ENAMETOOLONG.
+        let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
 
         if let Err(e) =
-            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
+            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
             fd.close();
 

@@ -921,14 +921,14 @@ impl IoRequestLoop {
         let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
-        // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
+        // and stay in raw-ptr land via `addr_of!` so we never materialize
         // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
-        // borrow. `pending.push` takes `&self` (lock-free MPSC); `waker.wake`
-        // is async-signal-safe by design.
+        // borrow. `pending.push` and `waker.wake` both take `&self` (lock-free
+        // MPSC push; eventfd write / mach_msg send / uv_async_send).
         unsafe {
             let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);
-            (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
+            (*core::ptr::addr_of!((*loop_p).waker)).wake();
         }
     }
 
@@ -2043,7 +2043,7 @@ pub mod waker {
             }
         }
 
-        pub fn wake(&mut self) {
+        pub fn wake(&self) {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
 

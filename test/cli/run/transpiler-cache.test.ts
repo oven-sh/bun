@@ -251,27 +251,127 @@ describe("transpiler cache", () => {
   });
 });
 
-test("rejects cached module records containing out-of-range string indices", () => {
-  // When test isolation is enabled, the runtime transpiler cache stores a
-  // serialized ES module record ("esm_record") alongside the transpiled
-  // output. The string indices inside that record are used to index an
-  // identifier table when the record is converted back into a JSC module
-  // record, so any index beyond the table length (other than the reserved
-  // *-default / *-namespace sentinels near u32::MAX) must be rejected.
-  //
-  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
-  // Serialized module record layout (src/bundler/analyze_transpiled_module.rs,
-  // serialize()):
-  //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
-  //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+// The runtime transpiler cache stores a serialized ES module record
+// ("esm_record") alongside the transpiled output of every ES module.
+//
+// Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+//   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+//   then twelve u64 fields; esm_record_byte_offset @ 78,
+//   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+// Serialized module record layout (src/js_printer/lib.rs,
+// ModuleInfoDeserialized::serialize):
+//   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
+//   [buffer_len u32][buffer: u32 string index x buffer_len]
+//   [requested_modules_len u32][keys u32 x n][values u32 x n][phases u8 x n][pad to 4]
+//   [flags u8][pad 3]
+//   [strings_len u32][string byte lengths u32 x strings_len][string bytes]
+const ESM_RECORD_BYTE_OFFSET_AT = 78;
+const ESM_RECORD_BYTE_LENGTH_AT = 86;
+const ESM_RECORD_HASH_AT = 94;
+const METADATA_SIZE = 102;
 
+// src/js_printer/lib.rs RecordKind discriminants and payload lengths.
+const RECORD_KIND = {
+  ImportInfoSingle: 0,
+  ImportInfoSingleTypeScript: 1,
+  ImportInfoNamespace: 2,
+  ExportInfoIndirect: 3,
+  ExportInfoLocal: 4,
+  ExportInfoNamespace: 5,
+  ExportInfoStar: 6,
+  ImportInfoNamespaceDefer: 7,
+} as const;
+const RECORD_LEN = [4, 4, 4, 4, 4, 3, 2, 4] as const;
+const RECORD_KIND_NAME = Object.fromEntries(Object.entries(RECORD_KIND).map(([name, kind]) => [kind, name]));
+
+function readModuleRecord(file: string): { kind: string; name: string }[] | null {
+  const data = readFileSync(file);
+  if (data.length < METADATA_SIZE) return null;
+  const esmOff = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_OFFSET_AT));
+  const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
+  if (esmLen === 0) return null;
+  const record = data.subarray(esmOff, esmOff + esmLen);
+
+  let off = 0;
+  const recordKindsLen = record.readUInt32LE(off);
+  off += 4;
+  const kinds = record.subarray(off, off + recordKindsLen);
+  off += recordKindsLen + ((4 - (recordKindsLen % 4)) % 4);
+  const bufferLen = record.readUInt32LE(off);
+  off += 4;
+  const buffer = record.subarray(off, off + bufferLen * 4);
+  off += bufferLen * 4;
+  const requestedModulesLen = record.readUInt32LE(off);
+  off += 4 + requestedModulesLen * 4 * 2 + requestedModulesLen;
+  off += (4 - (requestedModulesLen % 4)) % 4;
+  off += 4; // flags + padding
+  const stringsLen = record.readUInt32LE(off);
+  off += 4;
+  const strings: string[] = [];
+  let stringOff = off + stringsLen * 4;
+  for (let i = 0; i < stringsLen; i++) {
+    const len = record.readUInt32LE(off + i * 4);
+    strings.push(record.toString("utf8", stringOff, stringOff + len));
+    stringOff += len;
+  }
+
+  // The first slot of every record names what it declares: the module
+  // specifier for imports and star exports, the export name otherwise.
+  const records: { kind: string; name: string }[] = [];
+  let slot = 0;
+  for (const kind of kinds) {
+    records.push({ kind: RECORD_KIND_NAME[kind], name: strings[buffer.readUInt32LE(slot * 4)] });
+    slot += RECORD_LEN[kind];
+  }
+  return records;
+}
+
+test("module records list local exports last, in export name order", async () => {
+  // JSC sorts the export entries by name every time it builds a module
+  // namespace object, and its sort degrades badly when the entries arrive in
+  // source order (see ModuleInfo::finalize in src/js_printer/lib.rs). The
+  // printer therefore canonicalizes the record: everything else stays in
+  // source order, local exports follow sorted by name.
+  const filler = ("// " + "x".repeat(120) + "\n").repeat(40);
+  writeFileSync(
+    join(temp_dir, "lib.js"),
+    `import { join } from "node:path";
+export const zeta = 1;
+export { join as pathJoin };
+export function alpha() {}
+export { basename as renamedBasename } from "node:path";
+export let mid = 2;
+export default 3;
+${filler}`,
+  );
+  writeFileSync(
+    join(temp_dir, "main.js"),
+    `import * as lib from "./lib.js";\nconsole.log(Object.keys(lib).join(","));`,
+  );
+
+  expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn("alpha,default,mid,pathJoin,renamedBasename,zeta");
+
+  const records = readdirSync(cache_dir)
+    .map(name => readModuleRecord(join(cache_dir, name)))
+    .filter(records => records !== null);
+  expect(records).toEqual([
+    [
+      { kind: "ImportInfoSingle", name: "node:path" },
+      { kind: "ExportInfoIndirect", name: "pathJoin" },
+      { kind: "ExportInfoIndirect", name: "renamedBasename" },
+      { kind: "ExportInfoLocal", name: "alpha" },
+      { kind: "ExportInfoLocal", name: "default" },
+      { kind: "ExportInfoLocal", name: "mid" },
+      { kind: "ExportInfoLocal", name: "zeta" },
+    ],
+  ]);
+});
+
+test("rejects cached module records containing out-of-range string indices", () => {
+  // The string indices inside the record are used to index an identifier
+  // table when the record is converted back into a JSC module record, so any
+  // index beyond the table length (other than the reserved *-default /
+  // *-namespace sentinels near u32::MAX) must be rejected.
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
     if (data.length < METADATA_SIZE) return false;

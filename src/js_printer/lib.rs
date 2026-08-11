@@ -620,6 +620,7 @@ pub mod analyze_transpiled_module {
                     self.record_kinds[idx] = RecordKind::ImportInfoSingleTypeScript;
                 }
             }
+            self.move_local_exports_last_in_name_order();
             // Build-time indexes only; the runtime may keep this struct alive until
             // the module is evaluated, so drop them and trim the rest now.
             self.strings_map = HashMap::default();
@@ -634,6 +635,67 @@ pub mod analyze_transpiled_module {
             self.requested_modules.phases.shrink_to_fit();
             self.finalized = true;
             Ok(())
+        }
+
+        /// JSC keeps export entries in insertion order and `std::sort`s them when
+        /// it builds the namespace object. Its own analyzer inserts local exports
+        /// in hash-table order; the printer sees them in source order, and on
+        /// inputs like `a0, a1, ..., a9999` introsort falls back to heapsort,
+        /// making `import()` of a wide module measurably slower than JSC's own
+        /// analysis. Hand JSC the sort's best case instead: local exports after
+        /// every other record, already in byte order of their export name. The
+        /// remaining records keep their relative order, so which unresolvable
+        /// indirect export gets reported first is unchanged.
+        fn move_local_exports_last_in_name_order(&mut self) {
+            let is_local = |k: &RecordKind| *k == RecordKind::ExportInfoLocal;
+            if self.record_kinds.iter().filter(|k| is_local(k)).count() < 2 {
+                return;
+            }
+
+            let mut record_offsets: Vec<usize> = Vec::with_capacity(self.record_kinds.len());
+            let mut offset = 0usize;
+            for k in &self.record_kinds {
+                record_offsets.push(offset);
+                offset += k.len();
+            }
+
+            let mut string_offsets: Vec<usize> = Vec::with_capacity(self.strings_lens.len() + 1);
+            let mut string_end = 0usize;
+            string_offsets.push(string_end);
+            for &len in &self.strings_lens {
+                string_end += len as usize;
+                string_offsets.push(string_end);
+            }
+            let strings_buf = &self.strings_buf;
+            let name = |id: StringID| -> &[u8] {
+                match (
+                    string_offsets.get(id.0 as usize),
+                    string_offsets.get(id.0 as usize + 1),
+                ) {
+                    (Some(&start), Some(&end)) => &strings_buf[start..end],
+                    _ => &[],
+                }
+            };
+
+            let kinds = &self.record_kinds;
+            let buffer = &self.buffer;
+            // Export name is the first slot of every export record.
+            let export_name = |record: usize| name(buffer[record_offsets[record]]);
+            let mut locals: Vec<usize> =
+                (0..kinds.len()).filter(|&r| is_local(&kinds[r])).collect();
+            locals.sort_by(|&a, &b| export_name(a).cmp(export_name(b)));
+
+            let mut new_kinds: Vec<RecordKind> = Vec::with_capacity(kinds.len());
+            let mut new_buffer: Vec<StringID> = Vec::with_capacity(buffer.len());
+            let others = (0..kinds.len()).filter(|&r| !is_local(&kinds[r]));
+            for record in others.chain(locals.iter().copied()) {
+                let kind = kinds[record];
+                let start = record_offsets[record];
+                new_kinds.push(kind);
+                new_buffer.extend_from_slice(&buffer[start..start + kind.len()]);
+            }
+            self.record_kinds = new_kinds;
+            self.buffer = new_buffer;
         }
     }
 }

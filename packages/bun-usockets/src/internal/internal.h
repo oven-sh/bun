@@ -308,10 +308,12 @@ struct us_socket_t {
    * already dispatched to the user layer; both EOF paths can fire for one
    * connection, and the end handler must run once. */
   unsigned char ssl_end_delivered : 1;
-  /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
-   * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
-   * SSL must not be freed under BoringSSL's feet - the detach is deferred to
-   * the driver's epilogue via ssl_pending_detach. */
+  /* Set while SSL_do_handshake/SSL_read/SSL_write is on the stack: JS run from
+   * inside those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and
+   * the SSL must not be freed under BoringSSL's feet - the detach is deferred
+   * to the driver's epilogue via ssl_pending_detach. A write issued while the
+   * bit is set is parked (us_internal_ssl_write) rather than re-entering
+   * BoringSSL on the SSL the outer call is still working on. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */

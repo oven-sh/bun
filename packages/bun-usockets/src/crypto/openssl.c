@@ -2478,6 +2478,18 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     return 0;
   }
 
+  /* Written from a callback that SSL_do_handshake/SSL_read on this very
+   * socket is running (the server ALPN/SNI selection hands the socket to
+   * JS): SSL_write would re-enter BoringSSL on the SSL* that call is still
+   * working on, which fails the handshake with internal_error. Park it like
+   * any other write issued before the handshake is done (the WANT_READ case
+   * below): the caller buffers, and the driver's ssl_retry_parked_write
+   * dispatches writable once the handshake completes. */
+  if (s->ssl_in_use) {
+    s->ssl_write_wants_read = 1;
+    return 0;
+  }
+
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   /* Earlier batched records of ours must reach the wire before anything new:
@@ -2506,7 +2518,24 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+    /* SSL_write drives the handshake while it is pending, so it is a driver
+     * like SSL_do_handshake/SSL_read above and follows the same protocol: a
+     * close requested from inside it is deferred to this epilogue. */
+    s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    s->ssl_in_use = 0;
+    if (s->ssl_pending_detach) {
+      /* The socket was destroyed from inside this call. The connection is
+       * being dropped, so the records this write sealed are discarded along
+       * with whatever the BIO swallowed after the close was requested, and
+       * the caller sees 0 like any other write to a socket that is going
+       * away. */
+      loop_ssl_data->ssl_write_batching = 0;
+      loop_ssl_data->ssl_write_batch_len = 0;
+      s->ssl_pending_detach = 0;
+      us_socket_close(s, s->ssl_pending_close_code, NULL);
+      return 0;
+    }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;

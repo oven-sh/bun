@@ -1448,6 +1448,98 @@ it("TLS mid-read boundary dispatch: writing to another TLS socket from data() do
   }
 }, 60_000);
 
+describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
+  // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /
+  // SNICallback go through. Both run from inside the read that is processing
+  // the ClientHello and hand the accepted socket to JS, so a write() there
+  // lands on a TLS engine that is mid-handshake on this very socket. It gets
+  // the same treatment as any other write issued before the handshake is done:
+  // nothing is consumed (write() reports 0) and drain() fires once the
+  // handshake completes. Encrypting it on the spot instead re-entered the
+  // engine and failed the handshake (client: TLSV1_ALERT_INTERNAL_ERROR).
+  const MESSAGE = "written-from-drain;";
+  const cases: Array<[string, (attempt: (socket: Socket) => void) => object, string | false]> = [
+    [
+      "alpnCallback",
+      attempt => ({
+        alpnCallback(socket: Socket) {
+          attempt(socket);
+          return "x/1";
+        },
+      }),
+      "x/1",
+    ],
+    [
+      "serverName",
+      attempt => ({
+        serverName(_listenerData: unknown, _servername: string, socket: Socket) {
+          attempt(socket);
+        },
+      }),
+      false,
+    ],
+  ];
+  for (const [hook, selection, expectedAlpn] of cases) {
+    it(`${hook}: the write is parked and the handshake still completes`, async () => {
+      const events: string[] = [];
+      const serverSideClosed = Promise.withResolvers<void>();
+      let pending = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          ...selection(socket => {
+            const written = socket.write(MESSAGE);
+            events.push(`write:${written}`);
+            pending = MESSAGE.slice(written);
+          }),
+          handshake(socket, success) {
+            events.push(`handshake:${success}`);
+            if (!pending) socket.end();
+          },
+          drain(socket) {
+            events.push("drain");
+            pending = pending.slice(socket.write(pending));
+            if (!pending) socket.end();
+          },
+          data() {},
+          error(_socket, err) {
+            events.push(`error:${err.message}`);
+          },
+          close() {
+            events.push("close");
+            serverSideClosed.resolve();
+          },
+        },
+      });
+
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        ca: tls.cert,
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+      });
+      const received = await new Promise<string>(resolve => {
+        let data = "";
+        client.setEncoding("utf8");
+        client.on("data", chunk => (data += chunk));
+        client.on("end", () => resolve(data));
+        client.on("error", err => resolve(`client error: ${err.message}`));
+      });
+      client.end();
+      await serverSideClosed.promise;
+
+      expect({ received, alpn: client.alpnProtocol, events }).toEqual({
+        received: MESSAGE,
+        alpn: expectedAlpn,
+        events: ["write:0", "handshake:true", "drain", "close"],
+      });
+    });
+  }
+});
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on

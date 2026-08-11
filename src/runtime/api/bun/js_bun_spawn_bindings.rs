@@ -2276,14 +2276,16 @@ impl CgroupTarget {
     }
 
     fn is_frozen(dir: Fd) -> bool {
-        // `cgroup.freeze` is the requested state, set before `cgroup.events`
-        // reports `frozen 1`; new children are trapped as soon as it is 1.
-        match sys::File::read_from(dir, b"cgroup.freeze") {
-            Ok(freeze) => freeze.starts_with(b"1"),
-            // Not cgroup2; v1 only freezes where the freezer controller is
-            // co-mounted, and reports THAWED / FREEZING / FROZEN.
-            Err(_) => sys::File::read_from(dir, b"freezer.state")
-                .is_ok_and(|state| !state.starts_with(b"THAWED")),
+        // v2: `cgroup.freeze` is this cgroup's own request (set before freezing
+        // completes); `cgroup.events` `frozen 1` is the effective state,
+        // including a freeze inherited from an ancestor.
+        if let Ok(freeze) = sys::File::read_from(dir, b"cgroup.freeze") {
+            return freeze.starts_with(b"1")
+                || sys::File::read_from(dir, b"cgroup.events")
+                    .is_ok_and(|events| strings::contains(&events, b"frozen 1"));
         }
+        // v1 only freezes where the freezer controller is co-mounted, and
+        // reports THAWED / FREEZING / FROZEN (effective state).
+        sys::File::read_from(dir, b"freezer.state").is_ok_and(|state| !state.starts_with(b"THAWED"))
     }
 }

@@ -236,6 +236,15 @@ describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () =>
     expect(() => Bun.spawnSync({ cmd: ["true"], cgroup: String(v2) })).toThrow(
       expect.objectContaining({ code: "EBUSY", path: String(v2) }),
     );
+    // Frozen through an ancestor: own cgroup.freeze is 0, cgroup.events says frozen.
+    using v2ancestor = tempDir("spawn-cgroup", {
+      "cgroup.procs": "",
+      "cgroup.freeze": "0\n",
+      "cgroup.events": "populated 1\nfrozen 1\n",
+    });
+    expect(() => Bun.spawnSync({ cmd: ["true"], cgroup: String(v2ancestor) })).toThrow(
+      expect.objectContaining({ code: "EBUSY" }),
+    );
     using v1 = tempDir("spawn-cgroup", { "cgroup.procs": "", "freezer.state": "FREEZING\n" });
     expect(() => Bun.spawnSync({ cmd: ["true"], cgroup: String(v1) })).toThrow(
       expect.objectContaining({ code: "EBUSY" }),

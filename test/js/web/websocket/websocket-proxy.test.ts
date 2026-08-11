@@ -843,7 +843,7 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
     expect(exitCode).toBe(0);
   });
 
-  describe("IPv6 literal target", () => {
+  describe.skipIf(!harness.hasIPv6Loopback())("IPv6 literal target", () => {
     // ws://[::1]/ hands the matcher the bracketed host "[::1]"; NO_PROXY lists
     // conventionally hold the bare address (NO_PROXY=localhost,127.0.0.1,::1),
     // and Bun used to match only the bracketed spelling. Same setup as above:

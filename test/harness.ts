@@ -1661,6 +1661,26 @@ export function isIPv4() {
   return isIP("IPv4");
 }
 
+let ipv6Loopback: boolean | undefined;
+
+/**
+ * Whether a server can bind `::1`. Unlike {@link isIPv6}, which reports
+ * interface addresses and is pinned to false on BuildKite Linux, this only
+ * asks for the IPv6 loopback, which is all a test talking to `[::1]` needs
+ * and is what IPv6-disabled containers lack.
+ */
+export function hasIPv6Loopback(): boolean {
+  if (ipv6Loopback === undefined) {
+    try {
+      using _listener = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+      ipv6Loopback = true;
+    } catch {
+      ipv6Loopback = false;
+    }
+  }
+  return ipv6Loopback;
+}
+
 let glibcVersion: string | undefined;
 
 export function getGlibcVersion() {

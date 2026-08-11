@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, hasIPv6Loopback, isASAN, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -2164,7 +2164,7 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   });
 });
 
-describe.concurrent("NO_PROXY matches an IPv6 literal target with or without brackets", () => {
+describe.concurrent.skipIf(!hasIPv6Loopback())("NO_PROXY matches an IPv6 literal with or without brackets", () => {
   // The URL hands the matcher the bracketed hostname ("[::1]" for
   // http://[::1]/), while NO_PROXY lists conventionally hold the bare address
   // (NO_PROXY=localhost,127.0.0.1,::1 is what curl, Go and node:http read).

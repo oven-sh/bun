@@ -343,9 +343,7 @@ impl Lookup {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            // `name` comes from the source map's `sources` array, so the joined
-            // path can be longer than any path buffer; it is a display string,
-            // so it is produced at whatever length it has.
+            // `name` is unbounded source map data; the result is only displayed.
             let mut spill = Vec::new();
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs_string_spill::<bun_paths::platform::Auto>(
@@ -414,8 +412,8 @@ impl Lookup {
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             let mut buf = bun_paths::path_buffer_pool::get();
-            // `name` comes from the source map's `sources` array; a joined path
-            // that does not fit in a path buffer cannot be opened either way.
+            // `name` is unbounded source map data; a path that does not fit
+            // cannot be opened anyway.
             let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf[..], &[name])?;

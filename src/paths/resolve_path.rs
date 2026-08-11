@@ -1370,8 +1370,6 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
 
 /// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
 /// into `spill` (grown as needed). `spill` is untouched in the common case.
-/// Use this when `parts` may contain user-controlled input of arbitrary length
-/// and the result does not need to fit in a path buffer (display strings).
 pub fn join_abs_string_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     spill: &'a mut Vec<u8>,
@@ -1591,10 +1589,8 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Upper bound on the bytes `_join_abs_string_buf` writes for a `cwd` of
-/// `cwd_len` bytes and `parts`, whether the unnormalized concatenation or the
-/// normalized result plus sentinel: normalizing never grows a path by more
-/// than the slack included here.
+/// Buffer size that always holds `_join_abs_string_buf`'s output (and its
+/// unnormalized scratch) for `parts` joined onto a `cwd_len`-byte cwd.
 #[inline]
 fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2

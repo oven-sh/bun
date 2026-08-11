@@ -237,5 +237,8 @@ test("missing file throws the expected error", async () => {
       expect(resp).rejects.toThrow("no such file or directory");
     }
   });
+  // The rejection tracker keeps each promise alive until the end of the tick
+  // (a microtask is not enough), so yield one before forcing the collection.
+  await Bun.sleep(0);
   Bun.gc(true);
 });

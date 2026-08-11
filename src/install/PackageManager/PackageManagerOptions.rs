@@ -397,11 +397,8 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// Registry credentials are copied into the `Authorization` header byte for
-/// byte, so a CR, LF or NUL inside one would end that header line and turn the
-/// rest of the value into extra headers (or a second request) on every
-/// registry request. Every credential `load()` stores passes through here;
-/// `source` says where it was configured.
+/// Credentials are sent verbatim in `Authorization`; a CR, LF or NUL in one would
+/// smuggle extra header lines (or a second request) into every registry request.
 fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<()> {
     if !strings::contains_any(value, b"\r\n\0") {
         return Ok(());
@@ -410,9 +407,8 @@ fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<(
     Err(crate::Error::InstallFailed)
 }
 
-/// `Scope::from_api` is where `.npmrc` / bunfig credentials (including
-/// `$ENV_VAR` indirections and `:_authToken=` URL suffixes) take their final
-/// value, so the scope is checked as soon as it is built.
+/// Checked here rather than in the .npmrc / bunfig loaders: `$VAR` indirections
+/// and `:_authToken=` URL suffixes only resolve inside `from_api`.
 fn load_scope(
     name: &[u8],
     registry: Api::NpmRegistry,

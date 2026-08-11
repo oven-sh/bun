@@ -20,10 +20,6 @@ pub mod w_path_buffer_pool {
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
     }
-    #[inline]
-    pub(crate) fn put(buf: Box<WPathBuffer>) {
-        PathBufferPoolT::<WPathBuffer>::put(buf)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

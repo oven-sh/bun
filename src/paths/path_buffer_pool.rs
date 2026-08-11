@@ -10,6 +10,7 @@
 
 use core::cell::RefCell;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 
 use crate::{PathBuffer, WPathBuffer};
@@ -74,12 +75,12 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
         // Zero-allocate on the (rare) cache-miss path — see
         // `PoolStorage::new_boxed` for the soundness/perf justification.
         let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(T::new_boxed);
-        PoolGuard { buf: Some(buf) }
+        PoolGuard {
+            buf: ManuallyDrop::new(buf),
+        }
     }
 
-    /// Manual return path. Prefer dropping
-    /// the `PoolGuard` instead.
-    pub(crate) fn put(buf: Box<T>) {
+    fn put(buf: Box<T>) {
         T::with_pool(|p| {
             let mut p = p.borrow_mut();
             if p.len() < POOL_CAP {
@@ -92,30 +93,29 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
 /// RAII guard returned by `PathBufferPoolT::get()`.
 pub struct PoolGuard<T: PoolStorage> {
-    buf: Option<Box<T>>,
+    buf: ManuallyDrop<Box<T>>,
 }
 
 impl<T: PoolStorage> Deref for PoolGuard<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY-ish: `buf` is always `Some` until `Drop`.
-        self.buf.as_deref().unwrap()
+        &self.buf
     }
 }
 
 impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        self.buf.as_deref_mut().unwrap()
+        &mut self.buf
     }
 }
 
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        if let Some(buf) = self.buf.take() {
-            PathBufferPoolT::<T>::put(buf);
-        }
+        // SAFETY: `buf` is taken only here, and `drop` runs at most once.
+        let buf = unsafe { ManuallyDrop::take(&mut self.buf) };
+        PathBufferPoolT::<T>::put(buf);
     }
 }
 
@@ -125,26 +125,10 @@ pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
 pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
-/// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
-/// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
-}
-#[inline]
-pub(crate) fn put(buf: Box<PathBuffer>) {
-    PathBufferPoolT::<PathBuffer>::put(buf)
-}
-
-impl<T: PoolStorage> PoolGuard<T> {
-    /// Extract the `Box` without returning it to the pool (for `ManuallyDrop`
-    /// owners that will `put` explicitly later). `Drop` is a no-op once `buf`
-    /// is `None`, so no leak.
-    #[inline]
-    pub(crate) fn into_box(mut self) -> Box<T> {
-        self.buf.take().unwrap()
-    }
 }
 
 #[cfg(windows)]

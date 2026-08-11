@@ -875,7 +875,7 @@ impl WatcherAtomics {
             {
                 debug_assert!(
                     (*this).dbg_watcher_event.is_none(),
-                    "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
+                    "must call `watcher_release_and_submit_event` before calling `watcher_acquire_event` again",
                 );
                 (*this).dbg_watcher_event = Some(ev);
             }

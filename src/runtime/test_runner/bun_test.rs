@@ -754,7 +754,7 @@ impl BunTest {
 
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
-        // and round-tripped via `asPromisePtr`; we adopt the +1 it carried.
+        // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
         let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
         // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {

@@ -1785,7 +1785,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         );
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
         scopeguard::defer! { unsafe { StaticRoute::deref_(response) } };
-        // SAFETY: `response` is live until `_deref` runs after this returns.
+        // SAFETY: `response` is live until the deferred `deref_` runs after this returns.
         unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
         return;
     }
@@ -3861,7 +3861,7 @@ pub(super) fn finalize_bundle(
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
-            // it is only set to `None` inside `_outer_defer`, which runs after
+            // it is only set to `None` inside the outer `finalize_bundle_cleanup` defer, which runs after
             // every use of this macro. `dev.current_bundle` is never reassigned
             // (so the inner `CurrentBundle` is not moved) between here and the
             // outer-defer.
@@ -4620,12 +4620,12 @@ pub(super) fn finalize_bundle(
         let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
             dev.inspector().map(std::ptr::from_ref);
         if current_bundle!().promise.strong.has_value() {
-            // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
+            // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
             // Note: copy the raw ptr so `defer!`'s by-ref capture does not
             // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
             let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
             scopeguard::defer! {
-                // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until `_outer_defer` runs.
+                // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
                 unsafe { (*cb_ptr_defer).promise.reset() }
             };
             current_bundle!()
@@ -4829,12 +4829,12 @@ pub(super) fn finalize_bundle(
     }
 
     if current_bundle!().promise.strong.has_value() {
-        // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
+        // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
         // Note: copy the raw ptr so `defer!`'s by-ref capture does not
         // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
         let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
         scopeguard::defer! {
-            // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until `_outer_defer` runs.
+            // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
             unsafe { (*cb_ptr_defer).promise.deinit_idempotently() }
         };
         current_bundle!()

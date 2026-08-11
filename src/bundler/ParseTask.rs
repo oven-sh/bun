@@ -2272,7 +2272,7 @@ pub mod parse_worker {
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.resetStore()` and
+        // Error-path cleanup (`transpiler.reset_store()` and
         // `if (.fd) entry.deinit(arena)`) is reshaped into the
         // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
         // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that

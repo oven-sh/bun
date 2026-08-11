@@ -903,7 +903,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
         // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // (`get_or_put*`) passes the index just returned by
         // `push_entry` or `find_hash`.
         let (key_ptr, value_ptr) = unsafe {
             (

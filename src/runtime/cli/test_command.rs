@@ -3304,7 +3304,7 @@ impl TestCommand {
                         // `global_exit()` diverges, so the `exit_file()` defer
                         // above never fires. Release the active file's
                         // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
                         // then clear `RUNNER` so finalizers can't observe a
                         // partially-torn-down `TestRunner`.
                         // SAFETY: single-threaded; raw-ptr reborrow mirrors the

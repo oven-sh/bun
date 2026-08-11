@@ -1978,7 +1978,7 @@ pub fn init(
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `getFdPath` yields `\`, so
+        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.

@@ -923,7 +923,7 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     // Note: `Debugger::create` / `wait_for_debugger_if_necessary` live in
     // `bun_jsc::debugger::Debugger` (Debugger.rs); the heavy bodies (futex
     // spin, debugger-thread spawn, deadline poll-loop) are there. This hook
-    // is the literal `ensureDebugger` body — it owns the "is a debugger
+    // is the literal `VirtualMachine::ensure_debugger` body — it owns the "is a debugger
     // configured?" guard and the `block_until_connected` branch, then
     // delegates to those two fns.
     // SAFETY: `vm` is the live per-thread VM.
@@ -983,7 +983,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     {
         // SAFETY: per fn contract. `swap(0)` so a concurrent
         // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick_concurrently`) can't be lost between
+        // `KeepAlive::unref_on_next_tick`) can't be lost between
         // the read and the reset.
         let pending_unref = unsafe { &*vm }
             .pending_unref_counter
@@ -1015,7 +1015,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     if state.is_null() {
         // No high-tier state (unit test) — fall back to a non-blocking I/O
         // poll. The uws loop must always be polled
-        // (`tickWithTimeout`/`tickWithoutIdle`); `EventLoop::tick()` would only
+        // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
         // SAFETY: `loop_` is the live per-thread uws loop.
         unsafe { (*loop_).tick_without_idle() };
@@ -1143,7 +1143,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     {
         // SAFETY: per fn contract. `swap(0)` so a concurrent
         // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick_concurrently`) can't be lost between
+        // `KeepAlive::unref_on_next_tick`) can't be lost between
         // the read and the reset.
         let pending_unref = unsafe { &*vm }
             .pending_unref_counter
@@ -1571,7 +1571,7 @@ unsafe fn apply_standalone_runtime_flags(
     // the concrete `Graph` (originally upcast from `&Graph`, so the data
     // pointer is `Graph`-aligned). Read-only downcast (`&*`, not `&mut *` —
     // the shared-ref provenance carries no write permission); the body only
-    // reads `graph.runtime_flags`.
+    // reads `graph.flags`.
     let graph = unsafe {
         &*std::ptr::from_ref::<dyn bun_resolver::StandaloneModuleGraph>(graph)
             .cast::<c_void>()
@@ -2255,7 +2255,7 @@ unsafe fn transpile_source_code(
         Err(_) => {
             // Note: on `error.ParseError` /
             // `error.AsyncModule` the caller (`Bun__transpileFile`) catches and
-            // routes through `processFetchLog`. Mirror that: write `.err` so the
+            // routes through `process_fetch_log`. Mirror that: write `.err` so the
             // low tier surfaces it; `process_fetch_log` is invoked by the
             // `transpile_file` hook, not here.
             // SAFETY: per fn contract.
@@ -3950,7 +3950,7 @@ unsafe fn fetch_builtin_module(
         if let Some(&entry) = unsafe { &*jsc_vm }.macro_entry_points.get(&id) {
             let entry = entry.cast::<MacroEntryPoint>();
             // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `js_run_macro_entry_point`; map ownership keeps it
+            // inserted by `load_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
@@ -4368,7 +4368,7 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     // backing arena (resolver-interned, or a prior `intern_transpile_path`
     // result) — no hash, no probe, no append.
     if Fs::FilenameStore::instance().exists(value) {
-        // SAFETY: `exists` is the pointer-range check `isSliceInBuffer` — the
+        // SAFETY: `exists` is a pointer-range check (like `is_slice_in_buffer`): the
         // bytes lie wholly within `FilenameStore`'s backing storage, which is
         // process-lifetime and never freed, so widening to `'static` is sound.
         // Same widening as `FilenameStore::append_slice` itself performs.
@@ -5214,7 +5214,7 @@ unsafe fn resolve<'a>(
         top_level_dir
     };
 
-    // `resolveAndAutoInstall` retry-on-not-found loop.
+    // `resolve_and_auto_install` retry-on-not-found loop.
     // SAFETY: `resolver.opts.global_cache` is a plain enum field.
     let global_cache = unsafe { &*vm }.transpiler.resolver.opts.global_cache;
     let kind = if is_esm {
@@ -5306,7 +5306,7 @@ unsafe fn resolve<'a>(
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the
-    // lifetime to `'a` so the caller can `cloneUTF8` it; the underlying bytes
+    // lifetime to `'a` so the caller can `clone_utf8` it; the underlying bytes
     // outlive the program.
     // SAFETY: `result_path.text` borrows the resolver's `'static` interned
     // string store; detaching the borrow lifetime is sound (see Note).
@@ -5373,7 +5373,7 @@ unsafe fn resolve_hook(
     let specifier_utf8 = specifier.to_utf8();
     let source_utf8 = source.to_utf8();
 
-    // `PluginRunner.onResolveJSC`.
+    // `plugin_runner::on_resolve_jsc`.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.plugin_runner.is_some() {
         use bun_bundler_jsc::PluginRunner as plugin_runner;

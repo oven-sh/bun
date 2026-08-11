@@ -746,10 +746,10 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
     let slice = if input.is_null() {
         &[][..]
     } else {
-        // SAFETY: as in `__transform`.
+        // SAFETY: as in `CompressionStreamCoder__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // SAFETY: as in `__transform`.
+    // SAFETY: as in `CompressionStreamCoder__transform`.
     match unsafe { (*this).transform(slice, finish) } {
         Ok(()) => {
             // SAFETY: as above; the sink copies before returning.
@@ -809,7 +809,7 @@ pub struct CompressionAsyncCtx {
 
 impl Drop for CompressionAsyncCtx {
     fn drop(&mut self) {
-        // SAFETY: `coder` was ref'd in `__transformAsync`; this ctx owns that
+        // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
         // reference and drops it exactly once (in `then`, or when the job is
         // released unrun / its off-thread part finishes after the VM is gone).
         unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
@@ -855,7 +855,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
             None => {
                 // SAFETY: `this` holds a coder reference until it drops at the
                 // end of this fn, so `coder` (and its `out` buffer) stay live
-                // while `deliverAsync` copies.
+                // while `Bun__CompressionStream__deliverAsync` copies.
                 let coder = unsafe { &*this.coder };
                 (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }

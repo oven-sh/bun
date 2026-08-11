@@ -1742,7 +1742,7 @@ impl<'a> LinkerContext<'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
+            // `transpiler_for_target` only reads `bundle.client_transpiler`.
             let bundle = unsafe {
                 &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
@@ -2977,7 +2977,7 @@ impl<'a> LinkerContext<'a> {
         log: &mut Log,
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scanImportsAndExports`; we only test `is_none()`.
+        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
         let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {

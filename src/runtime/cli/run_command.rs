@@ -1096,7 +1096,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.hot_reload = ctx.debug.hot_reload as u8;
 
         extern "C" fn trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
+            // SAFETY: `ctx` is `&mut RUN` passed through `hold_api_lock`'s
             // opaque slot; the API lock is held for the full call so no
             // other thread touches the VM.
             let this = unsafe { &mut *ctx.cast::<Run>() };
@@ -1233,7 +1233,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         extern "C" fn trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
+            // SAFETY: `ctx` is `&mut RUN` passed through `hold_api_lock`'s
             // opaque slot; the API lock is held for the full call.
             let this = unsafe { &mut *ctx.cast::<Run>() };
             this.start();
@@ -3893,7 +3893,7 @@ impl RunCommand {
             .map(|k| -> &'static [u8] {
                 // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
                 // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
+                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
                 // never runs `Drop`, so the boxed bytes live until process
                 // exit and erasing to `'static` is sound.
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }

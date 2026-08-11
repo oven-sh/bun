@@ -3584,6 +3584,210 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
   }
 });
 
+// Serves a single request with `onStream` (which must push synchronously and then respond) and
+// resolves with the PUSH_PROMISE header blocks the client received, in wire order: `fields` is the
+// flat [name, value, ...] list as decoded from the wire, `headers` the object form, both without
+// pseudo-headers. Every PUSH_PROMISE precedes the parent's response on the wire, so once the parent
+// response has ended every push has been observed.
+async function pushedHeaderBlocks(onStream, serverOptions) {
+  const server = http2.createServer(serverOptions);
+  server.on("stream", onStream);
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    const blocks = [];
+    client.on("stream", (pushed, headers, _flags, rawHeaders) => {
+      pushed.on("error", reject);
+      pushed.resume();
+      const fields = [];
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        if (!rawHeaders[i].startsWith(":")) fields.push(rawHeaders[i], rawHeaders[i + 1]);
+      }
+      blocks.push({
+        id: pushed.id,
+        path: headers[":path"],
+        sensitive: headers[http2.sensitiveHeaders],
+        headers: Object.fromEntries(Object.entries(headers).filter(([name]) => !name.startsWith(":"))),
+        fields,
+      });
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", reject);
+    req.on("end", resolve);
+    req.resume();
+    await promise;
+    client.close();
+    return blocks;
+  } finally {
+    server.close();
+  }
+}
+
+it("http2 pushStream sends an array-valued header as one field per element", async () => {
+  const blocks = await pushedHeaderBlocks(stream => {
+    stream.pushStream(
+      {
+        ":path": ["/pushed"],
+        "set-cookie": ["c1=1", "c2=2"],
+        "x-multi": ["a", "b"],
+        "x-number": [1, 2],
+        "x-one": ["only"],
+        "x-none": [],
+        "x-plain": "p",
+      },
+      (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      },
+    );
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  expect(blocks.length).toBe(1);
+  const [block] = blocks;
+  expect(block.path).toBe("/pushed");
+  expect(block.fields).toEqual([
+    ...["set-cookie", "c1=1", "set-cookie", "c2=2"],
+    ...["x-multi", "a", "x-multi", "b"],
+    ...["x-number", "1", "x-number", "2"],
+    ...["x-one", "only"],
+    ...["x-plain", "p"],
+  ]);
+  // The object form a receiver builds from those fields: set-cookie stays a list, other repeated
+  // fields are joined with ", ", and an empty array sends nothing at all.
+  expect(block.headers).toEqual({
+    "set-cookie": ["c1=1", "c2=2"],
+    "x-multi": "a, b",
+    "x-number": "1, 2",
+    "x-one": "only",
+    "x-plain": "p",
+  });
+});
+
+it("http2 pushStream never-indexes every element of a sensitive array-valued header", async () => {
+  const blocks = await pushedHeaderBlocks(stream => {
+    stream.pushStream(
+      { ":path": "/pushed", "x-secret": ["s1", "s2"], [http2.sensitiveHeaders]: ["x-secret"] },
+      (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      },
+    );
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  // The receiver lists a name once per field that arrived with the never-index flag.
+  expect(blocks.map(({ headers, sensitive }) => ({ secret: headers["x-secret"], sensitive }))).toEqual([
+    { secret: "s1, s2", sensitive: ["x-secret", "x-secret"] },
+  ]);
+});
+
+it("http2 pushStream throws ERR_HTTP2_HEADER_SINGLE_VALUE synchronously without reserving a stream", async () => {
+  const attempts = [
+    { ":path": "/pushed", "content-type": ["text/plain", "text/html"] },
+    { ":path": ["/a", "/b"] },
+    { ":path": "/pushed", "content-type": "text/plain", "Content-Type": "text/html" },
+  ];
+  const thrown = [];
+  let rejectedCallbackCalls = 0;
+  const blocks = await pushedHeaderBlocks(stream => {
+    for (const headers of attempts) {
+      try {
+        stream.pushStream(headers, () => rejectedCallbackCalls++);
+        thrown.push(null);
+      } catch (err) {
+        thrown.push({ name: err.constructor.name, code: err.code, message: err.message });
+      }
+    }
+    stream.pushStream({ ":path": "/after" }, (err, push) => {
+      if (err) {
+        stream.destroy(err);
+        return;
+      }
+      push.respond({ ":status": 200 });
+      push.end();
+    });
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  const singleValue = name => ({
+    name: "TypeError",
+    code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
+    message: `Header field "${name}" must only have a single value`,
+  });
+  expect(thrown).toEqual([singleValue("content-type"), singleValue(":path"), singleValue("content-type")]);
+  expect(rejectedCallbackCalls).toBe(0);
+  // The rejected attempts reserved nothing: the push that followed them got the first even id.
+  expect(blocks.map(({ id, path }) => ({ id, path }))).toEqual([{ id: 2, path: "/after" }]);
+});
+
+it("http2 pushStream sends each element of a single-value header when strictSingleValueFields is off", async () => {
+  const blocks = await pushedHeaderBlocks(
+    stream => {
+      stream.pushStream({ ":path": "/pushed", "content-type": ["text/plain", "text/html"] }, (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    },
+    { strictSingleValueFields: false },
+  );
+
+  expect(blocks.map(({ path, fields }) => ({ path, fields }))).toEqual([
+    { path: "/pushed", fields: ["content-type", "text/plain", "content-type", "text/html"] },
+  ]);
+});
+
+it("http2 pushStream reports an unsendable array element through the callback", async () => {
+  const results = [];
+  const blocks = await pushedHeaderBlocks(stream => {
+    const values = [
+      ["ok", "a\nb"],
+      ["ok", null],
+    ];
+    let pending = values.length;
+    for (const value of values) {
+      stream.pushStream({ ":path": "/pushed", "x-custom": value }, (err, push) => {
+        results.push(err ? { name: err.constructor.name, code: err.code, message: err.message } : "pushed");
+        if (push) {
+          push.respond({ ":status": 200 });
+          push.end();
+        }
+        if (--pending === 0) {
+          stream.respond({ ":status": 200 });
+          stream.end();
+        }
+      });
+    }
+  });
+
+  const invalidValue = {
+    name: "TypeError",
+    code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    message: 'Invalid value for header "x-custom"',
+  };
+  expect(results).toEqual([invalidValue, invalidValue]);
+  expect(blocks).toEqual([]);
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

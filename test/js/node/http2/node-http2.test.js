@@ -2539,6 +2539,67 @@ it("http2 client.setNextStreamID validates input", async () => {
   });
 });
 
+it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
+  // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
+  // underflow (node ends up on stream 1 too). A server parked at 2 ** 32 - 1 used to overflow
+  // when the next id was computed; it has to read back as an unusable id, not wrap to a low one.
+  const fixture = `
+    const http2 = require("node:http2");
+    const result = { client: {}, server: {} };
+    const fail = what => err => {
+      console.error(what, err);
+      process.exit(1);
+    };
+    const server = http2.createServer();
+    server.on("sessionError", fail("server session error"));
+    server.on("stream", stream => {
+      // ServerHttp2Session does not expose setNextStreamID; call the native setter it would wrap.
+      const parser = stream.session[Symbol.for("::bunhttp2native::")];
+      for (const id of [0, 2, 2 ** 32 - 1]) {
+        parser.setNextStreamID(id);
+        result.server[id] = stream.session.state.nextStreamID;
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      client.on("error", fail("client session error"));
+      client.on("connect", () => {
+        for (const id of [0.5, 1]) {
+          client.setNextStreamID(id);
+          result.client[id] = client.state.nextStreamID;
+        }
+        const req = client.request({ ":path": "/" });
+        req.on("error", fail("request error"));
+        req.on("response", headers => {
+          result.response = { streamId: req.id, status: headers[":status"] };
+        });
+        req.resume();
+        req.on("close", () => {
+          console.log(JSON.stringify(result));
+          process.exit(0);
+        });
+        req.end();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    client: { 0.5: 1, 1: 1 },
+    server: { 0: 2, 2: 2, 4294967295: 4294967295 },
+    response: { streamId: 1, status: 200 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("http2 request.destroy() with error", async () => {
   const server = http2.createServer();
 

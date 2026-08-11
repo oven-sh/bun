@@ -796,6 +796,53 @@ it("a write from inside 'data' does not re-enter 'data' on a TLSSocket over a du
   }).toEqual({ nestedDataEvents: 0, payloadIntact: true, tail: "got reply" });
 });
 
+it("a client and a server TLSSocket connected through a synchronous in-memory duplex pair talk to each other", async () => {
+  // Each side's _write pushes straight into the other side, so every reply,
+  // including the server's handshake flight, is fed to the engine from inside
+  // its own write callback. The engine has to pick those bytes up after the
+  // write that provoked them instead of decrypting them in place.
+  const makeSide = (peer: () => Duplex) =>
+    new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        peer().push(chunk);
+        callback();
+      },
+      final(callback) {
+        peer().push(null);
+        callback();
+      },
+    });
+  const clientSide: Duplex = makeSide(() => serverSide);
+  const serverSide: Duplex = makeSide(() => clientSide);
+
+  const secure = { client: false, server: false };
+  const exchange: string[] = [];
+  const server = new TLSSocket(serverSide, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  server.on("secure", () => (secure.server = true));
+  server.on("data", (data: Buffer) => {
+    exchange.push(`server got ${data}`);
+    server.write(`pong ${data}`);
+  });
+  server.on("end", () => server.end());
+
+  const client = tls.connect({ socket: clientSide, rejectUnauthorized: false }, () => {
+    secure.client = true;
+    client.write("one");
+  });
+  client.on("data", (data: Buffer) => {
+    exchange.push(`client got ${data}`);
+    if (String(data) === "pong one") client.write("two");
+    else client.end();
+  });
+  await once(client, "close");
+
+  expect({ secure, exchange }).toEqual({
+    secure: { client: true, server: true },
+    exchange: ["server got one", "client got pong one", "server got two", "client got pong two"],
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

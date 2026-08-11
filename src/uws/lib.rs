@@ -1172,6 +1172,7 @@ pub mod ssl_wrapper {
             // PERF: 64KiB on-stack array, verify stack-size headroom.
             let mut buffer = [0u8; BUFFER_SIZE];
             if self.traffic.get() != Traffic::Idle {
+                log!("handleTraffic re-entered, flushing and deferring to the outer pass");
                 self.handle_writing(&mut buffer);
                 self.traffic.set(Traffic::RerunRequested);
                 return;

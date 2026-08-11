@@ -1687,7 +1687,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// # Safety
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
     /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
-    /// this call (the tunnel calls through its raw `connected_websocket` backref).
+    /// this call (the tunnel calls through its `Owner::Connected` backref).
     pub(crate) unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
@@ -1705,7 +1705,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// this call.
     pub(crate) unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
-        // (the tunnel calls through its raw `connected_websocket` backref).
+        // (the tunnel calls through its `Owner::Connected` backref).
         let this = unsafe { ThisPtr::new(this_ptr) };
         if this.close_received.get() && !this.has_pending_close_dispatch() {
             return;

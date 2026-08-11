@@ -1,9 +1,9 @@
 //! Rust side of `BakeSourceProvider.h` / `DevServerSourceProvider.h`: the
 //! FFI bindings and `SourceProvider` impls for bake's two C++ source
-//! providers, plus the host exports that register them with the VM's
-//! `SavedSourceMap` so stack remapping can resolve dev-server /
-//! bake-production output. `bun_sourcemap` sees these only as erased
-//! `AnySourceProvider` handles.
+//! providers, plus the host exports that register them with (and, from their
+//! destructors, remove them from) the VM's `SavedSourceMap` so stack remapping
+//! can resolve dev-server / bake-production output. `bun_sourcemap` sees these
+//! only as erased `AnySourceProvider` handles.
 //!
 //! `#[unsafe(no_mangle)] extern "C"` thunks are emitted by
 //! `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
@@ -18,8 +18,8 @@ use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{SourceContentPtr, SourceProvider};
 
 bun_opaque::opaque_ffi! {
-    /// Opaque handle to the C++ `Bake::SourceProvider` for production-build
-    /// sources (`BakeSourceProvider.cpp`).
+    /// Opaque handle to the C++ `Bake::SourceProvider` (`BakeSourceProvider.h`),
+    /// registered from its `create()` and unregistered from its destructor.
     pub(crate) struct BakeSourceProvider;
     /// Opaque handle to the C++ `Bake::DevServerSourceProvider`
     /// (`DevServerSourceProvider.cpp`).
@@ -139,6 +139,17 @@ pub fn add_bake_source_provider_source_map(
         ),
         slice.slice(),
     );
+}
+
+// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
+pub fn remove_bake_source_provider_source_map(
+    vm: &mut VirtualMachine,
+    opaque_source_provider: *mut c_void,
+    specifier: &BunString,
+) {
+    let slice = specifier.to_utf8();
+    vm.source_mappings
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)

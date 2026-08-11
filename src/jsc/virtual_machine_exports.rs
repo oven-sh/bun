@@ -260,8 +260,8 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
-// `Bun__removeDevServerSourceProvider` live in
+// `Bun__{add,remove}BakeSourceProviderSourceMap` /
+// `Bun__{add,remove}DevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 

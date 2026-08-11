@@ -144,20 +144,9 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (sourceString.isNull()) [[unlikely]]
         return;
 
-    if (!stackFrame.hasBytecodeIndex()) {
-        if (stackFrame.hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame.computeLineAndColumn();
-            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
-        }
-
-        position.byte_position = -1;
-        return;
-    }
-
-    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
-    memcpy(&position, &location, sizeof(ZigStackFramePosition));
-    if (flags == PopulateStackTraceFlags::OnlyPosition)
+    auto location = Bun::getAdjustedPositionForStackFrame(stackFrame);
+    position = location;
+    if (flags == PopulateStackTraceFlags::OnlyPosition || location.byte_position < 0)
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {

@@ -1,65 +1,49 @@
 #include "root.h"
+#include "ErrorStackFrame.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "headers-handwritten.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "wtf/Assertions.h"
+#include "JavaScriptCore/StackFrame.h"
 #include "wtf/text/OrdinalNumber.h"
 
 namespace Bun {
 using namespace JSC;
 
-/// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
-/// crosses line boundaries, and thus requires the source code in order to properly compute
-/// the result.
-void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
+/// Moves `pos` (the divot of an expression) back `amount` code units, to the start of the
+/// expression. When that crosses a line boundary the line and column have to be recounted from
+/// the source text. If that is not possible, `pos` is left pointing at the divot.
+static void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
 {
-    if (pos.byte_position - amount < 0) {
-        pos.line_zero_based = 0;
-        pos.column_zero_based = 0;
-        pos.byte_position = 0;
+    if (amount <= 0 || pos.byte_position < amount)
+        return;
+
+    int start = pos.byte_position - amount;
+
+    if (pos.column_zero_based >= amount) {
+        pos.column_zero_based -= amount;
+        pos.byte_position = start;
         return;
     }
 
-    pos.column_zero_based = pos.column_zero_based - amount;
-    if (pos.column_zero_based < 0) {
-        auto* provider = code->source().provider();
-        if (!provider) {
-            pos.line_zero_based = 0;
-            pos.column_zero_based = 0;
-            pos.byte_position = 0;
-            return;
-        }
+    auto* provider = code->source().provider();
+    if (!provider)
+        return;
 
-        auto source = provider->source();
-        if (!source.is8Bit()) {
-            // Debug-only assertion
-            // Bun does not yet use 16-bit sources anywhere. The transpiler ensures everything
-            // fit's into latin1 / 8-bit strings for on-average lower memory usage.
-            ASSERT_NOT_REACHED("16-bit source re-mapping is not implemented here.");
+    // eval, new Function and node:vm code is not transpiled, so unlike transpiled modules
+    // its source can be 16-bit. StringView indexing handles both encodings.
+    WTF::StringView source = provider->source();
+    if (static_cast<unsigned>(pos.byte_position) > source.length())
+        return;
 
-            pos.line_zero_based = 0;
-            pos.column_zero_based = 0;
-            pos.byte_position = 0;
-            return;
-        }
-
-        for (int i = 0; i < amount; i++) {
-            if (source[pos.byte_position - i] == '\n') {
-                pos.line_zero_based = pos.line_zero_based - 1;
-            }
-        }
-
-        int columns = 0;
-        // Initial -1 to skip the newline that gets counted.
-        int i = pos.byte_position - amount - 1;
-        while (i > 0 && source[i] != '\n') {
-            columns += 1;
-            i -= 1;
-        }
-        pos.column_zero_based = columns;
+    for (int i = start; i < pos.byte_position; i++) {
+        if (source[i] == '\n')
+            pos.line_zero_based--;
     }
 
-    pos.byte_position -= amount;
+    int column = 0;
+    for (int i = start - 1; i >= 0 && source[i] != '\n'; i--)
+        column++;
+
+    pos.column_zero_based = column;
+    pos.byte_position = start;
 }
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
@@ -96,6 +80,19 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
     }
 
     return pos;
+}
+
+ZigStackFramePosition getAdjustedPositionForStackFrame(const JSC::StackFrame& frame)
+{
+    if (!frame.hasLineAndColumnInfo() || !frame.hasBytecodeIndex()) {
+        return ZigStackFramePosition {
+            .line_zero_based = -1,
+            .column_zero_based = -1,
+            .byte_position = -1,
+        };
+    }
+
+    return getAdjustedPositionForBytecode(frame.codeBlock(), frame.bytecodeIndex());
 }
 
 } // namespace Bun

@@ -368,11 +368,8 @@ fn reject_on_exception(
     Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
-/// Rejection for a `Bun.file()` request body that cannot be opened or read.
-/// The fetch spec turns a request body that fails to be read into a network
-/// error, so this has the same shape as the network errors from
-/// `FetchTasklet::on_reject` (`ValueError::SystemTypeError`): a `TypeError`
-/// that keeps the system error's `code`/`errno`/`syscall`/`path`.
+/// A request body that cannot be read is a network error in fetch terms, so it
+/// rejects with the same `TypeError` shape as `FetchTasklet::on_reject`.
 fn request_body_file_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSValue {
     jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
 }

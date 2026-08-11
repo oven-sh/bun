@@ -239,3 +239,60 @@ test("missing file throws the expected error", async () => {
   });
   Bun.gc(true);
 });
+
+// Like the network errors fetch() rejects with, a Bun.file() body that cannot
+// be read rejects with a TypeError that still carries the system error fields.
+describe.concurrent("Bun.file() body that cannot be read rejects with a TypeError", () => {
+  // The body is read before anything is connected, so the promise comes back
+  // already rejected. Checking that (and the system error fields) pins the
+  // rejection to the body, not to the connection the URL would refuse.
+  function earlyRejection(promise: Promise<Response>): Promise<unknown> {
+    const error = promise.then(
+      () => {
+        throw new Error("fetch() resolved");
+      },
+      err => err,
+    );
+    expect(Bun.peek.status(promise)).toBe("rejected");
+    return error;
+  }
+
+  test("file that does not exist (open fails)", async () => {
+    using dir = tempDir("fetch-unreadable-body", {});
+    const path = join(String(dir), "missing.txt");
+
+    const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(path) }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err).toMatchObject({
+      code: "ENOENT",
+      syscall: "open",
+      path: expect.stringContaining("missing.txt"),
+    });
+  });
+
+  test("file that does not exist, as the body of a Request", async () => {
+    using dir = tempDir("fetch-unreadable-body", {});
+    const path = join(String(dir), "missing.txt");
+
+    const request = new Request("http://127.0.0.1:1/", { method: "POST", body: Bun.file(path) });
+    const err = await earlyRejection(fetch(request));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err).toMatchObject({ code: "ENOENT", syscall: "open" });
+  });
+
+  test("directory (open succeeds, read fails)", async () => {
+    using dir = tempDir("fetch-unreadable-body", {});
+
+    const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(String(dir)) }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err).toMatchObject({ code: "EISDIR", syscall: "read" });
+  });
+
+  test("file descriptor that is not open (dup fails)", async () => {
+    const err = await earlyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body: Bun.file(1 << 30) }));
+    expect(err).toBeInstanceOf(TypeError);
+    // Windows reports a different errno for a descriptor number that was never
+    // opened; posix dup() fails with EBADF.
+    if (!isWindows) expect(err).toMatchObject({ code: "EBADF" });
+  });
+});

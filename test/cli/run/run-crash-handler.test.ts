@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -190,12 +190,15 @@ test.if(isPosix)("fd limit hint suggests bounded values", async () => {
       "--debug-crash-handler-use-trace-string",
     ],
     env: noReportEnv,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "ignore", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("possibly due to low max file descriptors");
   expect(stderr).toContain("ulimit -n 65536");
+  if (isMacOS) {
+    expect(stderr).toContain("sudo launchctl limit maxfiles 65536 200000");
+  }
   expect(stderr).not.toContain("2147483646");
   expect(exitCode).not.toBe(0);
 });

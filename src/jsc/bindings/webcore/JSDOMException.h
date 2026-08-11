@@ -76,6 +76,10 @@ public:
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
 
+    // Installs `stack` as an own property and keeps the lazily captured trace from overwriting it.
+    void setStackString(JSC::VM&, WTF::String&&);
+    void putHeaderStackIfNoFrames(JSC::VM&);
+
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
 

@@ -125,18 +125,20 @@ describe("DOMException in Node.js environment", () => {
       cmd: [
         bunExe(),
         "-e",
-        `Error.stackTraceLimit = undefined;
+        `class Sub extends DOMException {}
+         Error.stackTraceLimit = undefined;
          console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
          Error.stackTraceLimit = 0;
          console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
-         console.log(JSON.stringify(new DOMException("", "AbortError").stack));`,
+         console.log(JSON.stringify(new DOMException("", "AbortError").stack));
+         console.log(JSON.stringify(new Sub("boom", "AbortError").stack));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n',
+      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"AbortError: boom"\n',
       stderr: "",
       exitCode: 0,
     });
@@ -153,15 +155,18 @@ describe("DOMException in Node.js environment", () => {
     expect(reason.stack).toStartWith("AbortError");
   });
 
-  it("structuredClone preserves DOMException and captures a stack", () => {
+  it("structuredClone preserves a DOMException including its stack", () => {
     const original = new DOMException("boom", "QuotaExceededError");
-    const clone = structuredClone(original);
+    const clone = structuredClone(structuredClone(original));
     expect(clone).toBeInstanceOf(DOMException);
     expect(Error.isError(clone)).toBe(true);
-    expect(clone.name).toBe("QuotaExceededError");
-    expect(clone.message).toBe("boom");
-    expect(clone.code).toBe(22);
-    expect(typeof clone.stack).toBe("string");
+    expect(clone.stack).toContain("domexception-node.test.js");
+    expect({ name: clone.name, message: clone.message, code: clone.code, stack: clone.stack }).toEqual({
+      name: "QuotaExceededError",
+      message: "boom",
+      code: 22,
+      stack: original.stack,
+    });
   });
 
   it("works with Error.captureStackTrace", () => {

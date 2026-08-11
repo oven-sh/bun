@@ -155,19 +155,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    auto object = DOMException::create(WTF::move(message), WTF::move(name));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    // Not toJSNewlyCreated: own properties must wait until after the subclass structure swap.
+    auto* wrapper = createWrapper<DOMException>(castedThis->globalObject(), DOMException::create(WTF::move(message), WTF::move(name)));
+    setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, wrapper);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (!cause.isEmpty()) {
-        jsValue.getObject()->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
-    }
-    return JSValue::encode(jsValue);
+    wrapper->putHeaderStackIfNoFrames(vm);
+    if (!cause.isEmpty())
+        wrapper->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(wrapper);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMExceptionDOMConstructorConstruct, JSDOMExceptionDOMConstructor::construct);
 
@@ -245,17 +240,25 @@ void JSDOMException::finishCreation(VM& vm)
     // Null message/cause: those stay prototype accessors over the wrapped impl.
     Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
+    // No own properties here: the constructor may still swap in a subclass structure.
+}
 
-    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the name: message header.
+void JSDOMException::setStackString(VM& vm, String&& stack)
+{
+    putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    setStackPropertyAlreadyMaterialized();
+}
+
+// ErrorInstance leaves .stack unset on an empty trace; other engines still give the name: message header.
+void JSDOMException::putHeaderStackIfNoFrames(VM& vm)
+{
     auto* trace = stackTrace();
-    if (!trace || trace->isEmpty()) {
-        auto& impl = wrapped();
-        auto name = impl.name();
-        auto message = impl.message();
-        auto header = message.isEmpty() ? name : makeString(name, ": "_s, message);
-        putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(header)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-        setStackPropertyAlreadyMaterialized();
-    }
+    if (trace && !trace->isEmpty())
+        return;
+    auto& impl = wrapped();
+    auto name = impl.name();
+    auto message = impl.message();
+    setStackString(vm, message.isEmpty() ? name : makeString(name, ": "_s, message));
 }
 
 template<typename Visitor>
@@ -382,7 +385,9 @@ void JSDOMExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* conte
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
-    return createWrapper<DOMException>(globalObject, WTF::move(impl));
+    auto* wrapper = createWrapper<DOMException>(globalObject, WTF::move(impl));
+    wrapper->putHeaderStackIfNoFrames(globalObject->vm());
+    return wrapper;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException& impl)

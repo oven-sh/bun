@@ -255,13 +255,6 @@ pub enum BrotliEncoderOperation {
     emit_metadata = 3,
 }
 
-impl BrotliEncoder {
-    pub fn destroy_instance(state: &mut BrotliEncoder) {
-        // SAFETY: state is a valid &mut BrotliEncoder allocated by BrotliEncoderCreateInstance
-        unsafe { BrotliEncoderDestroyInstance(state) }
-    }
-}
-
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;

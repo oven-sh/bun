@@ -1047,7 +1047,7 @@ describe("patchedDependencies contents_hash", () => {
     expect(patchA).not.toBe(patchB);
 
     const mkProject = (name: string, patch: string) =>
-      tempDirWithFiles(`patch-hash-${name}`, {
+      tempDir(`patch-hash-${name}`, {
         "package.json": JSON.stringify({
           name,
           patchedDependencies: { "is-odd@3.0.1": "patches/p.patch" },
@@ -1056,9 +1056,11 @@ describe("patchedDependencies contents_hash", () => {
         patches: { "p.patch": patch },
       });
 
-    const sharedCache = tempDirWithFiles("patch-hash-cache", {});
-    const dirA = mkProject("proj-a", patchA);
-    const dirB = mkProject("proj-b", patchB);
+    using sharedCache = tempDir("patch-hash-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const dirA = String(projA);
+    const dirB = String(projB);
 
     const install = async (cwd: string) => {
       await using proc = Bun.spawn({
@@ -1083,8 +1085,66 @@ describe("patchedDependencies contents_hash", () => {
 
     // A non-colliding control patch (different size, different content) has
     // always gone to its own cache entry.
-    const dirC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
+    using projC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
+    const dirC = String(projC);
     await install(dirC);
     expect(await Bun.file(join(dirC, "node_modules", "is-odd", "m.js")).text()).toContain("control payload");
+  });
+
+  test("patches that differ only after the first 64 KiB get distinct cache entries", async () => {
+    // The content hash used to be computed by repeatedly reading from file
+    // offset 0, so any two patches with an identical leading chunk hashed the
+    // same no matter what followed. Both patches here share a >64 KiB prefix
+    // (a long comment line) and differ only in the final exported payload.
+    const prefixLen = 80 * 1024;
+    const padding = "+// " + Buffer.alloc(prefixLen, "p").toString() + "\n";
+    const header =
+      "diff --git a/m.js b/m.js\n" +
+      "new file mode 100644\n" +
+      "index 0000000..1111111\n" +
+      "--- /dev/null\n" +
+      "+++ b/m.js\n" +
+      "@@ -0,0 +1,2 @@\n";
+    const patchA = header + padding + `+module.exports="TAIL_AAAA";\n`;
+    const patchB = header + padding + `+module.exports="TAIL_BBBB";\n`;
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    const mkProject = (name: string, patch: string) =>
+      tempDir(`patch-tail-${name}`, {
+        "package.json": JSON.stringify({
+          name,
+          patchedDependencies: { "is-odd@3.0.1": "patches/p.patch" },
+          dependencies: { "is-odd": "3.0.1" },
+        }),
+        patches: { "p.patch": patch },
+      });
+
+    using sharedCache = tempDir("patch-tail-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const dirA = String(projA);
+    const dirB = String(projB);
+
+    const install = async (cwd: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(sharedCache) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    };
+
+    await install(dirA);
+    expect(await Bun.file(join(dirA, "node_modules", "is-odd", "m.js")).text()).toContain("TAIL_AAAA");
+
+    await install(dirB);
+    const mB = await Bun.file(join(dirB, "node_modules", "is-odd", "m.js")).text();
+    // Compare just the tail so a failure doesn't dump the 80 KiB padding.
+    expect({ hasB: mB.includes("TAIL_BBBB"), hasA: mB.includes("TAIL_AAAA") }).toEqual({ hasB: true, hasA: false });
   });
 });

@@ -698,13 +698,14 @@ impl PatchTask {
         // Truncation keeps the u64 folder-suffix / tag-file interface.
         let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
 
-        // what's a good number for this? page size i guess
-        const STACK_SIZE: usize = 16384;
-        let mut stack = [0u8; STACK_SIZE];
-        let mut read: usize = 0;
-        while (read as u64) < size {
-            let slice: &mut [u8] = match file.read_fill_buf(&mut stack[..]) {
-                sys::Result::Ok(slice) => slice,
+        // `read_fill_buf` always reads from file offset 0, so looping over it
+        // re-hashes the first chunk; track the file offset explicitly.
+        const CHUNK_SIZE: usize = 64 * 1024;
+        let mut chunk = vec![0u8; CHUNK_SIZE];
+        let mut offset: u64 = 0;
+        while offset < size {
+            let n = match file.pread_all(&mut chunk[..], offset) {
+                sys::Result::Ok(n) => n,
                 sys::Result::Err(e) => {
                     log.add_error_fmt(
                         None,
@@ -718,11 +719,11 @@ impl PatchTask {
                     return None;
                 }
             };
-            if slice.is_empty() {
+            if n == 0 {
                 break;
             }
-            hasher.update(slice);
-            read += slice.len();
+            hasher.update(&chunk[..n]);
+            offset += n as u64;
         }
 
         let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];

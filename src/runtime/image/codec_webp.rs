@@ -29,18 +29,11 @@ unsafe extern "C" {
     fn VP8LEncDspInit();
 }
 
-/// libwebp initialises its dispatch tables lazily and, without
-/// `WEBP_USE_THREAD` (and always on Windows), unsynchronised: concurrent first
-/// calls all run the init bodies. The VP8L bodies are not idempotent (their
-/// SSE2 stage snapshots the live table into the `*_SSE` tail tables the AVX2
-/// kernels delegate to), so racing inits can leave a kernel delegating to
-/// itself. Initialise once up front so libwebp's own calls find it done;
-/// `VP8LEncDspInit` also runs `VP8LDspInit`.
+/// libwebp's lazy dsp init is unlocked in our build and the VP8L init bodies are not idempotent.
 fn init_dsp() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        // SAFETY: no preconditions; writes only libwebp's own static tables,
-        // and `Once` keeps any other caller out until it returns.
+        // SAFETY: no preconditions; only writes libwebp's own static tables, serialised by `Once`.
         unsafe { VP8LEncDspInit() }
     });
 }

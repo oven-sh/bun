@@ -1420,6 +1420,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
 
         if (keyType != CryptoKeyType::Public) {
             auto* dBuf = decodeJwkString(globalObject, scope, dView, "key.d"_s);
+            RETURN_IF_EXCEPTION(scope, {});
             auto dBufSpan = dBuf->span();
             BignumPointer dBn = BignumPointer(dBufSpan.data(), dBufSpan.size());
             if (!ec.setPrivateKey(dBn)) {

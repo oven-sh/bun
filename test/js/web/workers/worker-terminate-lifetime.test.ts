@@ -521,3 +521,64 @@ test(
   },
   timeout,
 );
+
+// Regression: RETURN_IF_EXCEPTION is also where a worker's termination trap is
+// serviced, so once terminate() has fired, the next helper called from a native
+// function returns empty with the TerminationException pending. In
+// KeyObject::getKeyObjectHandleFromJwk the EC "d" decode was the one
+// decodeJwkString() call whose result was used without that check, so a
+// terminate() landing while the worker was inside createPrivateKey({ format:
+// "jwk" }) for an EC key dereferenced null ("Segmentation fault at address
+// 0x10"; UBSan reports the member call on a null JSArrayBufferView) and took
+// the whole process down with it.
+test(
+  "terminate() while a worker is importing an EC private key from JWK does not crash the process",
+  async () => {
+    const ROUNDS = slow ? 2 : 6;
+    const WORKERS = 4;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { generateKeyPairSync } = require("node:crypto");
+        const jwk = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" });
+        // Leading zero bytes leave the scalar unchanged (BN_bin2bn drops them),
+        // so this still imports as the same key, but decoding "d", the call
+        // that was unguarded, now takes up most of every createPrivateKey(),
+        // which is where terminate() has to land.
+        jwk.d = Buffer.concat([Buffer.alloc(768 * 1024), Buffer.from(jwk.d, "base64url")]).toString("base64url");
+        const src =
+          "const { parentPort, workerData: jwk } = require('node:worker_threads');" +
+          "const { createPrivateKey } = require('node:crypto');" +
+          // Import once before reporting in: a JWK that does not import fails
+          // the round loudly instead of leaving terminate() nothing to race.
+          "createPrivateKey({ key: jwk, format: 'jwk' });" +
+          "parentPort.postMessage('busy');" +
+          "for (;;) createPrivateKey({ key: jwk, format: 'jwk' });";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before busy")));
+          });
+        }
+        for (let r = 0; r < ${ROUNDS}; r++) {
+          const ws = Array.from({ length: ${WORKERS} }, () => new Worker(src, { eval: true, workerData: jwk }));
+          await Promise.all(ws.map(ready));
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);

@@ -27,8 +27,6 @@
 #include "config.h"
 #include "ActiveDOMObject.h"
 
-#include "Event.h"
-#include "EventTarget.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/MainThread.h>
 

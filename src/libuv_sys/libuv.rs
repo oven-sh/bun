@@ -2720,8 +2720,6 @@ unsafe extern "C" {
     pub fn uv_update_time(loop_: *mut Loop);
     pub fn uv_now(loop_: *const Loop) -> u64;
 
-    // errors
-
     // handle/req
     pub fn uv_handle_size(type_: uv_handle_type) -> usize;
     pub fn uv_handle_get_type(handle: *const uv_handle_t) -> uv_handle_type;
@@ -2763,8 +2761,6 @@ unsafe extern "C" {
     pub fn uv_is_readable(handle: *const uv_stream_t) -> c_int;
     pub fn uv_is_writable(handle: *const uv_stream_t) -> c_int;
     pub fn uv_stream_set_blocking(handle: *mut uv_stream_t, blocking: c_int) -> ReturnCode;
-
-    // udp
 
     // tty
     pub fn uv_tty_init(
@@ -2853,6 +2849,9 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
+    pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
+    pub fn uv_get_total_memory() -> u64;
+    pub fn uv_disable_stdio_inheritance();
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);
@@ -3065,11 +3064,6 @@ unsafe extern "C" {
         flags: c_uint,
     ) -> ReturnCode;
     pub fn uv_fs_event_stop(handle: *mut uv_fs_event_t) -> c_int;
-
-    // ip
-    pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
-    pub fn uv_get_total_memory() -> u64;
-    pub fn uv_disable_stdio_inheritance();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

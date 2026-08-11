@@ -139,6 +139,12 @@ test("dead simdutf wrappers stay removed on both sides of the FFI", () => {
   const cpp = collect(src("src/simdutf_sys/bun-simdutf.cpp"));
   expect([...rust].filter(n => !cpp.has(n)).sort()).toEqual([]);
   expect([...cpp].filter(n => !rust.has(n)).sort()).toEqual([]);
+
+  // The parser bench shim only exists to satisfy those same declarations, so
+  // it must not define wrappers the Rust side never declares (it carried
+  // six such orphans before this sweep).
+  const shim = collect(src("src/parsers/benches/support/simdutf_shim.cpp"));
+  expect([...shim].filter(n => !rust.has(n)).sort()).toEqual([]);
 });
 
 test("dead bun_runtime helpers do not reappear", () => {

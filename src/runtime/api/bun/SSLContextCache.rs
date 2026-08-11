@@ -24,6 +24,7 @@ use core::ffi::{c_int, c_long, c_void};
 use core::ptr::{self, NonNull};
 
 use bun_boringssl_sys as boringssl;
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap, MapEntry};
 use bun_threading::Mutex;
 use bun_uws as uws;
@@ -76,13 +77,13 @@ struct Entry {
 impl Entry {
     /// Points `ctx`'s ex_data slot at `self` so `bun_ssl_ctx_cache_on_free`
     /// can tombstone it. Fails only on OOM.
-    fn attach(&self, ctx: *mut boringssl::SSL_CTX) -> bool {
-        // SAFETY: `ctx` is the live SSL_CTX the caller just built. The slot
-        // receives a pointer derived from `&self`; the callback only reads it
-        // back as `&Entry` and writes through the `Cell`.
+    fn attach(&self, ctx: &OwnedSslCtx) -> bool {
+        // SAFETY: `ctx` holds a ref on the SSL_CTX, so it is live for this
+        // call. The slot receives a pointer derived from `&self`; the callback
+        // only reads it back as `&Entry` and writes through the `Cell`.
         unsafe {
             boringssl::SSL_CTX_set_ex_data(
-                ctx,
+                ctx.as_ptr(),
                 c::us_ssl_ctx_cache_ex_idx(),
                 ptr::from_ref(self).cast_mut().cast::<c_void>(),
             ) == 1
@@ -136,6 +137,10 @@ impl SSLContextCache {
         // which has a reason to serialize, and holding a non-reentrant SRWLock
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
         let ctx = opts.create_ssl_context(err)?;
+        // SAFETY: `create_ssl_context` returns a +1 ref that is ours; `ctx`
+        // now owns it, and either hands it to the caller (`into_raw`) or frees
+        // it by being dropped.
+        let ctx = unsafe { OwnedSslCtx::from_raw(ctx) }.expect("create_ssl_context returned null");
 
         let _guard = self.mutex.lock_guard();
 
@@ -151,31 +156,31 @@ impl SSLContextCache {
                 let entry: &Entry = occupied.get();
                 if let Some(existing) = entry.ctx.get() {
                     let existing = existing.as_ptr();
-                    // SAFETY: existing is still live (not tombstoned); ctx is the fresh
-                    // CTX we just built and own.
-                    unsafe {
-                        boringssl::SSL_CTX_up_ref(existing);
-                        boringssl::SSL_CTX_free(ctx);
-                    }
+                    // SAFETY: existing is still live (not tombstoned) and the
+                    // tombstone write is serialized by the mutex we hold.
+                    unsafe { boringssl::SSL_CTX_up_ref(existing) };
+                    // Ours was never attached, so dropping `ctx` on return
+                    // frees it without reaching `bun_ssl_ctx_cache_on_free`.
                     return Some(existing);
                 }
                 // Tombstone: adopt the rebuilt CTX into the existing slot.
                 // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
                 // it did, the entry would never tombstone and `entry.ctx` would dangle
-                // after the CTX is freed. Don't cache it; caller still owns the ref.
-                if entry.attach(ctx) {
-                    entry.ctx.set(NonNull::new(ctx));
+                // after the CTX is freed. Don't cache it; the caller gets the ref
+                // either way.
+                if entry.attach(&ctx) {
+                    entry.ctx.set(NonNull::new(ctx.as_ptr()));
                 }
-                return Some(ctx);
+                return Some(ctx.into_raw());
             }
             MapEntry::Vacant(vacant) => {
                 let entry: &Entry = vacant.insert(Box::new(Entry {
-                    ctx: Cell::new(NonNull::new(ctx)),
+                    ctx: Cell::new(NonNull::new(ctx.as_ptr())),
                     owner: owner_ptr,
                 }));
-                if !entry.attach(ctx) {
+                if !entry.attach(&ctx) {
                     self.map.swap_remove(&d);
-                    return Some(ctx);
+                    return Some(ctx.into_raw());
                 }
             }
         }
@@ -185,7 +190,7 @@ impl SSLContextCache {
             self.ops_since_compact = 0;
             self.compact_locked();
         }
-        Some(ctx)
+        Some(ctx.into_raw())
     }
 
     /// Reclaim tombstoned entries. Locked variant — callers hold `self.mutex`.

@@ -2671,8 +2671,9 @@ it("http2 client.setNextStreamID validates input", async () => {
 
 it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
   // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
-  // underflow (node ends up on stream 1 too). 2 ** 32 - 1 passes the JS range check as well but
-  // is not a 31-bit stream id: node ignores it, and computing the next id from it used to overflow.
+  // underflow (node ends up on stream 1 too). 2 ** 32 - 1 passes the JS range check as well; on a
+  // server it is ignored as an odd id (node ignores it too), where it used to be stored and
+  // overflow the next id computation. The 31-bit bound itself is covered by the next test.
   const fixture = `
     const http2 = require("node:http2");
     const result = { client: {}, server: {} };
@@ -2735,7 +2736,9 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
   // nghttp2_session_set_next_stream_id: an id of the peer's parity, an id that is not above the
   // current next id, or one that does not fit in 31 bits leaves the session untouched. The server
   // side is checked while handling the client's first stream (id 1), where node reports 2 as the
-  // server's next id too.
+  // server's next id too. The "equal to next" rows also read lastProcStreamID: it is the one value
+  // that tells an ignored call apart from one that re-stores the current position.
+  const readState = ({ nextStreamID, lastProcStreamID }) => [nextStreamID, lastProcStreamID];
   const server = http2.createServer();
   const serverSide = Promise.withResolvers();
   server.on("stream", (stream, headers) => {
@@ -2752,9 +2755,12 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
         parser.setNextStreamID(id);
         return session.state.nextStreamID;
       };
-      const seen = { initial: session.state.nextStreamID };
+      const seen = { "initial [next, lastProc]": readState(session.state) };
+      parser.setNextStreamID(2);
+      seen["set 2 (equal to next) [next, lastProc]"] = readState(session.state);
       seen["set 100"] = set(100);
       seen["set 101 (odd)"] = set(101);
+      seen["set 105 (odd)"] = set(105);
       seen["set 50 (below next)"] = set(50);
       seen["set 100 (equal to next)"] = set(100);
       stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
@@ -2764,6 +2770,7 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
       });
       seen["after pushStream"] = session.state.nextStreamID;
       seen["set 50 after pushStream"] = set(50);
+      seen["set 104 (lowest id above next)"] = set(104);
       seen["set 2 ** 31 (not 31-bit)"] = set(2 ** 31);
       seen["set 2 ** 32 - 2 (not 31-bit)"] = set(2 ** 32 - 2);
       seen["set 2 ** 31 - 2 (highest even)"] = set(2 ** 31 - 2);
@@ -2802,46 +2809,58 @@ it("http2 setNextStreamID ignores the ids nghttp2 rejects instead of rounding th
         req.end();
       });
 
-    const seen = { initial: client.state.nextStreamID };
+    const seen = { "initial [next, lastProc]": readState(client.state) };
+    client.setNextStreamID(1);
+    seen["set 1 (equal to next) [next, lastProc]"] = readState(client.state);
     seen["request /first"] = await request("/first");
+    seen["set 5 (lowest id above next)"] = set(5);
+    seen["request /second"] = await request("/second");
     seen["set 11"] = set(11);
     seen["set 12 (even)"] = set(12);
-    seen["set 5 (below next)"] = set(5);
+    seen["set 14 (even)"] = set(14);
+    seen["set 7 (below next)"] = set(7);
     seen["set 11 (equal to next)"] = set(11);
-    seen["request /second"] = await request("/second");
-    seen["after /second"] = client.state.nextStreamID;
-    seen["set 5 after /second"] = set(5);
     seen["request /third"] = await request("/third");
+    seen["after /third"] = client.state.nextStreamID;
+    seen["set 7 after /third"] = set(7);
+    seen["request /fourth"] = await request("/fourth");
     seen["set 2 ** 31 + 1 (not 31-bit)"] = set(2 ** 31 + 1);
     seen["set 2 ** 32 - 1 (not 31-bit)"] = set(2 ** 32 - 1);
     seen["set 2 ** 31 - 1 (highest odd)"] = set(2 ** 31 - 1);
 
     expect({ client: seen, server: await serverSide.promise, pushed: await pushed }).toEqual({
       client: {
-        initial: 1,
+        "initial [next, lastProc]": [1, 0],
+        "set 1 (equal to next) [next, lastProc]": [1, 0],
         "request /first": { id: 1, status: 200 },
+        "set 5 (lowest id above next)": 5,
+        "request /second": { id: 5, status: 200 },
         "set 11": 11,
         "set 12 (even)": 11,
-        "set 5 (below next)": 11,
+        "set 14 (even)": 11,
+        "set 7 (below next)": 11,
         "set 11 (equal to next)": 11,
-        "request /second": { id: 11, status: 200 },
-        "after /second": 13,
-        "set 5 after /second": 13,
-        "request /third": { id: 13, status: 200 },
+        "request /third": { id: 11, status: 200 },
+        "after /third": 13,
+        "set 7 after /third": 13,
+        "request /fourth": { id: 13, status: 200 },
         "set 2 ** 31 + 1 (not 31-bit)": 15,
         "set 2 ** 32 - 1 (not 31-bit)": 15,
         "set 2 ** 31 - 1 (highest odd)": 2 ** 31 - 1,
       },
       server: {
-        initial: 2,
+        "initial [next, lastProc]": [2, 1],
+        "set 2 (equal to next) [next, lastProc]": [2, 1],
         "set 100": 100,
         "set 101 (odd)": 100,
+        "set 105 (odd)": 100,
         "set 50 (below next)": 100,
         "set 100 (equal to next)": 100,
         "after pushStream": 102,
         "set 50 after pushStream": 102,
-        "set 2 ** 31 (not 31-bit)": 102,
-        "set 2 ** 32 - 2 (not 31-bit)": 102,
+        "set 104 (lowest id above next)": 104,
+        "set 2 ** 31 (not 31-bit)": 104,
+        "set 2 ** 32 - 2 (not 31-bit)": 104,
         "set 2 ** 31 - 2 (highest even)": 2 ** 31 - 2,
       },
       pushed: { id: 100, path: "/pushed" },

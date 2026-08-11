@@ -437,6 +437,21 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     return storage;
 }
 
+/* XNU rejects a kevent timeout with tv_sec > INT32_MAX as EINVAL
+ * (bsd/kern/kern_time.c, timespec_is_valid), so while a deadline that far out
+ * (a spawn `timeout` or AbortSignal.timeout of centuries) is the soonest timer,
+ * every tick would return at once and the loop would spin. The epoll_pwait
+ * fallback's nanosecond arithmetic overflows on such values too. Callers
+ * recompute the remaining time after every wake, so waking early is harmless. */
+static const struct timespec *us_internal_clamp_to_kernel_max(const struct timespec *timeout, struct timespec *storage) {
+    if (!timeout || timeout->tv_sec <= INT32_MAX) {
+        return timeout;
+    }
+    storage->tv_sec = INT32_MAX;
+    storage->tv_nsec = 0;
+    return storage;
+}
+
 void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
@@ -471,6 +486,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         return;
 
     loop->data.tick_depth++;
+
+    struct timespec kernel_max_ts;
+    timeout = us_internal_clamp_to_kernel_max(timeout, &kernel_max_ts);
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);

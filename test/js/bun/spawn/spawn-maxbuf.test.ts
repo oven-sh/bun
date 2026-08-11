@@ -285,3 +285,48 @@ describe("timeout Infinity does not kill the process", () => {
     expect(stderr).toBe("");
   });
 });
+
+describe("timeout of 2**31 ms or more does not kill the process", () => {
+  // The timeout used to be truncated to its low 31 bits: 2**31 became 0 (killed on the first
+  // tick of the event loop) and 2**32 + 1 became 1 ms. Number.MAX_SAFE_INTEGER is the largest
+  // value the option accepts; a deadline that far out exceeds the largest wait kevent accepts.
+  const timeouts = [2 ** 31, 2 ** 32 + 1, Number.MAX_SAFE_INTEGER];
+
+  test.concurrent.each(timeouts)("Bun.spawn timeout: %d", async timeout => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log('ran to completion')"],
+      env: bunEnv,
+      timeout,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ran to completion\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.each(timeouts)("Bun.spawnSync timeout: %d", timeout => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ran to completion')"],
+      env: bunEnv,
+      timeout,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect({
+      stdout: proc.stdout.toString("utf-8"),
+      stderr: proc.stderr.toString("utf-8"),
+      exitCode: proc.exitCode,
+      signalCode: proc.signalCode,
+      exitedDueToTimeout: proc.exitedDueToTimeout,
+    }).toEqual({
+      stdout: "ran to completion\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: undefined,
+      exitedDueToTimeout: false,
+    });
+  });
+});

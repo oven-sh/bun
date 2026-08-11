@@ -46,9 +46,10 @@ pub struct RuntimeDevelopmentPair {
 bun_core::comptime_string_map! {
     pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
         b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
         b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        // TypeScript: "react-jsx" selects jsx/jsxs (production), "react-jsxdev" selects jsxDEV.
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
         b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
     };
 }
@@ -87,7 +88,7 @@ impl From<Box<[Box<[u8]>]>> for MemberList {
 
 impl MemberList {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             MemberList::Static(s) => s.len(),
             MemberList::Owned(o) => o.len(),
@@ -95,12 +96,7 @@ impl MemberList {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    pub fn get(&self, i: usize) -> Option<&[u8]> {
+    pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             MemberList::Static(s) => s.get(i).copied(),
             MemberList::Owned(o) => o.get(i).map(|b| &**b),
@@ -218,6 +214,9 @@ impl Pragma {
         hasher.update(&self.import_source.production);
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
+        // `runtime` selects classic vs automatic emission; `development`
+        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
+        hasher.update(&[self.runtime as u8, self.development as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {
@@ -226,35 +225,6 @@ impl Pragma {
         } else {
             &self.import_source.production
         }
-    }
-
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        if str.is_empty() {
-            return str;
-        }
-        if str[0] == b'@' {
-            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                let first_slash = first_slash as usize;
-                let remainder = &str[1 + first_slash + 1..];
-
-                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                    let last_slash = last_slash as usize;
-                    return &str[0..first_slash + 1 + last_slash + 1];
-                }
-            }
-        }
-
-        if let Some(first_slash) = strings::index_of_char(str, b'/') {
-            return &str[0..first_slash as usize];
-        }
-
-        str
-    }
-
-    pub fn is_react_like(&self) -> bool {
-        &*self.package_name == b"react"
-            || &*self.package_name == b"@emotion/jsx"
-            || &*self.package_name == b"@emotion/react"
     }
 
     /// When `package_name` is the default `"react"`, this borrows the
@@ -287,22 +257,18 @@ impl Pragma {
         Cow::Owned(out)
     }
 
-    pub fn set_production(&mut self, is_production: bool) {
-        self.development = !is_production;
-    }
-
     // "React.createElement" => ["React", "createElement"]
     // ...unless new is "React.createElement" and original is ["React", "createElement"]
     // saves an allocation for the majority case
     pub fn member_list_to_components_if_different(
         original: MemberList,
         new: &[u8],
-    ) -> Result<MemberList, bun_core::Error> {
+    ) -> Result<MemberList, crate::Error> {
         let count = strings::count_char(new, b'.') + 1;
 
         let mut needs_alloc = false;
         let mut current_i: usize = 0;
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }
@@ -320,7 +286,7 @@ impl Pragma {
         }
 
         let mut out: Vec<Box<[u8]>> = Vec::with_capacity(count);
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }
@@ -329,7 +295,7 @@ impl Pragma {
         Ok(MemberList::Owned(out.into_boxed_slice()))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
+    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, crate::Error> {
         let mut pragma = Pragma::default();
 
         if !jsx.fragment.is_empty() {

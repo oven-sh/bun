@@ -1,22 +1,56 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { resolveObjectURL } from "node:buffer";
+import util from "node:util";
 
 describe("url", () => {
   it("URL throws", () => {
-    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
-    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
-    expect(() => new URL("boop", "http!/example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against "http!/example.com"',
-    );
+    // Node-compatible message: exactly "Invalid URL".
+    expect(() => new URL("")).toThrow("Invalid URL");
+    expect(() => new URL(" ")).toThrow("Invalid URL");
+    expect(() => new URL("boop", "http!/example.com")).toThrow("Invalid URL");
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_URL",
       }),
     );
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow("Invalid URL");
+  });
 
-    // redact
-    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against <redacted>',
-    );
+  it("ERR_INVALID_URL carries input and, when given, base", () => {
+    try {
+      new URL("//[", "http://x");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_URL");
+      expect(e.input).toBe("//[");
+      expect(e.base).toBe("http://x");
+    }
+    // base itself invalid: both still surface, base is the raw string.
+    try {
+      new URL("boop", "http!/example.com");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("boop");
+      expect(e.base).toBe("http!/example.com");
+    }
+    // One-arg form: .base must be absent, not undefined-valued.
+    try {
+      new URL("::");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
+    // href setter has no base argument, so no .base either.
+    const u = new URL("http://x");
+    try {
+      u.href = "::";
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.input).toBe("::");
+      expect("base" in e).toBe(false);
+    }
   });
 
   it("should have correct origin and protocol", () => {
@@ -80,22 +114,69 @@ describe("url", () => {
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("file://");
   });
+  it("leaves opaque (non-special-scheme) hosts unchanged", () => {
+    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
+    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
+    // special schemes only.
+    expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
+    expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
+    // special scheme: delta applies, host is IDNA-processed.
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // Non-canonical special-scheme authority forms reach IDNA too.
+    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
+    // Same scheme as the base without "//" is relative-state (path, not host):
+    // the delta source stays percent-encoded verbatim.
+    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
+    // Cross-scheme reaches the authority state and IDNA runs.
+    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
+    // file: only has a host with exactly two slashes; ///x and /x are path.
+    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    // Bracketed hosts go to the IPv6 parser, never IDNA.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
+    // embedded tab in the scheme or between : and // must not defeat the delta.
+    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // The port span is left verbatim: an ignored-class delta source
+    // (U+180E) in the port must still fail the WHATWG port state, not be
+    // stripped into a valid digit run. The same char in the host is fine.
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
+    // setter on a non-special scheme: opaque host stays verbatim.
+    const u = new URL("foo://x/");
+    u.hostname = "\u1E9E";
+    expect(u.hostname).toBe("%E1%BA%9E");
+    // url.host setter: delta applies to the host span only, port stays
+    // verbatim so an ignored-class code point there is not stripped into a
+    // valid digit run.
+    const h1 = new URL("http://x/");
+    h1.host = "foo:8\u206A0";
+    expect(h1.port).toBe("8");
+    const h2 = new URL("http://x/");
+    h2.host = "foo\u1E9E:81";
+    expect(h2.host).toBe("xn--foo-7ka:81");
+  });
+
   it("prints", () => {
+    // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
+    // Bun.inspect matches node's util.inspect output.
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
-  href: "https://example.com/",
-  origin: "https://example.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "example.com",
-  hostname: "example.com",
-  port: "",
-  pathname: "/",
-  hash: "",
-  search: "",
-  searchParams: ${Bun.inspect(new URLSearchParams())},
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://example.com/',
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
 }`);
 
     expect(
@@ -103,21 +184,56 @@ describe("url", () => {
         new URL("https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"),
       ),
     ).toBe(`URL {
-  href: "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  origin: "https://github.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "github.com",
-  hostname: "github.com",
-  port: "",
-  pathname: "/oven-sh/bun/issues/135",
-  hash: "",
-  search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  origin: 'https://github.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'github.com',
+  hostname: 'github.com',
+  port: '',
+  pathname: '/oven-sh/bun/issues/135',
+  search: '?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  searchParams: URLSearchParams { 'hello i have spaces thank you good night' => '' },
+  hash: ''
 }`);
+  });
+
+  it("URLContext offsets account for the /. pathname guard", () => {
+    // URL Standard section 4.5 step 3: null host + empty first path segment
+    // serializes with a /. guard the pathname getter omits, so offsets from
+    // pathname_start on are shifted by 2 in the href.
+    expect(util.inspect(new URL("foo:/.//?x"), { showHidden: true })).toBe(`URL {
+  href: 'foo:/.//?x',
+  origin: 'null',
+  protocol: 'foo:',
+  username: '',
+  password: '',
+  host: '',
+  hostname: '',
+  port: '',
+  pathname: '//',
+  search: '?x',
+  searchParams: URLSearchParams { 'x' => '' },
+  hash: '',
+  Symbol(context): URLContext {
+    href: 'foo:/.//?x',
+    protocol_end: 4,
+    username_end: 4,
+    host_start: 4,
+    host_end: 4,
+    pathname_start: 6,
+    search_start: 8,
+    hash_start: 4294967295,
+    port: 4294967295,
+    scheme_type: 1,
+    [hasPort]: [Getter],
+    [hasSearch]: [Getter],
+    [hasHash]: [Getter]
+  }
+}`);
+    // A path whose first segment merely starts with "." gets no guard.
+    expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
   });
   it("works", () => {
     const inputs = [
@@ -256,4 +372,228 @@ describe("url", () => {
     expect(params.get("second")).toBe("replaced");
     expect(params.get("third")).toBeNull();
   });
+});
+
+describe("url.searchParams lazy href sync", () => {
+  // The URLSearchParams update steps are applied lazily to the associated
+  // URL's serialized string: each getter below must observe the change without
+  // any intermediate href read having forced a sync.
+  it("reflects mutations in every URL getter and across component setters", () => {
+    const u = new URL("http://user:pw@host:81/path?initial=1#frag");
+    const sp = u.searchParams;
+
+    sp.append("a", "1");
+    sp.append("b", "2");
+    sp.set("initial", "x");
+    expect({
+      href: u.href,
+      search: u.search,
+      toString: u.toString(),
+      toJSON: u.toJSON(),
+      hash: u.hash,
+      pathname: u.pathname,
+      protocol: u.protocol,
+      origin: u.origin,
+      username: u.username,
+      password: u.password,
+      host: u.host,
+      hostname: u.hostname,
+      port: u.port,
+      spSize: sp.size,
+      spString: sp.toString(),
+      inspect: Bun.inspect(u).includes("initial=x&a=1&b=2"),
+    }).toEqual({
+      href: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      search: "?initial=x&a=1&b=2",
+      toString: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      toJSON: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      hash: "#frag",
+      pathname: "/path",
+      protocol: "http:",
+      origin: "http://host:81",
+      username: "user",
+      password: "pw",
+      host: "host:81",
+      hostname: "host",
+      port: "81",
+      spSize: 3,
+      spString: "initial=x&a=1&b=2",
+      inspect: true,
+    });
+
+    // Setting an unrelated component while a searchParams mutation is pending
+    // must keep the pending query.
+    sp.append("c", "3");
+    u.pathname = "/p2";
+    expect({ href: u.href, get: sp.get("c") }).toEqual({
+      href: "http://user:pw@host:81/p2?initial=x&a=1&b=2&c=3#frag",
+      get: "3",
+    });
+
+    sp.set("d", "4");
+    u.hash = "#h2";
+    expect(u.href).toBe("http://user:pw@host:81/p2?initial=x&a=1&b=2&c=3&d=4#h2");
+
+    // Setting search directly discards any pending searchParams mutation
+    // (the new search wins) and rebuilds searchParams from it.
+    sp.append("dropped", "y");
+    u.search = "?only=1";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "http://user:pw@host:81/p2?only=1#h2",
+      entries: [["only", "1"]],
+    });
+
+    // Setting href discards any pending searchParams mutation and rebuilds
+    // searchParams from the new href.
+    sp.append("dropped", "z");
+    u.href = "https://other/?n=v";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "https://other/?n=v",
+      entries: [["n", "v"]],
+    });
+
+    // Deleting all params removes the '?' entirely.
+    sp.delete("n");
+    expect({ href: u.href, search: u.search, size: sp.size }).toEqual({
+      href: "https://other/",
+      search: "",
+      size: 0,
+    });
+
+    // sort() is also a mutation; href must reflect the sorted order.
+    sp.append("z", "1");
+    sp.append("a", "2");
+    sp.sort();
+    expect(u.search).toBe("?a=2&z=1");
+  });
+
+  // N appends through a URL-bound URLSearchParams used to re-serialize and
+  // re-parse the full href on every mutation, so 10000 appends ran for tens of
+  // seconds. With the sync deferred to the next href/search read, this is O(N)
+  // and finishes near-instantly; the spawn timeout is the discriminator.
+  test("N appends through url.searchParams are O(N), not O(N^2)", async () => {
+    const fixture = `
+      const N = 10000;
+      const u = new URL("http://h/");
+      for (let i = 0; i < N; i++) u.searchParams.append("k" + i, "v" + i);
+      const href = u.href;
+      if (u.searchParams.size !== N) throw new Error("size=" + u.searchParams.size);
+      if (!href.startsWith("http://h/?k0=v0&")) throw new Error("href=" + href.slice(0, 40));
+      if (!href.endsWith("&k9999=v9999")) throw new Error("hrefEnd=" + href.slice(-20));
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
+});
+
+describe("object URL prefix check", () => {
+  // The "blob:" prefix check dispatches on encoding and only reads
+  // prefix.len() code units; these inputs must not be transcoded first.
+  it("revokeObjectURL / resolveObjectURL handle non-blob inputs across encodings", () => {
+    const latin1 = "\u00e9not-a-blob";
+    const utf16 = "\u{1f600}not-a-blob";
+    const blobish = "blob:" + "\u{1f600}";
+    const real = URL.createObjectURL(new Blob(["hi"]));
+    expect({
+      revokeLatin1: URL.revokeObjectURL(latin1),
+      revokeUtf16: URL.revokeObjectURL(utf16),
+      revokeBlobish: URL.revokeObjectURL(blobish),
+      resolveLatin1: resolveObjectURL(latin1),
+      resolveUtf16: resolveObjectURL(utf16),
+      resolveBlobish: resolveObjectURL(blobish),
+      resolveUtf16Real: resolveObjectURL(real + "\u{1f600}"),
+      resolveReal: resolveObjectURL(real) instanceof Blob,
+    }).toEqual({
+      revokeLatin1: undefined,
+      revokeUtf16: undefined,
+      revokeBlobish: undefined,
+      resolveLatin1: undefined,
+      resolveUtf16: undefined,
+      resolveBlobish: undefined,
+      resolveUtf16Real: undefined,
+      resolveReal: true,
+    });
+    URL.revokeObjectURL(real);
+    expect(resolveObjectURL(real)).toBeUndefined();
+  });
+
+  // `is_string()` admits `StringObject`, so `to_bun_string` can hit a user
+  // `toString` that throws; that must surface as a catchable JS exception.
+  test("revokeObjectURL propagates a throwing toString on a String object", async () => {
+    const fixture = `
+      const s = new String("blob:x");
+      s.toString = () => { throw new Error("boom"); };
+      s[Symbol.toPrimitive] = () => { throw new Error("boom"); };
+      try { URL.revokeObjectURL(s); } catch (e) { console.log("caught", e.message); }
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "caught boom\nsurvived\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // bun_core::String::{has_prefix_comptime, eql_comptime} used to scan or
+  // transcode the entire string before comparing a short ASCII literal. With
+  // an O(literal) check this workload is effectively free; with an O(n) check
+  // it allocates and transcodes tens of GB and cannot finish inside the spawn
+  // timeout. Covers both encoding arms (UTF-16 and 8-bit Latin-1) and both
+  // helpers (has_prefix_comptime via revoke/resolveObjectURL, eql_comptime via
+  // fetch's protocol option).
+  test("ASCII prefix/equality checks on huge strings are O(k), not O(n)", async () => {
+    const fixture = `
+      const { resolveObjectURL } = require("node:buffer");
+      const n = 16 * 1024 * 1024;
+      const huge16 = Buffer.alloc(n * 2, "\\u0100", "utf16le").toString("utf16le");
+      const huge8 = Buffer.alloc(n, 0xe9).toString("latin1");
+      if (huge16.length !== n || huge16.charCodeAt(0) !== 0x100) throw new Error("setup");
+      if (huge8.length !== n || huge8.charCodeAt(0) !== 0xe9) throw new Error("setup");
+      for (const huge of [huge16, huge8]) {
+        for (let i = 0; i < 2000; i++) {
+          URL.revokeObjectURL(huge);
+          resolveObjectURL(huge);
+          try { fetch("http://x", { protocol: huge }).catch(() => {}); } catch {}
+        }
+      }
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
 });

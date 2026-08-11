@@ -20,9 +20,6 @@ pub const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
 pub const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
 pub const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1
 
-/// §6.5.2 SETTINGS_HEADER_TABLE_SIZE default.
-pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4_096;
-
 /// Highest valid stream identifier (§5.1.1): 2^31 - 1.
 pub const MAX_STREAM_ID: u32 = 2_147_483_647;
 
@@ -103,6 +100,21 @@ impl ErrorCode {
     pub fn as_u32(self) -> u32 {
         self as u32
     }
+}
+
+/// nghttp2 library error codes (negative). The embedder surfaces locally-detected connection
+/// errors to JS with one of these so node's `NghttpError` shape (code `ERR_HTTP2_ERROR`, message
+/// `nghttp2_strerror(code)`) can be reproduced exactly.
+/// https://github.com/nghttp2/nghttp2/blob/master/lib/includes/nghttp2/nghttp2.h (nghttp2_error)
+pub mod lib_error {
+    /// NGHTTP2_ERR_PROTO — "Protocol error"
+    pub const PROTO: i32 = -505;
+    /// NGHTTP2_ERR_STREAM_CLOSED — "Stream was already closed or invalid"
+    pub const STREAM_CLOSED: i32 = -510;
+    /// NGHTTP2_ERR_BAD_CLIENT_MAGIC — "Received bad client magic byte string"
+    pub const BAD_CLIENT_MAGIC: i32 = -903;
+    /// NGHTTP2_ERR_FLOODED — "Flooding was detected in this HTTP/2 session, and it must be closed"
+    pub const FLOODED: i32 = -904;
 }
 
 /// RFC 9113 §6.5.2 SETTINGS parameter registry (+ RFC 8441, RFC 9218).

@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, symlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -249,7 +250,7 @@ describe("bun", () => {
   });
 
   test("run pre and post scripts, in order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js": "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success')",
@@ -274,7 +275,7 @@ describe("bun", () => {
   });
 
   test("respect dependency order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "index.js": [
           "await new Promise((resolve) => setTimeout(resolve, 100))",
@@ -324,7 +325,7 @@ describe("bun", () => {
         },
       }),
     };
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       main: {
         "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
         "package.json": JSON.stringify({
@@ -348,7 +349,7 @@ describe("bun", () => {
   });
 
   test("ignore dependency order on cycle, preserving pre and post script order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js":
@@ -389,7 +390,7 @@ describe("bun", () => {
   });
 
   test("detect cycle of length > 2", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -440,7 +441,7 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -562,7 +563,7 @@ describe("bun", () => {
   });
 
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       packages: {
         dep0: {
           "index.js": Array(20).fill("console.log('log_line');").join("\n"),
@@ -593,7 +594,7 @@ describe("bun", () => {
   });
 
   test("self-referential directory symlink in a workspace does not loop", () => {
-    const dir = tempDirWithFiles("filter-symlink-loop", {
+    using dir = tempDir("filter-symlink-loop", {
       packages: {
         pkga: {
           "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
@@ -633,7 +634,7 @@ describe("bun", () => {
   });
 
   test("warning names which package.json failed to parse", async () => {
-    const dir = tempDirWithFiles("filter-bad-pkgjson", {
+    await using dir = tempDir("filter-bad-pkgjson", {
       packages: {
         good: {
           "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
@@ -660,5 +661,234 @@ describe("bun", () => {
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
+  });
+});
+
+// #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
+// as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
+// reaches the scripts and cleanup is entirely on the parent. libuv's global
+// spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
+// propagates one hop: as soon as the tree contains a non-libuv spawner
+// (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
+// its port bound after the parent exits.
+//
+// Tree under test:
+//   test → bun parent → `bun exec` → cmd.exe → leaf bun (long-running).
+// The leaf writes its pid to a file; the test kills the parent and polls the
+// leaf. Without a recursive kill-on-close Job on the parent, the leaf survives.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via reaps the whole descendant tree when the parent exits (#20319)", ({ argv }) => {
+  test.concurrent(
+    "leaf dies",
+    async () => {
+      function isAlive(pid: number): boolean {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (!isAlive(pid)) return true;
+          await sleep(25);
+        }
+        return !isAlive(pid);
+      }
+
+      using dir = tempDir("filter-win-cleanup", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        // .bat avoids cmd /c's quote-stripping around a quoted exe path + arg.
+        "packages/app/run.bat": `@"${bunExe()}" "%~dp0server.js"\r\n`,
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: "cmd /d /c run.bat" },
+        }),
+      });
+
+      const pidfile = join(String(dir), "leaf.pid");
+      // Unset NO_ORPHANS so the test exercises the unconditional Job rather
+      // than the opt-in env-var path CI may set globally.
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: pidfile,
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+
+      const parent = Bun.spawn({
+        cmd: [bunExe(), ...argv],
+        env,
+        cwd: join(String(dir), "packages", "app"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      let leafPid = 0;
+      try {
+        const deadline = Date.now() + 15000;
+        while (leafPid === 0 && Date.now() < deadline) {
+          try {
+            const t = await Bun.file(pidfile).text();
+            if (t.length > 0) leafPid = Number(t.trim());
+          } catch {}
+          if (leafPid === 0) await sleep(25);
+        }
+        if (leafPid === 0) {
+          parent.kill("SIGKILL");
+          await parent.exited;
+          const stderr = await parent.stderr.text();
+          throw new Error(`leaf never wrote pidfile; stderr:\n${stderr}`);
+        }
+        expect(isAlive(leafPid)).toBe(true);
+
+        // TerminateProcess on the parent — same effect as the second Ctrl+C
+        // (default handler) or the first Ctrl+C's abort() path once the direct
+        // children have exited and the parent calls Global::exit().
+        parent.kill("SIGKILL");
+        await parent.exited;
+
+        const died = await waitUntilDead(leafPid, 10000);
+        expect(died).toBe(true);
+      } finally {
+        parent.kill("SIGKILL");
+        await parent.exited;
+        if (leafPid > 0 && isAlive(leafPid)) {
+          try {
+            process.kill(leafPid, "SIGKILL");
+          } catch {}
+          await waitUntilDead(leafPid, 2000);
+        }
+      }
+    },
+    30000,
+  );
+});
+
+describe("output timing", () => {
+  // A script is finished when its process exits: output it already wrote is
+  // drained at that point, but a detached child still holding the pipe write
+  // ends must not keep the run alive waiting for an EOF that may never come.
+  test("a detached child holding the pipes does not delay the script's finish", async () => {
+    using dir = tempDir("filter-late-output", {
+      "package.json": JSON.stringify({
+        name: "ws-late",
+        workspaces: ["packages/*"],
+      }),
+      "packages/late/package.json": JSON.stringify({
+        name: "pkg-late",
+        scripts: {
+          go: `${bunExe()} late.js`,
+        },
+      }),
+      "packages/late/late.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("pid.txt", String(child.pid));
+        console.log("early-line");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
+      // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+      // bun SIGKILL the detached child on exit; unset it so the child really
+      // keeps the pipes open.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(join(String(dir), "packages", "late", "pid.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expect(stdout).toContain("early-line");
+    expect(stdout).toContain("Exited with code 0");
+    // The run ends when the script exits; the child's much later write goes to
+    // a closed pipe instead of delaying the run by 30s.
+    expect(stdout).not.toContain("late-line");
+    expect(exitCode).toBe(0);
+  });
+
+  // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe
+  // EOF would hang on the detached child that still holds go's stdout.
+  test.skipIf(isWindows)("SIGINT does not wait for a child holding the script's pipes", async () => {
+    using dir = tempDir("filter-abort-late", {
+      "package.json": JSON.stringify({
+        name: "ws-abort",
+        workspaces: ["packages/*"],
+      }),
+      "packages/bg/package.json": JSON.stringify({
+        name: "pkg-bg",
+        scripts: {
+          go: `${bunExe()} go.js`,
+        },
+      }),
+      "packages/bg/go.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
+        await Bun.sleep(15_000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-bg", "go"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // New session, so the group signal below cannot reach the test runner.
+      detached: true,
+    });
+    const ready = join(String(dir), "packages", "bg", "ready.txt");
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline || proc.exitCode !== null) {
+        proc.kill();
+        const [o, e] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+        throw new Error(`go never wrote ready.txt; stdout: ${o}stderr: ${e}`);
+      }
+      await Bun.sleep(10);
+    }
+    // Ctrl-C semantics: the terminal signals the foreground process group
+    // (bun run and the script), but not the detached grandchild.
+    const start = Date.now();
+    process.kill(-proc.pid, "SIGINT");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding grandchild so nothing outlives the test. Guard the
+    // pid: kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(ready).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    // 128 + SIGINT: go is killed by the signal and is the only script. stderr
+    // rides along so a regression surfaces it in the failure output.
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 130,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
   });
 });

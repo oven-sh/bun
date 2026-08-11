@@ -18,7 +18,6 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -87,7 +86,12 @@ extern "C" bool Bun__Node__ZeroFillBuffers;
 
 // SIMD-optimized search functions from highway_strings.cpp
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -323,7 +327,7 @@ static std::optional<JSString*> resolveEncodingString(JSC::ThrowScope& scope, JS
 // Matches Node's validateOffset (lib/buffer.js), which is validateInteger and
 // therefore renders its range as ">= min && <= max", unlike boundsError's
 // ">= min and <= max".
-uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, uint32_t min, uint32_t max)
+size_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, size_t min, size_t max)
 {
     if (!value.isNumber()) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
@@ -332,10 +336,9 @@ uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObjec
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min || value_num > max) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, makeString(">= "_s, min, " && <= "_s, max), value);
-    uint32_t result = JSC::toInt32(value_num);
-    return result;
+    return static_cast<size_t>(value_num);
 }
-uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, uint32_t min, uint32_t max)
+size_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, size_t min, size_t max)
 {
     if (!value.isNumber()) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
@@ -344,8 +347,7 @@ uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObjec
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min || value_num > max) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, makeString(">= "_s, min, " && <= "_s, max), value);
-    uint32_t result = JSC::toInt32(value_num);
-    return result;
+    return static_cast<size_t>(value_num);
 }
 
 namespace WebCore {
@@ -404,8 +406,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    // JSUint8Array::create throws only on OOM — or with a termination request
+    // pending on this VM (a worker being stopped), which any exception check
+    // materialises. Either way there is no buffer.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
@@ -414,7 +418,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 namespace WebCore {
 using namespace JSC;
 
-static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, uint32_t offset, uint32_t length, BufferEncodingType encoding)
+static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, size_t offset, size_t length, BufferEncodingType encoding)
 {
     if (str->length() == 0) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsNumber(0));
@@ -1568,6 +1572,8 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
+// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
+// so a match can only start on an even byte offset.
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1575,16 +1581,13 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    auto idx = byteOffset + std::distance(haystack.begin(), it);
-    return idx * 2;
+    const uint16_t* haystack = reinterpret_cast<const uint16_t*>(thisPtr);
+    size_t result = highway_memmem16(haystack + byteOffset, static_cast<size_t>(thisLength - byteOffset),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return (byteOffset + static_cast<int64_t>(result)) * 2;
 }
 
-// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
-// so a match can only start on an even byte offset.
 static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1592,22 +1595,22 @@ static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const u
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), std::min(thisLength, byteOffset + valueLength));
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::find_end(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return std::distance(haystack.begin(), it) * 2;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    size_t result = highway_memrmem16(reinterpret_cast<const uint16_t*>(thisPtr), static_cast<size_t>(haystackLen),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result) * 2;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto start = thisPtr;
-    auto end = thisPtr + std::min(thisLength, byteOffset + valueLength);
-    auto it = std::find_end(start, end, valuePtr, valuePtr + valueLength);
-    if (it != end) {
-        return it - thisPtr;
-    }
-    return -1;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
+        valuePtr, static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result);
 }
 
 // Port of the search-range handling in Node's src/node_buffer.cc
@@ -1615,9 +1618,10 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
 // upper bound of the search range. Returns true when a real search should run,
 // with *offsetOut / *searchEndOut set; otherwise *immediateResult holds the
 // value to return (the clamped offset for an empty needle, or -1).
-static bool computeIndexOfRange(size_t haystackLength, double byteOffsetD, double endD, size_t needleLength, bool isForward, size_t* offsetOut, size_t* searchEndOut, int64_t* immediateResult)
+static bool computeIndexOfRange(size_t haystackLength, double byteOffsetD, double endD, size_t needleLength, bool isForward, bool isUTF16, size_t* offsetOut, size_t* searchEndOut, int64_t* immediateResult)
 {
     size_t searchEnd = static_cast<size_t>(std::min<double>(std::max<double>(endD, 0), static_cast<double>(haystackLength)));
+    if (isUTF16) searchEnd &= ~static_cast<size_t>(1);
     ssize_t optOffset = indexOfOffset(haystackLength, static_cast<ssize_t>(byteOffsetD), static_cast<ssize_t>(needleLength), isForward);
 
     if (needleLength == 0) {
@@ -1655,18 +1659,18 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
-    if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, &byteOffset, &searchEnd, &immediateResult))
+    if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, false, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    auto span = std::span<const uint8_t>(typedVector, searchEnd);
     if (last) {
-        span = span.subspan(0, byteOffset + 1);
-        return WTF::reverseFind(span, byteValue);
+        size_t len = byteOffset + 1;
+        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
+        return result == len ? -1 : static_cast<int64_t>(result);
     }
-    span = span.subspan(byteOffset);
-    auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == WTF::notFound) return -1;
-    return result + byteOffset;
+    size_t len = searchEnd - byteOffset;
+    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
+    if (result == len) return -1;
+    return static_cast<int64_t>(result + byteOffset);
 }
 
 // ucs2 and utf16le name the same encoding (the parser normalizes every alias
@@ -1689,17 +1693,19 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     auto* arrayValue = uncheckedDowncast<JSC::JSUint8Array>(JSC::JSValue::decode(encodedBuffer));
     size_t needleLength = arrayValue->byteLength();
 
-    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    const bool isUTF16 = isUTF16Encoding(encoding);
+    // Node's IndexOfString rounds haystack_length down to even for UCS2 before
+    // IndexOfOffset (unlike IndexOfBuffer, which uses the raw byte length).
+    size_t haystackLength = isUTF16 ? byteLength & ~static_cast<size_t>(1) : byteLength;
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
-    if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
+    if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, isUTF16, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
 
     const uint8_t* typedVectorValue = arrayValue->typedVector();
-    if (isUTF16Encoding(encoding)) {
+    if (isUTF16) {
         return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                     : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
     }
@@ -1710,17 +1716,18 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, double endD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
 {
     size_t needleLength = array->byteLength();
-    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    const bool isUTF16 = isUTF16Encoding(encoding);
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
-    if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
+    // Node's IndexOfBuffer wraps negative offsets against the raw byte length,
+    // then floors to 16-bit units only for the search itself.
+    if (!computeIndexOfRange(byteLength, byteOffsetD, endD, needleLength, !last, isUTF16, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
 
     const uint8_t* typedVectorValue = array->typedVector();
-    if (isUTF16Encoding(encoding)) {
+    if (isUTF16) {
         return last ? lastIndexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset)
                     : indexOf16(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
     }
@@ -2291,9 +2298,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    uint32_t start = 0;
-    uint32_t end = castedThis->byteLength();
-    uint32_t byteLength = end;
+    size_t start = 0;
+    size_t end = castedThis->byteLength();
+    size_t byteLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     if (end == 0)
@@ -2315,15 +2322,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
 
     auto fstart = arg2.toNumber(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (fstart < 0) {
-        fstart = 0;
-        goto lstart;
-    }
-    if (fstart > byteLength) {
+    if (!(fstart >= 0)) {
+        start = 0;
+    } else if (fstart > byteLength) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    } else {
+        start = static_cast<size_t>(fstart);
     }
-    start = truncateDoubleToUint32(fstart);
-lstart:
 
     if (!arg3.isUndefined()) {
         auto lend = arg3.toLength(lexicalGlobalObject);
@@ -2384,30 +2389,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
 
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
-
-// DOMJIT makes it slower! TODO: investigate why
-// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
-
-// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-//     if (!encoded) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-
-//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-//         return {};
-//     }
-
-//     auto encoding = encoded.value();
-
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
-// }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
@@ -2582,8 +2563,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     auto lengthValue = callFrame->argument(2);
     auto encodingValue = callFrame->argument(3);
 
-    uint32_t offset;
-    uint32_t length;
+    size_t offset;
+    size_t length;
 
     if (offsetValue.isUndefined()) {
         Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
@@ -2611,7 +2592,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         length = castedThis->byteLength();
         offset = validateOffset(scope, lexicalGlobalObject, offsetValue, "offset"_s, 0, length);
         RETURN_IF_EXCEPTION(scope, {});
-        uint32_t remaining = castedThis->byteLength() - offset;
+        size_t remaining = castedThis->byteLength() - offset;
 
         if (lengthValue.isUndefined()) {
             length = remaining;
@@ -2642,10 +2623,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
-    uint32_t currentByteLength = castedThis->byteLength();
+    size_t currentByteLength = castedThis->byteLength();
     if (offset >= currentByteLength)
         RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
-    uint32_t currentRemaining = currentByteLength - offset;
+    size_t currentRemaining = currentByteLength - offset;
     if (length > currentRemaining) length = currentRemaining;
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));

@@ -1,8 +1,9 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { createRequire } from "module";
 import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -620,6 +621,107 @@ describe("optional peers", () => {
     await checkInstall();
     await checkInstall();
   });
+});
+
+// https://github.com/oven-sh/bun/issues/28147
+test("patched package shared by multiple peer variants is materialized into the cache once", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // `peer-deps@1.0.0` has `peerDependencies: { "no-deps": "*" }`. Giving each
+  // workspace a different `no-deps` version forces one isolated store variant
+  // of `peer-deps` per workspace, all sharing one patched cache directory.
+  const noDepsVersions = ["1.0.0", "1.0.1", "1.1.0", "2.0.0"];
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patched-peer-variants",
+      workspaces: ["packages/*"],
+      patchedDependencies: {
+        "peer-deps@1.0.0": "patches/peer-deps@1.0.0.patch",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "peer-deps@1.0.0.patch"),
+    `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+  );
+  for (const version of noDepsVersions) {
+    await write(
+      join(packageDir, "packages", `pkg-${version}`, "package.json"),
+      JSON.stringify({
+        name: `pkg-${version}`,
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps": "1.0.0",
+          "no-deps": version,
+        },
+      }),
+    );
+  }
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin it
+  // so the patched cache directory is created where the assertions look.
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  // Force the hardlink backend so the inode assertions below hold on every
+  // platform (macOS defaults to clonefile, which copies).
+  async function install() {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("packages installed");
+    expect(exitCode).toBe(0);
+  }
+
+  async function checkInstall() {
+    const storeDirs = (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(dir =>
+      dir.startsWith("peer-deps@1.0.0"),
+    );
+    expect(storeDirs.length).toBe(noDepsVersions.length);
+
+    // Exactly one patched cache directory exists for the package.
+    const cacheDirs = (await readdirSorted(cacheDir)).filter(
+      dir => dir.startsWith("peer-deps@1.0.0") && dir.includes("_patch_hash="),
+    );
+    expect(cacheDirs.length).toBe(1);
+    const cacheFile = join(cacheDir, cacheDirs[0], "index.js");
+
+    // The patch is applied in every variant, and every variant is hardlinked
+    // from the single patched cache materialization. Before the fix each
+    // variant re-applied the patch, replacing the shared cache directory the
+    // previous variant was concurrently hardlinking from (EPERM on Windows,
+    // divergent inodes on POSIX).
+    const inodes = new Set<number>();
+    for (const storeDir of storeDirs) {
+      const pkgDir = join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps");
+      expect(await file(join(pkgDir, "patched.txt")).text()).toBe("hello world\n");
+      inodes.add(statSync(join(pkgDir, "index.js")).ino);
+    }
+    inodes.add(statSync(cacheFile).ino);
+    expect(inodes.size).toBe(1);
+  }
+
+  await install();
+  await checkInstall();
+
+  // Reinstall with a warm cache and no node_modules: the patched cache
+  // directory already exists and must not be rebuilt per variant.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install();
+  await checkInstall();
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
@@ -1550,7 +1652,13 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
   const cacheDir = join(String(packageDir), ".bun-cache");
-  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  const bunfig = Bun.TOML.stringify({
+    install: {
+      cache: cacheDir,
+      registry: `http://localhost:${server.port}/`,
+      linker: "isolated",
+    },
+  });
   await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(
@@ -1596,6 +1704,56 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );
+});
+
+// https://github.com/oven-sh/bun/issues/36987
+// A tarball URL with a query string must not put a literal `?` in the .bun
+// store directory name: module resolution parses `?` as a query-string
+// delimiter (truncating the path), and `?` is invalid in Windows filenames.
+test("tarball URL with query string resolves at runtime", async () => {
+  const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/pkg.tgz") {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(tarball, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    },
+  });
+
+  using cacheDir = tempDir("tarball-query-cache-", {});
+  using packageDir = tempDir("tarball-query-test-", {
+    "bunfig.toml": `[install]\ncache = "${String(cacheDir).replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
+    "package.json": JSON.stringify({
+      name: "test-tarball-query",
+      dependencies: {
+        "no-deps": `http://localhost:${server.port}/pkg.tgz?x=y`,
+      },
+    }),
+    "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
+  });
+
+  await runBunInstall(bunEnv, String(packageDir));
+
+  const bunDir = join(String(packageDir), "node_modules", ".bun");
+  const storeEntries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
+  expect(storeEntries).toEqual([`no-deps@http+++localhost+${server.port}+pkg.tgz+x=y`]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(packageDir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("1.0.0\n");
+  expect(exitCode).toBe(0);
 });
 
 describe("global virtual store", () => {
@@ -1971,7 +2129,14 @@ describe("global virtual store", () => {
     const sharedCache = join(a.packageDir, ".bun-cache");
     await write(
       join(b.packageDir, "bunfig.toml"),
-      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\nglobalStore = true\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: sharedCache,
+          registry: registry.registryUrl(),
+          linker: "isolated",
+          globalStore: true,
+        },
+      }),
     );
 
     for (const { packageJson } of [a, b]) {
@@ -2341,4 +2506,184 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain('--linker: "isoalted"');
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
+});
+
+describe("hoist", () => {
+  // `node_modules/.bun/node_modules` holds a symlink to every installed
+  // package and sits on the upward resolution path of every store entry, so
+  // by default a store package can resolve dependencies it never declared.
+  // `install.hoist = false` (pnpm's `hoist=false`) skips that fallback
+  // directory without touching the rest of the layout.
+  test("hoist = false skips the hidden fallback directory", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-false",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // declared dependency symlinks are unchanged
+    expect(readlinkSync(join(packageDir, "node_modules", "a-dep"))).toBe(
+      join(".bun", "a-dep@1.0.1", "node_modules", "a-dep"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+
+    // a store package still resolves the dependencies it declares
+    const fromTwoRangeDeps = createRequire(
+      join(
+        packageDir,
+        "node_modules",
+        ".bun",
+        "two-range-deps@1.0.0",
+        "node_modules",
+        "two-range-deps",
+        "package.json",
+      ),
+    );
+    expect(fromTwoRangeDeps.resolve("no-deps/package.json")).toEndWith(
+      join(".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+    );
+
+    // and cannot resolve a package it does not declare
+    const fromADep = createRequire(
+      join(packageDir, "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep", "package.json"),
+    );
+    expect(() => fromADep.resolve("no-deps/package.json")).toThrow(
+      expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+    );
+
+    // packages linked at the project root (here: a direct dependency) remain
+    // reachable because `.bun` lives inside node_modules, matching pnpm
+    expect(fromADep.resolve("two-range-deps/package.json")).toEndWith(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps", "package.json"),
+    );
+  });
+
+  test("hoist = false keeps publicHoistPattern working", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, publicHoistPattern: "*types*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-public",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // the transitive @types/is-number is still publicly hoisted to the root
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "@types", "two-range-deps"]);
+    expect(readlinkSync(join(packageDir, "node_modules", "@types", "is-number"))).toBe(
+      join("..", ".bun", "@types+is-number@2.0.0", "node_modules", "@types", "is-number"),
+    );
+    // while the hidden fallback is not created
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  test("hoist = false removes a stale fallback directory from a previous install", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-stale",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // hoisting is on by default: transitive deps resolve through the fallback
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@1.1.0", "node_modules", "no-deps"),
+    );
+
+    await registry.writeBunfig(packageDir, { linker: "isolated", hoist: false });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+
+    // the rest of the install is untouched: removing the fallback symlinks
+    // must not touch the store entries they pointed at
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+    expect(await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+    });
+    expect(
+      await file(
+        join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  });
+
+  test("hoist = false takes precedence over hoistPattern", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoist: false, hoistPattern: "*" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-precedence",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+  });
+
+  test("npmrc hoist=false", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        ".npmrc": "hoist=false",
+      },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-npmrc",
+        dependencies: {
+          "two-range-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules"))).toBeFalse();
+    expect(readlinkSync(join(packageDir, "node_modules", "two-range-deps"))).toBe(
+      join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
+    );
+  });
 });

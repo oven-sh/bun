@@ -700,22 +700,16 @@ interface ReadableStreamDirectController {
   /**
    * Write a chunk directly to the destination.
    *
-   * Returns the number of bytes written, or a **negative number** when the
-   * destination's internal buffer is full (backpressure). When negative, the
-   * chunk *was* accepted; pause writing and `await controller.flush(true)`,
-   * which resolves once the destination has drained:
+   * Returns the number of bytes written, or a **pending `Promise<number>`**
+   * when the destination's internal buffer is full (backpressure). The chunk
+   * *was* accepted either way; `await`ing the result is enough:
    *
    * ```ts
-   * const n = controller.write(chunk);
-   * if (typeof n === "number" && n < 0) {
-   *   await controller.flush(true);
-   * }
+   * await controller.write(chunk);
    * ```
    *
-   * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
-   * write itself is asynchronous and a `Promise<number>` is returned instead;
-   * the `typeof` check above skips the backpressure wait for those — the
-   * promise carries its own flow control.
+   * The promise resolves once the destination has drained.
+   * `await controller.flush(true)` is equivalent.
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
@@ -724,7 +718,7 @@ interface ReadableStreamDirectController {
    *
    * @param wait When `true`, the returned promise resolves only once the
    * destination has drained its own internal buffer (i.e. backpressure has
-   * cleared). Use this after {@link write} returns a negative value.
+   * cleared). Use this after {@link write} returns a `Promise`.
    */
   flush(wait?: boolean): number | Promise<number>;
   start(): void;
@@ -1936,8 +1930,8 @@ interface BunFetchRequestInit extends RequestInit {
 
   /**
    * The proxy to send the request through, overriding the `http_proxy` and
-   * `HTTPS_PROXY` environment variables. Accepts a URL string, or an object
-   * with `url` and optional `headers`.
+   * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
+   * or an object with `url` and optional `headers`.
    *
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
@@ -1965,6 +1959,7 @@ interface BunFetchRequestInit extends RequestInit {
    */
   proxy?:
     | string
+    | URL
     | {
         /**
          * The proxy URL, as a string or a `URL`.
@@ -2080,6 +2075,30 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   maxRedirects?: number;
+
+  /**
+   * Control the socket idle timeout for this request. The timer is reset on
+   * every byte sent or received; if the connection stays idle for longer than
+   * this, the request fails with a timeout error.
+   *
+   * - A finite positive number sets the idle deadline in milliseconds,
+   *   overriding the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default (5 minutes).
+   * - `0`, `false`, or a non-finite number disables the idle timer for this
+   *   request.
+   * - `true` or an omitted value uses the default.
+   *
+   * This is not a whole-request deadline; use `AbortSignal.timeout(ms)` for
+   * that. Not part of the Fetch API specification.
+   *
+   * @example
+   * ```js
+   * // Allow a slow streaming response to stay idle for up to an hour
+   * const response = await fetch("https://example.com/llm", {
+   *   timeout: 60 * 60 * 1000,
+   * });
+   * ```
+   */
+  timeout?: number | boolean;
 }
 
 /**

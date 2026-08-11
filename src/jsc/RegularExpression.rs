@@ -26,8 +26,6 @@ pub enum RegularExpressionError {
     InvalidRegExp,
 }
 
-bun_core::named_error_set!(RegularExpressionError);
-
 // `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
 // `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
 // internal Yarr state through it is interior mutation invisible to Rust. The
@@ -38,9 +36,6 @@ unsafe extern "C" {
     -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
-    safe fn Yarr__RegularExpression__matchedLength(this: &RegularExpression) -> i32;
-    // C++: int Yarr__RegularExpression__searchRev(RegularExpression*, BunString) (bindings/RegularExpression.cpp:30)
-    safe fn Yarr__RegularExpression__searchRev(this: &RegularExpression, string: BunString) -> i32;
     safe fn Yarr__RegularExpression__matches(this: &RegularExpression, string: BunString) -> i32;
 }
 
@@ -63,7 +58,7 @@ impl RegularExpression {
     }
 
     #[inline]
-    pub fn is_valid(&mut self) -> bool {
+    pub(crate) fn is_valid(&mut self) -> bool {
         Yarr__RegularExpression__isValid(self)
     }
 
@@ -78,19 +73,9 @@ impl RegularExpression {
         Yarr__RegularExpression__matches(self, str) >= 0
     }
 
-    #[inline]
-    pub fn search_rev(&mut self, str: BunString) -> i32 {
-        Yarr__RegularExpression__searchRev(self, str)
-    }
-
-    #[inline]
-    pub fn matched_length(&mut self) -> i32 {
-        Yarr__RegularExpression__matchedLength(self)
-    }
-
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
     #[inline]
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
@@ -105,7 +90,7 @@ impl RegularExpression {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
+fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
     // Initialize JSC before first compile (idempotent).
     crate::initialize(false);
     match RegularExpression::init(pattern, Flags::None) {
@@ -115,7 +100,7 @@ pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNu
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
+fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
     // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
     // centralised non-null deref proof. `regex` was produced by
     // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
@@ -123,7 +108,7 @@ pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunStri
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
+fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
     unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
 }

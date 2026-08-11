@@ -35,9 +35,6 @@
 
 namespace WebCore {
 
-class Blob;
-class ScriptExecutionContext;
-class URLRegistrable;
 class URLSearchParams;
 
 class DOMURL final : public RefCounted<DOMURL>, public CanMakeWeakPtr<DOMURL>, public URLDecomposition {
@@ -49,17 +46,21 @@ public:
     static RefPtr<DOMURL> parse(const String& url, const String& base);
     static bool canParse(const String& url, const String& base);
 
-    const URL& href() const { return m_url; }
+    const URL& href() const
+    {
+        flushPendingSearchParamsUpdate();
+        return m_url;
+    }
     ExceptionOr<void> setHref(const String&);
 
     URLSearchParams& searchParams();
+    void markSearchParamsDirty() { m_searchParamsDirty = true; }
 
-    const String& toJSON() const { return m_url.string(); }
-
-    static String createObjectURL(ScriptExecutionContext&, Blob&);
-    static void revokeObjectURL(ScriptExecutionContext&, const String&);
-
-    static String createPublicURL(ScriptExecutionContext&, URLRegistrable&);
+    const String& toJSON() const
+    {
+        flushPendingSearchParamsUpdate();
+        return m_url.string();
+    }
 
     size_t memoryCost() const
     {
@@ -71,15 +72,21 @@ public:
     }
 
 private:
-    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base);
+    static ExceptionOr<Ref<DOMURL>> create(const String& url, const URL& base, const String& baseInput);
     DOMURL(URL&& completeURL);
 
-    URL fullURL() const final { return m_url; }
+    URL fullURL() const final
+    {
+        flushPendingSearchParamsUpdate();
+        return m_url;
+    }
     void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
+    void flushPendingSearchParamsUpdate() const;
 
     URL m_url;
     RefPtr<URLSearchParams> m_searchParams;
     uint16_t m_initialURLCostForGC { 0 };
+    mutable bool m_searchParamsDirty { false };
 };
 
 } // namespace WebCore

@@ -164,7 +164,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
+Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link).
 
 ### Phase 3 — Execute
 
@@ -197,6 +197,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                            |
 | `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                  |
 | `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer |
+| `xmlByteClass.ts`              | Generates `xml_byte_class.{h,rs}` — the XML byte classification shared by the SIMD kernels and the Rust scalar indexer  |
 | `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                                      |
 | `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                 |
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                        |

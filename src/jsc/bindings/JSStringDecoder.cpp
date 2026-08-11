@@ -282,6 +282,7 @@ JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalOb
                 RELEASE_AND_RETURN(throwScope, firstHalf);
             offset = m_lastNeed;
             m_lastNeed = 0;
+            m_lastTotal = 0;
             if (offset == length)
                 RELEASE_AND_RETURN(throwScope, firstHalf);
 
@@ -317,9 +318,10 @@ ResetScope::ResetScope(JSStringDecoder* decoder)
 
 ResetScope::~ResetScope()
 {
+    // Node's FlushData only clears MissingBytes/BufferedBytes; it leaves the
+    // incomplete-character buffer (lastChar) intact, so m_lastChar stays as-is.
     m_decoder->m_lastTotal = 0;
     m_decoder->m_lastNeed = 0;
-    memset(m_decoder->m_lastChar, 0, 4);
 }
 
 JSC::JSString*
@@ -601,15 +603,6 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     }
 
     return JSC::JSValue::encode(jsObject);
-}
-
-void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype)
-{
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "StringDecoder"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };

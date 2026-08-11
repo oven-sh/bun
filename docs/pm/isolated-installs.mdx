@@ -72,6 +72,8 @@ Instead of hoisting dependencies, isolated installs create a two-tier structure:
 ```bash tree layout of node_modules icon="list-tree"
 node_modules/
 ├── .bun/                          # Central package store
+│   ├── node_modules/              # Hoisted fallback (see install.hoist)
+│   │   └── package -> ../package@1.0.0/node_modules/package
 │   ├── package@1.0.0/             # Versioned package installations
 │   │   └── node_modules/
 │   │       └── package/           # Actual package files
@@ -121,6 +123,18 @@ node_modules/.bun/package@1.0.0_react@18.2.0/
 ```
 
 The directory name includes both the package version and its peer dependency versions, so each unique combination gets its own installation.
+
+### Strict resolution with `install.hoist = false`
+
+By default, Bun creates `node_modules/.bun/node_modules`, a fallback directory with a symlink to every installed package. Because it is an ancestor of every store entry, a package in the store can resolve dependencies it never declared. Set [`install.hoist = false`](/runtime/bunfig#install-hoist) (or `hoist=false` in `.npmrc`, matching pnpm) to skip creating this directory, so undeclared imports fail instead of depending on what else happens to be installed. One caveat, shared with pnpm: the root `node_modules` also sits above the store, so packages linked there (your direct dependencies, `publicHoistPattern` matches, and workspace packages) stay resolvable from any store package:
+
+```toml bunfig.toml icon="settings"
+[install]
+linker = "isolated"
+hoist = false
+```
+
+[`install.hoistPattern`](/runtime/bunfig#install-hoistpattern) and [`install.publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) offer pattern-based control over the same fallback directory and the root `node_modules` respectively.
 
 ### Global virtual store
 

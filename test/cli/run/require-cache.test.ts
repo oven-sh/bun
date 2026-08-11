@@ -1,18 +1,54 @@
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isArm64,
-  isASAN,
-  isBroken,
-  isCI,
-  isIntelMacOS,
-  isMacOS,
-  isMusl,
-  isWindows,
-  tempDir,
-} from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isBroken, isIntelMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+// Shared by the "don't leak the output source code" fixtures below.
+//
+// The leak they guard against (the transpiled source, or the whole module, kept
+// alive once per load) is measured as the bytes mimalloc currently has handed
+// out, summed over every heap; JSC allocates through mimalloc as well. RSS is
+// not a usable signal for these loops: each load of index.js creates a ~2 MB
+// CodeBlock metadata table that is reported to the GC while collection is
+// deferred, so whether a collection actually runs between loads depends on
+// concurrent JIT timing, and mimalloc keeps pages mapped for a while after the
+// blocks in them are freed. Together those moved RSS by 60-180 MB between two
+// gc(true) calls with nothing retained (the alpine x64 and macOS CI failures of
+// this file), while liveBytes() stayed within 4 MB.
+//
+// ASAN builds allocate through the system allocator, which the heap walk does
+// not see, so they keep the RSS bound.
+const leakFixturePrelude = `
+          const { heapStats } = require("bun:jsc");
+          const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          function liveBytes() {
+            let bytes = 0;
+            for (const heap of heapStats({ dump: true }).mimallocDump.heaps) {
+              for (const page of heap.pages) bytes += page.block_size * page.used;
+            }
+            return bytes;
+          }
+          function measure() {
+            gc(true);
+            return { live: liveBytes(), rss: rss() };
+          }
+`;
+
+// Leaking one copy of index.js's output per load adds at least ~44 MB in the
+// smallest fixture (100 KB x 400 loads; the long-export-name fixtures add
+// hundreds of MB). The noise floor is the most recently loaded module's
+// unlinked bytecode occasionally surviving gc(true): ~3 MB.
+function leakFixtureCheck(asanRssMB: number) {
+  return `
+          const after = measure();
+          const liveDiff = after.live - baseline.live;
+          const rssDiff = after.rss - baseline.rss;
+          console.log("live diff", (liveDiff / 1024 / 1024).toFixed(1), "MB,", "RSS diff", (rssDiff / 1024 / 1024) | 0, "MB");
+          if (${isASAN} ? rssDiff > ${asanRssMB} * 1024 * 1024 : liveDiff > 16 * 1024 * 1024) {
+            throw new Error("Memory leak detected");
+          }
+`;
+}
 
 describe.concurrent("require.cache", () => {
   test("require.cache is not an empty object literal when inspected", () => {
@@ -62,9 +98,8 @@ describe.concurrent("require.cache", () => {
       await using dir = tempDir("require-cache-bug-leak-1", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
+          ${leakFixturePrelude}
           const path = require.resolve("./index.js");
-          const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
           function bust() {
             const mod = require.cache[path];
@@ -79,22 +114,12 @@ describe.concurrent("require.cache", () => {
             require(path);
             bust();
           }
-          gc(true);
-          const baseline = rss();
+          const baseline = measure();
           for (let i = 0; i < 500; i++) {
             require(path);
             bust(path);
           }
-          gc(true);
-          const after = rss();
-          const diff = after - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 400 : 100} * 1024 * 1024) {
-            // Bun v1.1.21 reported 844 MB here on macOS arm64.
-            throw new Error("Memory leak detected");
-          }
-
+          ${leakFixtureCheck(400)}
           exports.abc = 123;
         `,
       });
@@ -121,9 +146,8 @@ describe.concurrent("require.cache", () => {
       await using dir = tempDir("require-cache-bug-leak-3", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
+          ${leakFixturePrelude}
           const path = require.resolve("./index.js");
-          const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -132,23 +156,12 @@ describe.concurrent("require.cache", () => {
             await import(path);
             bust();
           }
-          gc(true);
-          const baseline = rss();
+          const baseline = measure();
           for (let i = 0; i < 400; i++) {
             await import(path);
             bust(path);
           }
-          gc(true);
-          const after = rss();
-          const diff = after - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
-            // Bun v1.1.22 reported 1 MB here on macoS arm64.
-            // Bun v1.1.21 reported 257 MB here on macoS arm64.
-            throw new Error("Memory leak detected");
-          }
-
+          ${leakFixtureCheck(320)}
           export default 123;
         `,
       });
@@ -171,9 +184,8 @@ describe.concurrent("require.cache", () => {
       await using dir = tempDir("require-cache-bug-leak-4", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
+          ${leakFixturePrelude}
           const path = require.resolve("./index.js");
-          const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -182,23 +194,12 @@ describe.concurrent("require.cache", () => {
             await import(path);
             bust();
           }
-          gc(true);
-          const baseline = rss();
+          const baseline = measure();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
-          gc(true);
-          const after = rss();
-          const diff = after - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
-            // Bun v1.1.21 reported 423 MB here on macoS arm64.
-            // Bun v1.1.22 reported 4 MB here on macoS arm64.
-            throw new Error("Memory leak detected");
-          }
-
+          ${leakFixtureCheck(320)}
           export default 124;
         `,
       });
@@ -213,28 +214,20 @@ describe.concurrent("require.cache", () => {
       expect(exitCode).toBe(0);
     }, 60000);
 
-    test.todoIf(
-      // Flaky specifically on macOS CI, and on musl-aarch64 under ThinLTO +
-      // -Zshare-generics where RSS reports ~280 MB for the same workload
-      // that measures under 64 MB elsewhere (intermittent).
-      isBroken && isCI && (isMacOS || (isMusl && isArm64)),
-    )(
-      "via require() with a lot of function calls",
-      async () => {
-        let text = "function i() { return 1; }\n";
-        for (let i = 0; i < 20000; i++) {
-          text += `i();\n`;
-        }
-        text += "exports.forceCommonJS = true;\n";
+    test("via require() with a lot of function calls", async () => {
+      let text = "function i() { return 1; }\n";
+      for (let i = 0; i < 20000; i++) {
+        text += `i();\n`;
+      }
+      text += "exports.forceCommonJS = true;\n";
 
-        console.log("Text length:", text.length);
+      console.log("Text length:", text.length);
 
-        await using dir = tempDir("require-cache-bug-leak-2", {
-          "index.js": text,
-          "require-cache-bug-leak-fixture.js": `
+      await using dir = tempDir("require-cache-bug-leak-2", {
+        "index.js": text,
+        "require-cache-bug-leak-fixture.js": `
+          ${leakFixturePrelude}
           const path = require.resolve("./index.js");
-          const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           function bust() {
             const mod = require.cache[path];
             if (mod) {
@@ -248,37 +241,24 @@ describe.concurrent("require.cache", () => {
             require(path);
             bust();
           }
-          gc(true);
-          const baseline = rss();
+          const baseline = measure();
           for (let i = 0; i < 400; i++) {
             require(path);
             bust(path);
           }
-          gc(true);
-          const after = rss();
-          const diff = after - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
-            // Bun v1.1.22 reported 4 MB here on macoS arm64.
-            // Bun v1.1.21 reported 248 MB here on macoS arm64.
-            throw new Error("Memory leak detected");
-          }
-
+          ${leakFixtureCheck(320)}
           exports.abc = 123;
         `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-          env: bunEnv,
-          stdio: ["inherit", "inherit", "inherit"],
-        });
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+        env: bunEnv,
+        stdio: ["inherit", "inherit", "inherit"],
+      });
 
-        const exitCode = await proc.exited;
-        expect(exitCode).toBe(0);
-      },
-      60000,
-    ); // takes 4s on an M1 in release build
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+    }, 60000); // takes 4s on an M1 in release build
   });
 
   describe("files transpiled and loaded don't leak the AST", () => {

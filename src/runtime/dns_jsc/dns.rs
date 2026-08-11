@@ -2400,7 +2400,6 @@ pub mod internal {
 
     /// "localhost" or a name under it (RFC 6761 §6.3), the same set `normalize_dns_name`
     /// special-cases for `dns.lookup`.
-    #[cfg(not(windows))]
     fn is_localhost_name(host: &[u8]) -> bool {
         const LOCALHOST: &[u8] = b"localhost";
         let Some(prefix_len) = host.len().checked_sub(LOCALHOST.len()) else {
@@ -2409,6 +2408,75 @@ pub mod internal {
         let (prefix, label) = host.split_at(prefix_len);
         strings::eql_case_insensitive_ascii(label, LOCALHOST, true)
             && (prefix.is_empty() || prefix.ends_with(b"."))
+    }
+
+    /// `bun:internal-for-testing`: [`is_localhost_name`]. What it changes about a
+    /// real lookup is only observable on a host where AI_ADDRCONFIG filters loopback.
+    pub(crate) fn is_localhost_name_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let hostname = frame.argument(0);
+        if !hostname.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
+        }
+        let hostname = hostname.to_slice(global)?;
+        Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
+    }
+
+    /// glibc's AI_ADDRCONFIG judges each family by the machine's non-loopback
+    /// addresses, so where ::1 is the only IPv6 address (a container, typically) it
+    /// drops the `::1 localhost` line of /etc/hosts even though ::1 is up, and a
+    /// listener bound to the name sits exactly there (`bsd_create_listen_socket`
+    /// prefers that line). macOS libinfo exempts localhost from its equivalent
+    /// filter and musl's AI_ADDRCONFIG probes loopback itself; for glibc, a loopback
+    /// name whose filtered answer holds a single family gets the unfiltered answer.
+    ///
+    /// Returns the filtered answer's family so it stays at the head of the list:
+    /// the other loopback family is only ever an extra candidate, and a consumer
+    /// that takes just the first entry (`us_quic_connect_result`) connects where it
+    /// did before. `AF_UNSPEC` when the answer was left alone.
+    ///
+    /// # Safety
+    /// `*addrinfo` must be the non-null list a successful `getaddrinfo()` call with
+    /// `hints`, `host_ptr` and `service` returned; on return it is again a list the
+    /// caller owns and frees.
+    #[cfg(not(windows))]
+    unsafe fn add_filtered_loopback_family(
+        hints: &mut AddrInfo,
+        host_ptr: *const c_char,
+        service: *const c_char,
+        addrinfo: &mut *mut AddrInfo,
+    ) -> c_int {
+        if hints.ai_family != netc::AF_UNSPEC {
+            return netc::AF_UNSPEC;
+        }
+        // SAFETY: `*addrinfo` is a getaddrinfo()-owned list per the contract above.
+        let filtered_family = unsafe { (**addrinfo).ai_family };
+        let mut node = *addrinfo;
+        while !node.is_null() {
+            // SAFETY: walking the same list.
+            unsafe {
+                if (*node).ai_family != filtered_family {
+                    return netc::AF_UNSPEC;
+                }
+                node = (*node).ai_next;
+            }
+        }
+
+        hints.ai_flags &= !netc::AI_ADDRCONFIG;
+        let mut unfiltered: *mut AddrInfo = ptr::null_mut();
+        // SAFETY: FFI getaddrinfo with the caller's still-valid host/service
+        // pointers; `hints`/`unfiltered` are live locals.
+        if unsafe { libc::getaddrinfo(host_ptr, service, &raw const *hints, &raw mut unfiltered) }
+            != 0
+        {
+            return netc::AF_UNSPEC;
+        }
+        // SAFETY: `*addrinfo` came from getaddrinfo() and nothing else points into it.
+        unsafe { bun_dns::freeaddrinfo(*addrinfo) };
+        *addrinfo = unfiltered;
+        filtered_family
     }
 
     // `Request` is passed opaquely to usockets and round-tripped back into
@@ -2505,11 +2573,16 @@ pub mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
+    //
+    // `first_family` takes index 0 and the even slots; `AF_UNSPEC` means the
+    // family the list itself starts with. The slot arithmetic below is a
+    // bijection for any split, including one where `first_family` matches no
+    // entry at all.
+    fn process_results(info: *mut AddrInfo, first_family: c_int) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
-        let first_family = if info.is_null() {
-            netc::AF_UNSPEC
+        let first_family = if first_family != netc::AF_UNSPEC || info.is_null() {
+            first_family
         } else {
             // SAFETY: info is a live addrinfo node; freed by caller after we return.
             unsafe { (*info).ai_family }
@@ -2587,9 +2660,9 @@ pub mod internal {
         results
     }
 
-    fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
+    fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int, first_family: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
-            let res = process_results(info);
+            let res = process_results(info, first_family);
             // ws2_32!getaddrinfo-allocated on Windows — free via the matching
             // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
             // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
@@ -2658,7 +2731,7 @@ pub mod internal {
                 &wsa_hints,
                 &mut addrinfo,
             );
-            after_result(req, addrinfo.cast(), err);
+            after_result(req, addrinfo.cast(), err, netc::AF_UNSPEC);
         }
         #[cfg(not(windows))]
         // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
@@ -2668,27 +2741,26 @@ pub mod internal {
             let mut hints = get_hints();
             let host = (*req).key.host.as_ref();
 
-            // glibc's AI_ADDRCONFIG only counts non-loopback interface addresses, so on
-            // a machine whose only IPv6 address is ::1 (a container, typically) it drops
-            // the `::1 localhost` line of /etc/hosts even though ::1 is up, while a
-            // listener bound to the name (bsd_create_listen_socket prefers that line)
-            // sits exactly there. Loopback names get the unfiltered answer, which is
-            // what macOS libinfo and musl already return for them.
-            if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
-                hints.ai_flags &= !netc::AI_ADDRCONFIG;
-            }
-
             let host_ptr = host
                 .map(|h| h.as_ptr().cast::<c_char>())
                 .unwrap_or(ptr::null());
             let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
 
-            // optional fallback
-            if err == netc::EAI_NONAME && (hints.ai_flags & netc::AI_ADDRCONFIG) != 0 {
-                hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
+            let mut first_family = netc::AF_UNSPEC;
+            if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0 {
+                if err == netc::EAI_NONAME {
+                    // optional fallback
+                    hints.ai_flags &= !netc::AI_ADDRCONFIG;
+                    err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
+                } else if err == 0
+                    && !addrinfo.is_null()
+                    && host.is_some_and(|h| is_localhost_name(h.as_bytes()))
+                {
+                    first_family =
+                        add_filtered_loopback_family(&mut hints, host_ptr, service, &mut addrinfo);
+                }
             }
-            after_result(req, addrinfo, err);
+            after_result(req, addrinfo, err, first_family);
         }
     }
 
@@ -2816,7 +2888,7 @@ pub mod internal {
             unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
         }
 
-        let results = process_results(nodes.as_mut_ptr());
+        let results = process_results(nodes.as_mut_ptr(), netc::AF_UNSPEC);
         after_result_entries(req, Some(results), 0);
     }
 
@@ -2868,7 +2940,9 @@ pub mod internal {
 
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
-    /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
+    /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it. The
+    /// optional `firstFamily` (4 or 6) is what `add_filtered_loopback_family`
+    /// passes for a loopback name.
     pub(crate) fn seed_cache_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -2876,7 +2950,7 @@ pub mod internal {
         let args = frame.arguments();
         if args.len() < 2 || !args[0].is_string() || !args[1].is_array() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "expected (hostname: string, addresses: string[])"
+                "expected (hostname: string, addresses: string[], firstFamily?: 4 | 6)"
             )));
         }
         let hostname_slice = args[0].to_slice(global)?;
@@ -2887,6 +2961,16 @@ pub mod internal {
                 global.throw_invalid_arguments(format_args!("addresses must have 1..=64 entries"))
             );
         }
+        let first_family = match frame.argument(2) {
+            v if v.is_undefined() => netc::AF_UNSPEC,
+            v if v.is_int32() && v.as_int32() == 4 => netc::AF_INET,
+            v if v.is_int32() && v.as_int32() == 6 => netc::AF_INET6,
+            _ => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("firstFamily must be 4 or 6"))
+                );
+            }
+        };
 
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
@@ -2932,7 +3016,7 @@ pub mod internal {
             unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
         }
 
-        let results = process_results(nodes.as_mut_ptr());
+        let results = process_results(nodes.as_mut_ptr(), first_family);
 
         let out = JSValue::create_empty_array(global, results.len())?;
         for (i, entry) in (0u32..).zip(results.iter()) {
@@ -6122,4 +6206,8 @@ export_host_fn!(
 export_host_fn!(
     internal::seed_cache_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
+);
+export_host_fn!(
+    internal::is_localhost_name_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting"
 );

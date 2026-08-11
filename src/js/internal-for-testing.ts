@@ -737,11 +737,22 @@ export const stringsInternals = {
   ) => string,
 };
 
-/** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
-export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
+/**
+ * Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order.
+ * `firstFamily` is what the loopback-name path passes to keep AI_ADDRCONFIG's family at the head of the list.
+ */
+export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 3) as (
   hostname: string,
   addresses: string[],
+  firstFamily?: 4 | 6,
 ) => number[];
+
+/** The names the connect-path resolver exempts from AI_ADDRCONFIG's loopback filtering ("localhost" and below). */
+export const dnsIsLocalhostName = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.isLocalhostNameForTesting",
+  1,
+) as (hostname: string) => boolean;
 
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {

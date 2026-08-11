@@ -1,6 +1,11 @@
 import { dns } from "bun";
+import { dnsCacheSeed, dnsIsLocalhostName } from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+
+// What the system says "localhost" is, unfiltered: the JS-facing lookup passes no
+// AI_ADDRCONFIG, so this is the same /etc/hosts content the listeners below bind.
+const localhostHasV6Loopback = (await dns.lookup("localhost").catch(() => [])).some(({ address }) => address === "::1");
 
 // The DNS cache is process-global, so this runs in its own process to get
 // clean counters. Docs promise that a failed connection evicts the host's
@@ -40,67 +45,107 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
-// A listener given a hostname binds one of the name's addresses (the `::1
-// localhost` line of /etc/hosts when there is one), so a connect to the same name
-// has to try every address the name has. The connect side resolves through the
-// internal DNS cache, which used to pass AI_ADDRCONFIG for every name; glibc's
-// AI_ADDRCONFIG ignores loopback when deciding which families are configured, so
-// on a machine whose only IPv6 address is ::1 (a container) "localhost" resolved
-// to 127.0.0.1 alone and the listener on ::1 was unreachable by name.
-describe.concurrent("connecting to the hostname a listener was bound to", () => {
-  test("fetch()", async () => {
+// The connect-path resolver (fetch(), Bun.connect(), WebSocket) passes
+// AI_ADDRCONFIG to getaddrinfo(). glibc judges each family by the machine's
+// non-loopback addresses, so on a host whose only IPv6 address is ::1 (a
+// container, typically) it drops the `::1 localhost` line of /etc/hosts, while a
+// listener bound to the name "localhost" (or to ::1) sits exactly there. For
+// localhost names the resolver now adds the filtered-out loopback family behind
+// the family AI_ADDRCONFIG did answer with.
+//
+// Which names get this, and how the merged list is ordered, are checked
+// directly below because a real lookup only shows the difference on such a host.
+// The end-to-end tests after that fail without the fix on such a host and are
+// plain regression coverage everywhere else.
+describe("loopback names and AI_ADDRCONFIG", () => {
+  test("names that are exempt from the filter", () => {
+    const names = [
+      "localhost",
+      "LOCALHOST",
+      "app.localhost",
+      "a.b.LocalHost",
+      "notlocalhost",
+      "localhost.example",
+      "localhost2",
+      "127.0.0.1",
+      "",
+    ];
+    expect(Object.fromEntries(names.map(name => [name, dnsIsLocalhostName(name)]))).toEqual({
+      "localhost": true,
+      "LOCALHOST": true,
+      "app.localhost": true,
+      "a.b.LocalHost": true,
+      "notlocalhost": false,
+      "localhost.example": false,
+      "localhost2": false,
+      "127.0.0.1": false,
+      "": false,
+    });
+  });
+
+  test("the family AI_ADDRCONFIG answered with stays at the head of the unfiltered list", () => {
+    // /etc/hosts lists ::1 first; AI_ADDRCONFIG had answered with IPv4 only, so
+    // consumers that take the first entry keep connecting to 127.0.0.1 and ::1
+    // is added behind it. Symmetric for an IPv6-only answer, and unchanged
+    // (the list's own order) when no family is forced.
+    expect({
+      v4Answered: dnsCacheSeed("addrconfig-v4.invalid", ["::1", "127.0.0.1"], 4),
+      v6Answered: dnsCacheSeed("addrconfig-v6.invalid", ["127.0.0.1", "::1"], 6),
+      unforced: dnsCacheSeed("addrconfig-unforced.invalid", ["::1", "127.0.0.1"]),
+    }).toEqual({
+      v4Answered: [4, 6],
+      v6Answered: [6, 4],
+      unforced: [6, 4],
+    });
+  });
+
+  test.concurrent("fetch() reaches a server listening on the name it connects to", async () => {
     await using server = Bun.serve({ port: 0, hostname: "localhost", fetch: () => new Response("ok") });
     const response = await fetch(`http://localhost:${server.port}/`);
     expect(await response.text()).toBe("ok");
   });
 
-  // getaddrinfo() is case-insensitive, so the exemption has to be too.
-  test.each(["localhost", "LOCALHOST"])("Bun.connect({ hostname: %j })", async hostname => {
-    using listener = Bun.listen({
-      port: 0,
-      hostname: "localhost",
-      socket: {
-        open(socket) {
-          socket.end("hello");
-        },
-        data() {},
-      },
+  // Only meaningful where the system resolver maps localhost to ::1 at all.
+  describe.skipIf(!localhostHasV6Loopback)("a server on ::1 is reachable through the name", () => {
+    test.concurrent("fetch()", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "::1",
+        fetch: (request, server) => new Response(server.requestIP(request)!.address),
+      });
+      const response = await fetch(`http://localhost:${server.port}/`);
+      expect(await response.text()).toBe("::1");
     });
-    const { promise, resolve } = Promise.withResolvers<string>();
-    using socket = await Bun.connect({
-      hostname,
-      port: listener.port,
-      socket: {
-        data(_socket, data) {
-          resolve(data.toString());
-        },
-      },
-    });
-    expect(await promise).toBe("hello");
-    expect(socket.remoteAddress).toBeOneOf(["127.0.0.1", "::1"]);
-  });
 
-  test("new WebSocket()", async () => {
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "localhost",
-      fetch(request, server) {
-        return server.upgrade(request) ? undefined : new Response(null, { status: 400 });
-      },
-      websocket: {
-        open(ws) {
-          ws.send("hello");
-        },
-        message() {},
-      },
+    // getaddrinfo() is case-insensitive, so the exemption has to be too.
+    test.concurrent.each(["localhost", "LOCALHOST"])("Bun.connect({ hostname: %j })", async hostname => {
+      using listener = Bun.listen({ port: 0, hostname: "::1", socket: { data() {} } });
+      using socket = await Bun.connect({ hostname, port: listener.port, socket: { data() {} } });
+      expect(socket.remoteAddress).toBe("::1");
     });
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const ws = new WebSocket(`ws://localhost:${server.port}/`);
-    ws.onmessage = event => resolve(String(event.data));
-    ws.onclose = event => reject(new Error(`closed before any message: ${event.code} ${event.reason}`));
-    expect(await promise).toBe("hello");
-    ws.onclose = null;
-    ws.close();
+
+    test.concurrent("new WebSocket()", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "::1",
+        fetch(request, server) {
+          return server.upgrade(request) ? undefined : new Response(null, { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            ws.send(ws.remoteAddress);
+          },
+          message() {},
+        },
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const ws = new WebSocket(`ws://localhost:${server.port}/`);
+      ws.onmessage = event => resolve(String(event.data));
+      ws.onclose = event => reject(new Error(`closed before any message: ${event.code} ${event.reason}`));
+      expect(await promise).toBe("::1");
+      ws.onclose = null;
+      ws.close();
+    });
   });
 });
 

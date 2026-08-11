@@ -236,7 +236,7 @@ pub struct VirtualMachine {
     /// `None` when neither was given and NODE_USE_SYSTEM_CA decides. Node makes
     /// this an Environment option, so a Worker's execArgv can differ.
     pub use_system_ca: Option<bool>,
-    /// See `Options::use_system_ca_flag`; equals `use_system_ca` on the main thread.
+    /// See [`InitOptions::use_system_ca_flag`]; equals `use_system_ca` on the main thread.
     pub use_system_ca_flag: Option<bool>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -3255,7 +3255,7 @@ pub struct Options {
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     /// Explicit CA intent; `None` lets NODE_USE_SYSTEM_CA decide.
     pub use_system_ca: Option<bool>,
-    /// See `Options::use_system_ca_flag`.
+    /// See [`InitOptions::use_system_ca_flag`].
     pub use_system_ca_flag: Option<bool>,
     pub is_main_thread: bool,
 }

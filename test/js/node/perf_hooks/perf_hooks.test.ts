@@ -133,10 +133,12 @@ test("eventLoopUtilization is zero before the loop starts and counts only loop t
       const { performance } = require("perf_hooks");
       const end = Date.now() + 50; while (Date.now() < end) {}
       const before = performance.eventLoopUtilization();
-      setTimeout(() => {
+      // Arm the timer from inside the loop: armed at the top level, a slow (debug) build's
+      // post-entry work can outlast it, and the first poll then returns without parking.
+      setImmediate(() => setTimeout(() => {
         const after = performance.eventLoopUtilization();
         console.log(JSON.stringify({ before, activeExcludesTopLevelSpin: after.active < 50, idleSeen: after.idle > 0, utilInRange: after.utilization > 0 && after.utilization < 1 }));
-      }, 20);
+      }, 20));
       `,
     ],
     env: bunEnv,

@@ -725,13 +725,13 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
-/// Non-validating `Display` adapter for a `&[u8]` known to be valid UTF-8.
+/// `Display` adapter for a `&[u8]` that is expected to be UTF-8 (registry
+/// hosts, package names, semver tags: almost always ASCII) but is not
+/// guaranteed to be (argv, paths and package metadata all end up here too).
 ///
-/// Writes the bytes straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
-/// the input via `Utf8Chunks` to substitute U+FFFD on invalid sequences, which
-/// shows up in install-hot-path profiles (registry hosts, package names, semver
-/// pre/build tags — all pre-validated ASCII). Use this where the bytes are
-/// already known-good and you just want `f.write_str` semantics.
+/// Cheaper than `bstr::BStr` on the install hot path: one SIMD validation and a
+/// single `write_str`, ignoring width/precision. Invalid sequences are written
+/// as U+FFFD; see [`write_bytes`].
 ///
 /// Prefer the [`s`] alias at call sites.
 #[derive(Copy, Clone)]
@@ -740,15 +740,37 @@ pub struct Raw<'a>(pub &'a [u8]);
 impl fmt::Display for Raw<'_> {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
-        // npm package names, registry URLs, semver tags).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
+        write_bytes(f, self.0)
     }
 }
 /// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, shorter name).
 #[inline(always)]
 pub const fn raw(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)
+}
+
+/// Writes `bytes` to a `fmt::Write` sink. Valid UTF-8 (the overwhelmingly
+/// common case) goes out in a single `write_str`; anything else is written
+/// lossily, one U+FFFD per invalid sequence, since `fmt::Write` has no byte
+/// sink.
+#[inline]
+pub fn write_bytes(w: &mut (impl fmt::Write + ?Sized), bytes: &[u8]) -> fmt::Result {
+    match strings::str_utf8(bytes) {
+        Some(valid) => w.write_str(valid),
+        None => write_bytes_lossy(w, bytes),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn write_bytes_lossy(w: &mut (impl fmt::Write + ?Sized), bytes: &[u8]) -> fmt::Result {
+    for chunk in bytes.utf8_chunks() {
+        w.write_str(chunk.valid())?;
+        if !chunk.invalid().is_empty() {
+            w.write_char(char::REPLACEMENT_CHARACTER)?;
+        }
+    }
+    Ok(())
 }
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
@@ -3531,8 +3553,8 @@ const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
-/// for terse call sites (`bun_fmt::s(name)`).
+/// `&[u8] -> impl Display` adapter — short alias of [`raw`] for terse call
+/// sites (`bun_fmt::s(name)`).
 #[inline(always)]
 pub const fn s(bytes: &[u8]) -> Raw<'_> {
     Raw(bytes)
@@ -3541,12 +3563,6 @@ pub const fn s(bytes: &[u8]) -> Raw<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ───────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
-    // SAFETY: see `s()` above — callers feed valid ASCII/UTF-8.
-    w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
-}
 
 #[inline]
 fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Result {

@@ -1,10 +1,31 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
 describe.concurrent("run-unicode", () => {
+  // Windows argv is UTF-16, so an argument cannot carry an invalid byte there.
+  test.skipIf(isWindows)("the script echo line is valid UTF-8 when a pass-through argument is not", async () => {
+    using dir = tempDir("run-invalid-utf8-arg", {
+      "package.json": JSON.stringify({ name: "run-invalid-utf8-arg", scripts: { p: "echo hi" } }),
+    });
+    // A JS string cannot put a lone 0xFF into argv, so let sh build the argument.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'exec "$0" run p -- "a$(printf "\\377")b"', bunExe()],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.bytes(), proc.exited]);
+    // The argument itself still reaches the script byte for byte.
+    expect(Buffer.from(stdout)).toEqual(Buffer.concat([Buffer.from("hi a"), Buffer.from([0xff]), Buffer.from("b\n")]));
+    // The `$ <script>` diagnostic replaces the invalid byte instead of copying it out.
+    expect(Buffer.from(stderr)).toEqual(Buffer.from("$ echo hi a\uFFFDb\n"));
+    expect(exitCode).toBe(0);
+  });
+
   test("running a weird filename works", async () => {
     const troll = process.platform == "win32" ? "💥'​\\" : "💥'\"​\n";
     const dir = join(realpathSync(tmpdir()), "bun-run-test" + troll);

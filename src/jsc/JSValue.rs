@@ -2306,8 +2306,8 @@ impl JSValue {
 
     // ── Reflection / naming. ───────────────
     /// `JSValue.getName` — function/class display name.
-    pub fn get_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        let mut ret = bun_core::String::default();
+    pub fn get_name(self, global: &JSGlobalObject) -> JsResult<bun_core::OwnedString> {
+        let mut ret = bun_core::OwnedString::default();
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__getName(self, global, &mut ret)
         })?;

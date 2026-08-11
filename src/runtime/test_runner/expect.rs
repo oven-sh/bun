@@ -1620,7 +1620,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
-            matcher_name,
+            matcher_name.get(),
             &matcher_params,
             false,
         )?;
@@ -1638,7 +1638,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name.get(), matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -2635,7 +2635,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, matcher_name.get(), matcher_fn, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue

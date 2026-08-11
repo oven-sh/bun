@@ -3972,7 +3972,7 @@ pub mod formatter {
             // `Function.prototype.constructor === Function`, returning
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
             writer.add_for_new_line(printable.length());
 
             // Only report `extends` when the parent is itself a class
@@ -3983,11 +3983,11 @@ pub mod formatter {
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
-            let printable_proto = OwnedString::new(if proto_is_class {
+            let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
-                BunString::empty()
-            });
+                OwnedString::new(BunString::empty())
+            };
             writer.add_for_new_line(printable_proto.length());
 
             if printable.is_empty() {
@@ -4043,11 +4043,11 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
 
             let proto = value.get_prototype(self.global_this);
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-            let func_name = OwnedString::new(proto.get_name(self.global_this)?);
+            let func_name = proto.get_name(self.global_this)?;
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
@@ -5502,7 +5502,7 @@ pub mod formatter {
 
             let mut display_name = value.get_name(self.global_this)?;
             if display_name.is_empty() {
-                display_name = BunString::static_("Object");
+                display_name = OwnedString::new(BunString::static_("Object"));
             }
             let _ = write!(
                 writer_,

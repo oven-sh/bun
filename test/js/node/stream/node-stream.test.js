@@ -1763,8 +1763,10 @@ describe("stream operators exist on Readables created without loading node:strea
   ];
 
   async function run(script) {
+    // `bun -e` exposes the builtin modules as globals, and a top-level `const stream = ...` in the
+    // script would be enough to load node:stream. Block scoping the script keeps it away from them.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
+      cmd: [bunExe(), "-e", `{${script}}`],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1785,12 +1787,10 @@ describe("stream operators exist on Readables created without loading node:strea
     ["_stream_transform", `require("node:_stream_transform").prototype`],
     ["_stream_passthrough", `require("node:_stream_passthrough").prototype`],
   ])("%s", async (_, expression) => {
-    // Careful with variable names in these scripts: `bun -e` exposes the builtin modules as
-    // globals, and a top-level `const stream = ...` is enough to make it load node:stream.
     const result = await run(`
-      const readable = ${expression};
+      const target = ${expression};
       const found = {};
-      for (const name of ${JSON.stringify(operators)}) found[name] = typeof readable[name];
+      for (const name of ${JSON.stringify(operators)}) found[name] = typeof target[name];
       console.log(JSON.stringify(found));
     `);
     expect(result).toEqual({

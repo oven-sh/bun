@@ -289,7 +289,7 @@ describe("timeout Infinity does not kill the process", () => {
 describe("timeout of 2**31 ms or more does not kill the process", () => {
   // The timeout used to be truncated to its low 31 bits: 2**31 became 0 (killed on the first
   // tick of the event loop) and 2**32 + 1 became 1 ms. Number.MAX_SAFE_INTEGER is the largest
-  // value the option accepts; a deadline that far out exceeds the largest wait kevent accepts.
+  // value the option accepts.
   const timeouts = [2 ** 31, 2 ** 32 + 1, Number.MAX_SAFE_INTEGER];
 
   test.concurrent.each(timeouts)("Bun.spawn timeout: %d", async timeout => {
@@ -327,6 +327,34 @@ describe("timeout of 2**31 ms or more does not kill the process", () => {
       exitCode: 0,
       signalCode: undefined,
       exitedDueToTimeout: false,
+    });
+  });
+
+  // Inside `bun test`, spawnSync bounds its wait by the per-test deadline, so the cases above
+  // never hand the spawn deadline itself to the kernel. In a plain script, spawnSync's isolated
+  // event loop waits on exactly that deadline, and kevent rejects a wait of more than INT32_MAX
+  // seconds: unless us_loop_run_bun_tick clamps it, this child never observes the grandchild
+  // exiting and spins until the test times out.
+  test.concurrent("Bun.spawnSync timeout: Number.MAX_SAFE_INTEGER outside the test runner", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const proc = Bun.spawnSync({
+           cmd: [process.execPath, "-e", "console.log('ran to completion')"],
+           timeout: Number.MAX_SAFE_INTEGER,
+           stdio: ["ignore", "pipe", "inherit"],
+         });
+         console.log(JSON.stringify({ stdout: proc.stdout.toString(), exitCode: proc.exitCode, exitedDueToTimeout: proc.exitedDueToTimeout }));`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ stdout: "ran to completion\n", exitCode: 0, exitedDueToTimeout: false }) + "\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

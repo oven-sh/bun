@@ -438,11 +438,13 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
 }
 
 /* XNU rejects a kevent timeout with tv_sec > INT32_MAX as EINVAL
- * (bsd/kern/kern_time.c, timespec_is_valid), so while a deadline that far out
- * (a spawn `timeout` or AbortSignal.timeout of centuries) is the soonest timer,
- * every tick would return at once and the loop would spin. The epoll_pwait
- * fallback's nanosecond arithmetic overflows on such values too. Callers
- * recompute the remaining time after every wake, so waking early is harmless. */
+ * (bsd/kern/kern_time.c, timespec_is_valid). A spawn `timeout` or
+ * AbortSignal.timeout may be as large as 2^53 ms, and Bun.spawnSync's isolated
+ * loop waits on exactly that deadline, so without this every one of its ticks
+ * would return at once, never collecting the child's exit. The epoll_pwait
+ * fallback's nanosecond arithmetic overflows on such values too. Same bound as
+ * WTFTimer applies to JSC's timers; callers recompute the remaining time after
+ * every wake, so waking early is harmless. */
 static const struct timespec *us_internal_clamp_to_kernel_max(const struct timespec *timeout, struct timespec *storage) {
     if (!timeout || timeout->tv_sec <= INT32_MAX) {
         return timeout;

@@ -72,44 +72,53 @@ describe("bundler", () => {
     //
     // The unused import binds every single-character name as well, so the
     // collision also happens with whatever name the minifier gives `rm`.
+    //
+    // Only the bytecode builds have a record to get wrong, and only the
+    // splitting builds export `rm` across chunks; the other combinations pin
+    // the configurations that already worked.
     const deadImportNames = [
       "rm",
       ...Array.from("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$", c => `rm as ${c}`),
     ];
-    for (const minify of [false, true]) {
-      itBundled(`compile/splitting/BytecodeDeadExternalImportInWrappedModule${minify ? "+minify" : ""}`, {
-        compile: true,
-        splitting: true,
-        bytecode: true,
-        format: "esm",
-        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
-        files: {
-          "/entry.js": /* js */ `
-            import { rm } from "./shared.js";
-            console.log("entry:", rm());
-            await import("./page.js");
-          `,
-          "/page.js": /* js */ `
-            import { rm } from "./shared.js";
-            console.log("page:", rm());
-          `,
-          "/shared.js": /* js */ `
-            const { value } = require("./wrapped.js");
-            export function rm() {
-              return "local rm " + value;
-            }
-          `,
-          // A .js file on purpose: in TypeScript an unused import is dropped by
-          // the parser and never reaches the linker.
-          "/wrapped.js": /* js */ `
-            import { ${deadImportNames.join(", ")} } from "fs/promises";
-            export const value = 42;
-          `,
-        },
-        run: {
-          stdout: "entry: local rm 42\npage: local rm 42",
-        },
-      });
+    for (const splitting of [false, true]) {
+      for (const bytecode of [false, true]) {
+        for (const minify of [false, true]) {
+          const suffix = (splitting ? "+splitting" : "") + (bytecode ? "+bytecode" : "") + (minify ? "+minify" : "");
+          itBundled(`compile/DeadExternalImportInWrappedModule${suffix}`, {
+            compile: true,
+            splitting,
+            bytecode,
+            format: "esm",
+            ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+            files: {
+              "/entry.js": /* js */ `
+                import { rm } from "./shared.js";
+                console.log("entry:", rm());
+                await import("./page.js");
+              `,
+              "/page.js": /* js */ `
+                import { rm } from "./shared.js";
+                console.log("page:", rm());
+              `,
+              "/shared.js": /* js */ `
+                const { value } = require("./wrapped.js");
+                export function rm() {
+                  return "local rm " + value;
+                }
+              `,
+              // A .js file on purpose: in TypeScript an unused import is dropped by
+              // the parser and never reaches the linker.
+              "/wrapped.js": /* js */ `
+                import { ${deadImportNames.join(", ")} } from "fs/promises";
+                export const value = 42;
+              `,
+            },
+            run: {
+              stdout: "entry: local rm 42\npage: local rm 42",
+            },
+          });
+        }
+      }
     }
   });
 });

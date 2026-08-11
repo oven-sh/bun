@@ -2011,8 +2011,8 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
-        pub(crate) kq: i32,
-        pub(crate) machport: bun_core::mach_port,
+        kq: i32,
+        machport: bun_core::mach_port,
         pub machport_buf: Box<[u8]>,
     }
 

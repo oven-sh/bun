@@ -1687,14 +1687,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(matches!(SIDE, Side::Client));
         debug_assert!(self.current_chunk_len > 0);
         let kind = options.kind;
-
-        let runtime: bake::HmrRuntime = match kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
-            ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
-                line_count: 1,
-            },
-        };
+        let runtime = kind.prefix(SIDE);
 
         let mut end_list: Vec<u8> = Vec::with_capacity(256);
         // SAFETY: see `owner()`.
@@ -1802,13 +1795,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(matches!(SIDE, Side::Server));
         debug_assert!(self.current_chunk_len > 0);
 
-        let runtime: bake::HmrRuntime = match options.kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
-            ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
-                line_count: 0,
-            },
-        };
+        let runtime = options.kind.prefix(SIDE);
         // Server `.InitialResponse` is unreachable per spec; only HmrChunk hits
         // the end-builder.
         let end: &[u8] = b"})";

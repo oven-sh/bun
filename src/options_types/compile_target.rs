@@ -94,6 +94,9 @@ impl fmt::Display for BaselineFormatter {
 pub enum ParseError {
     #[error("UnsupportedTarget")]
     UnsupportedTarget,
+    /// A `v1.`/`v0.` token that is not exactly `vX.Y.Z`.
+    #[error("InvalidVersion")]
+    InvalidVersion,
     #[error("InvalidTarget")]
     InvalidTarget,
 }
@@ -278,25 +281,31 @@ impl CompileTarget {
                 _found_baseline = true;
                 continue;
             } else if strings::has_prefix(token, b"v1.") || strings::has_prefix(token, b"v0.") {
-                let version = Version::parse(SlicedString::init(&token[1..], &token[1..]));
-                if version.valid {
-                    if version.version.major.is_none()
-                        || version.version.minor.is_none()
-                        || version.version.patch.is_none()
-                    {
-                        return Err(ParseError::InvalidTarget);
-                    }
-
-                    this.version = Version {
-                        major: version.version.major.unwrap(),
-                        minor: version.version.minor.unwrap(),
-                        patch: version.version.patch.unwrap(),
-                        tag: Default::default(),
-                        _tag_padding: Default::default(),
-                    };
-                    _found_version = true;
-                    continue;
+                let version_text = &token[1..];
+                let parsed = Version::parse(SlicedString::init(version_text, version_text));
+                let (Some(major), Some(minor), Some(patch)) = (
+                    parsed.version.major,
+                    parsed.version.minor,
+                    parsed.version.patch,
+                ) else {
+                    return Err(ParseError::InvalidVersion);
+                };
+                // `Version::parse` is lenient (a fourth component, trailing text and an
+                // overflowing component all still yield a version); the token has to spell
+                // out exactly the version that will be downloaded.
+                if format!("{major}.{minor}.{patch}").as_bytes() != version_text {
+                    return Err(ParseError::InvalidVersion);
                 }
+
+                this.version = Version {
+                    major,
+                    minor,
+                    patch,
+                    tag: Default::default(),
+                    _tag_padding: Default::default(),
+                };
+                _found_version = true;
+                continue;
             } else if token == b"musl" {
                 this.libc = Libc::Musl;
                 found_libc = true;
@@ -377,6 +386,13 @@ impl CompileTarget {
                 }
                 Global::exit(1);
             }
+            Err(ParseError::InvalidVersion) => {
+                bun_core::err_generic!(
+                    "Please pass a complete version number to --target. For example, --target=bun-v{}",
+                    Environment::VERSION_STRING,
+                );
+                Global::exit(1);
+            }
             Err(ParseError::InvalidTarget) => {
                 let input = strings::trim(input_, b" \t\r");
                 if strings::contains(input, b"musl") && !strings::contains(input, b"linux") {
@@ -389,11 +405,6 @@ impl CompileTarget {
                     );
                 } else if strings::contains(input, b"wasm") {
                     bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
-                } else if strings::contains(input, b"v") {
-                    bun_core::err_generic!(
-                        "Please pass a complete version number to --target. For example, --target=bun-v{}",
-                        Environment::VERSION_STRING,
-                    );
                 } else {
                     bun_core::err_generic!("Invalid target: {}", bstr::BStr::new(input_));
                 }

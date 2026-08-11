@@ -949,6 +949,32 @@ describe("application data written over a Duplex transport before the handshake 
       received: "banner",
     });
   });
+
+  it("a pending write is failed, not delivered, when the server's certificate is rejected", async () => {
+    const { clientSide, serverSide } = inMemoryPair(synchronously);
+    const received: Buffer[] = [];
+    const clientError = Promise.withResolvers<NodeJS.ErrnoException>();
+    const writeOutcome = Promise.withResolvers<string>();
+
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("data", (chunk: Buffer) => received.push(chunk));
+    server.on("error", () => {});
+
+    // The self-signed fixture fails verification under the default rejectUnauthorized.
+    const client = tls.connect({ socket: clientSide });
+    client.on("error", clientError.resolve);
+    client.write("secret", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
+    const closed = new Promise<void>(resolve => client.on("close", () => resolve()));
+
+    const [{ code: clientErrorCode }, outcome] = await Promise.all([clientError.promise, writeOutcome.promise, closed]);
+    // 'close' is emitted a macrotask after the teardown, so anything the engine
+    // had handed to the synchronous transport has reached the server by now.
+    expect({ clientErrorCode, outcome, serverReceived: Buffer.concat(received).toString() }).toEqual({
+      clientErrorCode: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      outcome: "failed",
+      serverReceived: "",
+    });
+  });
 });
 
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {

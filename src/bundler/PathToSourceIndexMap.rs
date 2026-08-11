@@ -89,6 +89,30 @@ impl<V: Copy + Default> ModuleMap<V> {
         Ok(())
     }
 
+    /// Lookups of `text` that would have found `from` find `to` instead, whichever
+    /// loader `from` was registered under.
+    pub(crate) fn redirect(&mut self, text: &[u8], from: V, to: V)
+    where
+        V: PartialEq,
+    {
+        if let Some(first) = self.by_path.get_mut(text) {
+            if first.value == from {
+                first.value = to;
+                return;
+            }
+        }
+        if let Some(by_loader) = &mut self.by_loader {
+            for map in by_loader.values_mut() {
+                if let Some(value) = map.get_mut(text) {
+                    if *value == from {
+                        *value = to;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// Forgets every module registered for `text`, under any loader.
     pub fn remove(&mut self, text: &[u8]) -> bool {
         let mut removed = self.by_path.remove(text).is_some();

@@ -6853,11 +6853,11 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(
+                            path_to_source_index_map.redirect(
                                 ctx.source_path,
-                                ctx.loader,
+                                ctx.source_index.get(),
                                 source_index,
-                            ); // OOM-only Result
+                            );
                         }
                     }
                 }
@@ -7322,8 +7322,11 @@ pub mod bv2_impl {
 
                         this.graph
                             .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, source_loader, reference_source_index)
-                            .expect("oom");
+                            .redirect(
+                                source_path_text,
+                                result_source_index as IndexInt,
+                                reference_source_index,
+                            );
 
                         this.graph
                             .server_component_boundaries

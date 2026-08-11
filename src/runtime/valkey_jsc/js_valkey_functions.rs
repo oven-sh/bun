@@ -128,7 +128,7 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
 ///
-/// All the `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
+/// All 8 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
 /// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
 /// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
 /// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
@@ -192,10 +192,11 @@ pub(crate) mod compile {
 // cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
 // cmd_key_value! (key: RedisKey, value: RedisValue),
 // cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
+// cmd_required_varargs! (required0: RedisValue, ..., requiredN: RedisValue, ...optional: RedisValue[])
+//   (each named argument is validated and reported by name; whatever follows
+//   is forwarded as-is, skipping undefined/null),
 // cmd_strings_varargs! (...strings: string[]),
-// cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue),
-// cmd_required_then_rest! (each listed required arg, validated under its own
-//   name, then ...rest: RedisValue[] forwarded via `push_rest_args`)
+// cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
 
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
@@ -384,6 +385,53 @@ macro_rules! cmd_key_value_value2 {
     };
 }
 
+macro_rules! cmd_required_varargs {
+    ($fn_name:ident, $name:literal, $command:literal, $($required_name:literal,)+ $state:ident) => {
+        #[bun_jsc::host_fn(method)]
+        pub fn $fn_name(
+            this: &Self,
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<JSValue> {
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
+                this, $name,
+            )?;
+
+            const REQUIRED: &[&str] = &[$($required_name),+];
+
+            let arguments = frame.arguments();
+            let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
+
+            for (index, required_name) in REQUIRED.iter().copied().enumerate() {
+                let Some(required) = from_js(global, frame.argument(index))? else {
+                    return Err(global.throw_invalid_argument_type(
+                        bname($name),
+                        required_name,
+                        "string or buffer",
+                    ));
+                };
+                args.push(required);
+            }
+
+            push_rest_args(
+                global,
+                $name,
+                &mut args,
+                arguments.get(REQUIRED.len()..).unwrap_or_default(),
+            )?;
+            send_cmd(
+                this,
+                global,
+                frame.this(),
+                $command.as_bytes(),
+                CommandArgs::Args(&args),
+                CommandMeta::default(),
+                concat!("Failed to send ", $command),
+            )
+        }
+    };
+}
+
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
@@ -452,51 +500,6 @@ macro_rules! cmd_key_value_varargs {
                 };
                 args.push(another);
             }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_required_then_rest {
-    ($fn_name:ident, $name:literal, $command:literal, [$($arg_name:literal),+ $(,)?], $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let arguments = frame.arguments();
-            let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
-            let mut required = 0usize;
-            $(
-                let Some(arg) = from_js(global, frame.argument(required))? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        $arg_name,
-                        "string or buffer",
-                    ));
-                };
-                args.push(arg);
-                required += 1;
-            )+
-            push_rest_args(
-                global,
-                $name,
-                &mut args,
-                arguments.get(required..).unwrap_or_default(),
-            )?;
             send_cmd(
                 this,
                 global,
@@ -1441,11 +1444,12 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key!(dump, b"dump", "DUMP", "key", NotSubscriber);
-    cmd_required_then_rest!(
+    cmd_required_varargs!(
         expireat,
         b"expireat",
         "EXPIREAT",
-        ["key", "timestamp"],
+        "key",
+        "timestamp",
         NotSubscriber
     );
     cmd_key!(
@@ -1506,18 +1510,20 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key!(persist, b"persist", "PERSIST", "key", NotSubscriber);
-    cmd_required_then_rest!(
+    cmd_required_varargs!(
         pexpire,
         b"pexpire",
         "PEXPIRE",
-        ["key", "milliseconds"],
+        "key",
+        "milliseconds",
         NotSubscriber
     );
-    cmd_required_then_rest!(
+    cmd_required_varargs!(
         pexpireat,
         b"pexpireat",
         "PEXPIREAT",
-        ["key", "milliseconds-timestamp"],
+        "key",
+        "milliseconds-timestamp",
         NotSubscriber
     );
     cmd_key!(
@@ -1636,7 +1642,7 @@ impl JSValkeyClient {
     );
     cmd_key_value_varargs!(lpush, b"lpush", "LPUSH", NotSubscriber);
     cmd_key_value_varargs!(lpushx, b"lpushx", "LPUSHX", NotSubscriber);
-    cmd_required_then_rest!(pfadd, b"pfadd", "PFADD", ["key"], NotSubscriber);
+    cmd_required_varargs!(pfadd, b"pfadd", "PFADD", "key", NotSubscriber);
     cmd_key_value_varargs!(rpush, b"rpush", "RPUSH", NotSubscriber);
     cmd_key_value_varargs!(rpushx, b"rpushx", "RPUSHX", NotSubscriber);
     cmd_key_value!(setnx, b"setnx", "SETNX", "key", "value", NotSubscriber);

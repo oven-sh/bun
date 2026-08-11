@@ -3,10 +3,6 @@ use core::ptr::NonNull;
 use bun_core::String;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-// The JSC-agnostic surface (constructors, getters, `destroy`, the
-// whole-string conversions) lives in `bun_url::whatwg`; only the entry
-// points that need `JSValue`/`JSGlobalObject` stay in this crate, as the
-// `UrlJsc` extension trait.
 pub use bun_url::whatwg::URL;
 
 unsafe extern "C" {
@@ -15,8 +11,7 @@ unsafe extern "C" {
 }
 
 pub trait UrlJsc: Sized {
-    /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result.
-    /// If it fails, the tag is marked Dead.
+    /// Percent-encoded href; invalid input yields a Dead-tagged string without throwing.
     fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String>;
     /// Returns an owned C++ heap pointer that the caller must `destroy()`.
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<Self>>>;

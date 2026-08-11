@@ -1241,9 +1241,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
     }
 }
 
-// `URL` is a re-export of `bun_url::whatwg::URL`; the JS-value entry points
-// (`UrlJsc::from_js` / `UrlJsc::href_from_js`) live in `URL.rs`.
-
 // JSString (real module in JSString.rs).
 #[path = "JSString.rs"]
 pub mod js_string;

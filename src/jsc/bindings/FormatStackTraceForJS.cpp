@@ -654,9 +654,7 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
 
 void clearStaleErrorLocation(JSC::ErrorInstance* instance)
 {
-    // A parser error's recorded location is the parse failure (rendered as the <parse> frame).
-    // Any other recorded location came from frames the instance used to have (written back by
-    // the GC finalizer, or copied by structured clone) and is superseded by the new frames.
+    // Only a parse location outlives the frames; any other one was derived from the old frames.
     if (instance->isParseError())
         return;
     instance->setSourceURL(String());

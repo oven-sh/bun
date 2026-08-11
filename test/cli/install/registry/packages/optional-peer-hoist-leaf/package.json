@@ -2,7 +2,7 @@
   "_id": "optional-peer-hoist-leaf",
   "name": "optional-peer-hoist-leaf",
   "dist-tags": {
-    "latest": "2.0.0"
+    "latest": "3.0.0"
   },
   "versions": {
     "1.0.0": {
@@ -10,8 +10,8 @@
       "version": "1.0.0",
       "_id": "optional-peer-hoist-leaf@1.0.0",
       "dist": {
-        "integrity": "sha512-fqljP59V2vz45cC0Zan3B9MFl9YqzOkr3yIwFVF8RnI9A/dtx3f8MeLMw75pd18KBY/1aIYCIGN5cvaxwjMiMw==",
-        "shasum": "d34a5ad0681194b5ea936a7db014a9fad1ea8e3d",
+        "integrity": "sha512-57x3rWhz3tBcdNnWCudX5V6XvzIHn7taFxSdYzNgAUCAkYIrc+945lIT5CziLvmeXDh4EbRxamaYFHbIDA1BeA==",
+        "shasum": "37a38558bbefe6dbfdc785c4c61841b0e704caac",
         "tarball": "http://localhost:4873/optional-peer-hoist-leaf/-/optional-peer-hoist-leaf-1.0.0.tgz"
       }
     },
@@ -20,9 +20,22 @@
       "version": "2.0.0",
       "_id": "optional-peer-hoist-leaf@2.0.0",
       "dist": {
-        "integrity": "sha512-yfqEs/442yivAG4zTY4u1DFAf8W/ZjIZTI1elABJFvqfaVQiDxmwo+yoDrIXNiJVz7vVrNKIDjhOeU0vToAZNg==",
-        "shasum": "d7f6cf082fcfb677ee9217b58d25c53b2edee85c",
+        "integrity": "sha512-tfK30752Xwe6oDLE4Iv0cnDxJILQVmb+HiGrOHDHqnn/Oi3g+RIGH3NuSqX2WmluXbH0C/bkJOrjqgTlGk6wNg==",
+        "shasum": "510479d612daa8950f98e5a63238e6916a2f7ee9",
         "tarball": "http://localhost:4873/optional-peer-hoist-leaf/-/optional-peer-hoist-leaf-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "optional-peer-hoist-leaf",
+      "version": "3.0.0",
+      "dependencies": {
+        "optional-peer-hoist-target2": "1.0.0"
+      },
+      "_id": "optional-peer-hoist-leaf@3.0.0",
+      "dist": {
+        "integrity": "sha512-xSPMrxzzfuv9sFRWtGGfB9+DOZj8UOB8i7BUt+0xul0M+GgZV6QsM/PtWtybEMOfr45ASiN3HRuVUHF2Tix4Gw==",
+        "shasum": "dc5163d16ef66c63acbc8c1eb151a43c7abe076d",
+        "tarball": "http://localhost:4873/optional-peer-hoist-leaf/-/optional-peer-hoist-leaf-3.0.0.tgz"
       }
     }
   }

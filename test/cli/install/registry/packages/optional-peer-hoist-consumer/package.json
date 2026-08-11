@@ -18,8 +18,8 @@
       },
       "_id": "optional-peer-hoist-consumer@1.0.0",
       "dist": {
-        "integrity": "sha512-rq7OhIYtUaZVmYZs+XRxr7o7cOfH/Cy0X9+o5CE4yTvpHfDdQmqOvSkS4KQMvVp4y5d+8byAVmRg0kNKS6Yh3w==",
-        "shasum": "92907b252bd102a17aedc94837a27497a6baff37",
+        "integrity": "sha512-sVIugo50KczyFT1h3oEAZTIvptOi5hfwwveKVbLw3MjOsQC4XBkB8FYFpgQH2ltjpU88VhHpN6g3LSF+OuQOYQ==",
+        "shasum": "b96f9a0bb75bbcf182c94187b007131b52534742",
         "tarball": "http://localhost:4873/optional-peer-hoist-consumer/-/optional-peer-hoist-consumer-1.0.0.tgz"
       }
     }

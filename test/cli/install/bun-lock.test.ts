@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
+import { readlinkSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -1012,19 +1013,13 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
   await run(["install", "--frozen-lockfile"]);
 });
 
-// The optional-peer-hoist-* fixtures (registry/packages/create-optional-peer-hoist-packages.ts):
-//
-//   consumer      optional peer on target
-//   deep          -> deep-child -> leaf@1.0.0, target@1.0.0
-//   target@1.0.0  -> leaf@2.0.0
-//   provider      -> target@2.0.0
-//
-// Hoisting is breadth-first, so which leaf ends up in the root node_modules
-// depends on whether consumer's peer is already bound to target when the tree
-// is built: bound, target is placed from consumer and its leaf@2.0.0 reaches
-// the root before deep-child's leaf@1.0.0; unbound, target is only placed once
-// deep-child is reached and leaf@1.0.0 wins. A loaded bun.lock always has the
-// peer bound, so that is the tree every install has to build, otherwise
+// The optional-peer-hoist-* fixtures are described in
+// registry/packages/create-optional-peer-hoist-packages.ts. In short: consumer
+// has an optional peer on target, and deep -> deep-child reaches target@1.0.0
+// (which depends on leaf@2.0.0) as well as leaf@1.0.0. Hoisting is
+// breadth-first, so leaf@2.0.0 only wins the root slot if consumer's peer is
+// already bound to target when the tree is built. A loaded bun.lock always has
+// the peer bound, so that is the tree every install has to build, otherwise
 // --frozen-lockfile compares two different trees.
 const optionalPeerHoistDeps = {
   "optional-peer-hoist-consumer": "1.0.0",
@@ -1047,6 +1042,37 @@ it("a fresh install hoists around an optional peer the same way a reinstall does
 
   // --lockfile-only always writes, so this checks the tree a reload builds
   // prints back to the same text.
+  await run(["install", "--lockfile-only"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
+});
+
+it("a fresh install settles hoisting around a peer that only becomes bindable once another peer is bound", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+  const run = makeInstallRunner(packageDir);
+
+  // Shape 2 in the fixture generator: binding consumer's peer hoists leaf@3.0.0
+  // out from under target, which is what lets target2@1.0.0 reach consumer2's
+  // peer, and only with that one bound too does target2's tail@2.0.0 beat
+  // deep-child's tail@1.0.0 to the root, the way it does on every reload.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "optional-peer-hoist-consumer": "1.0.0",
+        "optional-peer-hoist-consumer2": "1.0.0",
+        "optional-peer-hoist-deep": "2.0.0",
+      },
+    }),
+  );
+  await run(["install"]);
+  const fresh = await file(join(packageDir, "bun.lock")).text();
+  expect(fresh).toContain('"optional-peer-hoist-tail": ["optional-peer-hoist-tail@2.0.0"');
+  expect(fresh).toContain(
+    '"optional-peer-hoist-deep-child/optional-peer-hoist-tail": ["optional-peer-hoist-tail@1.0.0"',
+  );
+
+  await run(["install", "--frozen-lockfile"]);
   await run(["install", "--lockfile-only"]);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
 });
@@ -1110,7 +1136,7 @@ it.each([
   await run(["install", "--frozen-lockfile"]);
 });
 
-it("adding a dependency keeps an optional peer bound to the package bun.lock bound it to", async () => {
+it("adding a dependency keeps an optional peer on the package bun.lock bound it to while that package stays next to it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
   const run = makeInstallRunner(packageDir);
 
@@ -1121,8 +1147,9 @@ it("adding a dependency keeps an optional peer bound to the package bun.lock bou
   );
 
   // provider brings in target@2.0.0, which consumer's peer range would accept
-  // too. The lockfile already binds consumer to target@1.0.0, so that binding
-  // (and the hoisting that follows from it) is kept and the new version nests.
+  // too. bun.lock binds consumer to target@1.0.0, and consumer sorts before
+  // provider, so target@1.0.0 is placed from consumer first, keeps the root
+  // slot and the binding, and target@2.0.0 nests under provider.
   await write(
     packageJson,
     JSON.stringify({
@@ -1139,6 +1166,48 @@ it("adding a dependency keeps an optional peer bound to the package bun.lock bou
   expect(lockfile).toContain('"optional-peer-hoist-leaf": ["optional-peer-hoist-leaf@2.0.0"');
 
   await run(["install", "--frozen-lockfile"]);
+  await run(["install", "--lockfile-only"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+it("an optional peer is rebound when another version of its package takes the slot next to it", async () => {
+  // The isolated linker is the one consumer of the binding itself: consumer's
+  // store entry is keyed by the target it was linked against.
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "isolated" },
+  });
+  const run = makeInstallRunner(packageDir);
+  const consumerLink = () => readlinkSync(join(packageDir, "node_modules", "optional-peer-hoist-consumer"));
+
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: optionalPeerHoistDeps }));
+  await run(["install"]);
+  const boundToTarget1 = consumerLink();
+
+  // Same as the previous test, but aliased so the provider sorts before
+  // consumer: target@2.0.0 takes the root slot before consumer's bound
+  // target@1.0.0 can be placed, and since the peer range accepts it, consumer
+  // dedupes onto it. That is what a reload of this bun.lock binds consumer to,
+  // so it is also what this install has to link consumer against.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "a-provider": "npm:optional-peer-hoist-provider@1.0.0", ...optionalPeerHoistDeps },
+    }),
+  );
+  await run(["install"]);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"optional-peer-hoist-target": ["optional-peer-hoist-target@2.0.0"');
+  expect(lockfile).toContain(
+    '"optional-peer-hoist-deep-child/optional-peer-hoist-target": ["optional-peer-hoist-target@1.0.0"',
+  );
+  const linkedByThisInstall = consumerLink();
+  expect(linkedByThisInstall).not.toBe(boundToTarget1);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+  expect(consumerLink()).toBe(linkedByThisInstall);
+
   await run(["install", "--lockfile-only"]);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });

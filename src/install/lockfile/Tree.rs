@@ -135,6 +135,11 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
+    /// Like `Hoisted`, for an optional peer that was bound to one package but
+    /// deduplicated onto another version of it: the slot is repointed at the
+    /// package the dependent will find next to itself, which is also what
+    /// loading the saved tree binds the edge to (`bun.lock.rs`).
+    Rebind(PackageID),
     Placement(Placement),
 }
 
@@ -915,6 +920,10 @@ impl Tree {
                         })?;
                     }
                 }
+                HoistDependencyResult::Rebind(res_id) => {
+                    debug_assert!(dependency.behavior.is_optional_peer());
+                    builder.resolutions[dep_id as usize] = res_id;
+                }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
                     // with another unresolved optional peer. save it so we remember resolve it
@@ -1052,6 +1061,23 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
+                // An optional peer is bound to whatever ends up next to it, so
+                // a binding that came in pointing elsewhere (carried over by
+                // `Package::clone`, or made by an earlier pass of
+                // `Lockfile::resolve`) moves to `res_id`. Only the tree being
+                // saved decides this; `filter` runs afterwards for installing
+                // and leaves the bindings alone. Required peers keep the
+                // version the resolver picked; `bun.lock.rs` re-derives that
+                // one by version rather than from the tree.
+                let dedupe = || {
+                    if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
+                    {
+                        HoistDependencyResult::Rebind(res_id)
+                    } else {
+                        HoistDependencyResult::Hoisted
+                    }
+                };
+
                 if dependency.version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
@@ -1059,7 +1085,7 @@ impl Tree {
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {
-                        return Ok(HoistDependencyResult::Hoisted); // 1
+                        return Ok(dedupe()); // 1
                     }
                 }
 
@@ -1067,7 +1093,7 @@ impl Tree {
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
                     // TODO: warning about peer dependency version mismatch
-                    return Ok(HoistDependencyResult::Hoisted); // 1
+                    return Ok(dedupe()); // 1
                 }
             }
 

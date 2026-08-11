@@ -1369,14 +1369,16 @@ impl Lockfile {
     /// placed by an edge processed after the peer's dependent, its subtree is
     /// queued from that later edge. A lockfile loaded from disk has the binding
     /// up front and queues the subtree from the dependent instead, which can
-    /// hoist the subtree's dependencies differently. Hoist again in that case
-    /// so the tree is the one a reload builds; otherwise `--frozen-lockfile`
-    /// rejects the lockfile we are about to save. The second pass starts with
-    /// every binding the first one made and cannot bind anything late.
+    /// hoist the subtree's dependencies differently. So hoist again until a
+    /// pass binds nothing late: that pass built its tree from bindings it had
+    /// up front, which is what a reload does, and anything else would make
+    /// `--frozen-lockfile` reject the lockfile we are about to save. A pass
+    /// reports `true` only after filling an empty optional peer slot (moving a
+    /// dependent can put a target within reach of a peer the previous pass
+    /// could not bind) and no pass empties one, so this ends after at most
+    /// one pass per optional peer.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        if self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {
-            self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?;
-        }
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         Ok(())
     }
 

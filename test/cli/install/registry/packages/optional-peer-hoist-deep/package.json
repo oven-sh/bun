@@ -2,7 +2,7 @@
   "_id": "optional-peer-hoist-deep",
   "name": "optional-peer-hoist-deep",
   "dist-tags": {
-    "latest": "1.0.0"
+    "latest": "2.0.0"
   },
   "versions": {
     "1.0.0": {
@@ -13,9 +13,22 @@
       },
       "_id": "optional-peer-hoist-deep@1.0.0",
       "dist": {
-        "integrity": "sha512-ytgvRJWhHiAPJbQhFw3iuAZgyxEr/jPJK8AeKzXZxQGcbHHZApeWtULf8t1KSF1fUKYC9pl19rlyC9axWiAVDw==",
-        "shasum": "88938b872ea61cd2fa96da6ed9b9f43db3b01745",
+        "integrity": "sha512-Nl/l5CFE2ostDfGRN+FKlbWP0HgYdjZ+rUZHT5kKwmVGMyKUPsParH9qCHGVaWMcxwQfqzPqUJyAMaHXW+ci1w==",
+        "shasum": "2fc39ef50643af6eac1abaf7ad78f1ed48806e06",
         "tarball": "http://localhost:4873/optional-peer-hoist-deep/-/optional-peer-hoist-deep-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "optional-peer-hoist-deep",
+      "version": "2.0.0",
+      "dependencies": {
+        "optional-peer-hoist-deep-child": "2.0.0"
+      },
+      "_id": "optional-peer-hoist-deep@2.0.0",
+      "dist": {
+        "integrity": "sha512-UJk6zpTjUOU812aFbNk2J3UyY072P6rDAVfbDKSNheRzStX2U+fdA05CQyFlGd3SHk5HWJojFvyF1ssLjW9QhA==",
+        "shasum": "282a38f52b9ef982c7c5bed3be0312b96c8bd83c",
+        "tarball": "http://localhost:4873/optional-peer-hoist-deep/-/optional-peer-hoist-deep-2.0.0.tgz"
       }
     }
   }

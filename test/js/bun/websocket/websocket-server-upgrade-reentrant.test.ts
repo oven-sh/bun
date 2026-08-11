@@ -214,6 +214,13 @@ test("server.upgrade() of a request parked by another connection leaves the conn
   });
 
   const ws = new WebSocket(new URL("/ws", server.url).href.replace("http", "ws"));
+  const websocketFailed = (event: Event) => {
+    const error = new Error(`client WebSocket ${event.type}`);
+    requestParked.reject(error);
+    websocketOpened.reject(error);
+  };
+  ws.addEventListener("error", websocketFailed);
+  ws.addEventListener("close", websocketFailed);
   await requestParked.promise;
 
   // Both requests in one write so the parser sees the second one in the same
@@ -244,12 +251,12 @@ test("server.upgrade() of a request parked by another connection leaves the conn
     },
   });
 
-  await connectionClosed.promise;
+  await Promise.all([connectionClosed.promise, websocketOpened.promise]);
   const responses = Buffer.concat(received).toString();
   expect(responses.match(/HTTP\/1\.1 200 OK\r\n/g)).toHaveLength(2);
   expect(responses).toEndWith("\r\n\r\n/second");
   expect(responses).toContain("\r\n\r\napproved");
 
-  await websocketOpened.promise;
+  ws.removeEventListener("close", websocketFailed);
   ws.close();
 });

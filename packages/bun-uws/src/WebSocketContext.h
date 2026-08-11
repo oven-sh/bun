@@ -438,8 +438,9 @@ public:
          * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
          * WebSocket.h. That's only sound if `group` is the first member and `data`
          * sits immediately after it with no inserted base/field. (offsetof is not
-         * usable here: the struct is not standard-layout.) */
-        ASSERT((void *) &webSocketContext->data == (void *) ((us_socket_group_t *) webSocketContext + 1));
+         * usable here: the struct is not standard-layout.) The layout can differ
+         * per ABI, so check it in every build; this runs once per context. */
+        RELEASE_ASSERT((void *) &webSocketContext->data == (void *) ((us_socket_group_t *) webSocketContext + 1));
         us_socket_group_init(&webSocketContext->group, (us_loop_t *) loop, &wsVTable, webSocketContext);
         return webSocketContext;
     }

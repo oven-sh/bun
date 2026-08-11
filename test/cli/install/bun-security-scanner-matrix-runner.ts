@@ -161,12 +161,18 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
 
+  // The manifest cache is off for both installs: the setup install writes its
+  // manifests to the cache asynchronously and `bun install` does not wait for
+  // those writes before exiting, so with the cache on, which manifests the
+  // install under test has to request would depend on whether they had landed.
+  const cache = { disable: true, disableManifest: true };
+
   // First write bunfig WITHOUT scanner for pre-install
   await Bun.write(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
       install: {
-        cache: { disable: true },
+        cache,
         linker,
         registry: `${registryUrl}/`,
       },
@@ -206,7 +212,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
       install: {
-        cache: { disable: true },
+        cache,
         linker,
         registry: `${registryUrl}/`,
         security: {

@@ -98,6 +98,18 @@ describe("debug-info flag order", () => {
     }
   });
 
+  test("debug homes type definitions instead of the standalone kind -glldb implies; release has nothing to home", () => {
+    using dir = tempDir("build-debug-info", {});
+    const debug = linuxConfig({ buildType: "Debug" }, String(dir));
+    for (const flags of allCompileFlagLists(debug)) {
+      expect(flags).toContain("-fno-standalone-debug");
+    }
+    const release = linuxConfig({ buildType: "Release" }, String(dir));
+    for (const flags of allCompileFlagLists(release)) {
+      expect(flags).not.toContain("-fno-standalone-debug");
+    }
+  });
+
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes
   // xcode-select for the real SDK. The flag tables are the same either way.
   test.skipIf(isMacOS)("darwin release: the DWARF version flag comes first and -g1 still ends the list", () => {

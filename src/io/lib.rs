@@ -790,6 +790,16 @@ static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
 #[cfg(not(windows))]
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
+/// Snapshot freeze: the "IO Watcher" thread has no stop protocol, so a snapshot is refused while it exists.
+#[cfg(not(windows))]
+pub fn io_watcher_snapshot_blocker() -> Option<&'static str> {
+    ONCE.get().map(|_| "the file I/O watcher thread is running (Bun.file()/Bun.write() on a pipe or terminal started it) — a snapshot cannot contain a thread")
+}
+#[cfg(windows)]
+pub fn io_watcher_snapshot_blocker() -> Option<&'static str> {
+    None
+}
+
 impl IoRequestLoop {
     #[cfg(not(windows))]
     fn load() {

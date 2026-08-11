@@ -77,6 +77,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength();
 
 extern "C" int mi_prof_dump_to_file(const char*) noexcept;
 extern "C" void mi_prof_enable(size_t) noexcept;
+static size_t s_profSampleRate; // set when this file enables the profiler itself; otherwise the environment says
 extern "C" void mi_on_thread_idle(void) noexcept;
 extern "C" void mi_purge_holes_report(void) noexcept;
 typedef void(mi_output_fun)(const char* msg, void* arg);
@@ -398,27 +399,8 @@ static void fileSnapshotHeap(JSC::VM& vm)
     }
     size_t pg = getpagesize();
     bool onlyLive = !getenv("BUN_FILESNAP_ALL");
-    {
-        s_cellPages.clear();
-        s_payloadPages.clear();
-        s_pageSizeClass.clear();
-        s_liveBlocks.clear();
-        snapshotRuns.clear();
-        vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
-            for (uintptr_t a = (uintptr_t)&h->block(); a < (uintptr_t)&h->block() + JSC::MarkedBlock::blockSize; a += pg)
-                s_cellPages.push_back(a);
-        });
-        mi_heap_visit_blocks(mi_heap_main(), true, recordUsedBlock, &pg);
-        std::sort(s_cellPages.begin(), s_cellPages.end());
-        std::sort(s_liveBlocks.begin(), s_liveBlocks.end());
-        std::sort(s_payloadPages.begin(), s_payloadPages.end());
-        s_payloadPages.erase(std::unique(s_payloadPages.begin(), s_payloadPages.end()), s_payloadPages.end());
-        // MarkedBlocks are themselves malloc blocks; keep the classes disjoint
-        std::vector<uintptr_t> tmp;
-        std::set_difference(s_payloadPages.begin(), s_payloadPages.end(), s_cellPages.begin(), s_cellPages.end(), std::back_inserter(tmp));
-        s_payloadPages.swap(tmp);
-        fprintf(stderr, "[filesnap] cellPages=%.1fMB payloadPages=%.1fMB\n", s_cellPages.size() * pg / 1048576.0, s_payloadPages.size() * pg / 1048576.0);
-    }
+    snapshotRuns.clear();
+    startupSnapshotToolingIndexAtFreeze(vm, pg);
     struct Range {
         uintptr_t start;
         size_t len;
@@ -1130,7 +1112,9 @@ static void dumpNewPayload(JSC::VM& vm)
     },
         &ctx);
     fclose(ctx.f);
-    fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks, %.1fMB (each ~%s bytes of allocation volume) -> %s\n", ctx.n, ctx.bytes / 1048576.0, getenv("MIMALLOC_PROF_SAMPLE_RATE") ? getenv("MIMALLOC_PROF_SAMPLE_RATE") : "?", path);
+    char rateText[32];
+    snprintf(rateText, sizeof rateText, "%zu", s_profSampleRate ? s_profSampleRate : (getenv("MIMALLOC_PROF_SAMPLE_RATE") ? (size_t)strtoull(getenv("MIMALLOC_PROF_SAMPLE_RATE"), nullptr, 10) : 0));
+    fprintf(stderr, "[newpayload] %zu live sampled post-restore blocks, %.1fMB (each ~%s bytes of allocation volume) -> %s\n", ctx.n, ctx.bytes / 1048576.0, rateText, path);
 }
 
 static void dumpNewCells(JSC::VM& vm)
@@ -1389,8 +1373,8 @@ static void snapshotTrapArm()
     s_trapRecs = (TrapRec*)mmap(nullptr, s_trapCap * sizeof(TrapRec), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (s_trapRecs == MAP_FAILED) {
         s_trapRecs = nullptr;
-        s_trapCap = 0; // the handler records nothing; faults are still resolved
-        fprintf(stderr, "[snapshottrap] could not allocate the record buffer; recording disabled\n");
+        s_trapCap = 0; // nothing gets protected below, so no faults occur: trapping is off entirely
+        fprintf(stderr, "[snapshottrap] could not allocate the record buffer; trapping disabled\n");
         return;
     }
     struct sigaction sa {};
@@ -1471,7 +1455,8 @@ void startupSnapshotToolingAfterRestore()
     const char* d = getenv("BUN_MEMDEBUG");
     s_dir = (d && *d) ? strdup(d) : nullptr; // the builder's pointer would point into its environment
     if (s_dir)
-        mi_prof_enable(64 * 1024); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
+        s_profSampleRate = 64 * 1024;
+        mi_prof_enable(s_profSampleRate); // the profiler state came from the builder (off); sample what this process allocates so newpayload can attribute it
 }
 
 void startupSnapshotToolingInstall()

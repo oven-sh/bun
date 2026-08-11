@@ -3512,6 +3512,7 @@ impl VirtualMachine {
 
     /// The channel belongs to the launch: run at boot, and again once a snapshot restore has reloaded the environment.
     pub fn adopt_ipc_channel_from_env(&mut self) {
+        self.pending_ipc = None; // a builder that was itself spawned with a channel left one here
         let env = self.transpiler.env_mut();
         let map = &mut env.map;
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {

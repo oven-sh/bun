@@ -1829,6 +1829,9 @@ fn snapshot_blockers(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<S
     if let Some(msg) = bun_spawn::process::WaiterThread::snapshot_blocker() {
         out.push(msg.to_string());
     }
+    if let Some(msg) = bun_io::io_watcher_snapshot_blocker() {
+        out.push(msg.to_string());
+    }
     match bun_jsc::web_worker::live_worker_count() {
         0 => {}
         n => out.push(format!("{n} worker thread(s) still running — a snapshot cannot contain a thread; terminate them (await worker.terminate()) before snapshotting")),

@@ -2529,6 +2529,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     let mut word_end = 0usize;
     // `obj.in` / `this.#in` is a member access, not the `in` keyword.
     let mut word_after_dot = false;
+    let mut word_after_type_op = false;
     // Parens opened by `if`/`for`/`while`/`with`; a `/` after such a `)` is a regex.
     let mut paren_stack: Vec<bool> = Vec::new();
     let mut last_paren_conditional = false;
@@ -2587,6 +2588,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             // A `/` after a token that cannot end an expression starts a regex.
             let after_keyword = is_word_char(prev)
                 && !word_after_dot
+                && !word_after_type_op
                 && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
             // A doubled `+`/`-` is postfix inc/dec, which ends an expression.
             let postfix_incdec =
@@ -2699,6 +2701,9 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
         if is_word_char(ch) {
             if word_end != i {
+                // `void` after `as`/`satisfies` is a type, not the void operator.
+                word_after_type_op = is_word_char(prev)
+                    && matches!(&code[word_start..word_end], b"as" | b"satisfies");
                 word_start = i;
                 word_after_dot = matches!(prev, b'.' | b'#');
             }

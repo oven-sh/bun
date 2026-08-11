@@ -877,6 +877,19 @@ describe.concurrent("Bun REPL", () => {
       expect(comparison.exitCode).toBe(0);
     });
 
+    test("division after a cast to void", async () => {
+      const cast = await runRepl(["q = (84 as void / 2); q", ".exit"]);
+      expect(stripAnsi(cast.stdout)).toContain("42");
+      expect(stripAnsi(cast.stdout)).not.toContain("SyntaxError");
+      expect(cast.exitCode).toBe(0);
+
+      // The void operator still takes a regex operand.
+      const operator = await runRepl(["q = void /\"/.test('\"'); q", ".exit"]);
+      expect(stripAnsi(operator.stdout)).toContain("undefined");
+      expect(stripAnsi(operator.stdout)).not.toContain("SyntaxError");
+      expect(operator.exitCode).toBe(0);
+    });
+
     test("division after a cast to an inline type literal", async () => {
       const { stdout, exitCode } = await runRepl(["function t(x) { return x as {a:number} / 2 }; t(84)", ".exit"]);
       const output = stripAnsi(stdout);

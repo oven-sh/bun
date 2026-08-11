@@ -42,7 +42,7 @@ pub struct StandaloneModuleGraph {
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
-    pub entry_point_id: u32,
+    entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
 }
@@ -661,10 +661,6 @@ impl StandaloneModuleGraph {
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
-        if offsets.entry_point_id as usize > modules_list_count {
-            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
-        }
-
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
         for i in 0..modules_list_count {
@@ -731,6 +727,13 @@ impl StandaloneModuleGraph {
                     wtf_string: BunString::empty(),
                 },
             );
+        }
+
+        // `entry_point()` indexes `files` by this id, and `files` is keyed by
+        // name, so bound it by what was actually inserted rather than by the
+        // record count in the section.
+        if offsets.entry_point_id as usize >= modules.count() {
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
 
         modules.lock_pointers(); // make the pointers stable forever

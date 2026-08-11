@@ -61,6 +61,43 @@ console.log("caught:", caught, "phase:", phase);`,
   });
 });
 
+// Same assert, no hooks: first-touching Bun.sql with almost no stack left makes
+// the builder's module evaluation throw a RangeError after the transition.
+test("lazy property builder that throws from stack overflow does not abort", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let result = "not attempted";
+function f() {
+  try {
+    f();
+  } catch {}
+  if (result === "not attempted") {
+    try {
+      Bun.sql;
+      result = "no throw";
+    } catch (e) {
+      result = e.name;
+    }
+  }
+}
+f();
+console.log(result);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "RangeError\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("require('bun')", () => {
   const str = eval("'bun'");
   expect(require(str)).toBe(Bun);

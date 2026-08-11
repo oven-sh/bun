@@ -624,8 +624,7 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
-/// Not an open file action: that runs in the vfork child (inside posix_spawn on
-/// Darwin), so an open(2) that blocks, e.g. a FIFO with no peer, blocks the spawn.
+/// Not an open file action, which would block the spawn itself on e.g. a FIFO with no peer.
 #[cfg(unix)]
 fn open_stdio_path(
     actions: &mut PosixSpawnActions,

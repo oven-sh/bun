@@ -40,6 +40,70 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
+// A listener given a hostname binds one of the name's addresses (the `::1
+// localhost` line of /etc/hosts when there is one), so a connect to the same name
+// has to try every address the name has. The connect side resolves through the
+// internal DNS cache, which used to pass AI_ADDRCONFIG for every name; glibc's
+// AI_ADDRCONFIG ignores loopback when deciding which families are configured, so
+// on a machine whose only IPv6 address is ::1 (a container) "localhost" resolved
+// to 127.0.0.1 alone and the listener on ::1 was unreachable by name.
+describe.concurrent("connecting to the hostname a listener was bound to", () => {
+  test("fetch()", async () => {
+    await using server = Bun.serve({ port: 0, hostname: "localhost", fetch: () => new Response("ok") });
+    const response = await fetch(`http://localhost:${server.port}/`);
+    expect(await response.text()).toBe("ok");
+  });
+
+  // getaddrinfo() is case-insensitive, so the exemption has to be too.
+  test.each(["localhost", "LOCALHOST"])("Bun.connect({ hostname: %j })", async hostname => {
+    using listener = Bun.listen({
+      port: 0,
+      hostname: "localhost",
+      socket: {
+        open(socket) {
+          socket.end("hello");
+        },
+        data() {},
+      },
+    });
+    const { promise, resolve } = Promise.withResolvers<string>();
+    using socket = await Bun.connect({
+      hostname,
+      port: listener.port,
+      socket: {
+        data(_socket, data) {
+          resolve(data.toString());
+        },
+      },
+    });
+    expect(await promise).toBe("hello");
+    expect(socket.remoteAddress).toBeOneOf(["127.0.0.1", "::1"]);
+  });
+
+  test("new WebSocket()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "localhost",
+      fetch(request, server) {
+        return server.upgrade(request) ? undefined : new Response(null, { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("hello");
+        },
+        message() {},
+      },
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const ws = new WebSocket(`ws://localhost:${server.port}/`);
+    ws.onmessage = event => resolve(String(event.data));
+    ws.onclose = event => reject(new Error(`closed before any message: ${event.code} ${event.reason}`));
+    expect(await promise).toBe("hello");
+    ws.onclose = null;
+    ws.close();
+  });
+});
+
 describe("dns.prefetch", () => {
   it("should prefetch", async () => {
     // A local server keeps the test off the external network. "localhost" is a

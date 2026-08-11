@@ -2398,6 +2398,19 @@ pub mod internal {
         hints_copy
     }
 
+    /// "localhost" or a name under it (RFC 6761 §6.3), the same set `normalize_dns_name`
+    /// special-cases for `dns.lookup`.
+    #[cfg(not(windows))]
+    fn is_localhost_name(host: &[u8]) -> bool {
+        const LOCALHOST: &[u8] = b"localhost";
+        let Some(prefix_len) = host.len().checked_sub(LOCALHOST.len()) else {
+            return false;
+        };
+        let (prefix, label) = host.split_at(prefix_len);
+        strings::eql_case_insensitive_ascii(label, LOCALHOST, true)
+            && (prefix.is_empty() || prefix.ends_with(b"."))
+    }
+
     // `Request` is passed opaquely to usockets and round-tripped back into
     // Rust; the C side never dereferences fields, so layout is irrelevant.
     #[allow(improper_ctypes)]
@@ -2653,11 +2666,19 @@ pub mod internal {
         unsafe {
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             let mut hints = get_hints();
+            let host = (*req).key.host.as_ref();
 
-            let host_ptr = (*req)
-                .key
-                .host
-                .as_ref()
+            // glibc's AI_ADDRCONFIG only counts non-loopback interface addresses, so on
+            // a machine whose only IPv6 address is ::1 (a container, typically) it drops
+            // the `::1 localhost` line of /etc/hosts even though ::1 is up, while a
+            // listener bound to the name (bsd_create_listen_socket prefers that line)
+            // sits exactly there. Loopback names get the unfiltered answer, which is
+            // what macOS libinfo and musl already return for them.
+            if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
+                hints.ai_flags &= !netc::AI_ADDRCONFIG;
+            }
+
+            let host_ptr = host
                 .map(|h| h.as_ptr().cast::<c_char>())
                 .unwrap_or(ptr::null());
             let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);

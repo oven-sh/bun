@@ -415,7 +415,7 @@ mod refusal_gate {
 
     pub(super) fn before_post(h: &VmHandle) {
         if !h.posts_parked()
-            || std::thread::current().id() == h.0.js_thread
+            || std::thread::current().id() == *h.0.js_thread.lock().unwrap()
             || h.0.embedded.load(Ordering::SeqCst) != 0
         {
             return;

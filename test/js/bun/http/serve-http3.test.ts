@@ -1435,9 +1435,13 @@ describe("Bun.serve HTTP/3 production", () => {
   // The request is applied only when it yields more than the socket already
   // has, so a host whose defaults are larger than what the request yields (a
   // tuned one; simulated here with a request below every platform's default)
-  // keeps its defaults instead of having them lowered.
-  test.concurrent.skipIf(isWindows)("QUIC UDP socket buffers are never lowered below the kernel default", async () => {
-    const { body, defaults, sockets } = await probeQuicSocketBuffers(1024);
+  // keeps its defaults instead of having them lowered. A request of 0 is the
+  // override's documented "leave the sockets alone" value.
+  test.concurrent.skipIf(isWindows).each([
+    ["a request below the kernel default", 1024],
+    ["the request disabled", 0],
+  ])("QUIC UDP socket buffers stay at the kernel default with %s", async (_, requestBytes) => {
+    const { body, defaults, sockets } = await probeQuicSocketBuffers(requestBytes);
     expect({ body, sockets }).toEqual({
       body: "ok",
       sockets: [

@@ -872,19 +872,20 @@ void us_quic_set_socket_buffer_size_for_testing(int bytes) {
  * the old value cannot be restored afterwards, so what the request actually
  * yields is measured on a throwaway socket first and a socket that already
  * has at least that much is left alone. Best effort: any failure leaves the
- * socket at its default. */
-static void us_quic_set_socket_buffers(struct us_udp_socket_t *udp) {
+ * socket at its default. Called once ls->local is known so the probe uses the
+ * family the kernel just accepted for the real socket. */
+static void us_quic_set_socket_buffers(us_quic_listen_socket_t *ls) {
     int request = __atomic_load_n(&us_quic_socket_buffer_request, __ATOMIC_SEQ_CST);
     if (request <= 0) return;
-    LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(AF_INET, SOCK_DGRAM, 0, NULL);
+    LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(ls->local.ss_family, SOCK_DGRAM, 0, NULL);
     if (probe == LIBUS_SOCKET_ERROR) return;
     for (int is_recv = 0; is_recv <= 1; is_recv++) {
         int granted = 0, current = 0;
         if (bsd_socket_buffer_size(probe, is_recv, request, &granted) != 0 ||
             bsd_socket_buffer_size(probe, is_recv, 0, &granted) != 0 ||
-            us_udp_socket_buffer_size(udp, is_recv, 0, &current) != 0 ||
+            us_udp_socket_buffer_size(ls->udp, is_recv, 0, &current) != 0 ||
             current >= granted) continue;
-        us_udp_socket_buffer_size(udp, is_recv, request, &current);
+        us_udp_socket_buffer_size(ls->udp, is_recv, request, &current);
     }
     bsd_close_socket(probe);
 }
@@ -905,11 +906,11 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
         host, (unsigned short) port, flags, &err, ls);
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
-    us_quic_set_socket_buffers(ls->udp);
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    us_quic_set_socket_buffers(ls);
 
     ls->next = ctx->listeners;
     ctx->listeners = ls;
@@ -1264,9 +1265,9 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     }
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
-    us_quic_set_socket_buffers(ls->udp);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    us_quic_set_socket_buffers(ls);
     ls->next = ctx->listeners;
     ctx->listeners = ls;
     ctx->client_udp = ls;

@@ -3284,8 +3284,7 @@ pub mod bv2_impl {
                 let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
-                (*runtime_parse_task).ctx = Some(ctx_mut.shared());
-                (*runtime_parse_task).completion_ctx = Some(ctx_mut);
+                (*runtime_parse_task).ctx = Some(ctx_mut);
                 (*runtime_parse_task).tree_shaking = true;
                 (*runtime_parse_task).loader = Some(Loader::Js);
             }
@@ -3704,8 +3703,7 @@ pub mod bv2_impl {
                 let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
-                (*task).ctx = Some(ctx_mut.shared());
-                (*task).completion_ctx = Some(ctx_mut);
+                (*task).ctx = Some(ctx_mut);
                 (*task).task.node.next = core::ptr::null_mut();
                 (*task).io_task.node.next = core::ptr::null_mut();
             }
@@ -4806,17 +4804,7 @@ pub mod bv2_impl {
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
-                                ctx: Some(
-                                    unsafe {
-                                        bun_ptr::ParentRef::from_raw_mut(
-                                            std::ptr::from_mut::<BundleV2>(this)
-                                                .cast::<BundleV2<'static>>(),
-                                        )
-                                    }
-                                    .shared(),
-                                ),
-                                // SAFETY: `this` is the live bundle (write provenance).
-                                completion_ctx: Some(unsafe {
+                                ctx: Some(unsafe {
                                     bun_ptr::ParentRef::from_raw_mut(
                                         std::ptr::from_mut::<BundleV2>(this)
                                             .cast::<BundleV2<'static>>(),
@@ -6706,8 +6694,7 @@ pub mod bv2_impl {
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
-                    new_task.ctx = self_ptr.map(|p| p.shared());
-                    new_task.completion_ctx = self_ptr;
+                    new_task.ctx = self_ptr;
                     // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
                     // intervening insert into that map has occurred since get_or_put.
                     unsafe {

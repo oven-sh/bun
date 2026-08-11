@@ -117,26 +117,31 @@ describe("zlib native handle constructor/init/write argument errors", () => {
   ];
 
   test.each(modeCases)("%s constructor validates mode", (_label, Class, min, max) => {
-    expect(caught(() => new Class("x"))).toEqual({
+    const notANumber = (received: string) => ({
       name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
-      message: `The "mode" argument must be of type number. Received type string ('x')`,
+      message: `The "mode" argument must be of type number. Received ${received}`,
     });
-    expect(caught(() => new Class(min + 0.5))).toEqual({
+    const notAnInteger = (value: number) => ({
       name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
-      message: `The "mode" argument must be of type integer. Received type number (${min + 0.5})`,
+      message: `The "mode" argument must be of type integer. Received type number (${value})`,
     });
-    expect(caught(() => new Class(min - 1))).toEqual({
+    const outOfRange = (value: number) => ({
       name: "RangeError",
       code: "ERR_OUT_OF_RANGE",
-      message: `The value of "mode" is out of range. It must be >= ${min} and <= ${max}. Received ${min - 1}`,
+      message: `The value of "mode" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`,
     });
-    expect(caught(() => new Class(max + 1))).toEqual({
-      name: "RangeError",
-      code: "ERR_OUT_OF_RANGE",
-      message: `The value of "mode" is out of range. It must be >= ${min} and <= ${max}. Received ${max + 1}`,
-    });
+
+    expect(caught(() => new Class())).toEqual(notANumber("undefined"));
+    expect(caught(() => new Class("x"))).toEqual(notANumber("type string ('x')"));
+    expect(caught(() => new Class(min + 0.5))).toEqual(notAnInteger(min + 0.5));
+    expect(caught(() => new Class(NaN))).toEqual(notAnInteger(NaN));
+    expect(caught(() => new Class(Infinity))).toEqual(notAnInteger(Infinity));
+    expect(caught(() => new Class(-Infinity))).toEqual(notAnInteger(-Infinity));
+    expect(caught(() => new Class(0))).toEqual(outOfRange(0));
+    expect(caught(() => new Class(min - 1))).toEqual(outOfRange(min - 1));
+    expect(caught(() => new Class(max + 1))).toEqual(outOfRange(max + 1));
   });
 
   const cb = () => {};
@@ -287,10 +292,18 @@ describe("zlib native handle lifecycle", () => {
           new NativeZstd(10);
           new NativeZstd(11);
 
-          // Constructed, init failed argument validation.
-          try { new NativeZlib(1).init(15, 6, 8, 0, new Uint32Array(1), cb, undefined); } catch {}
-          try { new NativeBrotli(8).init(new Uint32Array(0), new Uint32Array(1), cb); } catch {}
-          try { new NativeZstd(10).init(new Uint32Array(0), 0, new Uint32Array(1), cb); } catch {}
+          // Constructed, init failed argument validation. Each init() must
+          // actually throw, otherwise this would be finalizing healthy handles.
+          function rejected(init) {
+            try { init(); } catch (e) { return e.code; }
+            throw new Error("init() unexpectedly succeeded");
+          }
+          const codes = [
+            rejected(() => new NativeZlib(1).init(15, 6, 8, 0, new Uint32Array(1), cb, undefined)),
+            rejected(() => new NativeBrotli(8).init(new Uint32Array(0), new Uint32Array(1), cb)),
+            rejected(() => new NativeZstd(10).init(new Uint32Array(0), 0, new Uint32Array(1), cb)),
+          ];
+          if (codes.some(c => c !== "ERR_INVALID_ARG_VALUE")) throw new Error("unexpected codes: " + codes);
 
           // Explicit close() on a never-initialized handle.
           new NativeZlib(1).close();

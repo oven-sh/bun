@@ -175,13 +175,19 @@ fn map_init_return_code(rc: ReturnCode) -> Result<(), ZlibError> {
     }
 }
 
+/// Largest byte count a single zlib call can be offered; `reserve_expand_tail`
+/// hands back the Vec's whole slack, which can exceed 32 bits.
+fn avail_out_for(len: usize) -> uInt {
+    len.min(uInt::MAX as usize) as uInt
+}
+
 /// Point the stream's output at freshly reserved tail capacity of `list`,
 /// capping `avail_out` at `budget` bytes (`usize::MAX` = unbounded).
 fn regrow_output_tail(zlib: &mut zStream_struct, list: &mut Vec<u8>, budget: usize) {
     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
     let (next_out, avail_out) = unsafe { list.reserve_expand_tail(budget.min(4096)) };
     zlib.next_out = next_out;
-    zlib.avail_out = avail_out.min(budget) as uInt;
+    zlib.avail_out = avail_out_for(avail_out.min(budget));
 }
 
 // zlib `alloc_func`/`free_func` thunks → mimalloc, used by
@@ -791,7 +797,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         // ensureTotalCapacityPrecise → reserve_exact
         let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
         zlib_reader.list_ptr.reserve_exact(need);
-        zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
+        zlib_reader.zlib.avail_out = avail_out_for(zlib_reader.list_ptr.capacity());
         zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
         Ok(zlib_reader)

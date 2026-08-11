@@ -1575,7 +1575,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 /// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct FileSystemFlags(pub c_int);
+pub struct FileSystemFlags(c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileSystemFlagsKind {

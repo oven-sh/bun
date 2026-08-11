@@ -833,7 +833,7 @@ mod __macro_smoke {
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
 pub use self::dom_form_data::DOMFormData;
-pub use self::url::URL;
+pub use self::url::{OwnedURL, URL};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};

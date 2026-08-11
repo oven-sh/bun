@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
@@ -19,7 +18,7 @@ use super::protocol_jsc;
 use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
-use bun_jsc::url::URL;
+use bun_jsc::url::{OwnedURL, URL};
 use bun_valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
@@ -587,7 +586,7 @@ impl JSValkeyClient {
         // the case right now and I do not understand why. It will take some work in JSC to
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
-        let parsed_url: NonNull<URL> = 'get_url: {
+        let parsed_url: OwnedURL = 'get_url: {
             let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
@@ -632,13 +631,6 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
-        let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();
@@ -691,28 +683,15 @@ impl JSValkeyClient {
 
         let port: u16 = match uri {
             valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => 0,
-            _ => 'brk: {
-                let port_value = parsed_url.port();
-                // URL.port() returns u32::MAX if port is not set
-                if port_value == u32::MAX {
-                    // No port specified, use default
-                    break 'brk 6379;
-                } else {
-                    // Port was explicitly specified
-                    if port_value == 0 {
-                        // Port 0 is invalid for TCP connections (though it's allowed for unix sockets)
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Port 0 is not valid for TCP connections",
-                        )));
-                    }
-                    if port_value > 65535 {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Invalid port number in URL. Port must be a number between 0 and 65535",
-                        )));
-                    }
-                    break 'brk u16::try_from(port_value).expect("int cast");
+            _ => match parsed_url.port() {
+                None => 6379,
+                Some(0) => {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Port 0 is not valid for TCP connections",
+                    )));
                 }
-            }
+                Some(port) => port,
+            },
         };
 
         let options = if arguments.len() >= 2

@@ -2815,13 +2815,21 @@ where
         // unconditional. `Box::into_raw` (not `heap::release`) keeps raw-owner
         // provenance for the `deinit()` dealloc — a `&mut self`-derived tag
         // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
-        // `is_shutting_down()`; `TERMINATED` means `app.close()` already ran,
-        // so `NewApp::destroy` can't orphan a keep-alive socket.
+        // `is_shutting_down()`.
+        //
+        // `DEINIT_SCHEDULED` can only have been set by the `deinit_if_we_can`
+        // call below (it requires the `Finalized` state set just before), so
+        // it means the server is drained; past `is_shutting_down()` it also
+        // means `schedule_deinit` enqueued nothing, since no tick will run.
+        // Nothing else will free the Box then, so free it here — after an
+        // abrupt stop (`TERMINATED`, app closed) and after a graceful one
+        // alike: the app is still open but empty, teardown's stop phase closed
+        // every socket before destroying the heap, and `deinit()` closes it
+        // before destroying it in any case.
         unsafe {
             (*this_ptr).js_value.finalize();
             (*this_ptr).deinit_if_we_can();
             if (*this_ptr).flags.contains(ServerFlags::DEINIT_SCHEDULED)
-                && (*this_ptr).flags.contains(ServerFlags::TERMINATED)
                 && (*this_ptr).vm().is_shutting_down()
             {
                 Self::deinit(this_ptr);

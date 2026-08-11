@@ -2116,7 +2116,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
         if let Some(app) = server.app.take() {
-            // SAFETY: live uws App handle owned by this server.
+            // `destroy` only deinits the app's socket groups (`us_socket_group_deinit`
+            // asserts they are empty); it closes nothing. Every path that sets
+            // `TERMINATED` closes the app (an abrupt stop synchronously,
+            // `schedule_deinit` in the task queued ahead of the one that gets
+            // here); a gracefully stopped server freed by `finalize()` at VM
+            // teardown, or a `listen()` that failed part-way, gets here without
+            // either.
+            if !server.flags.contains(ServerFlags::TERMINATED) {
+                server.flags.insert(ServerFlags::TERMINATED);
+                server.deinit_running.set(true);
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).close();
+            }
+            // SAFETY: live uws App handle owned by this server, closed above or
+            // by the path that set `TERMINATED`.
             unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
         }
     }

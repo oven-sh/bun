@@ -63,10 +63,13 @@ function variableViaSpawnSync(name: string, env: Env) {
 }
 
 describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
-  // The object is applied the way assigning its properties to process.env would
-  // be: of the properties whose names differ only in case, the last one is what
-  // the child gets, and an undefined one removes the variable. (node:child_process
-  // keeps node's own rule, applied in JS before the object reaches Bun.spawn.)
+  // Of the properties whose names differ only in case, the last one is what the
+  // child gets, as with every other env object in bun on Windows. Properties set
+  // to undefined are skipped before that, as on POSIX, so the usual way of
+  // clearing every spelling and then setting one works whichever spelling is set
+  // (a `[key]: value` after the undefined ones lands wherever that key already
+  // was, see the scheme cases in test/js/bun/http/proxy.test.ts).
+  // node:child_process keeps node's own rule, applied in JS before Bun.spawn.
   const cases: [name: string, env: Env, variable: string, expected: Env][] = [
     [
       "{ ...process.env, PATH } overrides the parent's Path",
@@ -99,22 +102,16 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
       { Spawn_Env_Case: "second" },
     ],
     [
-      "{ SPAWN_ENV_CASE: undefined, spawn_env_case }: clearing every spelling, then setting one",
+      "{ SPAWN_ENV_CASE: undefined, spawn_env_case: set }: the set spelling is passed",
       { ...bunEnv, SPAWN_ENV_CASE: undefined, spawn_env_case: "set" },
       "SPAWN_ENV_CASE",
       { spawn_env_case: "set" },
     ],
     [
-      "{ ...env, SPAWN_ENV_CASE: undefined } removes a differently spelled variable",
-      { ...bunEnv, Spawn_Env_Case: "inherited", SPAWN_ENV_CASE: undefined },
+      "{ SPAWN_ENV_CASE: set, spawn_env_case: undefined }: the set spelling is passed",
+      { ...bunEnv, SPAWN_ENV_CASE: "set", spawn_env_case: undefined },
       "SPAWN_ENV_CASE",
-      {},
-    ],
-    [
-      "{ ...env, spawn_env_case: undefined } removes a differently spelled variable",
-      { ...bunEnv, SPAWN_ENV_CASE: "inherited", spawn_env_case: undefined },
-      "SPAWN_ENV_CASE",
-      {},
+      { SPAWN_ENV_CASE: "set" },
     ],
   ];
 

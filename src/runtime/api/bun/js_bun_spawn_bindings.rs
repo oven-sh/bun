@@ -7,7 +7,7 @@ use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
-use bun_core::{String as BunString, ZStr, ZigString, strings};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::{
@@ -2075,53 +2075,33 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
-/// One `env` property as the `KEY=VALUE` line handed to the child. On Windows an
-/// `undefined` property is kept as a bare `KEY` so that it removes the other
-/// spellings of its name in `dedupe_env_names_windows`; it is never emitted.
+/// One `KEY=VALUE` line of the child's environment.
 struct EnvLine {
     line: ZBox,
     key_len: usize,
 }
 
 impl EnvLine {
-    // PERF: per-entry allocation — profile if it shows up on a hot path.
-    fn new(key: &BunString, value: Option<ZigString>) -> JsResult<EnvLine> {
-        let mut buf: Vec<u8> = Vec::new();
-        write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
-        let key_len = buf.len();
-        if let Some(value) = value {
-            write!(&mut buf, "={}", value).map_err(|_| JsError::OutOfMemory)?;
-        }
-        Ok(EnvLine {
-            line: ZBox::from_vec(buf),
-            key_len,
-        })
-    }
-
     fn key(&self) -> &[u8] {
         &self.line.as_bytes()[..self.key_len]
     }
 
-    /// `None` for an `undefined` property.
-    fn value(&self) -> Option<&[u8]> {
-        self.line.as_bytes().get(self.key_len + 1..)
+    fn value(&self) -> &[u8] {
+        &self.line.as_bytes()[self.key_len + 1..]
     }
 }
 
 /// Windows names are case-insensitive and the child reads the first matching block
 /// entry, so `{ ...process.env, PATH: dir }` (spelled `Path` by process.env) would
-/// keep the parent's value. Apply the object like assignments to a Windows
-/// `process.env` (ASCII-folded names, as bun's env maps use): per name the last
-/// property wins and an `undefined` one removes it. node:child_process applies
-/// node's own rule in JS before reaching this.
+/// keep the parent's value. As with bun's env maps on Windows (ASCII-folded names,
+/// later writes win), the last property of each name is the one passed on.
 fn dedupe_env_names_windows(lines: &mut Vec<EnvLine>) {
     fn cmp_names(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
         a.iter()
             .map(u8::to_ascii_uppercase)
             .cmp(b.iter().map(u8::to_ascii_uppercase))
     }
-    // After reversing, a stable sort leaves each name's last property first in
-    // its group, which is the one `dedup_by` keeps. libuv re-sorts the block.
+    // Reversed plus a stable sort puts each name's last property first in its run.
     lines.reverse();
     lines.sort_by(|a, b| cmp_names(a.key(), b.key()));
     lines.dedup_by(|other, kept| cmp_names(other.key(), kept.key()).is_eq());
@@ -2151,9 +2131,6 @@ fn append_envp_from_js(
     while let Some(key) = object_iter.next()? {
         let value = object_iter.value;
         if value.is_undefined() {
-            if cfg!(windows) {
-                lines.push(EnvLine::new(&key, None)?);
-            }
             continue;
         }
 
@@ -2185,7 +2162,19 @@ fn append_envp_from_js(
                 .throw());
         }
 
-        lines.push(EnvLine::new(&key, Some(value_bunstr.to_zig_string()))?);
+        // PERF: per-entry allocation — profile if it shows up on a hot path.
+        let line: EnvLine = {
+            let mut buf: Vec<u8> = Vec::new();
+            write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
+            let key_len = buf.len();
+            write!(&mut buf, "={}", value_bunstr.to_zig_string())
+                .map_err(|_| JsError::OutOfMemory)?;
+            EnvLine {
+                line: ZBox::from_vec(buf),
+                key_len,
+            }
+        };
+        lines.push(line);
     }
 
     if cfg!(windows) {
@@ -2201,10 +2190,6 @@ fn append_envp_from_js(
     );
     storage.reserve(lines.len());
     for entry in lines {
-        let Some(value) = entry.value() else {
-            continue;
-        };
-
         // Windows environment variable names are case-insensitive: an env
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
@@ -2217,7 +2202,7 @@ fn append_envp_from_js(
             // SAFETY: `entry.line` is moved into `storage` below (a `Vec<ZBox>`
             // that outlives every read of `*path`), and `ZBox` is heap-backed so
             // the bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(value) };
+            *path = unsafe { bun_ptr::detach_lifetime(entry.value()) };
         }
 
         envp.push(entry.line.as_ptr());

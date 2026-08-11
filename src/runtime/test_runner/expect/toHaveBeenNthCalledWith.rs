@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::DiffFormatter;
+use super::mock;
 use super::Expect;
 
 pub(crate) fn to_have_been_nth_called_with(
@@ -13,7 +13,7 @@ pub(crate) fn to_have_been_nth_called_with(
         frame.this(),
         "toHaveBeenNthCalledWith",
         "<green>n<r>, <green>...expected<r>",
-        super::mock::MockKind::CallsWithSig,
+        mock::MockKind::CallsWithSig,
     )?;
 
     if arguments.is_empty() || !arguments[0].is_any_int() {
@@ -36,7 +36,6 @@ pub(crate) fn to_have_been_nth_called_with(
 
     if pass {
         nth_call_value = calls.get_index(global, nth_call_num - 1)?;
-        let expected_args = &arguments[1..];
 
         if !nth_call_value.js_type().is_array() {
             return Err(global.throw(format_args!(
@@ -44,17 +43,7 @@ pub(crate) fn to_have_been_nth_called_with(
             )));
         }
 
-        if nth_call_value.get_length(global)? != expected_args.len() as u64 {
-            pass = false;
-        } else {
-            let mut itr = nth_call_value.array_iterator(global)?;
-            while let Some(call_arg) = itr.next()? {
-                if !call_arg.jest_deep_equals(expected_args[(itr.i - 1) as usize], global)? {
-                    pass = false;
-                    break;
-                }
-            }
-        }
+        pass = mock::call_args_equal(global, nth_call_value, &arguments[1..])?;
     }
 
     if pass != this.flags.get().not() {
@@ -62,52 +51,25 @@ pub(crate) fn to_have_been_nth_called_with(
     }
 
     // handle failure
-    let mut formatter = super::make_formatter(global);
-
-    let expected_args_slice = &arguments[1..];
-    let expected_args_js_array = JSValue::create_array_from_slice(global, expected_args_slice)?;
+    let expected_args_js_array = JSValue::create_array_from_slice(global, &arguments[1..])?;
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nExpected call #{} not to be with: <green>{}<r>\nBut it was.",
-                nth_call_num,
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+        return mock::throw_not_failure(
+            &this, global, "toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>",
+            format_args!("Expected call #{} not to be with", nth_call_num), expected_args_js_array, "\nBut it was.",
         );
     }
     let signature = Expect::get_signature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false);
 
     // Handle case where function was not called enough times
     if total_calls < nth_call_num {
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nThe mock function was called {} time{}, but call {} was requested.",
-                total_calls,
-                if total_calls == 1 { "" } else { "s" },
-                nth_call_num,
-            ),
-        );
+        return mock::throw_nth_call_missing(&this, global, signature, total_calls, nth_call_num, "");
     }
 
     // The call existed but didn't match. Show a diff.
-    let diff_format = DiffFormatter {
-        expected: Some(expected_args_js_array),
-        received: Some(nth_call_value),
-        expected_string: None,
-        received_string: None,
-        global_this: Some(global),
-        not: false,
-    };
-    this.throw(
-        global,
-        signature,
-        format_args!("\n\nCall #{}:\n{}\n", nth_call_num, diff_format),
+    mock::throw_diff(
+        &this, global, signature,
+        format_args!("Call #{}:\n", nth_call_num), expected_args_js_array, nth_call_value,
     )
 }

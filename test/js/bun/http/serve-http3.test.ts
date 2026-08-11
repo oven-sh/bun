@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, libcPathForDlopen, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -1300,4 +1301,110 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+
+  // quic.c asks for this much SO_RCVBUF / SO_SNDBUF on every QUIC UDP socket
+  // (US_QUIC_SOCKET_BUFFER_SIZE): the Bun.serve listener and the shared
+  // fetch() client endpoint. The kernel default (Linux net.core.rmem_default,
+  // 208 KiB) queues fewer than 100 full-size packets, so every cwnd-sized
+  // lsquic burst overflowed the receiving socket. The value is only
+  // observable through getsockopt(2) on the live fds, hence bun:ffi.
+  const QUIC_SOCKET_BUFFER = 4 * 1024 * 1024;
+  test.skipIf(isWindows)("QUIC UDP sockets get enlarged kernel buffers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { dlopen, FFIType, ptr } = require("bun:ffi");
+          const { readdirSync } = require("fs");
+          const isDarwin = process.platform === "darwin";
+          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            getsockopt: {
+              args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+              returns: FFIType.int,
+            },
+            getsockname: { args: [FFIType.int, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
+          });
+          const SOL_SOCKET = isDarwin ? 0xffff : 1;
+          const SO_SNDBUF = isDarwin ? 0x1001 : 7;
+          const SO_RCVBUF = isDarwin ? 0x1002 : 8;
+          const SO_TYPE = isDarwin ? 0x1008 : 3;
+          const SOCK_DGRAM = 2;
+          const AF_INET = 2;
+          const AF_INET6 = isDarwin ? 30 : 10;
+          function sockopt(fd, opt) {
+            const val = new Int32Array(1);
+            const len = new Uint32Array([4]);
+            return libc.symbols.getsockopt(fd, SOL_SOCKET, opt, ptr(val), ptr(len)) === 0 ? val[0] : -1;
+          }
+          // Every IPv4/IPv6 datagram socket open in this process, with its bound port.
+          function udpSockets() {
+            const out = [];
+            for (const name of readdirSync("/dev/fd")) {
+              const fd = Number(name);
+              if (sockopt(fd, SO_TYPE) !== SOCK_DGRAM) continue;
+              const addr = new Uint8Array(128);
+              const len = new Uint32Array([addr.length]);
+              if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) continue;
+              // Darwin sockaddr starts with a u8 sa_len; Linux with a native-endian u16 sa_family.
+              const family = isDarwin ? addr[1] : (addr[0] | (addr[1] << 8));
+              if (family !== AF_INET && family !== AF_INET6) continue;
+              // sin_port / sin6_port both sit at offset 2, network byte order.
+              out.push({ port: (addr[2] << 8) | addr[3], rcvbuf: sockopt(fd, SO_RCVBUF), sndbuf: sockopt(fd, SO_SNDBUF) });
+            }
+            return out;
+          }
+
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            tls: ${JSON.stringify(tls)},
+            http3: true,
+            http1: false,
+            fetch: () => new Response("ok"),
+          });
+          const res = await fetch("https://127.0.0.1:" + server.port + "/", {
+            protocol: "http3",
+            tls: { rejectUnauthorized: false },
+          });
+          const body = await res.text();
+          const sockets = udpSockets().map(s => ({ ...s, role: s.port === server.port ? "listener" : "client" }));
+          server.stop(true);
+          console.log(JSON.stringify({ body, sockets }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0 || !stdout.trim()) throw new Error(`probe exited with ${exitCode}:\n${stderr}`);
+    const { body, sockets } = JSON.parse(stdout) as {
+      body: string;
+      sockets: Array<{ role: string; port: number; rcvbuf: number; sndbuf: number }>;
+    };
+
+    // socket(7): Linux clamps the request to net.core.{r,w}mem_max and then
+    // reports double the clamped value, so an untuned host lands at exactly
+    // 2 * 212992. macOS applies the request as-is (it is below the default
+    // kern.ipc.maxsockbuf).
+    const floor = (max: "rmem_max" | "wmem_max") =>
+      isLinux
+        ? Math.min(QUIC_SOCKET_BUFFER, 2 * Number(readFileSync(`/proc/sys/net/core/${max}`, "utf8")))
+        : QUIC_SOCKET_BUFFER;
+    const checked = sockets
+      .sort((a, b) => a.role.localeCompare(b.role))
+      .map(s => ({
+        role: s.role,
+        rcvbuf: s.rcvbuf >= floor("rmem_max") ? "raised" : `not raised (${s.rcvbuf})`,
+        sndbuf: s.sndbuf >= floor("wmem_max") ? "raised" : `not raised (${s.sndbuf})`,
+      }));
+    expect({ body, sockets: checked }).toEqual({
+      body: "ok",
+      sockets: [
+        { role: "client", rcvbuf: "raised", sndbuf: "raised" },
+        { role: "listener", rcvbuf: "raised", sndbuf: "raised" },
+      ],
+    });
+  });
 });

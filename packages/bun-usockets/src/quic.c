@@ -849,6 +849,28 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+/* Kernel default UDP socket buffers are sized for request/response datagram
+ * traffic: Linux net.core.rmem_default (208 KiB) queues fewer than 100
+ * full-size QUIC packets once skb overhead is charged, Windows defaults to
+ * 64 KiB. lsquic sends up to a cwnd per engine tick and one socket carries
+ * every connection, so the tail of any larger burst is dropped by the
+ * receiving socket before lsquic sees it, every burst becomes a loss event,
+ * and throughput settles at about one socket buffer per RTT. 4 MiB is in line
+ * with other QUIC stacks and below macOS's default kern.ipc.maxsockbuf.
+ * Linux clamps the request to net.core.{r,w}mem_max (then doubles it), so an
+ * untuned host gets 2x the default and a tuned one the full amount. Best
+ * effort: a failure, or a default that is already this large, leaves the
+ * socket as is. */
+#define US_QUIC_SOCKET_BUFFER_SIZE (4 * 1024 * 1024)
+
+static void us_quic_set_socket_buffers(struct us_udp_socket_t *udp) {
+    for (int is_recv = 0; is_recv <= 1; is_recv++) {
+        int size = 0;
+        if (us_udp_socket_buffer_size(udp, is_recv, 0, &size) == 0 && size >= US_QUIC_SOCKET_BUFFER_SIZE) continue;
+        us_udp_socket_buffer_size(udp, is_recv, US_QUIC_SOCKET_BUFFER_SIZE, &size);
+    }
+}
+
 us_quic_listen_socket_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size)
@@ -865,6 +887,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
         host, (unsigned short) port, flags, &err, ls);
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
+    us_quic_set_socket_buffers(ls->udp);
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
@@ -1223,6 +1246,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     }
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
+    us_quic_set_socket_buffers(ls->udp);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
     ls->next = ctx->listeners;

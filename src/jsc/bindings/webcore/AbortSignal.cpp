@@ -72,6 +72,11 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     // alive while an abort listener or an AbortSignal.any() dependent observes
     // the timeout. With no observer, collecting the wrapper destroys the
     // signal and ~AbortSignal() cancels and frees the timer.
+    //
+    // Those are the only two things that stop the timer (see markAborted() and
+    // ~AbortSignal()). Losing every observer must not: a signal JS still holds
+    // has to read as aborted once its deadline passes, whether or not anything
+    // was listening when it did.
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
     return signal;
@@ -297,14 +302,6 @@ void AbortSignal::eventListenersDidChange()
         else
             m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
-
-    // When a timeout signal loses all observers there is nothing left to
-    // notify when the timer fires, so cancel it eagerly.
-    // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
-    // wrapper alive and ~AbortSignal() runs on collection; this just frees the
-    // native timer sooner.
-    if (m_timeout && !aborted() && !hasTimeoutObserver())
-        cancelTimer();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

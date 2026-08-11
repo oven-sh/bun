@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -178,5 +178,116 @@ describe("AbortSignal", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout.trim())).toEqual([0, 1, 2, 3, 4, 5, "t"]);
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://dom.spec.whatwg.org/#dom-abortsignal-timeout: a timeout signal aborts
+// once its deadline passes for as long as the signal exists. Whether anything
+// was listening in the meantime only matters for GC, never for whether it fires.
+// The native timer used to be cancelled as soon as the signal's listener count
+// dropped to zero, leaving a signal the program still held stuck at
+// aborted === false. Node and the browsers abort it in every case below.
+describe.concurrent("AbortSignal.timeout() still fires after its observers go away", () => {
+  // Resolves after the deadline of a signal armed before this call with a
+  // shorter delay: the fence sits behind it in the timer heap, so by the time
+  // the fence fires that signal's own timer has had its turn. Waiting on a
+  // fence rather than on the signal under test keeps the latter unobserved.
+  function fence(ms: number): Promise<void> {
+    const signal = AbortSignal.timeout(ms);
+    return new Promise(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+  }
+
+  function summarize(signal: AbortSignal) {
+    return { aborted: signal.aborted, reason: signal.reason?.name };
+  }
+
+  const churn: [string, (signal: AbortSignal) => void][] = [
+    [
+      "an abort listener was added and removed",
+      signal => {
+        const listener = () => {};
+        signal.addEventListener("abort", listener);
+        signal.removeEventListener("abort", listener);
+      },
+    ],
+    [
+      "onabort was set and cleared",
+      signal => {
+        signal.onabort = () => {};
+        signal.onabort = null;
+      },
+    ],
+    [
+      "its abort listener was removed through the listener's { signal } option",
+      signal => {
+        const controller = new AbortController();
+        signal.addEventListener("abort", () => {}, { signal: controller.signal });
+        controller.abort();
+      },
+    ],
+    [
+      // Not even a removal: adding a listener for any other event type updates
+      // the listener bookkeeping while the abort listener count is still zero.
+      "a listener for an unrelated event type was added",
+      signal => {
+        signal.addEventListener("unrelated", () => {});
+      },
+    ],
+  ];
+
+  test.each(churn)("after %s", async (_, apply) => {
+    const signal = AbortSignal.timeout(1);
+    apply(signal);
+    await fence(20);
+    expect(summarize(signal)).toEqual({ aborted: true, reason: "TimeoutError" });
+  });
+
+  test("consumers attached after the listener churn still see the abort", async () => {
+    const signal = AbortSignal.timeout(1);
+    const listener = () => {};
+    signal.addEventListener("abort", listener);
+    signal.removeEventListener("abort", listener);
+
+    const events: string[] = [];
+    signal.addEventListener("abort", event => events.push(event.type));
+    const dependent = AbortSignal.any([signal]);
+    await fence(20);
+
+    let thrown: DOMException | undefined;
+    try {
+      signal.throwIfAborted();
+    } catch (error) {
+      thrown = error as DOMException;
+    }
+    expect({ events, dependent: summarize(dependent), thrown: thrown?.name }).toEqual({
+      events: ["abort"],
+      dependent: { aborted: true, reason: "TimeoutError" },
+      thrown: "TimeoutError",
+    });
+    expect(thrown).toBe(signal.reason);
+  });
+
+  // Native consumers observe the signal through a native callback instead of a
+  // JS listener; Bun.spawn() registers one and releases it when the child exits.
+  test("after the Bun.spawn() child it was passed to has exited", async () => {
+    // The child has to be gone before the deadline. A shell exits in ~1ms
+    // (a debug build of bun takes 100ms+ just to start), so 500ms leaves
+    // plenty of room for a loaded CI machine.
+    const signal = AbortSignal.timeout(500);
+    const deadline = fence(600);
+    await using proc = Bun.spawn({
+      cmd: isWindows ? [process.env.comspec || "cmd.exe", "/c", "exit", "0"] : ["/bin/sh", "-c", "exit 0"],
+      signal,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect({ exitCode: await proc.exited, ...summarize(signal) }).toEqual({
+      exitCode: 0,
+      aborted: false,
+      reason: undefined,
+    });
+
+    await deadline;
+    expect(summarize(signal)).toEqual({ aborted: true, reason: "TimeoutError" });
   });
 });

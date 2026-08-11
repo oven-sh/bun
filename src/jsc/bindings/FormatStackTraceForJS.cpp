@@ -177,7 +177,7 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            // Only parser errors record a sourceURL (addErrorInfo); it is what the <parse> frame shows.
+            // Parser errors record the rejected source's URL via addErrorInfo(); it is what this frame shows.
             if (err->errorType() == ErrorType::SyntaxError && !err->sourceURL().isEmpty() && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:

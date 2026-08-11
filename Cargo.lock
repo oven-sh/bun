@@ -661,7 +661,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_ast",
  "bun_collections",
  "bun_core",
  "bun_dispatch",

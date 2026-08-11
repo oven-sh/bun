@@ -1,8 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::Progress::Progress;
-use bun_core::{Global, Output};
+use bun_core::Output;
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
@@ -33,8 +32,6 @@ pub struct PackageInstall<'a> {
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
     pub(crate) destination_dir_subpath: &'a ZStr,
     pub(crate) destination_dir_subpath_buf: &'a mut [u8],
-
-    pub(crate) progress: Option<&'a mut Progress>,
 
     pub(crate) package_name: SemverString,
     pub(crate) package_version: &'a [u8],
@@ -1352,7 +1349,6 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir_: &Dir,
             walker: &mut Walker,
-            mut progress_: Option<&mut Progress>,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
@@ -1372,7 +1368,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
-                    use bun_sys::windows::{self, Win32ErrorExt as _};
+                    use bun_sys::windows;
                     match entry.kind {
                         EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
@@ -1428,31 +1424,16 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
-                                if let Some(progress) = progress_.as_deref_mut() {
-                                    progress.root.end();
-                                    progress.refresh();
-                                }
-
-                                if let Some(err) = windows::Win32Error::get().to_system_errno() {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>{}<r>: copying file {}",
-                                        <&'static str>::from(err),
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                } else {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>error<r> copying file {}",
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_slice(),
-                                            Default::default()
-                                        )
-                                    );
-                                }
-
-                                Global::crash();
+                                let err = windows::get_last_error();
+                                bun_core::pretty_errorln!(
+                                    "<r><red>{}<r>: copying file {}",
+                                    <&'static str>::from(err),
+                                    bun_core::fmt::fmt_os_path(
+                                        entry.path.as_slice(),
+                                        Default::default()
+                                    )
+                                );
+                                return Err(err.into());
                             }
                         }
                         _ => unreachable!(), // handled above
@@ -1498,11 +1479,6 @@ impl<'a> PackageInstall<'a> {
                             match create(entry.path) {
                                 Ok(f) => break 'brk f,
                                 Err(err) => {
-                                    if let Some(progress) = progress_ {
-                                        progress.root.end();
-                                        progress.refresh();
-                                    }
-
                                     bun_core::pretty_errorln!(
                                         "<r><red>{}<r>: copying file {}",
                                         bstr::BStr::new(err.name()),
@@ -1511,7 +1487,7 @@ impl<'a> PackageInstall<'a> {
                                             Default::default()
                                         )
                                     );
-                                    Global::crash();
+                                    return Err(err.into());
                                 }
                             }
                         }
@@ -1530,17 +1506,12 @@ impl<'a> PackageInstall<'a> {
                         outfile,
                         &mut copy_file_state,
                     ) {
-                        if let Some(progress) = progress_.as_deref_mut() {
-                            progress.root.end();
-                            progress.refresh();
-                        }
-
                         bun_core::pretty_errorln!(
                             "<r><red>{}<r>: copying file {}",
                             bstr::BStr::new(err.name()),
                             bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
                         );
-                        Global::crash();
+                        return Err(err.into());
                     }
                 }
             }
@@ -1552,7 +1523,6 @@ impl<'a> PackageInstall<'a> {
         let result = copy(
             &state.subdir,
             state.walker.as_mut().unwrap(),
-            self.progress.as_deref_mut(),
             state.to_copy_buf_off,
             &mut state.buf[..],
             state.to_copy_buf2_off,
@@ -1564,7 +1534,6 @@ impl<'a> PackageInstall<'a> {
             // Field-projected `&mut` so the `&state.subdir` borrow above stays disjoint
             // (`state.walker()` would reborrow `&mut state` and conflict).
             state.walker.as_mut().unwrap(),
-            self.progress.as_deref_mut(),
             (),
             (),
             (),

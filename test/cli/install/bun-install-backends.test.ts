@@ -1,9 +1,10 @@
 // The hoisted install backends (PackageInstall.rs) walk the package and build
 // each destination path, and for the symlink backend each link target, in a
 // fixed size path buffer. An entry that does not fit has to fail the package
-// install with ENAMETOOLONG instead of writing past the buffer, and a directory
-// the walker fails to create has to fail the install instead of being skipped
-// while the install reports success.
+// install with ENAMETOOLONG instead of writing past the buffer, a directory the
+// walker fails to create has to fail the install instead of being skipped while
+// the install reports success, and a file that cannot be installed has to fail
+// the package (as it does with the hardlink backend) rather than exit bun.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { closeSync, existsSync, mkdirSync, openSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -144,39 +145,22 @@ function projectWithSiblingPackage(name: string) {
 }
 
 describe.skipIf(isWindows)("install backends and paths near PATH_MAX", () => {
-  const backends = ["hardlink", "symlink", ...(isMacOS ? ["clonefile_each_dir"] : [])];
-
-  test.concurrent(
-    "symlink backend reports a link target longer than PATH_MAX",
-    async () => {
-      const { dir, projectDir, packageDir } = projectWithLocalPackage("long-target");
-      using _ = dir;
-      using staging = tempDir("long-target-staging", {});
-      // The path relative to the package fits in PATH_MAX on its own; joined to
-      // the absolute package directory (the link target) it does not.
-      const leaf = "leaf.js";
-      createDeepChain(String(staging), packageDir, deepDirs(PATH_BUFFER_LEN - 1 - 1 - leaf.length), {
-        [leaf]: "module.exports = 2;",
-      });
-
-      const { stdout, stderr, exitCode } = await install(projectDir, "symlink");
-      expect(stderr).toContain(EXPECTED_FAILURE);
-      expect(stdout).toContain("Failed to install 1 package");
-      expect(exitCode).toBe(1);
-    },
-    INSTALL_TIMEOUT,
-  );
+  // The copyfile backend only materializes files (parents are created on
+  // demand), the others also create the package's directories.
+  const directoryBackends = ["hardlink", "symlink", ...(isMacOS ? ["clonefile_each_dir"] : [])];
+  const backends = [...directoryBackends, "copyfile"];
 
   for (const backend of backends) {
     test.concurrent(
-      `${backend} backend reports a directory it could not create`,
+      `${backend} backend reports a file whose relative path exceeds PATH_MAX`,
       async () => {
-        const { dir, projectDir, packageDir } = projectWithLocalPackage(`deep-dir-${backend}`);
+        const { dir, projectDir, packageDir } = projectWithLocalPackage(`deep-file-${backend}`);
         using _ = dir;
-        using staging = tempDir(`deep-dir-${backend}-staging`, {});
-        // Only directories, so failing to create one is the only thing that
-        // can fail the install.
-        createDeepChain(String(staging), packageDir, deepDirs(PATH_BUFFER_LEN + DIR_NAME_LEN), {});
+        using staging = tempDir(`deep-file-${backend}-staging`, {});
+        // The directories all fit, so the file is the entry that fails.
+        createDeepChain(String(staging), packageDir, deepDirs(PATH_BUFFER_LEN - DIR_NAME_LEN), {
+          [Buffer.alloc(2 * DIR_NAME_LEN, "f").toString()]: "module.exports = 2;",
+        });
 
         const { stdout, stderr, exitCode } = await install(projectDir, backend);
         expect(stderr).toContain(EXPECTED_FAILURE);
@@ -201,7 +185,48 @@ describe.skipIf(isWindows)("install backends and paths near PATH_MAX", () => {
         expect(exitCode).toBe(0);
         const installed = join(projectDir, "node_modules", "pkg");
         expect(existsSync(join(installed, "a", "b", "c", "leaf.js"))).toBe(true);
-        expect(existsSync(join(installed, "empty"))).toBe(true);
+        expect(existsSync(join(installed, "empty"))).toBe(directoryBackends.includes(backend));
+      },
+      INSTALL_TIMEOUT,
+    );
+  }
+
+  test.concurrent(
+    "symlink backend reports a link target longer than PATH_MAX",
+    async () => {
+      const { dir, projectDir, packageDir } = projectWithLocalPackage("long-target");
+      using _ = dir;
+      using staging = tempDir("long-target-staging", {});
+      // The path relative to the package fits in PATH_MAX on its own; joined to
+      // the absolute package directory (the link target) it does not.
+      const leaf = "leaf.js";
+      createDeepChain(String(staging), packageDir, deepDirs(PATH_BUFFER_LEN - 1 - 1 - leaf.length), {
+        [leaf]: "module.exports = 2;",
+      });
+
+      const { stdout, stderr, exitCode } = await install(projectDir, "symlink");
+      expect(stderr).toContain(EXPECTED_FAILURE);
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    },
+    INSTALL_TIMEOUT,
+  );
+
+  for (const backend of directoryBackends) {
+    test.concurrent(
+      `${backend} backend reports a directory it could not create`,
+      async () => {
+        const { dir, projectDir, packageDir } = projectWithLocalPackage(`deep-dir-${backend}`);
+        using _ = dir;
+        using staging = tempDir(`deep-dir-${backend}-staging`, {});
+        // Only directories, so failing to create one is the only thing that
+        // can fail the install.
+        createDeepChain(String(staging), packageDir, deepDirs(PATH_BUFFER_LEN + DIR_NAME_LEN), {});
+
+        const { stdout, stderr, exitCode } = await install(projectDir, backend);
+        expect(stderr).toContain(EXPECTED_FAILURE);
+        expect(stdout).toContain("Failed to install 1 package");
+        expect(exitCode).toBe(1);
       },
       INSTALL_TIMEOUT,
     );
@@ -245,17 +270,36 @@ describe.skipIf(!isWindows)("install backends on Windows", () => {
     INSTALL_TIMEOUT,
   );
 
-  // These two walkers create directories as they go. Destinations this long
-  // are rejected by the OS a little before they stop fitting the buffer, so
-  // what fails the install here is the directory that could not be created;
-  // before the fix that failure was ignored (and the fallback created the
-  // directories under the cwd instead) and the walk went on to overflow.
+  /**
+   * Runs the install while a file inside `node_modules/pkg/<leftoverDir>` is
+   * held open. A previous install of the package then cannot be moved out of
+   * the way, so the walker runs into the existing directory and takes the
+   * fallback paths that used to create directories relative to the cwd.
+   */
+  async function installOverLeftover(projectDir: string, leftoverDir: string, backend: string | undefined) {
+    const leftover = join(projectDir, "node_modules", "pkg", leftoverDir);
+    mkdirSync(leftover, { recursive: true });
+    writeFileSync(join(leftover, "held-open.txt"), "");
+    const held = openSync(join(leftover, "held-open.txt"), "r");
+    try {
+      return await install(projectDir, backend);
+    } finally {
+      closeSync(held);
+    }
+  }
+
   for (const [walker, project, backend] of [
     ["copyfile", projectWithLocalPackage, "copyfile"],
     ["symlink", projectWithSiblingPackage, undefined],
   ] as const) {
+    // These two walkers create directories as they go, and the OS rejects
+    // destinations this long a little before they stop fitting the buffer, so
+    // the directory that could not be created is what fails the install (the
+    // length check itself is the same line as in the hardlink walker). Before
+    // the fix that failure was ignored, the fallback created the chain under
+    // the cwd, and the walk went on to overflow.
     test.concurrent(
-      `${walker} walker reports a directory whose destination exactly fills the path buffer`,
+      `${walker} walker reports a directory it could not create`,
       async () => {
         const { dir, projectDir, packageDir } = project(`exact-${walker}`);
         using _ = dir;
@@ -281,21 +325,29 @@ describe.skipIf(!isWindows)("install backends on Windows", () => {
         mkdirSync(join(packageDir, "sub"));
         writeFileSync(join(packageDir, "sub", "inner.js"), "module.exports = 2;");
 
-        // A previous install of the package that cannot be moved out of the way
-        // because a file inside it is open, so the walker meets an existing
-        // `sub` directory and takes its fallback path.
-        const leftover = join(projectDir, "node_modules", "pkg", "sub");
-        mkdirSync(leftover, { recursive: true });
-        writeFileSync(join(leftover, "held-open.txt"), "");
-        const held = openSync(join(leftover, "held-open.txt"), "r");
-        try {
-          const { stdout, exitCode } = await install(projectDir, backend);
-          expect(stdout).toContain("1 package installed");
-          expect(exitCode).toBe(0);
-        } finally {
-          closeSync(held);
-        }
+        const { stdout, exitCode } = await installOverLeftover(projectDir, "sub", backend);
+        expect(stdout).toContain("1 package installed");
+        expect(exitCode).toBe(0);
         expect(existsSync(join(projectDir, "node_modules", "pkg", "sub", "inner.js"))).toBe(true);
+        expect(existsSync(join(projectDir, "sub"))).toBe(false);
+      },
+      INSTALL_TIMEOUT,
+    );
+
+    // The package's `sub/entry` is a file, but the leftover has a directory
+    // there, so installing the entry fails even after the retry that creates
+    // its parent. The copyfile walker used to exit the process at this point.
+    test.concurrent(
+      `${walker} walker reports a file it could not install into a leftover directory`,
+      async () => {
+        const { dir, projectDir, packageDir } = project(`conflict-${walker}`);
+        using _ = dir;
+        mkdirSync(join(packageDir, "sub"));
+        writeFileSync(join(packageDir, "sub", "entry"), "module.exports = 2;");
+
+        const { stdout, exitCode } = await installOverLeftover(projectDir, join("sub", "entry"), backend);
+        expect(stdout).toContain("Failed to install 1 package");
+        expect(exitCode).toBe(1);
         expect(existsSync(join(projectDir, "sub"))).toBe(false);
       },
       INSTALL_TIMEOUT,

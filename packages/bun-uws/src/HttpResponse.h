@@ -871,38 +871,35 @@ public:
             Super::cork();
             handler();
 
-            /* If we're no longer in a cork slot, either: (a) the handler wrote
-             * large data that triggered an internal uncork, (b) our empty slot
-             * was stolen by another request during an await, or (c) we were
-             * upgraded to a WebSocket (upgrade path transferred the slot). In
-             * all cases our data (if any) was already flushed; nothing to do.
-             * The upgrade case is handled by HttpContext's uncork or the drain
-             * loop. */
-            if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
+            /* The handler may have closed this socket (an end that reached a
+             * close gate, an abort, an upgrade that relocated the socket); its
+             * ext is destructed then, so there is nothing to flush or to gate. */
+            if (us_socket_is_closed((us_socket_t *) this)) {
                 return this;
             }
 
-            /* Timeout on uncork failure, since most writes will succeed while corked */
-            auto [written, failed] = Super::uncork();
+            /* We may have lost our cork slot during the handler: a write larger
+             * than the cork buffer uncorked us, another socket borrowed the slot
+             * while it was still empty, or JS run by the handler corked two
+             * other sockets and AsyncSocket::cork() force-flushed ours as the
+             * LRU slot. Our bytes are out in every case, but the close gate
+             * below must still run: an end that does not gate itself
+             * (uws_res_end_without_body) relies on it, and outside the parser
+             * there is no later one. (If the forced flush hit backpressure,
+             * HttpContext::onWritable's gate closes once it drains.) */
+            if (loopData->findCorkSlot(this) != LoopData::INVALID_CORK_SLOT) {
+                /* Timeout on uncork failure, since most writes will succeed while corked */
+                auto [written, failed] = Super::uncork();
 
-            if (written > 0 || failed) {
-                /* For now we only have one single timeout so let's use it */
-                /* This behavior should equal the behavior in HttpContext when uncorking fails */
-                this->resetTimeout();
+                if (written > 0 || failed) {
+                    /* For now we only have one single timeout so let's use it */
+                    /* This behavior should equal the behavior in HttpContext when uncorking fails */
+                    this->resetTimeout();
+                }
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) this)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                        * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) this)->close();
-                    }
-                }
-            }
+            closeIfDoneAndMarked(getHttpResponseData());
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

@@ -10,8 +10,7 @@ use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skipp
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
 // the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
 // during `from`/`append`, which is load-bearing for the Win32 calls below.
-// Length-checked for the same reason as the `Hardlinker` paths: the walker's
-// entry paths appended on Windows are not bounded by any path buffer.
+// Length-checked like the Hardlinker's paths: the walker entries appended on Windows are unbounded.
 type AbsPathAutoOs =
     bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 type PathAutoOs =
@@ -112,75 +111,63 @@ impl FileCopier {
                 // restore via `set_length` after the body instead.
                 let src_saved_len = self.src_path.len();
                 let dest_saved_len = self.dest_subpath.len();
+                let appended = self.src_path.append(entry.path.as_slice()).is_ok()
+                    && self.dest_subpath.append(entry.path.as_slice()).is_ok();
 
-                let result: sys::Result<()> = 'entry: {
-                    if self.src_path.append(entry.path.as_slice()).is_err()
-                        || self.dest_subpath.append(entry.path.as_slice()).is_err()
-                    {
-                        break 'entry sys::Result::Err(sys::Error::from_code(
-                            E::ENAMETOOLONG,
-                            sys::Tag::copyfile,
-                        ));
+                let result: sys::Result<()> = match entry.kind {
+                    _ if !appended => {
+                        sys::Result::Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile))
                     }
-
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
-                            if unsafe {
-                                bun_sys::windows::CreateDirectoryExW(
-                                    self.src_path.slice_z().as_ptr(),
-                                    self.dest_subpath.slice_z().as_ptr(),
-                                    ptr::null_mut(),
-                                )
-                            } == 0
-                            {
-                                // CreateDirectoryExW also fails when the directory already
-                                // exists; `make_path` treats that as success and reports
-                                // anything else.
-                                bun_sys::make_path::make_path::<u16>(
-                                    &dest_dir,
-                                    entry.path.as_slice(),
-                                )
-                            } else {
-                                sys::Result::Ok(())
-                            }
+                    EntryKind::Directory => {
+                        // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
+                        if unsafe {
+                            bun_sys::windows::CreateDirectoryExW(
+                                self.src_path.slice_z().as_ptr(),
+                                self.dest_subpath.slice_z().as_ptr(),
+                                ptr::null_mut(),
+                            )
+                        } == 0
+                        {
+                            // Also taken when the directory exists; make_path treats that as success.
+                            bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())
+                        } else {
+                            sys::Result::Ok(())
                         }
-                        EntryKind::File => {
-                            match bun_sys::copy_file::copy_file(
-                                self.src_path.slice_z(),
-                                self.dest_subpath.slice_z(),
-                            ) {
-                                sys::Result::Ok(()) => sys::Result::Ok(()),
-                                sys::Result::Err(first_err) => {
-                                    // Retry after creating the parent directory.
-                                    // For root-level files (`index.js`,
-                                    // `package.json`, `LICENSE`) `dirname` is
-                                    // null and there is no missing parent to
-                                    // create — `dest_dir` itself was already
-                                    // opened above — so the original error is the
-                                    // real failure and must propagate. Silently
-                                    // continuing here would let a staged
-                                    // global-store entry be renamed into place
-                                    // with files missing.
-                                    match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice())
-                                    {
-                                        None => sys::Result::Err(first_err),
-                                        Some(entry_dirname) => {
-                                            let _ = bun_sys::make_path::make_path::<u16>(
-                                                &dest_dir,
-                                                entry_dirname,
-                                            );
-                                            bun_sys::copy_file::copy_file(
-                                                self.src_path.slice_z(),
-                                                self.dest_subpath.slice_z(),
-                                            )
-                                        }
+                    }
+                    EntryKind::File => {
+                        match bun_sys::copy_file::copy_file(
+                            self.src_path.slice_z(),
+                            self.dest_subpath.slice_z(),
+                        ) {
+                            sys::Result::Ok(()) => sys::Result::Ok(()),
+                            sys::Result::Err(first_err) => {
+                                // Retry after creating the parent directory.
+                                // For root-level files (`index.js`,
+                                // `package.json`, `LICENSE`) `dirname` is
+                                // null and there is no missing parent to
+                                // create — `dest_dir` itself was already
+                                // opened above — so the original error is the
+                                // real failure and must propagate. Silently
+                                // continuing here would let a staged
+                                // global-store entry be renamed into place
+                                // with files missing.
+                                match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
+                                    None => sys::Result::Err(first_err),
+                                    Some(entry_dirname) => {
+                                        let _ = bun_sys::make_path::make_path::<u16>(
+                                            &dest_dir,
+                                            entry_dirname,
+                                        );
+                                        bun_sys::copy_file::copy_file(
+                                            self.src_path.slice_z(),
+                                            self.dest_subpath.slice_z(),
+                                        )
                                     }
                                 }
                             }
                         }
-                        _ => unreachable!(),
                     }
+                    _ => unreachable!(),
                 };
 
                 self.src_path.set_length(src_saved_len);
@@ -218,8 +205,6 @@ impl FileCopier {
 
                 #[cfg(unix)]
                 {
-                    // `dest` has already been created (or truncated) above, so
-                    // skipping this entry would leave an empty file behind.
                     let stat = bun_sys::fstat(src.handle())?;
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
                     unsafe {

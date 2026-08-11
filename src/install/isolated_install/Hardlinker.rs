@@ -7,15 +7,10 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
-//
-// The walker's entry paths get appended to these per entry, and the walker
-// opens every directory relative to its parent, so an entry path can be longer
-// than any path buffer. `CheckLength::CHECK` turns that into `ENAMETOOLONG`
-// for the package (what the hoisted linker reports for the same tree) instead
-// of an out-of-bounds write in `append`.
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
+// Length-checked: the walker opens each directory relative to its parent, so entry paths are unbounded.
 type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 
@@ -143,9 +138,7 @@ impl Hardlinker {
                                     dest_slice,
                                 ]
                             };
-                            // `join_string_buf_w_same` and `add_nt_path_prefix_if_needed`
-                            // write into the pooled buffers unchecked: the parts, a
-                            // separator per part, the `\??\` prefix and the NUL must fit.
+                            // The join and the NT prefix below write into the pooled buffers unchecked.
                             let needed_len =
                                 dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
                                     + bun_paths::windows::NT_OBJECT_PREFIX.len();

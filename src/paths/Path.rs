@@ -80,8 +80,7 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
-        /// Pass as the `CHECK` const param (or convert with
-        /// [`Path::into_checked`]) when unbounded input gets appended.
+        /// For paths that get unbounded input appended; see also [`Path::into_checked`].
         pub const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
@@ -857,12 +856,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self.reinterpret()
     }
 
-    /// Reinterpret this path as length-checked: from here on `append` and
-    /// friends return `Err(MaxPathExceeded)` for input that does not fit
-    /// instead of panicking. For paths built with the `ASSUME`-only helpers
-    /// (`PathLike`) that are about to receive unbounded input, e.g. the
-    /// entries of a directory walk. Like `SEP_OPT`, `CHECK` only selects how
-    /// later mutations behave, so this is a no-op move.
+    /// [`Self::into_sep`] for `CHECK`: from here on over-long input is `Err(MaxPathExceeded)`.
     #[inline]
     pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
         self.reinterpret()

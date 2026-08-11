@@ -817,19 +817,10 @@ impl Request {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
-                    .filter(|host| Self::is_valid_host_header(host))
-                {
-                    // With `port: None`, HostFormatter always emits exactly `host`, so the
-                    // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
-                    // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
-                    // runs once per request via JSC extra-memory accounting.
-                    return self.get_protocol().len() + host.len() + req_url.len();
-                }
-            }
-            return req_url.len();
+            return match Self::url_authority(req.header(b"host"), &req_url) {
+                Some(host) => self.get_protocol().len() + host.len() + req_url.len(),
+                None => req_url.len(),
+            };
         }
 
         0
@@ -870,8 +861,8 @@ impl Request {
     }
 
     /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
-    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
-    /// configured host instead of pasting the client bytes into the URL.
+    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the bare
+    /// request target instead of pasting the client bytes into the URL.
     fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
@@ -900,6 +891,17 @@ impl Request {
             })
     }
 
+    /// The authority `request.url` is synthesized with: the client's `Host` (HTTP/1) or
+    /// `:authority` (HTTP/3) value, but only for an origin-form target and only when the
+    /// value can form a URL authority. `None` means `request.url` is the bare target.
+    fn url_authority<'a>(host: Option<&'a [u8]>, path: &[u8]) -> Option<&'a [u8]> {
+        if !path.is_empty() && path[0] == b'/' {
+            host.filter(|host| Self::is_valid_host_header(host))
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -908,86 +910,78 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
-                    .filter(|host| Self::is_valid_host_header(host))
-                {
-                    // With `port: None`, HostFormatter always emits exactly `host`. Compute the
-                    // length and assemble the URL with straight slice copies instead of going
-                    // through `core::fmt::write` (which is not monomorphized and shows up in
-                    // per-request profiles).
-                    let protocol = self.get_protocol();
-                    let url_bytelength = protocol.len() + host.len() + req_url.len();
-
-                    debug_assert!(self.size_of_url() == url_bytelength);
-
-                    if url_bytelength < 128 {
-                        let mut buffer = [0u8; 128];
-                        let url = {
-                            let mut at = 0;
-                            buffer[at..at + protocol.len()].copy_from_slice(protocol);
-                            at += protocol.len();
-                            buffer[at..at + host.len()].copy_from_slice(host);
-                            at += host.len();
-                            buffer[at..at + req_url.len()].copy_from_slice(&req_url);
-                            at += req_url.len();
-                            &buffer[..at]
-                        };
-
-                        debug_assert!(self.size_of_url() == url.len());
-
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
-                        if !href.is_empty() {
-                            if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                                self.url.set(BunString::clone_latin1(&url[..href.length()]));
-                                href.deref();
-                            } else {
-                                self.url.set(href);
-                            }
-                        } else {
-                            // TODO: what is the right thing to do for invalid URLS?
-                            self.url.set(BunString::clone_utf8(url));
-                        }
-
-                        return Ok(());
-                    }
-
-                    if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
-                        let (new_url, bytes) =
-                            BunString::create_uninitialized_latin1(url_bytelength);
-                        self.url.set(new_url);
-                        // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
-                    } else {
-                        // slow path
-                        let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
-                        temp_url.extend_from_slice(protocol);
-                        temp_url.extend_from_slice(host);
-                        temp_url.extend_from_slice(&req_url);
-                        // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
-                        self.url.set(BunString::clone_utf8(&temp_url));
-                    }
-
-                    let href = bun_url::href_from_string(&self.url.get());
-                    // TODO: what is the right thing to do for invalid URLS?
-                    if !href.is_empty() {
-                        self.url.set(href);
-                    }
-
-                    return Ok(());
-                }
-            }
-
-            debug_assert!(self.size_of_url() == req_url.len());
-            self.url.set(BunString::clone_utf8(&req_url));
+            self.set_url_from_request_target(req.header(b"host"), req.url());
         }
         Ok(())
+    }
+
+    /// Synthesizes `request.url` from the raw request target and the client-supplied
+    /// authority (`Host` for HTTP/1, `:authority` for HTTP/3). HTTP/1 gets here lazily via
+    /// [`Self::ensure_url`]; HTTP/3 eagerly from the server, since its uWS request does not
+    /// outlive the dispatch. Both transports share this so the authority filter and the URL
+    /// normalization cannot drift between them.
+    pub(crate) fn set_url_from_request_target(&self, host: Option<&[u8]>, target: &[u8]) {
+        let req_url = Self::request_target_path(target);
+        let Some(host) = Self::url_authority(host, &req_url) else {
+            self.url.set(BunString::clone_utf8(&req_url));
+            return;
+        };
+
+        // Assemble the URL with straight slice copies instead of going through
+        // `core::fmt::write` (which is not monomorphized and shows up in per-request
+        // profiles). When the WHATWG parser rejects the result (e.g. a port out of
+        // range), the raw concatenation is kept.
+        let protocol = self.get_protocol();
+        let url_bytelength = protocol.len() + host.len() + req_url.len();
+
+        if url_bytelength < 128 {
+            let mut buffer = [0u8; 128];
+            let url = {
+                let mut at = 0;
+                buffer[at..at + protocol.len()].copy_from_slice(protocol);
+                at += protocol.len();
+                buffer[at..at + host.len()].copy_from_slice(host);
+                at += host.len();
+                buffer[at..at + req_url.len()].copy_from_slice(&req_url);
+                at += req_url.len();
+                &buffer[..at]
+            };
+
+            let href = bun_url::href_from_string(&BunString::from_bytes(url));
+            if !href.is_empty() {
+                if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
+                    self.url.set(BunString::clone_latin1(&url[..href.length()]));
+                    href.deref();
+                } else {
+                    self.url.set(href);
+                }
+            } else {
+                self.url.set(BunString::clone_utf8(url));
+            }
+            return;
+        }
+
+        if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
+            let (new_url, bytes) = BunString::create_uninitialized_latin1(url_bytelength);
+            self.url.set(new_url);
+            // exact space was counted above
+            let (a, rest) = bytes.split_at_mut(protocol.len());
+            let (b, c) = rest.split_at_mut(host.len());
+            a.copy_from_slice(protocol);
+            b.copy_from_slice(host);
+            c.copy_from_slice(&req_url);
+        } else {
+            let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
+            temp_url.extend_from_slice(protocol);
+            temp_url.extend_from_slice(host);
+            temp_url.extend_from_slice(&req_url);
+            self.url.set(BunString::clone_utf8(&temp_url));
+        }
+
+        let href = bun_url::href_from_string(&self.url.get());
+        if !href.is_empty() {
+            self.url.set(href);
+        }
     }
 }
 

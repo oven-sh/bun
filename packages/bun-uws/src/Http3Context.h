@@ -35,6 +35,16 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            /* RFC 9114 §4.3.1: :path is the path and query of the target URI, so
+             * anything but origin-form is malformed (§4.1.2). HttpParser rejects
+             * the HTTP/1 equivalents before routing; HttpRouter assumes a leading
+             * '/' and would otherwise route on whatever follows the first byte of
+             * an absolute URL, "*", "xfoo", ... while req.url carried it verbatim. */
+            std::string_view fullUrl = req.getFullUrl();
+            if (fullUrl.empty() || fullUrl[0] != '/') {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

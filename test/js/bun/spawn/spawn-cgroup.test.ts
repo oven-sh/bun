@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync, constants } from "node:fs";
-import { execFile, fork, spawn as cpSpawn, spawnSync as cpSpawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { spawn as cpSpawn, spawnSync as cpSpawnSync, execFile, fork } from "node:child_process";
+import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // Find somewhere we are allowed to create a cgroup with a memory limit, or
 // null if this host doesn't let us (not root, read-only cgroupfs, no memory

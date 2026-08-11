@@ -5,25 +5,10 @@
 // through, `Debugger.scriptParsed` reports a non-module `scriptType` and
 // `Debugger.setBreakpoint` replies "Could not resolve breakpoint".
 // See oven-sh/WebKit#405.
-//
-// Kept in its own file rather than inspect.test.ts, which runs without
-// validateExceptionChecks (test/no-validate-exceptions.txt) and has several
-// environment-sensitive `localhost` websocket cases; this file runs clean on
-// its own.
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-
-// The inspectee pauses and answers Debugger.evaluateOnCallFrame through JSC's
-// InjectedScript, which has unchecked exception scopes in the prebuilt WebKit
-// (see the note at the top of test/js/node/inspector/inspector.test.ts). Under
-// validateExceptionChecks (the ASAN lane) that aborts the child and the socket
-// closes with 1006 before anything is observed, so strip it for the child only.
-const inspecteeEnv = (() => {
-  const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
-  return env;
-})();
 
 async function runDebuggerProbe(extraArgs: readonly string[], expectedSourceType: string | null) {
   using dir = tempDir("inspect-buntranspiledmodule", {
@@ -44,7 +29,7 @@ test("t", () => { expect(x).toBe(1); });
       ...extraArgs,
       join(String(dir), "mod.test.ts"),
     ],
-    env: inspecteeEnv,
+    env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

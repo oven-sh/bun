@@ -1274,7 +1274,7 @@ pub struct Run {
 // Process-global, written once in `boot`.
 // PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
 // `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
-// the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
+// the `hold_api_lock` trampoline can re-derive `&mut Run` from the static.
 static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
     ctx: ::core::ptr::null_mut(),
     vm: ::core::ptr::null_mut(),
@@ -1283,7 +1283,7 @@ static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
 
 // The unhandled-rejection callback fires
 // while `Run::start` holds `&mut self` (via the
-// `holdAPILock` trampoline). Storing the flag on `Run` and writing through a
+// `hold_api_lock` trampoline). Storing the flag on `Run` and writing through a
 // fresh `&raw mut RUN` would alias that exclusive borrow (PORTING.md
 // §Forbidden — Stacked Borrows UB). Keep it as a sibling static instead so the
 // callback's write and `start()`'s reads never overlap a `&mut`.
@@ -1537,9 +1537,8 @@ impl Run {
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
-            // `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op unless the arena type
-            // changes. Semantically a memory-usage hint, not correctness.
+            // `bun_alloc::Arena` has no per-heap collect to run alongside this
+            // GC; it would only be a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }

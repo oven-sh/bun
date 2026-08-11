@@ -1505,13 +1505,13 @@ pub mod js_bundler {
 
             // Notify the *bundler thread* about the deferral. This will
             // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
-            // BundleV2), which is distinct from the `enqueue_on_js_loop_for_plugins`
-            // target (the plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
-            // points at a live `AnyEventLoop` owned by the bundle thread /
-            // runtime for the duration of the bundle.
+            // counter. Must land on `parse_task.completion_ctx`'s `r#loop()` (the
+            // loop running BundleV2), which is distinct from the
+            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // when `Bun.build` runs the bundler on its own Mini event loop.
+            // SAFETY: `parse_task.completion_ctx` and `bv2` are valid backrefs;
+            // `r#loop()` points at a live `AnyEventLoop` owned by the bundle
+            // thread / runtime for the duration of the bundle.
             unsafe {
                 let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
                 // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.

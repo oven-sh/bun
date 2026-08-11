@@ -226,7 +226,7 @@ impl WTFTimer {
     }
 
     /// # Safety
-    /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
+    /// `this` must be the unique owner of a `WTFTimer` produced by `WTFTimer__create`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };

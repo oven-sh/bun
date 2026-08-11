@@ -2370,7 +2370,7 @@ fn transpile_source_code_inner(
                     let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };
                     if !give_back {
                         // When `give_back_arena == false`, ownership is held past
-                        // `processFetchLog` so log spans pointing into the
+                        // `process_fetch_log` so log spans pointing into the
                         // arena stay valid. (The AsyncModule path never reaches
                         // here: its enqueue site defuses this guard via
                         // `ScopeGuard::into_inner` and hands the `Box<Arena>`
@@ -5118,7 +5118,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// # Safety
 /// `vm` is the live per-thread VM. `specifier` / `source` borrow the caller's
 /// `to_utf8()` buffers and must outlive the returned slices (which the caller
-/// immediately `cloneUTF8`s).
+/// immediately `clone_utf8`s).
 unsafe fn resolve<'a>(
     vm: *mut VirtualMachine,
     specifier: &'a [u8],

@@ -2208,7 +2208,7 @@ pub mod parse_worker {
         // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
         // bundle pass.
         let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // errdefer transpiler.resetStore() — reshaped: call on the err
+        // errdefer transpiler.reset_store() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };

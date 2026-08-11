@@ -109,7 +109,7 @@ enum HeadParse {
     NeedMore,
 }
 
-/// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
+/// Owned +1 reference to an `SslCtx` (`SSL_CTX*`); releases the ref via
 /// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
 /// Either dropped here, or transferred to the connected `WebSocket` via
 /// `into_raw()` after the upgrade completes.
@@ -160,7 +160,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// TLS options (full SSLConfig for complete TLS customization)
     ssl_config: Option<Box<SSLConfig>>,
 
-    /// `us_ssl_ctx_t` built from `ssl_config` when it carries a custom CA.
+    /// `SslCtx` built from `ssl_config` when it carries a custom CA.
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.

@@ -75,7 +75,7 @@ enum Backend {
 pub struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
-    /// `nativeTransformReleaseState` via `__destroy`), plus 1 per in-flight
+    /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
     /// `CompressionAsyncCtx`. VM teardown (`lastChanceToFinalize`) runs the
     /// cell's finalizer even while a pool thread is inside `transform` — the
     /// ctx's reference is what keeps the coder alive through that.
@@ -798,8 +798,8 @@ unsafe extern "C" {
 /// One large `CompressionStream`/`DecompressionStream` chunk transformed off
 /// the JS thread.
 pub struct CompressionAsyncCtx {
-    /// Holds one coder reference (taken in `__transformAsync`, released by
-    /// `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
+    /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
+    /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
     /// serializes writes, so nothing else touches it while the pool has it.
     coder: *mut CompressionStreamCoder,
     input: AsyncInput,

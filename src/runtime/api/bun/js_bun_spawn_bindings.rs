@@ -7,7 +7,7 @@ use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{String as BunString, ZStr, ZigString, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::{
@@ -2085,6 +2085,20 @@ struct EnvLine {
 }
 
 impl EnvLine {
+    // PERF: per-entry allocation — profile if it shows up on a hot path.
+    fn new(key: &BunString, value: Option<ZigString>) -> JsResult<EnvLine> {
+        let mut buf: Vec<u8> = Vec::new();
+        write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
+        let key_len = buf.len();
+        if let Some(value) = value {
+            write!(&mut buf, "={}", value).map_err(|_| JsError::OutOfMemory)?;
+        }
+        Ok(EnvLine {
+            line: ZBox::from_vec(buf),
+            key_len,
+        })
+    }
+
     fn key(&self) -> &[u8] {
         &self.line.as_bytes()[..self.key_len]
     }
@@ -2139,52 +2153,42 @@ fn append_envp_from_js(
     let mut lines: Vec<EnvLine> = Vec::with_capacity(object_iter.len);
     while let Some(key) = object_iter.next()? {
         let value = object_iter.value;
-        if value.is_undefined() && !cfg!(windows) {
+        if value.is_undefined() {
+            if cfg!(windows) {
+                lines.push(EnvLine::new(&key, None)?);
+            }
             continue;
         }
 
-        // PERF: per-entry allocation — profile if it shows up on a hot path.
-        let mut buf: Vec<u8> = Vec::new();
-        write!(&mut buf, "{}", key).map_err(|_| JsError::OutOfMemory)?;
-        let key_len = buf.len();
+        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
-        if !value.is_undefined() {
-            let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
-
-            // Check for null bytes in env key and value (security: prevent null byte injection)
-            if key.index_of_ascii_char(0).is_some() {
-                return Err(global_this
-                    .err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                            key.to_zig_string(),
-                            key.to_zig_string()
-                        ),
-                    )
-                    .throw());
-            }
-            if value_bunstr.index_of_ascii_char(0).is_some() {
-                return Err(global_this
-                    .err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                            key.to_zig_string(),
-                            value_bunstr.to_zig_string()
-                        ),
-                    )
-                    .throw());
-            }
-
-            write!(&mut buf, "={}", value_bunstr.to_zig_string())
-                .map_err(|_| JsError::OutOfMemory)?;
+        // Check for null bytes in env key and value (security: prevent null byte injection)
+        if key.index_of_ascii_char(0).is_some() {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
+                        key.to_zig_string(),
+                        key.to_zig_string()
+                    ),
+                )
+                .throw());
+        }
+        if value_bunstr.index_of_ascii_char(0).is_some() {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
+                        key.to_zig_string(),
+                        value_bunstr.to_zig_string()
+                    ),
+                )
+                .throw());
         }
 
-        lines.push(EnvLine {
-            line: ZBox::from_vec(buf),
-            key_len,
-        });
+        lines.push(EnvLine::new(&key, Some(value_bunstr.to_zig_string()))?);
     }
 
     if cfg!(windows) {

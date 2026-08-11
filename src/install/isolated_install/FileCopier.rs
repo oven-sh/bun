@@ -2,8 +2,6 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-#[cfg(not(windows))]
-use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
@@ -205,7 +203,7 @@ impl FileCopier {
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
-                    Err(_) => 'dest: {
+                    Err(_) => {
                         if let Some(entry_dirname) =
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
@@ -214,18 +212,7 @@ impl FileCopier {
                                 entry_dirname,
                             );
                         }
-
-                        match dest_dir.create_file_z(entry.path, Default::default()) {
-                            Ok(f) => break 'dest f,
-                            Err(err) => {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r>: copy file {}",
-                                    bstr::BStr::new(err.name()),
-                                    bun_fmt::fmt_os_path(entry.path, Default::default()),
-                                );
-                                Global::exit(1);
-                            }
-                        }
+                        dest_dir.create_file_z(entry.path, Default::default())?
                     }
                 };
 

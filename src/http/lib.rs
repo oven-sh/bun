@@ -840,7 +840,7 @@ pub struct HTTPClient<'a> {
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that.
     pub if_modified_since: &'a [u8],
-    pub(crate) request_content_len_buf: [u8; b"-4294967295".len()],
+    pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
     /// Captured proxy env (http_proxy / https_proxy / no_proxy) so redirects
@@ -1437,7 +1437,20 @@ pub(crate) fn print_request(
     };
     bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
     for header in request.headers {
-        bun_core::pretty_errorln!("> {}", header);
+        let name = header.name();
+        if strings::eql_case_insensitive_ascii(name, b"authorization", true)
+            || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+        {
+            let value = header.value();
+            let scheme_len = value.iter().position(|&b| b == b' ').map_or(0, |i| i + 1);
+            bun_core::pretty_errorln!(
+                "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
+                BStr::new(name),
+                BStr::new(&value[..scheme_len]),
+            );
+        } else {
+            bun_core::pretty_errorln!("> {}", header);
+        }
     }
     Output::flush();
 }
@@ -2527,16 +2540,10 @@ impl<'a> HTTPClient<'a> {
                     header_count += 1;
                 }
             } else {
-                // 11-byte buf vs 64-bit usize: must fall back to "0" on
-                // overflow, NOT panic.
-                let value: &[u8] = match bun_core::fmt::buf_print(
-                    &mut self.request_content_len_buf,
-                    format_args!("{body_len}"),
-                ) {
-                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    Ok(s) => unsafe { bun_ptr::detach_lifetime(s) },
-                    Err(_) => b"0",
-                };
+                let value: &[u8] =
+                    bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);
+                // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
+                let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                 request_headers_buf[header_count] =
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
@@ -2585,15 +2592,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
         let keep_alive_possible = self.is_keep_alive_possible();
-        // There is no struct copy-back
-        // (`sync_progress_from` skips owned fields) and the original retains
-        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
-        // clone was created via `ptr::read`). Dropping it here would
-        // double-free when the original later runs `clear_data()`. Forget the
-        // clone's view; the original is the sole owner.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2659,6 +2658,11 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.clear_hostname_on_redirect {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
+            // The HTTP-thread clone shares this allocation with the JS-thread
+            // original (created via `ptr::read`); dropping it here would
+            // double-free when the original later runs `clear_data()`. Forget
+            // the clone's view; the original is the sole owner.
+            let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         }
 
         // TODO: should this check be before decrementing the redirect count?
@@ -4305,14 +4309,11 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.clear_hostname_on_redirect {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
+            let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
-        // See `do_redirect`: the HTTP-thread clone shares this allocation
-        // with the JS-thread original (created via `ptr::read`); dropping it
-        // here double-frees once the original runs `clear_data()`.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {

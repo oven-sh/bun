@@ -91,6 +91,11 @@ describe.concurrent("redact", async () => {
       expected: `"*"`,
     },
     {
+      title: "registry password",
+      bunfig: `l;password = "hunter2"`,
+      expected: `"*******"`,
+    },
+    {
       title: "random UUID",
       bunfig: 'unre;lated = "f1b0b6b4-4b1b-4b1b-8b1b-4b1b4b1b4b1b"',
       expected: '"************************************"',

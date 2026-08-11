@@ -1084,6 +1084,110 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
     false
 }
 
+#[cfg(unix)]
+pub struct DeferredSymlink {
+    path: Vec<u8>,
+    target: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl DeferredSymlink {
+    pub fn new(path: &[u8], target: &[u8]) -> Self {
+        let mut path_z = Vec::with_capacity(path.len() + 1);
+        path_z.extend_from_slice(path);
+        path_z.push(0);
+        let mut target_z = Vec::with_capacity(target.len() + 1);
+        target_z.extend_from_slice(target);
+        target_z.push(0);
+        Self {
+            path: path_z,
+            target: target_z,
+        }
+    }
+
+    pub fn path(&self) -> &[u8] {
+        &self.path[..self.path.len() - 1]
+    }
+
+    pub fn target(&self) -> &[u8] {
+        &self.target[..self.target.len() - 1]
+    }
+}
+
+#[cfg(unix)]
+fn open_dir_with_stat(dir_fd: Fd, sub_path: &[u8]) -> Option<(Fd, bun_sys::Stat)> {
+    let fd = bun_sys::open_dir_at(dir_fd, sub_path).ok()?;
+    match bun_sys::fstat(fd) {
+        Ok(st) => Some((fd, st)),
+        Err(_) => {
+            fd.close();
+            None
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
+    let mut parents: Vec<Option<bun_sys::Stat>> = Vec::with_capacity(symlinks.len());
+    for symlink in symlinks {
+        let dirname = bun_paths::dirname_simple(symlink.path());
+        if dirname.is_empty() {
+            parents.push(None);
+            continue;
+        }
+        let _ = dir_fd.make_path_u8(dirname);
+        parents.push(open_dir_with_stat(dir_fd, dirname).map(|(fd, st)| {
+            fd.close();
+            st
+        }));
+    }
+
+    let mut created: u32 = 0;
+    for (symlink, expected) in symlinks.iter().zip(parents) {
+        let dirname = bun_paths::dirname_simple(symlink.path());
+        let target = ZStr::from_slice_with_nul(&symlink.target);
+        let result = if dirname.is_empty() {
+            bun_sys::symlinkat(target, dir_fd, ZStr::from_slice_with_nul(&symlink.path))
+        } else {
+            let name = ZStr::from_slice_with_nul(&symlink.path[dirname.len() + 1..]);
+            match (open_dir_with_stat(dir_fd, dirname), expected) {
+                (Some((parent, st)), Some(expected))
+                    if st.st_dev == expected.st_dev && st.st_ino == expected.st_ino =>
+                {
+                    let result = bun_sys::symlinkat(target, parent, name);
+                    parent.close();
+                    result
+                }
+                (parent, _) => {
+                    if let Some((parent, _)) = parent {
+                        parent.close();
+                    }
+                    if log {
+                        bun_core::warn!(
+                            "Skipping symlink whose parent directory changed during extraction: {}\n",
+                            bstr::BStr::new(symlink.path()),
+                        );
+                    }
+                    continue;
+                }
+            }
+        };
+        match result {
+            Ok(()) => created += 1,
+            Err(_) => {
+                if log {
+                    bun_core::warn!(
+                        "Skipping symlink that could not be created: {} -> {}\n",
+                        bstr::BStr::new(symlink.path()),
+                        bstr::BStr::new(symlink.target()),
+                    );
+                }
+            }
+        }
+    }
+    created
+}
+
 /// Recursive mkdir over a WTF-16 path: component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
 /// on `FileNotFound` and forward again on success. This stays in WTF-16
@@ -1393,7 +1497,7 @@ impl Archiver {
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
-        let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
+        let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
@@ -1564,17 +1668,6 @@ impl Archiver {
 
                     let path_slice: &[OSPathChar] = &path[..];
 
-                    #[cfg(unix)]
-                    if path_traverses_created_symlink(path_slice, &created_symlinks) {
-                        if options.log {
-                            bun_core::warn!(
-                                "Skipping entry that traverses a previously extracted symlink: {}\n",
-                                bun_core::fmt::fmt_os_path(path_slice, Default::default()),
-                            );
-                        }
-                        continue;
-                    }
-
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
@@ -1664,26 +1757,8 @@ impl Archiver {
                                     }
                                     continue;
                                 }
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
-                                match bun_sys::symlinkat(link_target, dir_fd, path_z) {
-                                    Ok(()) => {}
-                                    Err(err) => match err.get_errno() {
-                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname_simple(path_slice);
-                                            if dirname.is_empty() {
-                                                return Err(err.into());
-                                            }
-                                            let _ = dir.make_path_u8(dirname);
-                                            bun_sys::symlinkat(link_target, dir_fd, path_z)?;
-                                        }
-                                        _ => return Err(err.into()),
-                                    },
-                                }
-                                created_symlinks.push(path_slice.to_vec());
+                                deferred_symlinks
+                                    .push(DeferredSymlink::new(path_slice, link_target.as_bytes()));
                             }
                             #[cfg(not(unix))]
                             {
@@ -1704,23 +1779,6 @@ impl Archiver {
                             )
                             .unwrap();
 
-                            // `path_traverses_created_symlink` is a lexical check: on
-                            // filesystems that alias differently-encoded names (Unicode
-                            // NFC/NFD normalization on APFS/HFS+), a path component can
-                            // reach a created symlink without byte-matching its recorded
-                            // path. Once this extraction has created any symlink, ask the
-                            // kernel to refuse to follow symlinks while opening file
-                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
-                            #[cfg(unix)]
-                            let flags = {
-                                let mut flags =
-                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                                if !created_symlinks.is_empty() {
-                                    flags |= bun_sys::O::NOFOLLOW_ANY;
-                                }
-                                flags
-                            };
-                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]
@@ -1944,6 +2002,9 @@ impl Archiver {
                 }
             }
         }
+
+        #[cfg(unix)]
+        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
 
         Ok(count)
     }

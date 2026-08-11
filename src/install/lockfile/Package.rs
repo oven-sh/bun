@@ -1829,7 +1829,7 @@ impl Package<u64> {
                     }
 
                     dependency_version.value.workspace = path;
-                } else {
+                } else if features.is_main || features.is_workspace {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.

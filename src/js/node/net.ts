@@ -307,7 +307,8 @@ function onClientHandshakeComplete(self, socket, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      const options = self[kConnectOptions];
+      const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);

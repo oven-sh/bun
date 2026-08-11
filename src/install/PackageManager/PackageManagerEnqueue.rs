@@ -1011,6 +1011,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         (*this_ptr).manifests.by_name_hash_allow_expired(
                                             cache_ctx,
                                             &*scope,
+                                            &name_str,
                                             name_hash,
                                             Some(&mut expired),
                                             ManifestLoad::LoadFromMemoryFallbackToDisk,
@@ -2347,6 +2348,7 @@ fn get_or_put_resolved_package(
             let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
                 cache_ctx,
                 scope.get(),
+                name_str,
                 name_hash,
                 ManifestLoad::LoadFromMemoryFallbackToDisk,
                 needs_ext,
@@ -2613,6 +2615,39 @@ fn get_or_put_resolved_package(
             }
         }
         dependency::version::Tag::Workspace => {
+            if !behavior.is_workspace() && !this.lockfile.is_workspace_dependency(dependency_id) {
+                let buf = this.lockfile.buffers.string_bytes.as_slice();
+                if !this.lockfile.overrides.contains_name(
+                    dependency.name_hash,
+                    dependency.name.slice(buf),
+                    buf,
+                ) {
+                    let Some(root_package) = this.lockfile.root_package() else {
+                        return Err(crate::Error::MissingPackageJSON);
+                    };
+                    let root_dependencies = root_package
+                        .dependencies
+                        .get(this.lockfile.buffers.dependencies.as_slice());
+                    let root_resolutions = root_package
+                        .resolutions
+                        .get(this.lockfile.buffers.resolutions.as_slice());
+                    for (root_dep, &workspace_package_id) in
+                        root_dependencies.iter().zip(root_resolutions)
+                    {
+                        if workspace_package_id != invalid_package_id
+                            && root_dep.version.tag == dependency::version::Tag::Workspace
+                            && root_dep.name_hash == name_hash
+                        {
+                            success_fn(this, dependency_id, workspace_package_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                package: *this.lockfile.packages.get(workspace_package_id as usize),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                    return Err(crate::Error::MissingPackageJSON);
+                }
+            }
             // package name hash should be used to find workspace path from map
             // SAFETY: `version.tag == Workspace` discriminates the union arm.
             let workspace_path_raw: SemverString = this

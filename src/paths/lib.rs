@@ -966,7 +966,14 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+            if cfg!(any(target_os = "macos", windows)) {
+                crate::strings::contains_case_insensitive_ascii(
+                    self.name().dir,
+                    crate::NODE_MODULES_NEEDLE,
+                )
+            } else {
+                crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+            }
         }
 
         /// Key used to identify this path in the incremental graph: the real

@@ -2361,44 +2361,32 @@ impl CompilerRT {
             return;
         };
 
-        #[cfg(windows)]
+        // Prefer the reusable per-user directory; if it cannot be safely
+        // populated, fall back to a freshly created, randomly named one.
+        #[cfg(unix)]
+        if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
+            && Self::populate_compiler_rt_dir(&bun_cc)
         {
-            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
+            return;
+        }
+        for _ in 0..8 {
+            let mut name_buf = PathBuffer::uninit();
+            let Ok(name) =
+                Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
             else {
                 return;
             };
-            Self::populate_compiler_rt_dir(&bun_cc);
-        }
-
-        // Prefer the per-user directory; if it (or any candidate) cannot be
-        // safely populated -- wrong owner/mode, or an entry inside it is a
-        // pre-planted symlink -- abandon it and mint a fresh private one.
-        #[cfg(unix)]
-        {
-            if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-                && Self::populate_compiler_rt_dir(&bun_cc)
-            {
-                return;
+            match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
+                Ok(()) => {}
+                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
+                Err(_) => return,
             }
-            for _ in 0..8 {
-                let mut name_buf = PathBuffer::uninit();
-                let Ok(name) =
-                    Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                else {
-                    return;
-                };
-                match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => return,
-                }
-                let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-                let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                    return;
-                };
-                let _ = Self::populate_compiler_rt_dir(&dir);
+            let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
                 return;
-            }
+            };
+            let _ = Self::populate_compiler_rt_dir(&dir);
+            return;
         }
     }
 
@@ -2407,11 +2395,7 @@ impl CompilerRT {
     /// a pre-planted symlinked entry refused by the no-follow write.
     fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
         for (name, source) in CompilerRtSources::SOURCES {
-            let wrote = Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source);
-            // On Unix a refused write means the entry is a planted symlink, so
-            // this directory is abandoned for a fresh one. On Windows the
-            // directory is already per-user; keep staging the rest best-effort.
-            if cfg!(unix) && !wrote {
+            if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
                 return false;
             }
         }

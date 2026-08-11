@@ -878,7 +878,7 @@ impl Request {
     /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
     /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
     /// configured host instead of pasting the client bytes into the URL.
-    fn is_valid_host_header(host: &[u8]) -> bool {
+    pub(crate) fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
                 c.is_ascii_alphanumeric()

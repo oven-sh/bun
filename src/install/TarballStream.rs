@@ -87,7 +87,9 @@ pub struct TarballStream {
 
     /// True while a drain task is either queued on the thread pool or
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
-    /// it runs out of input and decides to yield.
+    /// it runs out of input and decides to yield. Both transitions happen
+    /// with `mutex` held, and whoever does not own it stops touching `*this`
+    /// at the following `unlock()`.
     draining: AtomicBool,
 
     // ---------------------------------------------------------------------
@@ -101,6 +103,7 @@ pub struct TarballStream {
     /// we only recycle this buffer on the *following* swap.
     reading: Vec<u8>,
     read_pos: usize,
+    archive_holds_reading: bool,
 
     archive: Option<lib::ReadArchive>,
 
@@ -140,12 +143,13 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
-    /// Symlinks created so far during this extraction. Later entries whose
-    /// path traverses one of these are skipped: the per-target check in
-    /// `make_symlink` is purely lexical, so once a link is on disk the kernel
-    /// would follow it and a chained link could escape the extraction root.
+    /// Symlink entries accepted so far. They are only written to disk after
+    /// every other entry (`deferred_symlinks`), and later entries whose path
+    /// traverses one of them are skipped.
     #[cfg(unix)]
     created_symlinks: Vec<Vec<u8>>,
+    #[cfg(unix)]
+    deferred_symlinks: Vec<bun_libarchive::DeferredSymlink>,
 
     bytes_received: usize,
     entry_count: u32,
@@ -241,6 +245,7 @@ impl TarballStream {
             draining: AtomicBool::new(false),
             reading: Vec::new(),
             read_pos: 0,
+            archive_holds_reading: false,
             archive: None,
             phase: Phase::WantHeader,
             out_fd: None,
@@ -257,6 +262,8 @@ impl TarballStream {
             npm_mode,
             #[cfg(unix)]
             created_symlinks: Vec::new(),
+            #[cfg(unix)]
+            deferred_symlinks: Vec::new(),
             bytes_received: 0,
             entry_count: 0,
             fail: None,
@@ -287,6 +294,7 @@ impl TarballStream {
         is_last: bool,
         err: Option<crate::Error>,
     ) {
+        let drain_threshold = Self::drain_threshold();
         // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
         // projection only (no `&mut TarballStream` formed).
         unsafe {
@@ -302,29 +310,29 @@ impl TarballStream {
                 (*this).http_err = Some(e);
             }
             let pending_len = (*this).pending.len();
-            (*this).mutex.unlock();
 
             // Batch sub-threshold chunks so each one doesn't re-wake a worker
             // once the drain has yielded; `is_last`/`err` always schedule so
             // `finish()` never waits on the threshold.
-            if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
+            let schedule = (is_last || err.is_some() || pending_len >= drain_threshold)
+                && !(*this).draining.swap(true, Ordering::AcqRel);
+            (*this).mutex.unlock();
+
+            if schedule {
                 Self::schedule_drain(this);
             }
         }
     }
 
     /// # Safety
-    /// `this` must be live. Runs on the HTTP thread; a worker may be inside
-    /// `drain()` concurrently when `draining.swap` returns `true`, so this
-    /// never forms `&mut TarballStream`.
+    /// `this` must be live and the caller must have just taken `draining`
+    /// (false -> true) with `mutex` held, so no worker is inside `drain()`.
+    /// Never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
         // outlives this stream (it owns the thread pool that runs us). Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
         unsafe {
-            if (*this).draining.swap(true, Ordering::AcqRel) {
-                return;
-            }
             // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
@@ -378,15 +386,13 @@ impl TarballStream {
                         // libarchive consumed everything we had. Yield the
                         // worker until the HTTP thread delivers the next
                         // chunk.
-                        (*this).draining.store(false, Ordering::Release);
-                        // Close the race between clearing `draining` and a
-                        // chunk arriving: if `pending` is non-empty now, try
-                        // to reclaim the flag ourselves instead of waiting
-                        // for the next schedule.
                         (*this).mutex.lock();
                         let again = !(*this).pending.is_empty() || (*this).closed;
+                        if !again {
+                            (*this).draining.store(false, Ordering::Release);
+                        }
                         (*this).mutex.unlock();
-                        if again && !(*this).draining.swap(true, Ordering::AcqRel) {
+                        if again {
                             continue;
                         }
                         return;
@@ -436,11 +442,13 @@ impl TarballStream {
                 // Archive is done (or failed) but the HTTP response has not
                 // finished yet. Yield; the next `on_chunk` will reschedule us
                 // to discard the new bytes and eventually observe `closed`.
-                (*this).draining.store(false, Ordering::Release);
                 (*this).mutex.lock();
                 let again = !(*this).pending.is_empty() || (*this).closed;
+                if !again {
+                    (*this).draining.store(false, Ordering::Release);
+                }
                 (*this).mutex.unlock();
-                if again && !(*this).draining.swap(true, Ordering::AcqRel) {
+                if again {
                     continue;
                 }
                 return;
@@ -538,8 +546,17 @@ impl TarballStream {
                     Phase::WantHeader => {
                         let mut entry: *mut lib::Entry = core::ptr::null_mut();
                         match archive.read_next_header(&mut entry) {
+                            lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
+                                #[cfg(unix)]
+                                {
+                                    let dest = (*this).dest.unwrap();
+                                    let symlinks = core::mem::take(&mut (*this).deferred_symlinks);
+                                    bun_libarchive::create_deferred_symlinks(
+                                        dest, &symlinks, false,
+                                    );
+                                }
                                 (*this).phase = Phase::Done;
                                 return Ok(());
                             }
@@ -570,7 +587,7 @@ impl TarballStream {
                             continue;
                         };
                         match block.result {
-                            lib::Result::Retry => return Ok(()),
+                            lib::Result::Retry if !(*this).archive_holds_reading => return Ok(()),
                             lib::Result::Ok | lib::Result::Warn => {
                                 if let Some(fd) = (*this).out_fd {
                                     (*this).write_data_block(fd, &block)?;
@@ -858,7 +875,12 @@ impl TarballStream {
             }
             FileKind::SymLink => {
                 #[cfg(unix)]
-                if make_symlink(entry, dest, path, path_slice) {
+                if symlink_target_stays_inside(entry.symlink(), path_slice) {
+                    self.deferred_symlinks
+                        .push(bun_libarchive::DeferredSymlink::new(
+                            path_slice,
+                            entry.symlink().as_bytes(),
+                        ));
                     self.created_symlinks.push(path_slice.to_vec());
                 }
                 self.phase = Phase::WantData;
@@ -1273,8 +1295,10 @@ extern "C" fn archive_read_callback(
         if !remaining.is_empty() {
             *out_buffer = remaining.as_ptr().cast();
             (*this).read_pos = (*this).reading.len();
+            (*this).archive_holds_reading = true;
             return lib::la_ssize_t::try_from(remaining.len()).expect("int cast");
         }
+        (*this).archive_holds_reading = false;
     }
 
     // No data left in `reading`. Check for more under the lock —
@@ -1306,6 +1330,7 @@ extern "C" fn archive_read_callback(
             if !again.is_empty() {
                 *out_buffer = again.as_ptr().cast();
                 (*this).read_pos = (*this).reading.len();
+                (*this).archive_holds_reading = true;
                 return lib::la_ssize_t::try_from(again.len()).expect("int cast");
             }
         }
@@ -1416,16 +1441,8 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
 }
 
-/// Returns `true` only when a symlink was actually created on disk, so the
-/// caller can record it in `created_symlinks`.
 #[cfg(unix)]
-fn make_symlink(
-    entry: &mut lib::Entry,
-    dest_fd: Fd,
-    path: OSPathZ,
-    path_slice: &[OSPathChar],
-) -> bool {
-    let target = entry.symlink();
+fn symlink_target_stays_inside(target: &bun_core::ZStr, path_slice: &[OSPathChar]) -> bool {
     // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
     // reject absolute targets and anything that escapes via `..`.
     if target.is_empty() || target[0] == b'/' {
@@ -1480,17 +1497,7 @@ fn make_symlink(
             return false;
         }
     }
-    match bun_sys::symlinkat(target, dest_fd, path) {
-        Ok(()) => true,
-        Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
-            let Some(dir) = bun_paths::dirname(path_slice) else {
-                return false;
-            };
-            let _ = dest_fd.make_path(dir);
-            bun_sys::symlinkat(target, dest_fd, path).is_ok()
-        }
-        Err(_) => false,
-    }
+    true
 }
 
 #[cfg(windows)]

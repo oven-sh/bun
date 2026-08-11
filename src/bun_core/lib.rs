@@ -2047,6 +2047,9 @@ pub(crate) mod strings_impl {
         if let Some(r) = starts_with_redacted_item(str, b"_password") {
             return Some(r);
         }
+        if let Some(r) = starts_with_redacted_item(str, b"password") {
+            return Some(r);
+        }
         if let Some(r) = starts_with_redacted_item(str, b"token") {
             return Some(r);
         }

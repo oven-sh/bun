@@ -983,6 +983,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     ["a TypedArray written to a directory", `Bun.write(dir, new Uint8Array(4))`, "EISDIR"],
     // Truncating a directory fails with EINVAL on Windows and EISDIR elsewhere.
     ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
+    // Windows reports these two as "UV_EBADF" (errno -4083), which the substring check also accepts.
     ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
     [
       "a TypedArray written to a read-only file descriptor",

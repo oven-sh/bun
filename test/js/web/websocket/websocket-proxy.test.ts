@@ -842,4 +842,62 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);
   });
+
+  describe("IPv6 literal target", () => {
+    // ws://[::1]/ hands the matcher the bracketed host "[::1]"; NO_PROXY lists
+    // conventionally hold the bare address (NO_PROXY=localhost,127.0.0.1,::1),
+    // and Bun used to match only the bracketed spelling. Same setup as above:
+    // bypassing authProxy is the only way the socket can open.
+    let wsServer6: ReturnType<typeof Bun.serve>;
+
+    beforeAll(() => {
+      wsServer6 = Bun.serve({
+        hostname: "::1",
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Expected WebSocket", { status: 400 });
+        },
+        websocket: { message() {} },
+      });
+    });
+
+    afterAll(() => {
+      wsServer6?.stop(true);
+    });
+
+    async function route(noProxy: string): Promise<"direct" | "proxied"> {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ws = new WebSocket(process.env.WS_URL, { proxy: process.env.WS_PROXY });
+           ws.onopen = () => { console.log("direct"); ws.close(); process.exit(0); };
+           ws.onerror = () => { console.log("proxied"); process.exit(0); };`,
+        ],
+        env: {
+          ...bunEnv,
+          no_proxy: undefined,
+          NO_PROXY: noProxy,
+          WS_URL: `ws://[::1]:${wsServer6.port}`,
+          WS_PROXY: `http://127.0.0.1:${authProxyPort}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error("stderr:", stderr);
+      expect(exitCode).toBe(0);
+      return stdout.trim() as "direct" | "proxied";
+    }
+
+    test.each([
+      ["::1", "direct"],
+      ["localhost,127.0.0.1,::1", "direct"],
+      ["[::1]", "direct"],
+      ["::2", "proxied"],
+    ])("NO_PROXY=%s connects ws://[::1]/ %s", async (entry, expected) => {
+      expect(await route(entry)).toBe(expected);
+    });
+  });
 });

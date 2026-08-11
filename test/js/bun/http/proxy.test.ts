@@ -2164,6 +2164,110 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   });
 });
 
+describe.concurrent("NO_PROXY matches an IPv6 literal target with or without brackets", () => {
+  // The URL hands the matcher the bracketed hostname ("[::1]" for
+  // http://[::1]/), while NO_PROXY lists conventionally hold the bare address
+  // (NO_PROXY=localhost,127.0.0.1,::1 is what curl, Go and node:http read).
+  // Bun used to match only the bracketed spelling; both must work.
+  //
+  // The proxy answers every request itself, so the body of the subprocess's
+  // fetch says which route it took.
+  let origin: Server; // on ::1
+  let redirector: Server; // on 127.0.0.1, 302 -> origin
+  let proxy: ReturnType<typeof Bun.listen>;
+
+  beforeAll(() => {
+    origin = Bun.serve({ hostname: "::1", port: 0, fetch: () => new Response("direct") });
+    redirector = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: `http://[::1]:${origin.port}/`, Connection: "close" },
+        }),
+    });
+    proxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(s) {
+          s.write("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nproxied");
+          s.flush();
+          s.end();
+        },
+        error() {},
+        close() {},
+        drain() {},
+      },
+    });
+  });
+
+  afterAll(() => {
+    origin.stop(true);
+    redirector.stop(true);
+    proxy.stop(true);
+  });
+
+  async function route(noProxy: string, opts: { url?: string; explicitProxyOption?: boolean } = {}) {
+    const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        opts.explicitProxyOption
+          ? `console.log(await (await fetch(process.env.U, { proxy: process.env.P })).text())`
+          : `console.log(await (await fetch(process.env.U)).text())`,
+      ],
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        no_proxy: undefined,
+        http_proxy: opts.explicitProxyOption ? undefined : proxyUrl,
+        NO_PROXY: noProxy,
+        U: opts.url ?? `http://[::1]:${origin.port}/`,
+        P: proxyUrl,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  test.each([
+    ["::1", "direct"],
+    ["localhost,127.0.0.1,::1,0.0.0.0", "direct"],
+    ["127.0.0.1, ::1", "direct"],
+    ["[::1]", "direct"],
+    ["[::1]:ORIGIN_PORT", "direct"],
+    ["::2", "proxied"],
+    ["[::1]:1", "proxied"],
+    // Without brackets the whole entry is the address (this one is ::1:1),
+    // so a port can only be attached to the bracketed form.
+    ["::1:ORIGIN_PORT", "proxied"],
+    // Domain-suffix matching does not apply to an address.
+    ["1", "proxied"],
+  ])("NO_PROXY=%s sends http://[::1]/ %s", async (entry, expected) => {
+    expect(await route(entry.replace("ORIGIN_PORT", String(origin.port)))).toBe(expected);
+  });
+
+  test("bare address also bypasses an explicit fetch({ proxy }) option", async () => {
+    expect(await route("::1", { explicitProxyOption: true })).toBe("direct");
+  });
+
+  test("bare address also applies to a redirect into the IPv6 host", async () => {
+    // Hop 1 to 127.0.0.1 is exempt either way; hop 2 is re-resolved against
+    // the redirect target http://[::1]/ on the HTTP thread.
+    expect(await route("127.0.0.1,::1", { url: `http://127.0.0.1:${redirector.port}/` })).toBe("direct");
+    expect(await route("127.0.0.1,::2", { url: `http://127.0.0.1:${redirector.port}/` })).toBe("proxied");
+  });
+});
+
 test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
   // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
   // established. The proxy's response must be returned to the caller, but a

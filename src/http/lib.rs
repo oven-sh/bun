@@ -1875,11 +1875,7 @@ impl<'a> HTTPClient<'a> {
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
                             self.connected_url.get_port_auto(),
-                            if want_tunnel || self.http_proxy.is_none() {
-                                self.proxy_auth_hash()
-                            } else {
-                                0
-                            },
+                            self.pool_auth_hash(true, want_tunnel),
                         );
                     }
                 }
@@ -2299,6 +2295,15 @@ impl<'a> HTTPClient<'a> {
         if any { combined } else { 0 }
     }
 
+    /// The `proxy_auth_hash` pool-key field; `HTTPContext::connect` and every `release_socket` caller must agree on it.
+    pub(crate) fn pool_auth_hash(&self, is_ssl: bool, tunnel: bool) -> u64 {
+        if tunnel || (is_ssl && self.http_proxy.is_none()) {
+            self.proxy_auth_hash()
+        } else {
+            0
+        }
+    }
+
     /// Returns the SSL context for this client - either the custom context
     /// (for mTLS/custom TLS) or the default global context.
     pub(crate) fn get_ssl_ctx<const IS_SSL: bool>(&self) -> *mut GenHttpContext<IS_SSL> {
@@ -2623,6 +2628,8 @@ impl<'a> HTTPClient<'a> {
         } else if keep_alive_possible
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
+            // The hop goes out on this socket before a FIN sent behind the 3xx is seen; on_close only retries idempotent methods.
+            && self.method.is_idempotent()
             // A direct TLS socket verified against a Host-header override
             // (get_tls_hostname) must not be pooled here: this.url has already
             // been repointed at the redirect destination, so proxy_auth_hash()
@@ -2641,7 +2648,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 b"",
                 0,
-                0,
+                self.pool_auth_hash(IS_SSL, false),
                 None,
             );
         } else {
@@ -4208,15 +4215,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         0
                     },
-                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
-                        // Direct TLS: the handshake verified the peer against
-                        // the Host-header override (get_tls_hostname), so the
-                        // override hash must be part of the pool key. Matches
-                        // the lookup in HTTPContext::connect.
-                        self.proxy_auth_hash()
-                    } else {
-                        0
-                    },
+                    self.pool_auth_hash(IS_SSL, had_tunnel),
                     None,
                 );
             } else {
@@ -4390,7 +4389,7 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             0,
-            0,
+            self.pool_auth_hash(IS_SSL, false),
             None,
         );
 

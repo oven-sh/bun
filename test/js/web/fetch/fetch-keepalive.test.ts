@@ -370,16 +370,21 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
 });
 
 // Raw HTTP/1.1 server for the redirect tests below, bound to 127.0.0.1 (the
-// address fetch() dials). Every request is answered on the connection it came
-// in on, so `connections` is exactly how many times bun dialed.
-//   /302, /303, /307  bodyless redirect to /legit on a reusable connection
-//   /302-close        the same 302 with Connection: close
-//   /302-body         a 302 that carries a body
-//   anything else     200 whose body is "<method>:<request body length>"
-const redirectServer = `
+// address fetch() dials), optionally behind TLS. Every request is answered on
+// the connection it came in on, so `connections` is exactly how many times bun
+// dialed.
+//   /302, /303, /307      bodyless redirect to /legit on a reusable connection
+//   /302-close            the same 302 with Connection: close
+//   /302-end, /307-end    the same bodyless 3xx, after which the server closes
+//                         the connection without having announced it
+//   /302-body             a 302 that carries a body
+//   anything else         200 whose body is "<method>:<request body length>"
+const redirectServer = (https: boolean) => `
   import net from "node:net";
+  import tls from "node:tls";
+  const ca = ${JSON.stringify(tls.cert)};
   let connections = 0;
-  const server = net.createServer(sock => {
+  const onConnection = sock => {
     connections++;
     sock.on("error", () => {});
     let buf = "";
@@ -393,75 +398,157 @@ const redirectServer = `
         if (buf.length < end + 4 + len) return;
         buf = buf.slice(end + 4 + len);
         const [method, path] = head.split(" ");
-        const redirect = {
+        const status = {
           "/302": "302 Found",
           "/302-close": "302 Found",
+          "/302-end": "302 Found",
           "/302-body": "302 Found",
           "/303": "303 See Other",
           "/307": "307 Temporary Redirect",
+          "/307-end": "307 Temporary Redirect",
         }[path];
-        if (!redirect) {
+        if (!status) {
           const body = method + ":" + len;
           sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
         } else if (path === "/302-close") {
-          sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+          sock.end("HTTP/1.1 " + status + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+        } else if (path.endsWith("-end")) {
+          sock.end("HTTP/1.1 " + status + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
         } else if (path === "/302-body") {
-          sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
+          sock.write("HTTP/1.1 " + status + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
         } else {
-          sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
+          sock.write("HTTP/1.1 " + status + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
         }
       }
     });
-  });
+  };
+  const server = ${https ? `tls.createServer({ cert: ca, key: ${JSON.stringify(tls.key)} }, onConnection)` : "net.createServer(onConnection)"};
   server.listen(0, "127.0.0.1");
   await new Promise(r => server.on("listening", r));
-  const origin = "http://127.0.0.1:" + server.address().port;
+  const origin = "${https ? "https" : "http"}://127.0.0.1:" + server.address().port;
 `;
 
 // A bodyless 3xx on a keep-alive connection leaves that connection as reusable
-// as any other completed exchange, so the hop (and every later fetch) should
-// ride on it: four redirected fetches, one connection. This used to hold only
-// for streamed request bodies; a request whose headers and body went out in a
-// single write was never considered finished by the redirect path, so each
-// redirect closed the connection and dialed again for the hop (5 connections
-// here, one per redirect plus the first). Subprocess so the pool is private to
-// the test.
-test.concurrent.each([
-  ["GET -> 302", "/302", "{}", "GET:0", 1],
-  ["POST -> 303 (hop is a bodyless GET)", "/303", '{ method: "POST", body: "payload" }', "GET:0", 1],
-  ["POST -> 307 (hop resends the body)", "/307", '{ method: "POST", body: "payload" }', "POST:7", 1],
-  // Not reusable, so every fetch dials once more for the hop; the hop's own
-  // connection is pooled and carries the next fetch's 3xx.
-  ["GET -> 302 with Connection: close", "/302-close", "{}", "GET:0", 5],
-  ["GET -> 302 carrying a body", "/302-body", "{}", "GET:0", 5],
-])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      ${redirectServer}
-      const results = [];
-      for (let i = 0; i < 4; i++) {
-        const res = await fetch(origin + ${JSON.stringify(path)}, ${init});
-        results.push(res.status, res.redirected, await res.text());
-      }
-      console.log(JSON.stringify({ results, connections }));
-      process.exit(0);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+// as any other completed exchange, so when the hop can be retried it rides on
+// it, and so does every later fetch: four redirected fetches, one connection.
+// (Until 1.4.0 this held only for streamed request bodies; a request whose
+// headers and body went out in a single write was never considered finished by
+// the redirect path, so each redirect closed the connection and dialed again
+// for the hop.) The hop is written onto that connection before a FIN the
+// server may have sent right behind the 3xx can be seen, which on_close only
+// recovers from by retrying idempotent requests; a hop that kept a
+// non-idempotent method therefore gets a fresh connection instead.
+//
+// The 5-connection rows dial once per fetch: the connection that carried the
+// 3xx is not reused (or, in the "-end" rows, dies under the hop and the hop is
+// retried), while the hop's own connection is pooled and carries the next
+// fetch's 3xx. Subprocess so the pool is private to the test.
+const redirectCases: {
+  name: string;
+  path: string;
+  init?: string;
+  https?: boolean;
+  env?: Record<string, string>;
+  hop: string;
+  connections: number;
+}[] = [
+  { name: "GET -> 302", path: "/302", hop: "GET:0", connections: 1 },
+  {
+    name: "POST -> 303 (hop is a bodyless GET)",
+    path: "/303",
+    init: 'method: "POST", body: "payload"',
+    hop: "GET:0",
+    connections: 1,
+  },
+  {
+    name: "PUT -> 307 (hop resends the body)",
+    path: "/307",
+    init: 'method: "PUT", body: "payload"',
+    hop: "PUT:7",
+    connections: 1,
+  },
+  {
+    name: "POST -> 307 (hop is still a POST)",
+    path: "/307",
+    init: 'method: "POST", body: "payload"',
+    hop: "POST:7",
+    connections: 5,
+  },
+  { name: "GET -> 302 with Connection: close", path: "/302-close", hop: "GET:0", connections: 5 },
+  { name: "GET -> 302 carrying a body", path: "/302-body", hop: "GET:0", connections: 5 },
+  { name: "GET -> 302, server closes unannounced (hop retried)", path: "/302-end", hop: "GET:0", connections: 5 },
+  {
+    name: "PUT -> 307, server closes unannounced (hop retried)",
+    path: "/307-end",
+    init: 'method: "PUT", body: "payload"',
+    hop: "PUT:7",
+    connections: 5,
+  },
+  {
+    name: "POST -> 307, server closes unannounced",
+    path: "/307-end",
+    init: 'method: "POST", body: "payload"',
+    hop: "POST:7",
+    connections: 5,
+  },
+  { name: "https GET -> 302", path: "/302", https: true, init: "tls: { ca }", hop: "GET:0", connections: 1 },
+  // The TLS handshake was verified against the Host header, which the redirect
+  // path cannot key the pool by once the URL has moved on, so it closes.
+  {
+    name: "https GET -> 302 with a Host header override",
+    path: "/302",
+    https: true,
+    init: 'tls: { ca }, headers: { Host: "localhost" }',
+    hop: "GET:0",
+    connections: 5,
+  },
+  // The proxy option is bypassed by NO_PROXY, but its headers still take part
+  // in the key a direct TLS socket is pooled and looked up under; the redirect
+  // release has to use the same key or its sockets are parked unreachably.
+  {
+    name: "https GET -> 302 with a NO_PROXY-bypassed proxy option carrying headers",
+    path: "/302",
+    https: true,
+    init: 'tls: { ca }, proxy: { url: "http://127.0.0.1:9/", headers: { "x-proxy-probe": "1" } }',
+    env: { NO_PROXY: "127.0.0.1" },
+    hop: "GET:0",
+    connections: 1,
+  },
+];
+for (const { name, path, init = "", https = false, env, hop, connections } of redirectCases) {
+  test.concurrent(`redirect keep-alive: ${name}`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        ${redirectServer(https)}
+        const results = [];
+        for (let i = 0; i < 4; i++) {
+          try {
+            const res = await fetch(origin + ${JSON.stringify(path)}, { ${init} });
+            results.push(res.status, res.redirected, await res.text());
+          } catch (e) {
+            results.push(String(e.code ?? e));
+          }
+        }
+        console.log(JSON.stringify({ results, connections }));
+        process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-  expect({ result, exitCode }).toEqual({
-    result: { results: Array(4).fill([200, true, hopBody]).flat(), connections },
-    exitCode: 0,
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { results: Array(4).fill([200, true, hop]).flat(), connections },
+      exitCode: 0,
+    });
   });
-});
+}
 
 // What the pooling above must not relax: a response (redirect or final) that
 // arrives while the request body is still going out leaves the connection

@@ -285,8 +285,7 @@ struct InstallDirState {
     cached_package_dir: Dir,
     // `Walker` has no `Default`; wrap in Option.
     walker: Option<Walker>,
-    /// POSIX only. On Windows it stays `Fd::INVALID` (which relative syscalls
-    /// resolve against the cwd); the walkers there use the absolute paths in `buf`/`buf2`.
+    /// POSIX only; on Windows it stays invalid and the walkers use the absolute paths in `buf`/`buf2`.
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -431,8 +430,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     }
 }
 
-/// [`mkdir_recursive_os_path`] for `path[..len]`: the parent directory of the
-/// entry whose absolute destination path a walker built in `path`.
+/// [`mkdir_recursive_os_path`] for `path[..len]`, the parent directory of the entry `path` names.
 #[cfg(windows)]
 fn mkdir_recursive_os_path_prefix(path: &[u16], len: usize) -> sys::Maybe<()> {
     let mut buf = bun_paths::w_path_buffer_pool::get();

@@ -911,8 +911,7 @@ impl Request {
         Ok(())
     }
 
-    /// Shared by HTTP/1 (`ensure_url`, lazily) and HTTP/3 (the server, eagerly: its uWS
-    /// request dies with the dispatch) so `request.url` is built by one set of rules.
+    /// Used by both HTTP/1 (lazily, via `ensure_url`) and HTTP/3 (eagerly, by the server).
     pub(crate) fn set_url_from_request_target(&self, host: Option<&[u8]>, target: &[u8]) {
         let req_url = Self::request_target_path(target);
         let Some(host) = Self::url_authority(host, &req_url) else {
@@ -920,8 +919,7 @@ impl Request {
             return;
         };
 
-        // Slice copies, not `core::fmt::write` (not monomorphized; shows up in per-request
-        // profiles). An href the URL parser rejects keeps the raw concatenation.
+        // Hand-assembled: `core::fmt::write` is not monomorphized and shows up in profiles.
         let protocol = self.get_protocol();
         let url_bytelength = protocol.len() + host.len() + req_url.len();
 

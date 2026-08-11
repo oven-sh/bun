@@ -407,10 +407,13 @@ body { color: blue; }`,
       stdout: "pipe",
     });
 
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
-    expect(exitCode).toBe(0);
-    expect(existsSync(`${dir}/${isWindows ? "app.exe" : "app"}`)).toBe(true);
+    expect({ stderr, exitCode, executable: existsSync(`${dir}/${isWindows ? "app.exe" : "app"}`) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      executable: true,
+    });
   });
 
   test("fails with splitting", async () => {

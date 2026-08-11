@@ -251,8 +251,9 @@ describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () =>
       expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
     );
     expect(() => Bun.spawn({ cmd: ["true"], cgroup: 1.5 })).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
+    expect(() => Bun.spawn({ cmd: ["true"], cgroup: -1 })).toThrow('The value of "cgroup" is out of range');
     expect(() => Bun.spawn({ cmd: ["true"], cgroup: "/sys/fs/cgroup/x\0y" })).toThrow("without null bytes");
   });
 

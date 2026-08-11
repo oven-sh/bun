@@ -2219,9 +2219,18 @@ impl CgroupTarget {
     }
 
     fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        use bun_sys_jsc::FdJsc as _;
-        if let Some(fd) = Fd::from_js_validated(value, global)? {
-            return Ok(Self::DirFd(fd));
+        if value.is_number() {
+            let fd = global.validate_integer_range::<i32>(
+                value,
+                0,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: i128::from(i32::MAX),
+                    field_name: b"cgroup",
+                    ..Default::default()
+                },
+            )?;
+            return Ok(Self::DirFd(Fd::from_native(fd)));
         }
         if value.is_string() {
             let path = value.to_slice(global)?;

@@ -194,6 +194,34 @@ pub(crate) fn write_output_files_to_disk(
             continue;
         }
 
+        // A duplicate chunk's content is identical to its canonical chunk,
+        // which already wrote the shared output path. Insert a placeholder to
+        // keep chunk indices aligned; it is removed (with index remapping)
+        // before the list is returned.
+        if chunk.is_duplicate_output() {
+            let _ = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
+                data: OutputFileData::Saved(0),
+                hash: None,
+                loader: chunk.content.loader(),
+                input_path: Box::default(),
+                display_size: 0,
+                output_kind: options::OutputKind::Chunk,
+                input_loader: Loader::Js,
+                output_path: Box::default(),
+                is_executable: false,
+                source_map_index: None,
+                bytecode_index: None,
+                module_info_index: None,
+                side: None,
+                entry_point_index: None,
+                referenced_css_chunks: Box::default(),
+                size: None,
+                source_index: IndexOptional::NONE,
+                bake_extra: BakeExtra::default(),
+            }));
+            continue;
+        }
+
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
         // Reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII

@@ -875,7 +875,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         match picohttp::Response::parse(body, &mut self.headers_buf) {
             Ok(response) => HeadParse::Done {
                 status_code: response.status_code,
-                head_len: usize::try_from(response.bytes_read).expect("int cast"),
+                head_len: response.bytes_read,
                 full: body.to_vec(),
             },
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
@@ -998,7 +998,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: forwards to the existing teardown path.
             return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
         };
-        let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
         // 101: one scope across 'upgrade'+'open' so microtasks drain after open.

@@ -3719,8 +3719,7 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            let bytes_read =
-                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
+            let bytes_read = parsed.bytes_read.min(to_read.len());
             to_read = &to_read[bytes_read..];
 
             if parsed.status_code == 101 {

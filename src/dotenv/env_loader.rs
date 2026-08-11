@@ -627,9 +627,6 @@ impl Loader {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // Go straight to `parse_bytes` to avoid the
-        // `Source.contents: &'static [u8]` lifetime constraint (callers like
-        // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
@@ -1257,9 +1254,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Same as [`parse`] but takes the source bytes directly. Exists so
-    /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
-    /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
+    /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
     fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,

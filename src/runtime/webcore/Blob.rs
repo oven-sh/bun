@@ -3362,7 +3362,7 @@ impl BlobExt for Blob {
                     // instead of cloned, which would double peak memory for
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
                     // treated as able to run user JS.
-                    let mut parts_can_run_js = iter.fast.is_none() || !stack.is_empty();
+                    let mut parts_can_run_js = !iter.is_fast() || !stack.is_empty();
                     if !parts_can_run_js {
                         let mut prescan = jsc::JSArrayIterator::init(current, global)?;
                         while let Some(item) = prescan.next()? {

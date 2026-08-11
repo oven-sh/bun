@@ -60,6 +60,12 @@ fn take(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     joined.extend_from_slice(&name);
                     joined.push(0);
                 }
+                if joined.len() > 4096 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "take: envGate names total {} bytes; the limit is 4096",
+                        joined.len()
+                    )));
+                }
                 Bun__startupSnapshotSetEnvGate(joined.as_ptr(), joined.len());
             }
         }

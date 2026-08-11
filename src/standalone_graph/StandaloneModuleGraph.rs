@@ -2403,8 +2403,6 @@ pub fn to_executable(
 }
 
 impl StandaloneModuleGraph {
-    /// Loads the standalone module graph from the executable, allocates it on the heap,
-    /// sets it globally, and returns the pointer.
     /// The trailer `Offsets` of this executable's own payload, readable long before the graph exists (restore runs first thing in main).
     fn offsets_early() -> Option<(*const u8, usize, Offsets)> {
         #[cfg(target_os = "macos")]
@@ -2453,6 +2451,8 @@ impl StandaloneModuleGraph {
         })
     }
 
+    /// Loads the standalone module graph from the executable, allocates it on the heap,
+    /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         {

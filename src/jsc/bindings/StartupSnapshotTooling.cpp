@@ -94,10 +94,10 @@ using namespace Bun::StartupSnapshot;
 extern "C" void Bun__requestSnapshot(JSC::VM*, const char* path);
 
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
-static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (first) live block seen
+static std::map<uintptr_t, size_t> s_pageSizeClass; // page -> block size of (first) live block seen
 static std::set<uintptr_t> s_profileCells; // cells changed during the "training" interaction
 static bool s_recordProfile = false;
-static std::vector<std::pair<uintptr_t, uint32_t>> s_liveBlocks; // (start, size) of live malloc blocks at freeze, sorted
+static std::vector<std::pair<uintptr_t, size_t>> s_liveBlocks; // (start, size) of live malloc blocks at freeze, sorted
 static std::vector<uintptr_t> s_cellPages; // sorted OS pages inside MarkedBlocks at freeze
 static bool recordUsedBlock(const mi_heap_t*, const mi_heap_area_t*, void* block, size_t block_size, void* arg)
 {
@@ -105,9 +105,9 @@ static bool recordUsedBlock(const mi_heap_t*, const mi_heap_area_t*, void* block
     size_t pg = *static_cast<size_t*>(arg);
     for (uintptr_t a = reinterpret_cast<uintptr_t>(block) & ~(pg - 1); a < reinterpret_cast<uintptr_t>(block) + block_size; a += pg) {
         s_payloadPages.push_back(a);
-        s_pageSizeClass.emplace(a, static_cast<uint32_t>(block_size));
+        s_pageSizeClass.emplace(a, block_size);
     }
-    s_liveBlocks.push_back({ reinterpret_cast<uintptr_t>(block), static_cast<uint32_t>(block_size) });
+    s_liveBlocks.push_back({ reinterpret_cast<uintptr_t>(block), block_size });
     return true;
 }
 static bool pageIn(const std::vector<uintptr_t>& v, uintptr_t a) { return std::binary_search(v.begin(), v.end(), a); }
@@ -613,7 +613,7 @@ static void dumpDirtyMap(JSC::VM& vm)
             }
             if (key == "<malloc/other>" && pageIn(s_payloadPages, a)) {
                 auto sc = s_pageSizeClass.find(a);
-                uint32_t bs = sc == s_pageSizeClass.end() ? 0 : sc->second;
+                size_t bs = sc == s_pageSizeClass.end() ? 0 : sc->second;
                 const char* bucket = bs <= 16 ? "<=16" : bs <= 32 ? "<=32"
                     : bs <= 48                                    ? "<=48"
                     : bs <= 64                                    ? "<=64"
@@ -655,7 +655,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         std::vector<uint8_t> orig(pg);
         size_t changedBytes = 0, dirtyPayloadPages = 0, pagesNoChange = 0;
         std::map<std::string, size_t> blockClass; // classification -> count
-        std::map<uint32_t, std::pair<size_t, size_t>> bySize; // block size -> (changedBlocks, changedBytes)
+        std::map<size_t, std::pair<size_t, size_t>> bySize; // block size -> (changedBlocks, changedBytes)
         std::set<uintptr_t> changedBlocks;
         for (auto& run : snapshotRuns) {
             size_t n = run.len / pg;
@@ -675,7 +675,7 @@ static void dumpDirtyMap(JSC::VM& vm)
                     any = true;
                     changedBytes += 8;
                     // find owning block
-                    auto it = std::upper_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(a + off, UINT32_MAX));
+                    auto it = std::upper_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(a + off, SIZE_MAX));
                     if (it == s_liveBlocks.begin()) {
                         blockClass["<not in live block (freed-at-freeze space)>"]++;
                         continue;
@@ -701,7 +701,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         };
         std::map<std::string, SigInfo> smallSigs;
         for (uintptr_t b : changedBlocks) {
-            auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
+            auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, (size_t)0));
             uint32_t sz = it->second;
             // re-diff this block
             size_t first = SIZE_MAX, cntw = 0;
@@ -763,7 +763,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         }
         fprintf(stderr, "[diffmap] dirtyPayloadPages=%zu (%.1fMB) pagesWithNoByteChange=%zu changedBytes=%.2fMB changedBlocks=%zu: firstWordOnly=%zu (refcount-like) small(<=4 words)=%zu larger=%zu; strayWrites(outside live blocks)=%zu\n",
             dirtyPayloadPages, dirtyPayloadPages * pg / 1048576.0, pagesNoChange, changedBytes / 1048576.0, changedBlocks.size(), onlyHeader8, small32, larger, blockClass["<not in live block (freed-at-freeze space)>"]);
-        std::vector<std::pair<size_t, uint32_t>> sizes;
+        std::vector<std::pair<size_t, size_t>> sizes;
         for (auto& [sz, v] : bySize)
             sizes.push_back({ v.first, sz });
         std::sort(sizes.begin(), sizes.end(), std::greater<>());
@@ -940,12 +940,12 @@ static void dumpDirtyMap(JSC::VM& vm)
                 if (FILE* f2 = fopen(path2, "w")) {
                     size_t hit = 0;
                     for (uintptr_t b : changedBlocks) {
-                        auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
-                        uint32_t sz = (it != s_liveBlocks.end() && it->first == b) ? it->second : 0;
+                        auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, (size_t)0));
+                        size_t sz = (it != s_liveBlocks.end() && it->first == b) ? it->second : 0;
                         auto s = ix.byAddr.find(b);
                         if (s == ix.byAddr.end()) continue;
                         hit++;
-                        fprintf(f2, "%u\t1\t0\t", sz);
+                        fprintf(f2, "%zu\t1\t0\t", sz);
                         for (size_t k = 0; k < s->second->n; k++)
                             fprintf(f2, "%s0x%lx", k ? ";" : "", (unsigned long)s->second->frames[k]);
                         fprintf(f2, "\n");
@@ -1016,7 +1016,7 @@ static void dumpDirtyMap(JSC::VM& vm)
         }
         fprintf(stderr, "[diffmap] changed blocks by block size (count, bytes changed):");
         for (size_t i = 0; i < std::min<size_t>(sizes.size(), 24); i++)
-            fprintf(stderr, " %u:%zu/%zuB", sizes[i].second, sizes[i].first, bySize[sizes[i].second].second);
+            fprintf(stderr, " %zu:%zu/%zuB", sizes[i].second, sizes[i].first, bySize[sizes[i].second].second);
         fprintf(stderr, "\n");
     }
 #endif

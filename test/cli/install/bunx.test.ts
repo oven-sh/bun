@@ -1453,53 +1453,77 @@ describe("paths that do not fit in the path buffer", () => {
     expect(exitCode).toBe(1);
   });
 
-  // $TMPDIR is deep enough that <cache>/node_modules/<pkg>/package.json, which
-  // bunx reads to learn the bin name, does not fit, while the shorter
-  // <cache>/node_modules/.bin/<bin> probe made before it still does. `overBy`
-  // is the number of bytes the package.json path exceeds the buffer by; at 0
-  // the path itself fits but its NUL terminator does not. Unix only: the cache
-  // location includes the uid, and on Windows the buffer is sized for the
-  // longest path the OS can address, so no existing directory can overflow it.
-  it.concurrent.skipIf(isWindows).each([0, 64])(
-    "cached package.json path exceeds the path buffer by %d bytes",
-    async overBy => {
-      const maxPathBytes = isLinux ? 4096 : 1024;
-      const { x_dir, env } = setup();
-      const scope = `@${Buffer.alloc(100, "s").toString()}`;
-      const bin = "bunx-deep-cache-fixture";
-      const pkg = `${scope}/${bin}`;
-      const cacheDirName = `bunx-${process.getuid!()}-${pkg}@latest`;
+  // $TMPDIR is padded so that <cache>/node_modules/<pkg>/package.json, which
+  // bunx reads to learn the cached package's bin name, lands right at the
+  // buffer size, while the shorter <cache>/node_modules/.bin/<name> probes
+  // always fit. `overBy` is the package.json path length minus the buffer
+  // size: one byte under, it fits together with its NUL terminator, bunx reads
+  // it and runs the bin it names (this also pins the cache layout the other two
+  // cases depend on); at exactly the buffer size only the terminator is out of
+  // room. Unix only: the cache location includes the uid, and on Windows the
+  // buffer is sized for the longest path the OS can address, so no existing
+  // directory can overflow it.
+  it.concurrent.skipIf(isWindows).each([
+    ["one byte under the path buffer size", -1],
+    ["exactly the path buffer size", 0],
+    ["64 bytes over the path buffer size", 64],
+  ] as const)("cached package.json path is %s", async (_label, overBy) => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+    const { x_dir, env } = setup();
+    const scope = `@${Buffer.alloc(100, "s").toString()}`;
+    const name = "bunx-deep-cache-fixture";
+    const pkg = `${scope}/${name}`;
+    const realBin = "deep-cache-real-bin";
+    const cacheDirName = `bunx-${process.getuid!()}-${pkg}@latest`;
 
-      // Pad the temp dir with nested directories until
-      // `${tmp}/${cacheDirName}/node_modules/${pkg}/package.json` is exactly
-      // maxPathBytes + overBy long. Each component stays well under NAME_MAX.
-      const tmpLength = maxPathBytes + overBy - `/${cacheDirName}/node_modules/${pkg}/package.json`.length;
-      let tmp = env.TMPDIR;
-      while (tmp.length < tmpLength) {
-        let component = Math.min(200, tmpLength - tmp.length - 1);
-        // Never leave exactly one byte, which would need an empty component.
-        if (tmpLength - tmp.length - 1 - component === 1) component--;
-        tmp += "/" + Buffer.alloc(component, "p").toString();
-      }
-      expect(tmp).toHaveLength(tmpLength);
-      expect(`${tmp}/${cacheDirName}/node_modules/.bin/${bin}`.length).toBeLessThan(maxPathBytes);
+    // Pad the temp dir with nested directories until
+    // `${tmp}/${cacheDirName}/node_modules/${pkg}/package.json` is exactly
+    // maxPathBytes + overBy long. Each component stays well under NAME_MAX.
+    const tmpLength = maxPathBytes + overBy - `/${cacheDirName}/node_modules/${pkg}/package.json`.length;
+    let tmp = env.TMPDIR;
+    while (tmp.length < tmpLength) {
+      let component = Math.min(200, tmpLength - tmp.length - 1);
+      // Never leave exactly one byte, which would need an empty component.
+      if (tmpLength - tmp.length - 1 - component === 1) component--;
+      tmp += "/" + Buffer.alloc(component, "p").toString();
+    }
+    expect(tmp).toHaveLength(tmpLength);
+    // `name` is the longer of the two bin names bunx probes for.
+    expect(realBin.length).toBeLessThanOrEqual(name.length);
+    expect(`${tmp}/${cacheDirName}/node_modules/.bin/${name}`.length).toBeLessThan(maxPathBytes);
 
-      const cacheDir = join(tmp, cacheDirName);
-      await mkdir(cacheDir, { recursive: true });
-      chmodSync(cacheDir, 0o755);
-      chmodSync(resolve(cacheDir, ".."), 0o755);
-      // A fresh cache entry, so bunx goes on to look up the bin name inside it.
-      await writeFile(join(cacheDir, "package.json"), "{}\n");
+    const cacheDir = join(tmp, cacheDirName);
+    const binDir = join(cacheDir, "node_modules", ".bin");
+    await mkdir(binDir, { recursive: true });
+    chmodSync(cacheDir, 0o755);
+    chmodSync(resolve(cacheDir, ".."), 0o755);
+    // A fresh cache entry, so bunx goes on to look up the bin name inside it.
+    await writeFile(join(cacheDir, "package.json"), "{}\n");
+    // The bin is always there; whether bunx can find out about it depends only
+    // on whether the package.json path fits.
+    await writeFile(join(binDir, realBin), "#!/bin/sh\necho DEEP_CACHE_REAL_BIN_RAN\n");
+    chmodSync(join(binDir, realBin), 0o755);
+    if (overBy < 0) {
+      const packageJson = join(cacheDir, "node_modules", pkg, "package.json");
+      expect(packageJson).toHaveLength(maxPathBytes + overBy);
+      await mkdir(join(cacheDir, "node_modules", pkg), { recursive: true });
+      await writeFile(packageJson, JSON.stringify({ name: pkg, version: "1.0.0", bin: { [realBin]: "cli.js" } }));
+    }
 
-      const [err, out, exitCode] = await run(
-        x_dir,
-        { ...env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, BUN_TMPDIR: tmp },
-        "--no-install",
-        pkg,
-      );
-      expect(err).toContain(`Could not find an existing '${bin}' binary to run.`);
+    const [err, out, exitCode] = await run(
+      x_dir,
+      { ...env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, BUN_TMPDIR: tmp },
+      "--no-install",
+      pkg,
+    );
+    if (overBy < 0) {
+      expect(err).toBe("");
+      expect(out).toBe("DEEP_CACHE_REAL_BIN_RAN\n");
+      expect(exitCode).toBe(0);
+    } else {
+      expect(err).toContain(`Could not find an existing '${name}' binary to run.`);
       expect(out).toHaveLength(0);
       expect(exitCode).toBe(1);
-    },
-  );
+    }
+  });
 });

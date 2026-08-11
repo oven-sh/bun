@@ -28,6 +28,7 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
+const ObjectDefineProperty = Object.defineProperty;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -1723,5 +1724,49 @@ Readable.wrap = function (src, options) {
     },
   }).wrap(src);
 };
+
+// Node installs these from lib/stream.js. Here net, tls, crypto, child_process and _stream_*
+// load this module without going through node:stream, so they are installed with the class.
+const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
+const opStreamKeys = ObjectKeys(streamReturningOperators);
+for (let i = 0; i < opStreamKeys.length; i++) {
+  const key = opStreamKeys[i];
+  const op = streamReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Readable.from(op.$apply(this, args));
+  }
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+const opPromiseKeys = ObjectKeys(promiseReturningOperators);
+for (let i = 0; i < opPromiseKeys.length; i++) {
+  const key = opPromiseKeys[i];
+  const op = promiseReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Promise.$resolve().then(() => op.$apply(this, args));
+  }
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
 
 export default Readable as unknown as typeof import("node:stream").Readable;

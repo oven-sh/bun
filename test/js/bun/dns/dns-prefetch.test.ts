@@ -59,28 +59,21 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
 // plain regression coverage everywhere else.
 describe("loopback names and AI_ADDRCONFIG", () => {
   test("names that get the filtered loopback family added back", () => {
-    const names = [
-      "localhost",
-      "LOCALHOST",
-      "app.localhost",
-      "a.b.LocalHost",
-      "notlocalhost",
-      "localhost.example",
-      "localhost2",
-      "127.0.0.1",
-      "",
-    ];
-    expect(Object.fromEntries(names.map(name => [name, dnsIsLocalhostName(name)]))).toEqual({
+    const expected = {
       "localhost": true,
       "LOCALHOST": true,
+      "localhost.": true,
       "app.localhost": true,
+      "app.localhost.": true,
       "a.b.LocalHost": true,
       "notlocalhost": false,
       "localhost.example": false,
       "localhost2": false,
+      "localhost..": false,
       "127.0.0.1": false,
       "": false,
-    });
+    };
+    expect(Object.fromEntries(Object.keys(expected).map(name => [name, dnsIsLocalhostName(name)]))).toEqual(expected);
   });
 
   test("the family AI_ADDRCONFIG answered with stays at the head of the unfiltered list", () => {

@@ -2398,9 +2398,10 @@ pub mod internal {
         hints_copy
     }
 
-    /// "localhost" or a name under it (RFC 6761 §6.3), as `normalize_dns_name` special-cases for `dns.lookup`.
+    /// "localhost" or a name under it, with or without the root dot (RFC 6761 §6.3).
     fn is_localhost_name(host: &[u8]) -> bool {
         const LOCALHOST: &[u8] = b"localhost";
+        let host = host.strip_suffix(b".").unwrap_or(host);
         let Some(prefix_len) = host.len().checked_sub(LOCALHOST.len()) else {
             return false;
         };

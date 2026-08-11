@@ -14,20 +14,13 @@ export const replacements: ReplacementRule[] = [
 ];
 
 /**
- * `$<name>(` calls that expand to a call with a numeric id prepended to the
- * arguments: `$ERR_FOO(` → `$makeErrorWithCode(<n>, ` for every error code in
- * ErrorCode.ts and `$inheritsBlob(` → `$inherits(<id>, ` for js_classes.ts.
- * Keyed by name (after the `$` → `__intrinsic__` rewrite) and applied with one
- * regex, `intrinsicCall` below. These used to be ~370 entries of
- * `replacements`, and running every one of them over each of the ~120k code
- * chunks bundle-modules slices was ~90% of that codegen step's time.
- *
- * Values are inserted verbatim, so they are spelled with `__intrinsic__`, which
- * is what the `$` in the `to:` strings above expands to.
+ * `$ERR_FOO(` → `$makeErrorWithCode(<n>, ` and `$inheritsFoo(` → `$inherits(<id>, `,
+ * keyed by name and applied in one pass by `intrinsicCall`. Values are inserted
+ * verbatim, after the `$` → `__intrinsic__` rewrite, so they are spelled with `__intrinsic__`.
  */
 const intrinsicCallReplacements = new Map<string, string>();
 
-/** First definition of a name wins, as it did when each name was its own rule. */
+/** First definition of a name wins. */
 function defineIntrinsicCall(name: string, to: string): void {
   if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`intrinsic call name must be an identifier: ${name}`);
   if (!intrinsicCallReplacements.has(name)) intrinsicCallReplacements.set(name, to);
@@ -49,11 +42,6 @@ for (let id = 0; id < jsclasses.length; id++) {
   defineIntrinsicCall(`inherits${jsclasses[id][0]}`, `__intrinsic__inherits(${id}, `);
 }
 
-/**
- * Matches what each of the former per-name rules matched (`\b__intrinsic__<name>\(`):
- * the name is a maximal identifier run, so a match corresponds to exactly one
- * entry of the map or, when the name is not in it, to no former rule at all.
- */
 const intrinsicCall = /\b__intrinsic__([A-Za-z0-9_]+)\(/g;
 
 // These rules are run on the entire file, including within strings.
@@ -214,9 +202,6 @@ export function applyReplacements(src: string, length: number) {
       replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
     );
   }
-  // Independent of the rules above: none of them produces or consumes a
-  // `__intrinsic__<name>(` call that is in the map, so running this after all
-  // of them matches the old interleaved rule order.
   if (slice.includes("__intrinsic__")) {
     slice = slice.replace(intrinsicCall, (call, name) => intrinsicCallReplacements.get(name) ?? call);
   }

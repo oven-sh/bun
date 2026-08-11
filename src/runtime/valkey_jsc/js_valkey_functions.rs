@@ -76,8 +76,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, false)
 }
 
-/// Forwards the arguments after a command's named ones (the `[NX | XX | GT | LT]` of
-/// `EXPIRE`), skipping `undefined`/`null` so an omitted optional argument sends nothing.
+/// Optional trailing arguments; `undefined`/`null` are skipped so an omitted option sends nothing.
 fn push_rest_args(
     global: &JSGlobalObject,
     function_name: &'static [u8],

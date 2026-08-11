@@ -1929,6 +1929,47 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+// GOAWAY's error code is an unsigned 32-bit field: codes above 2^31-1 must reach the peer as
+// passed (node reads the argument with Uint32Value). Client and server sessions share the native
+// goaway(), and opaqueData selects between its two send paths, so the cases vary both.
+it.each([
+  ["server", 0xffffffff, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+  ["server", 0x80000000, undefined],
+  ["client", 0xffffffff, undefined],
+  ["client", 0x80000000, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
+])("http2 %s session.goaway() sends an error code of %d unchanged", async (sender, code, opaqueData) => {
+  const server = http2.createServer();
+  const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+  const onGoawayEvent = (receivedCode, lastStreamID, receivedData) =>
+    onGoaway({ code: receivedCode, lastStreamID, opaqueData: receivedData });
+  server.on("session", session => {
+    if (sender === "server") session.goaway(code, 0, opaqueData);
+    else session.on("goaway", onGoawayEvent);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  // A non-zero GOAWAY destroys the session that receives it with ERR_HTTP2_SESSION_ERROR.
+  client.on("error", () => {});
+  try {
+    if (sender === "client") {
+      await new Promise(resolve => client.once("connect", resolve));
+      client.goaway(code, 0, opaqueData);
+    } else {
+      client.on("goaway", onGoawayEvent);
+    }
+
+    expect(await goawayReceived).toEqual({
+      code,
+      lastStreamID: 0,
+      opaqueData: opaqueData ?? Buffer.alloc(0),
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 session.goaway() opaqueData survives re-entrant buffer detach over a JS Duplex", async () => {
   // The cork-flush path re-enters JS (onWrite → Duplex _write) when the transport is a JS
   // stream. If that JS detaches the opaqueData ArrayBuffer mid-write, the GOAWAY payload must

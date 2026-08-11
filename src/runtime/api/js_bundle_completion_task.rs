@@ -329,8 +329,7 @@ impl JSBundleCompletionTask {
         let outdir: &[u8] = &self.config.outdir.list;
         let mut outfile: &[u8] = &compile_options.outfile.list;
 
-        // Same fallback as the CLI when the name is the directory it would overwrite;
-        // Windows targets get `.exe` appended, so they cannot collide.
+        // Windows targets get `.exe` appended, so the directory name cannot collide there.
         if compile_options.outfile_is_entry_dir_name
             && compile_options.compile_target.os != OperatingSystem::Windows
         {

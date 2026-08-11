@@ -135,13 +135,11 @@ pub fn target_base_public_path(
 /// See [`default_outfile`].
 pub struct DefaultOutfile<'a> {
     pub name: &'a [u8],
-    /// `name` is the entry point's directory name, so the output path is usually that
-    /// directory itself; callers fall back to `index` when it is.
+    /// Callers use `index` instead when the output path turns out to be that directory itself.
     pub is_dir_name: bool,
 }
 
-/// Executable name when compiling without an outfile: the entry point's file name
-/// without extension; for `index.*` and `bun.*` its directory name, else `index`.
+/// Entry file name minus extension; `index.*`/`bun.*` use the directory name (or `index` if none).
 pub fn default_outfile(entry_point: &[u8]) -> DefaultOutfile<'_> {
     let file_name = path::basename(entry_point);
     let name = &file_name[..file_name.len() - path::extension(file_name).len()];

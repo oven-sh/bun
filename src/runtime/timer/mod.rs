@@ -1228,6 +1228,38 @@ impl All {
         }
     }
 
+    /// Timers armed before a heap snapshot carry absolute CLOCK_MONOTONIC deadlines of the building process; shift them by (now - then).
+    pub(crate) unsafe fn rebase_after_snapshot_restore(
+        &mut self,
+        then: bun_core::Timespec,
+        now: bun_core::Timespec,
+    ) -> usize {
+        self.thread_id = std::thread::current().id(); // the builder's main thread's id, until now
+        let delta_ns: i128 = (now.sec as i128 - then.sec as i128) * 1_000_000_000
+            + (now.nsec as i128 - then.nsec as i128);
+        if then.sec == 0 && then.nsec == 0 {
+            return 0;
+        }
+        let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
+        while let Some(min) = self.timers.peek() {
+            // SAFETY: live heap node; removed before mutation of its key.
+            unsafe { self.timers.remove(min) };
+            nodes.push(min);
+        }
+        let moved = nodes.len();
+        for t in nodes {
+            // SAFETY: node was just removed from the heap and is otherwise owned by its TimerObject.
+            unsafe {
+                let cur: i128 = ((*t).next.sec as i128) * 1_000_000_000 + ((*t).next.nsec as i128);
+                let v = cur + delta_ns;
+                (*t).next.sec = (v.div_euclid(1_000_000_000)) as _;
+                (*t).next.nsec = (v.rem_euclid(1_000_000_000)) as _;
+                self.timers.insert(t);
+            }
+        }
+        moved
+    }
+
     /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
     /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
     /// and the JS pin (`this_value` Strong) are released before the GC sweep.

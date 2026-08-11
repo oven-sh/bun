@@ -613,22 +613,10 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 
-extern "C" void bun_initialize_process()
-{
-    // Disable printf() buffering. We buffer it ourselves.
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    setvbuf(stderr, nullptr, _IONBF, 0);
-
-#if OS(LINUX)
-    // Prevent leaking inherited file descriptors on Linux
-    // This is less of an issue for macOS due to posix_spawn
-    // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
-    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
-#endif
-
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
-
+// Which of fds 0-2 are terminals (termios saved for exit) or were closed (now /dev/null); rerun after a snapshot restore, whose copies describe the build's.
+static void bun_detect_stdio()
+{
     int devNullFd_ = -1;
     bool anyTTYs = false;
 
@@ -694,6 +682,36 @@ extern "C" void bun_initialize_process()
         sigaction(SIGTERM, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
     }
+}
+extern "C" void bun_refresh_stdio_after_snapshot_restore()
+{
+    for (int fd = 0; fd < 3; fd++) {
+        bun_stdio_tty[fd] = 0;
+        bun_is_stdio_null[fd] = 0;
+        bun_stdio_modified[fd] = 0;
+    }
+    bun_detect_stdio();
+}
+#else
+extern "C" void bun_refresh_stdio_after_snapshot_restore() {}
+#endif
+
+extern "C" void bun_initialize_process()
+{
+    // Disable printf() buffering. We buffer it ourselves.
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
+#if OS(LINUX)
+    // Prevent leaking inherited file descriptors on Linux
+    // This is less of an issue for macOS due to posix_spawn
+    // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
+    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
+    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
+    bun_detect_stdio();
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));

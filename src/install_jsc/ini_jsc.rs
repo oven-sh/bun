@@ -78,7 +78,9 @@ impl IniTestingAPIs {
                 )?;
             }
 
-            env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map { map: envmap }))
+            env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map::with_table(
+                envmap,
+            )))
         };
 
         let mut install = Box::new(BunInstall::default());

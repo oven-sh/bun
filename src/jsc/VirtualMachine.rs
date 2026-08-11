@@ -286,7 +286,7 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
-    pub(crate) origin_timestamp: u64,
+    pub origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     pub(crate) macro_event_loop: EventLoop,
@@ -296,7 +296,7 @@ pub struct VirtualMachine {
     pub(crate) ref_strings: crate::ref_string::Map,
     pub(crate) ref_strings_mutex: bun_threading::Mutex,
 
-    pub(crate) active_tasks: usize,
+    pub active_tasks: usize,
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
@@ -463,6 +463,12 @@ impl VMHolder {
     #[inline(always)]
     pub(crate) fn set_vm(vm: Option<*mut VirtualMachine>) {
         VM.set(vm)
+    }
+    /// Snapshot: install an existing VM (from the snapshot's static) as this thread's VM.
+    pub(crate) fn adopt(vm: *mut VirtualMachine) {
+        VM.set(Some(vm));
+        // SAFETY: `vm` is the snapshot's live main-thread VM.
+        CACHED_GLOBAL_OBJECT.set(Some(unsafe { (*vm).global }));
     }
     #[inline(always)]
     fn set_cached_global_object(g: Option<*mut JSGlobalObject>) {
@@ -704,6 +710,14 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
+    /// Snapshot: the main-thread VM recorded in a plain static (survives a snapshot restore, unlike TLS).
+    pub fn main_thread_vm_ptr() -> *mut VirtualMachine {
+        MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire)
+    }
+    pub fn adopt_on_current_thread(vm: *mut VirtualMachine) {
+        VMHolder::adopt(vm);
+    }
+
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
     /// per-thread singleton allocated once in [`init`] and never freed until
     /// thread teardown, so the `'static` lifetime is sound. Mutation goes
@@ -1189,6 +1203,7 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+            || (self.is_main_thread() && bun_core::startup_snapshot::snapshot_requested()) // keep turning until the outermost tick takes the snapshot
     }
 
     pub fn wakeup(&mut self) {
@@ -2076,6 +2091,8 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    /// A snapshot was requested and the resulting termination reached the top of the event loop: quiesce and write the snapshot (noreturn).
+    pub take_snapshot: fn(vm: *mut VirtualMachine) -> !,
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
@@ -2326,7 +2343,7 @@ unsafe extern "C" {
     ) -> *mut JSInternalPromise;
 }
 
-fn get_origin_timestamp() -> u64 {
+pub fn get_origin_timestamp() -> u64 {
     // Subtract the Y2K epoch so the timestamp fits in a u64 (nanoseconds).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3251,6 +3268,14 @@ fn ensure_source_code_printer() {
     }
 }
 
+/// Made on first use: thread-locals are not in a snapshot, so a restored process arrives here with the slot empty.
+pub(crate) fn source_code_printer() -> NonNull<bun_js_printer::BufferPrinter> {
+    ensure_source_code_printer();
+    SOURCE_CODE_PRINTER
+        .get()
+        .expect("ensure_source_code_printer just set it")
+}
+
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
 fn drop_source_code_printer() {
     if let Some(printer) = SOURCE_CODE_PRINTER.take() {
@@ -3479,29 +3504,17 @@ impl VirtualMachine {
         self.rare_data().mime_type_from_string(str_)
     }
 
-    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
-    pub fn load_extra_env_and_source_code_printer(&mut self) {
-        // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
-        // `&'static mut Loader` is independent of `&self`, so `map` may be held
-        // across the `&mut self` writes below.
+    /// Snapshot restore: defaults latched from the builder's environment must not survive; TLS verification in particular must not stay off.
+    pub fn forget_env_derived_defaults_for_snapshot_restore(&mut self) {
+        self.default_tls_reject_unauthorized = None;
+        self.default_verbose_fetch.set(None);
+    }
+
+    /// The channel belongs to the launch: run at boot, and again once a snapshot restore has reloaded the environment.
+    pub fn adopt_ipc_channel_from_env(&mut self) {
+        self.pending_ipc = None; // a builder that was itself spawned with a channel left one here
         let env = self.transpiler.env_mut();
         let map = &mut env.map;
-
-        ensure_source_code_printer();
-        // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, `__bun_macro_context_deinit` must not free it.
-        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
-
-        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
-            self.hide_bun_stackframes = false;
-        }
-
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
-            .unwrap_or(false)
-        {
-            self.transpiler_store.enabled = false;
-        }
-
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;
@@ -3534,6 +3547,30 @@ impl VirtualMachine {
                     ),
                 }
             }
+        }
+    }
+
+    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
+    pub fn load_extra_env_and_source_code_printer(&mut self) {
+        // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
+        // `&'static mut Loader` is independent of `&self`, so `map` may be held
+        // across the `&mut self` writes below.
+        let env = self.transpiler.env_mut();
+        let map = &mut env.map;
+
+        ensure_source_code_printer();
+        // The runtime VM owns the printer from here on — even if a macro had
+        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
+
+        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
+            self.hide_bun_stackframes = false;
+        }
+
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
+            .unwrap_or(false)
+        {
+            self.transpiler_store.enabled = false;
         }
 
         // Node.js checks if this is set to "1" and no other value
@@ -3575,6 +3612,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        self.adopt_ipc_channel_from_env(); // last: it takes its own borrow of the env map, so nothing above may still hold one
     }
 
     /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
@@ -4228,9 +4267,7 @@ impl VirtualMachine {
         }
         let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
 
-        let printer = SOURCE_CODE_PRINTER
-            .get()
-            .expect("source_code_printer not initialized");
+        let printer = source_code_printer();
 
         // Note: the §Dispatch shim takes path/loader/module_type/printer/
         // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see

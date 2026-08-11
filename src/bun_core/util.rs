@@ -2458,6 +2458,16 @@ impl<T> Once<T> {
     {
         *self.get_or_init(f)
     }
+    /// Back to uninitialized, so the next use recomputes. Only for `Copy` payloads (nothing to drop) and only while no other
+    /// thread can be using the value: a process that just resumed from a snapshot recomputing what it inherited from the build.
+    pub fn reset_for_snapshot_restore(&self)
+    where
+        T: Copy,
+    {
+        self.state
+            .store(ONCE_UNINIT, core::sync::atomic::Ordering::Release);
+    }
+
     /// Fast path: already initialised?
     #[inline(always)]
     pub fn get(&self) -> Option<&T> {
@@ -2761,8 +2771,11 @@ fn os_entropy(bytes: &mut [u8]) {
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
-    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
-    let r = CELL.get_or_init(|| {
+    // Per process, not once: a snapshot built at one path is routinely restored by the same executable at another (a compiled
+    // executable is built in one place and deployed to another), and process.execPath must say where this one is.
+    static CELL: crate::startup_snapshot::ProcessDerived<crate::CrateResult<ZBox>> =
+        crate::startup_snapshot::ProcessDerived::new();
+    let r = CELL.get(|| {
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
@@ -3544,7 +3557,12 @@ pub fn fast_random() -> u64 {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU64, Ordering as O};
     static SEED: AtomicU64 = AtomicU64::new(0);
+    static SEED_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     fn random_seed() -> u64 {
+        let epoch = crate::startup_snapshot::epoch();
+        if SEED_EPOCH.swap(epoch, O::Relaxed) != epoch {
+            SEED.store(0, O::Relaxed); // seed cached by the snapshot builder: draw a fresh one here
+        }
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
             // Should also apply to canary builds, but bun_core has no `canary`
@@ -3564,14 +3582,16 @@ pub fn fast_random() -> u64 {
         v
     }
     thread_local! {
-        static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };
+        static PRNG: Cell<Option<(u32, rand::DefaultPrng)>> = const { Cell::new(None) };
     }
     PRNG.with(|p| {
-        let mut prng = p
-            .take()
-            .unwrap_or_else(|| rand::DefaultPrng::init(random_seed()));
+        let epoch = crate::startup_snapshot::epoch();
+        let mut prng = match p.take() {
+            Some((e, prng)) if e == epoch => prng,
+            _ => rand::DefaultPrng::init(random_seed()), // first use, or first use since a snapshot restore (the snapshotd stream is the builder's)
+        };
         let v = prng.next_u64();
-        p.set(Some(prng));
+        p.set(Some((epoch, prng)));
         v
     })
 }
@@ -3726,10 +3746,16 @@ pub use bun_alloc::secure_zero;
 // `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
-static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
-static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
-static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
-static ARGV_INIT: std::sync::Once = std::sync::Once::new();
+// Launch-context derived (recomputed after a snapshot restore — see `snapshot::ProcessDerived`).
+static ARGV_STORAGE: crate::startup_snapshot::ProcessDerived<Vec<ZBox>> =
+    crate::startup_snapshot::ProcessDerived::new();
+struct ArgvView(RacyCell<&'static [&'static ZStr]>);
+// SAFETY: the view is written during single-threaded startup / restore adoption only (see `set_argv`).
+unsafe impl Sync for ArgvView {}
+// SAFETY: as above; the view holds only `'static` data.
+unsafe impl Send for ArgvView {}
+static ARGV: crate::startup_snapshot::ProcessDerived<ArgvView> =
+    crate::startup_snapshot::ProcessDerived::new();
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
 /// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
@@ -3758,6 +3784,28 @@ pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c
     OS_ARGV.store(argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
 }
 
+/// The raw launch inputs `main` received. A snapshot restore overlays this crate's statics with the builder's,
+/// so the restore sequence reads these before the overlay and hands them back after (`bun_launch_context_*`).
+#[repr(C)]
+pub struct LaunchContext {
+    pub argc: usize,
+    pub argv: *const *const core::ffi::c_char,
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn bun_launch_context_capture(out: &mut LaunchContext) {
+    out.argc = OS_ARGC.load(core::sync::atomic::Ordering::Relaxed);
+    out.argv = OS_ARGV
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .cast_const();
+}
+/// # Safety
+/// `ctx` must come from `bun_launch_context_capture` in this same process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bun_launch_context_restore(ctx: &LaunchContext) {
+    OS_ARGC.store(ctx.argc, core::sync::atomic::Ordering::Relaxed);
+    OS_ARGV.store(ctx.argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
 #[inline]
 #[cfg(not(windows))]
@@ -3773,7 +3821,7 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
 }
 
 fn argv_storage() -> &'static [ZBox] {
-    ARGV_STORAGE.get_or_init(|| {
+    ARGV_STORAGE.get(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
         // ANSI-encoded (CP_ACP) — `WideCharToMultiByte` lossy-converts the
         // UTF-16 command line, replacing unrepresentable code points with `?`.
@@ -3830,29 +3878,78 @@ fn argv_storage() -> &'static [ZBox] {
     })
 }
 
+/// Options a `--compile`d executable carries (its `compile_exec_argv`); spliced after argv[0] like BUN_OPTIONS.
+/// Invariant for the executable, so a plain static (set once by `boot_standalone`, before `argv()` is derived).
+static COMPILE_EXEC_ARGV: RacyCell<&'static [u8]> = RacyCell::new(b"");
+static COMPILE_EXEC_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// # Safety
+/// Single-threaded startup, before the first `argv()` read that should see the splice.
+pub unsafe fn set_compile_exec_argv(opts: &'static [u8]) {
+    // SAFETY: see fn doc.
+    unsafe { COMPILE_EXEC_ARGV.write(opts) };
+}
+/// Number of argv tokens that came from the executable's `compile_exec_argv` (valid after `argv()` was read).
+pub fn compile_exec_argc() -> usize {
+    let _ = argv_view();
+    COMPILE_EXEC_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// Where the user's own arguments begin in `argv()`, kept relative to the spliced-options prefix (argv[0] + compile-time
+/// options + `BUN_OPTIONS` tokens): that prefix is recomputed with `argv()` itself after a snapshot restore, and the launching
+/// process may carry a different `BUN_OPTIONS` than the one that built the snapshot, so an absolute index would slice wrong.
+static PASSTHROUGH_AFTER_PREFIX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(PASSTHROUGH_DISABLED);
+const PASSTHROUGH_DISABLED: usize = usize::MAX;
+fn spliced_prefix_len() -> usize {
+    let _ = argv_view();
+    1 + COMPILE_EXEC_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+        + BUN_OPTIONS_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// `offset` is an absolute index into the current `argv()`; 0 disables (the arguments are not a verbatim argv tail).
+pub fn set_standalone_passthrough_offset(offset: usize) {
+    // (name kept: also set for plain `bun entry args…` when the args are a verbatim argv tail)
+    let value = if offset == 0 {
+        PASSTHROUGH_DISABLED
+    } else {
+        offset.saturating_sub(spliced_prefix_len())
+    };
+    PASSTHROUGH_AFTER_PREFIX.store(value, core::sync::atomic::Ordering::Relaxed);
+}
+/// Absolute index into the current process's `argv()` (0 = disabled).
+pub fn standalone_passthrough_offset() -> usize {
+    match PASSTHROUGH_AFTER_PREFIX.load(core::sync::atomic::Ordering::Relaxed) {
+        PASSTHROUGH_DISABLED => 0,
+        after_prefix => (spliced_prefix_len() + after_prefix).min(argv_view().len()),
+    }
+}
+
 #[cold]
 #[inline(never)]
-fn argv_view_init() {
+fn argv_view_init() -> ArgvView {
     let storage: &'static [ZBox] = argv_storage();
-    // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
     let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-    // Splice BUN_OPTIONS tokens after argv[0].
+    // Final order is [argv0, compile-time options, BUN_OPTIONS tokens, the user's arguments], so BUN_OPTIONS overrides what
+    // was compiled in. `append_options_env` inserts at position 1, so the group that must end up leftmost is spliced last.
+    // Counts are stored even when a group is absent: this runs again in a process restored from a snapshot, whose
+    // environment may lack a BUN_OPTIONS the building process had.
+    let before = view.len();
     if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        let original_len = view.len();
         append_options_env::<&'static ZStr>(opts, &mut view);
-        set_bun_options_argc(view.len() - original_len);
     }
-    let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
-    // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(view) };
+    set_bun_options_argc(view.len() - before);
+    // SAFETY: written once during single-threaded startup.
+    let compile_opts = unsafe { COMPILE_EXEC_ARGV.read() };
+    let before = view.len();
+    if !compile_opts.is_empty() {
+        append_options_env::<&'static ZStr>(compile_opts, &mut view);
+    }
+    COMPILE_EXEC_ARGC.store(view.len() - before, core::sync::atomic::Ordering::Relaxed);
+    ArgvView(RacyCell::new(Vec::leak(view)))
 }
 
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
-    ARGV_INIT.call_once(argv_view_init);
-    // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
-    // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    // SAFETY: the RacyCell is only written by `set_argv` during single-threaded startup.
+    unsafe { ARGV.get(argv_view_init).0.read() }
 }
 
 #[derive(Clone, Copy)]
@@ -4109,10 +4206,8 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
 /// Caller must ensure no concurrent reads of `argv()` are in flight.
 #[inline]
 pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
-    // Prevent the lazy OS-argv init from later clobbering a manually-set view.
-    ARGV_INIT.call_once(|| {});
     // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
+    unsafe { ARGV.get(argv_view_init).0.write(v) };
 }
 
 /// Park an owned argv `Vec` in process-static storage and return the

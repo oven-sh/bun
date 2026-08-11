@@ -144,6 +144,7 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
 #[bun_jsc::host_fn]
 pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -185,6 +186,7 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -255,6 +257,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
 #[bun_jsc::host_fn]
 pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -292,6 +295,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
 #[bun_jsc::host_fn]
 pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -799,11 +803,13 @@ pub(crate) fn get_stat(
     global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     S3BlobStatTask::stat(global, this)
 }
 
 #[bun_jsc::host_fn]
 pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    global.throw_disabled_in_snapshot_error_if_needed("Bun.s3")?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());

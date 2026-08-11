@@ -803,6 +803,8 @@ public:
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
+    void armStdioBlobs();
+
     void finishCreation(JSC::VM&);
 
 private:

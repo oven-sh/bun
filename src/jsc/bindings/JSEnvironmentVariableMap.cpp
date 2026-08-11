@@ -1,8 +1,11 @@
 #include "root.h"
+#include <wtf/text/StringBuilder.h>
+#include <algorithm>
 #include "ZigGlobalObject.h"
 
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -632,6 +635,8 @@ bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
     }
 
     auto* store = sharedEnvStoreFor(object);
+    if (store && store->isRecordingReads()) [[unlikely]]
+        store->noteRead(String(uid));
     String value = store ? store->get(String(uid)) : String();
     if (value.isNull()) {
         return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
@@ -673,6 +678,16 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
+// Snapshot restore: the override static and the VM's date cache both hold the building process's zone; this launch's TZ (or its
+// absence, i.e. the system zone of this machine) applies instead. The caches are reset either way, since the cached zone is stale either way.
+extern "C" void Bun__refreshTimeZoneAfterSnapshotRestore(JSGlobalObject* globalObject, const char* tz, size_t tzLen)
+{
+    WTF::setTimeZoneOverride(String()); // first: a zone ICU rejects must leave the system zone in effect, as at boot, not the builder's override
+    if (tzLen > 0) // no length cap: boot (JSGlobalObject__setTimeZone) has none either
+        WTF::setTimeZoneOverride(String::fromUTF8(std::span { tz, tzLen }));
+    resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+}
+
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
     /* Node only treats the exact string "0" as disabling verification. */
@@ -783,10 +798,35 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
+// The innermost few JS frames, formatted like an error stack (source maps applied), as the key a copy of process.env is reported under.
+String snapshotReportCallSite(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = JSC::getVM(globalObject);
+    WTF::Vector<JSC::StackFrame> frames;
+    vm.interpreter.getStackTrace(globalObject, frames, 0, 4);
+    OrdinalNumber line = OrdinalNumber::beforeFirst();
+    OrdinalNumber column = OrdinalNumber::beforeFirst();
+    String sourceURL;
+    String formatted = Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, "Error"_s, String(), line, column, sourceURL, frames, nullptr);
+    StringBuilder site;
+    bool first = true;
+    for (auto frameLine : StringView(formatted).split('\n')) {
+        if (first) { // the "Error" header line
+            first = false;
+            continue;
+        }
+        site.append(site.isEmpty() ? ""_s : "\n"_s, "      "_s, frameLine.trim(isASCIIWhitespace<char16_t>));
+    }
+    return site.toString();
+}
+
 void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = JSC::getVM(globalObject);
     if (auto* store = sharedEnvStoreFor(object)) {
+        if (store->isRecordingReads()) [[unlikely]]
+            store->noteEnumeration(snapshotReportCallSite(globalObject));
         for (const auto& key : store->keys())
             propertyNames.add(JSC::Identifier::fromString(vm, key));
     }
@@ -949,6 +989,80 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     }
 
     return store;
+}
+
+// Snapshot build: from here on `process.env` is a view over a store, so a restored process can swap the contents
+// underneath every reference the app captured, and reads before the freeze can be reported when the snapshot is written.
+extern "C" void Bun__Process__useSharedEnvForSnapshotBuild(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    JSC::JSLockHolder lock(globalObject->vm());
+    if (RefPtr store = ensureSharedEnvStoreForWorker(globalObject))
+        store->startRecordingReads();
+}
+
+// Restore: refill the store from this process's environment (the loader has already been reloaded). Returns false when
+// process.env is not store-backed (a snapshot built without the step above), and the caller replaces the object instead.
+bool refillSharedEnvAfterSnapshotRestore(Zig::GlobalObject* globalObject, JSC::JSObject* freshEnvObject)
+{
+    auto* store = sharedEnvStoreFor(globalObject);
+    if (!store)
+        return false;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    freshEnvObject->methodTable()->getOwnPropertyNames(freshEnvObject, globalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    Vector<std::pair<String, String>> entries;
+    entries.reserveInitialCapacity(keys.size());
+    for (const auto& key : keys) {
+        JSValue value = freshEnvObject->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (value.isCallable())
+            continue;
+        String str = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        entries.append({ String(key.impl()), WTF::move(str) });
+    }
+    store->replaceAll(WTF::move(entries));
+    return true;
+}
+
+// Printed by the snapshot writer. `excluded` are the envGate names: those are handled by construction.
+void printEnvReadsBeforeSnapshot(Zig::GlobalObject* globalObject, const Vector<String>& excluded)
+{
+    auto* store = sharedEnvStoreFor(globalObject);
+    if (!store)
+        return;
+    Vector<String> names;
+    for (auto& name : store->readKeys()) {
+        if (!excluded.contains(name))
+            names.append(name);
+    }
+    std::sort(names.begin(), names.end(), WTF::codePointCompareLessThan);
+    unsigned enumerations = store->enumerations();
+    auto sites = store->enumerationSites();
+    store->finishRecordingReads();
+    if (names.isEmpty() && !enumerations)
+        return;
+    StringBuilder out;
+    out.append("snapshot: values read from process.env before the freeze are baked into the snapshot; read them in a 'restore' listener or list them in envGate:"_s);
+    if (enumerations) {
+        out.append("\n  process.env was enumerated or copied "_s, enumerations, enumerations == 1 ? " time"_s : " times"_s, " (every variable)"_s);
+        std::sort(sites.begin(), sites.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        for (auto& [site, count] : sites) {
+            out.append("\n    "_s, count, count == 1 ? " copy from:\n"_s : " copies from:\n"_s, site);
+        }
+    }
+    // A copy reads every variable on the way through; listing them individually would say nothing more.
+    if (!names.isEmpty() && (!enumerations || names.size() < store->keys().size())) {
+        out.append("\n  "_s);
+        for (size_t i = 0; i < names.size(); i++)
+            out.append(i ? ", "_s : ""_s, names[i]);
+    }
+    out.append('\n');
+    auto utf8 = out.toString().utf8();
+    fwrite(utf8.data(), 1, utf8.length(), stderr);
 }
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

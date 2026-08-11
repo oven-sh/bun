@@ -142,18 +142,20 @@ pub mod waiter_thread_flag {
 // on `worker.terminate()`).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod pdeathsig {
+    use core::cell::Cell;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::OnceLock;
-    use std::thread::ThreadId;
 
     static DEFAULT_PDEATHSIG_ON_LINUX: AtomicBool = AtomicBool::new(false);
-    static INSTALL_THREAD: OnceLock<ThreadId> = OnceLock::new();
+    thread_local! {
+        /// Set on the thread that armed the default; thread-local so a process restored from a snapshot (fresh TLS) has to re-arm via `readopt_arming_thread`.
+        static ARMING_THREAD: Cell<bool> = const { Cell::new(false) };
+    }
 
     /// Arm the default. Records the calling thread so `should_default` only
     /// returns `true` for spawns issued from that thread. Idempotent.
     pub fn set_default(enabled: bool) {
         if enabled {
-            let _ = INSTALL_THREAD.set(std::thread::current().id());
+            ARMING_THREAD.set(true);
         }
         DEFAULT_PDEATHSIG_ON_LINUX.store(enabled, Ordering::Release);
     }
@@ -172,7 +174,12 @@ pub mod pdeathsig {
     /// race the process-wide subreaper flag and reap each other's children.
     #[inline]
     pub fn is_arming_thread() -> bool {
-        INSTALL_THREAD.get().copied() == Some(std::thread::current().id())
+        ARMING_THREAD.get()
+    }
+
+    /// The main thread of a process restored from a snapshot calls this: the builder armed on its own main thread, whose TLS did not come along.
+    pub fn readopt_arming_thread() {
+        ARMING_THREAD.set(true);
     }
 }
 

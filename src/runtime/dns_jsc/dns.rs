@@ -2350,6 +2350,25 @@ pub mod internal {
 
     static GLOBAL_CACHE: bun_threading::Guarded<GlobalCache> =
         bun_threading::Guarded::new(GlobalCache::new());
+
+    /// snapshot restore: every cached answer was resolved on the builder's machine/network. Nothing is in flight at
+    /// restore, so entries with no waiters are freed and the table emptied; the next lookup asks this machine's resolver.
+    pub fn flush_dns_cache_for_snapshot_restore() {
+        let mut guard = global_cache().lock();
+        let cache: &mut GlobalCache = &mut guard;
+        for i in 0..cache.len {
+            let e = cache.cache[i];
+            // SAFETY: entries are heap `Request`s owned by the table while `GLOBAL_CACHE` is held.
+            unsafe {
+                if !e.is_null() && (*e).refcount == 0 {
+                    Request::deinit(e);
+                }
+            }
+            cache.cache[i] = ptr::null_mut();
+        }
+        cache.len = 0;
+        DNS_CACHE_SIZE.store(0, Ordering::Relaxed);
+    }
     #[inline]
     fn global_cache() -> &'static bun_threading::Guarded<GlobalCache> {
         &GLOBAL_CACHE
@@ -3065,6 +3084,7 @@ pub mod internal {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments();
 
         if arguments.len() < 1 {
@@ -4956,6 +4976,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<3>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -5048,6 +5069,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -5118,6 +5140,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -5387,6 +5410,7 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5928,6 +5952,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        global_this.throw_disabled_in_snapshot_error_if_needed("dns")?;
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 2 {

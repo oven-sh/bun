@@ -433,6 +433,18 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// The I/O class reading or writing this blob counts as while a snapshot is being built (`None` = not gated: memory, or stdio, which is each launch's own).
+    pub fn snapshot_io_kind(&self) -> Option<&'static str> {
+        match self.store.get().as_deref().map(|s| &s.data) {
+            Some(store::Data::File(file)) => match &file.pathlike {
+                PathOrFileDescriptor::Path(_) => Some("Bun.file"),
+                PathOrFileDescriptor::Fd(fd) => (!fd.is_stdio()).then_some("Bun.file"),
+            },
+            Some(store::Data::S3(_)) => Some("Bun.s3"), // network-class: refused under strict and local alike
+            _ => None,
+        }
+    }
+
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {

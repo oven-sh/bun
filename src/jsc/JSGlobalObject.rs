@@ -312,6 +312,56 @@ impl JSGlobalObject {
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
+    /// I/O whose result would be baked into a snapshot is refused while one is being built. Under `IoPolicy::Local`,
+    /// what only touches this machine (files, subprocesses, local listeners, the resolver) is allowed and recorded for the
+    /// report the snapshot writer prints; network use is refused regardless.
+    pub fn throw_disabled_in_snapshot_error_if_needed(
+        &self,
+        what: &'static str,
+    ) -> Result<(), JsError> {
+        if !bun_core::startup_snapshot::building() {
+            return Ok(());
+        }
+        if bun_core::startup_snapshot::io_allowed(what) {
+            bun_core::startup_snapshot::note_local_io(what, self.current_call_site_for_report());
+            return Ok(());
+        }
+        Err(self.throw_invalid_arguments(format_args!(
+            "{what} is not available while building a snapshot: its result would be frozen into every launch. Do it after restore (process.on('restore')), or allow it for the build with --snapshot-io, which reports every use"
+        )))
+    }
+
+    /// The innermost JS frames as an error stack would print them (source maps applied), for the build-time reports.
+    fn current_call_site_for_report(&self) -> Vec<u8> {
+        let err = self.create_error_instance(format_args!(""));
+        let Ok(Some(stack)) = err.get(self, "stack") else {
+            self.clear_exception(); // a user Error.prepareStackTrace may have thrown; the report is best-effort
+            return Vec::new();
+        };
+        let Ok(stack) = stack.to_bun_string(self) else {
+            self.clear_exception();
+            return Vec::new();
+        };
+        let utf8 = stack.to_utf8();
+        let mut site = Vec::new();
+        // Skip the message line; keep the four innermost frames.
+        for line in bun_core::strings::split(utf8.slice(), b"\n")
+            .skip(1)
+            .take(4)
+        {
+            let line = line.trim_ascii();
+            if line.is_empty() {
+                continue;
+            }
+            if !site.is_empty() {
+                site.push(b'\n');
+            }
+            site.extend_from_slice(b"      ");
+            site.extend_from_slice(line);
+        }
+        site
+    }
+
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)

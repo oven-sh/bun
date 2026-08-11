@@ -126,6 +126,8 @@ pub struct Loader {
     pub quiet: bool,
 
     pub(crate) did_load_process: bool,
+    /// Keys that came from the OS environment (so a snapshot restore can drop the builder's and load this process's).
+    process_keys: Vec<Box<[u8]>>,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
@@ -575,9 +577,29 @@ impl Loader {
             custom_files_loaded: StringArrayHashMap::default(),
             quiet: false,
             did_load_process: false,
+            process_keys: Vec::new(),
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
+    }
+
+    /// snapshot restore: the map holds the *builder's* environment. Drop those entries and load this process's environ.
+    pub fn reload_process_after_snapshot_restore(&mut self) -> Result<(), AllocError> {
+        for key in core::mem::take(&mut self.process_keys) {
+            self.map.remove(&key);
+        }
+        self.did_load_process = false;
+        // Derived lazily from the environment being replaced: re-derived from the new one on next use. The credentials in
+        // particular must not outlive the environment they came from.
+        self.reject_unauthorized.set(None);
+        self.aws_credentials = None;
+        self.load_process()?;
+        for (key, value) in core::mem::take(&mut self.map.shadowed_by_process) {
+            if self.map.get(&key).is_none() {
+                self.map.put(&key, &value)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn load_process(&mut self) -> Result<(), AllocError> {
@@ -595,10 +617,12 @@ impl Loader {
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
                     self.map.put(key, value)?;
+                    self.process_keys.push(Box::from(key));
                 }
             } else {
                 if !env.is_empty() {
                     self.map.put(env, b"")?;
+                    self.process_keys.push(Box::from(env));
                 }
             }
         }
@@ -1252,6 +1276,7 @@ impl<'a> Parser<'a> {
         map: &mut Map,
     ) -> Result<(), AllocError> {
         let mut count = map.map.count();
+        let shadowed_start = map.shadowed_by_process.len();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1266,6 +1291,9 @@ impl<'a> Parser<'a> {
                     // Allow keys defined later in the same file to override keys defined earlier
                     // https://github.com/oven-sh/bun/issues/1262
                     if !OVERRIDE {
+                        if bun_core::startup_snapshot::building() {
+                            map.shadowed_by_process.push((Box::from(key), value_owned));
+                        }
                         continue;
                     }
                 }
@@ -1286,6 +1314,29 @@ impl<'a> Parser<'a> {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
                     };
+                }
+                idx += 1;
+            }
+            // A key repeated in one file: the later line wins at boot (#1262), so keep only the last stash of each key from this file.
+            let mut i = shadowed_start;
+            while i < map.shadowed_by_process.len() {
+                let key = map.shadowed_by_process[i].0.clone();
+                let last = map
+                    .shadowed_by_process
+                    .iter()
+                    .rposition(|(k, _)| *k == key)
+                    .unwrap();
+                if last != i {
+                    map.shadowed_by_process.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            let mut idx = shadowed_start;
+            while idx < map.shadowed_by_process.len() {
+                let current: Box<[u8]> = map.shadowed_by_process[idx].1.clone();
+                if let Some(expanded) = self.expand_value(map, &current)? {
+                    map.shadowed_by_process[idx].1 = Box::from(expanded);
                 }
                 idx += 1;
             }
@@ -1334,6 +1385,8 @@ pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<Has
 
 pub struct Map {
     pub map: HashTable,
+    /// `.env` values a snapshot builder's environ shadowed; a restored launch whose environ lacks the key gets them, as a normal boot would.
+    shadowed_by_process: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
 impl Default for Map {
@@ -1436,8 +1489,13 @@ impl Map {
 
     #[inline]
     pub(crate) fn init() -> Map {
+        Self::with_table(HashTable::default())
+    }
+
+    pub fn with_table(map: HashTable) -> Map {
         Map {
-            map: HashTable::default(),
+            map,
+            shadowed_by_process: Vec::new(),
         }
     }
 
@@ -1522,9 +1580,7 @@ impl Map {
 
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
         // allocator param dropped — global mimalloc
-        Ok(Map {
-            map: self.map.clone()?,
-        })
+        Ok(Map::with_table(self.map.clone()?))
     }
 }
 

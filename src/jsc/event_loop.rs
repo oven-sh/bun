@@ -648,6 +648,17 @@ impl EventLoop {
 
     pub fn tick(&mut self) {
         jsc::mark_binding();
+        // The request is process-wide but only the main thread's loop may act on it: a worker's loop ticks through here too.
+        // SAFETY: `vm()` is this loop's live VM.
+        if self.entered_event_loop_count == 0
+            && bun_core::startup_snapshot::snapshot_requested()
+            && unsafe { (*self.vm()).is_main_thread() }
+        {
+            // Requested while idle (or the termination already unwound to here): outermost tick, no JS below us.
+            (crate::virtual_machine::runtime_hooks()
+                .expect("hooks")
+                .take_snapshot)(self.vm());
+        }
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         // The scope/counter cleanup is inlined at each return site below (a
@@ -678,6 +689,18 @@ impl EventLoop {
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
+                // Only at the outermost tick: a nested tick (wait_for_promise) still has the outer callback's frames below it,
+                // so it just returns and lets the termination keep unwinding; the outermost one gets here with a count of 0.
+                if self.entered_event_loop_count == 0
+                    && bun_core::startup_snapshot::snapshot_requested()
+                    // SAFETY: as above.
+                    && unsafe { (*self.vm()).is_main_thread() }
+                {
+                    // The termination was ours: every JS frame is gone; hand off to the runtime to write the snapshot.
+                    (crate::virtual_machine::runtime_hooks()
+                        .expect("hooks")
+                        .take_snapshot)(ctx);
+                }
                 return;
             }
             if refills == Self::CONCURRENT_REFILLS_PER_TICK {

@@ -1039,10 +1039,8 @@ pub mod ssl_wrapper {
                             self.flags.set_fatal_error(true);
                         }
 
-                        // Deliver what was decrypted (and anything parked ahead
-                        // of it, e.g. a NewSessionTicket that rode in with the
-                        // peer's close_notify) before the close tears the
-                        // wrapper down.
+                        // Also with read == 0: a ticket that arrived with the
+                        // close_notify is still parked.
                         if !self.dispatch_read(&buffer[0..read]) {
                             return false;
                         }
@@ -1074,14 +1072,11 @@ pub mod ssl_wrapper {
             true
         }
 
-        /// Hand a batch of decrypted bytes to the owner. Whatever the
-        /// `SSL_read`s that produced the batch parked (new sessions, keylog
-        /// lines) goes out first, the order `ssl_on_data` in openssl.c uses:
-        /// those records preceded the bytes on the wire, and the data
-        /// callback may close the wrapper, after which nothing would deliver
-        /// them (`deinit` frees the queues with the SSL). Returns false once a
-        /// callback closed or deinitialized the wrapper; the caller must then
-        /// stop touching the SSL.
+        /// Deliver a batch of decrypted bytes, preceded by the sessions/keylog
+        /// lines parked while decrypting it (wire order, and what openssl.c's
+        /// `ssl_on_data` does): a data callback that closes the socket frees
+        /// the queues along with the SSL. Returns false once a callback closed
+        /// the wrapper.
         fn dispatch_read(&self, data: &[u8]) -> bool {
             self.flush_pending_events();
             if self.ssl.get().is_none() || self.flags.closed_notified() {
@@ -1146,20 +1141,15 @@ pub mod ssl_wrapper {
                     self.handle_writing(&mut buffer);
                 }
 
-                // BoringSSL surfaces new-session tickets / keylog lines from
-                // inside SSL_do_handshake/SSL_read, where dispatching JS could
-                // free the SSL out from under the caller, so openssl.c parks
-                // them on the SSL. `dispatch_read` drained everything parked
-                // ahead of decrypted data; this picks up what a handshake
-                // flight or a read that yielded no application data parked.
+                // What the handshake, or a read that produced no application
+                // data, parked; `dispatch_read` covers the rest.
                 self.flush_pending_events();
             }
         }
 
-        /// Drain the parked new-session / keylog queues (sessions first, like
-        /// the C path) into the owner's callbacks. Only SSLs whose handlers
-        /// opted in ever park (see `init_with_ctx`), so this is a no-op FFI
-        /// probe otherwise.
+        /// Deliver the new-session / keylog entries openssl.c parked on the
+        /// SSL during `SSL_read`/`SSL_do_handshake` (only for handlers that
+        /// opted in, see `init_with_ctx`); sessions first, like the C path.
         fn flush_pending_events(&self) {
             let handlers = self.handlers.get();
             if let Some(on_session) = handlers.on_session {
@@ -1170,31 +1160,26 @@ pub mod ssl_wrapper {
             }
         }
 
-        /// Pop one queue dry. Each entry is detached from the SSL before its
-        /// callback runs, so the JS it dispatches may close the wrapper (and
-        /// `deinit` may `SSL_free` the rest of the queue) while the payload
-        /// being delivered stays valid; the liveness check before each pop is
-        /// what stops delivery once that happens, mirroring the closed-socket
-        /// check in openssl.c's `ssl_flush_pending_session`.
+        /// Each entry is detached from the SSL before `deliver` runs, so the
+        /// callback may close the wrapper (`SSL_free` takes the rest of the
+        /// queue with it) without invalidating the payload in flight.
         fn drain_pending(&self, pop: PopPendingFn, ctx: T, deliver: fn(T, &[u8])) {
             while !self.flags.closed_notified() {
                 let Some(ssl) = self.ssl.get() else { return };
                 let mut data: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
-                // SAFETY: `ssl` is live (checked above); `data`/`len` are the
-                // out-params `pop` fills when it returns an entry.
+                // SAFETY: `ssl` is live (checked above); the out-params are locals.
                 let Some(entry) =
                     NonNull::new(unsafe { pop(ssl.as_ptr(), &raw mut data, &raw mut len) })
                 else {
                     return;
                 };
                 let entry = scopeguard::guard(entry, |entry| {
-                    // SAFETY: `pop` handed this frame sole ownership of the
-                    // detached entry; this is its only release.
+                    // SAFETY: `pop` transferred the entry to us; freed exactly once here.
                     unsafe { us_ssl_free_pending(entry.as_ptr()) }
                 });
-                // SAFETY: `pop` pointed `data`/`len` at the payload stored
-                // inside `*entry`, which the guard keeps alive past `deliver`.
+                // SAFETY: `data`/`len` describe the payload inside `*entry`,
+                // which stays allocated until the guard drops below.
                 let payload = unsafe { bun_core::ffi::slice(data, len) };
                 deliver(ctx, payload);
                 drop(entry);
@@ -1218,9 +1203,8 @@ pub mod ssl_wrapper {
     }
 
     bun_opaque::opaque_ffi! {
-        /// One parked new-session / keylog entry (`struct
-        /// us_ssl_pending_session_t` in openssl.c), owned by whoever popped it
-        /// until `us_ssl_free_pending`.
+        /// A parked new-session / keylog entry (openssl.c); owned by whoever
+        /// popped it until `us_ssl_free_pending`.
         struct us_ssl_pending_session_t;
     }
 
@@ -1245,10 +1229,8 @@ pub mod ssl_wrapper {
         /// SSLs without the marker).
         // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
         fn us_ssl_enable_pending_events(ssl: *mut boring_sys::SSL);
-        /// Detach the oldest parked session/keylog entry from `ssl` and point
-        /// `out_data`/`out_len` at its payload; null when the queue is empty.
-        /// The entry outlives any later `SSL_free` and must be released with
-        /// `us_ssl_free_pending`.
+        /// Detach the oldest parked entry and expose its payload; null when
+        /// the queue is empty.
         // SAFETY (unsafe fn): `ssl` live; `out_data`/`out_len` writable.
         fn us_ssl_pop_pending_session(
             ssl: *mut boring_sys::SSL,

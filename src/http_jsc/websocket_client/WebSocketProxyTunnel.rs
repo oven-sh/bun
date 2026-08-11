@@ -37,7 +37,7 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::{CloseCode, NewSocketHandler, us_bun_verify_error_t};
 
 use super::websocket_upgrade_client::{
     HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient,
@@ -119,7 +119,11 @@ pub struct WebSocketProxyTunnel {
     connected_websocket: *mut WebSocketClient,
     /// SSL wrapper for TLS inside tunnel
     wrapper: Option<SslWrapperType>,
-    /// Socket reference (the proxy connection)
+    /// The proxy connection. Owned by the upgrade client, which stays alive
+    /// after the upgrade purely to pump this socket into the tunnel; it takes
+    /// the handle back (`None`) in [`Self::detach_upgrade_client`] when it
+    /// tears down. Until then the connected WebSocket closes the connection
+    /// through [`Self::close_socket`], since its own `tcp` is detached.
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
@@ -309,8 +313,8 @@ impl WebSocketProxyTunnel {
         }
 
         // Snapshot backref pointers via short raw-ptr reads; the dispatch below may
-        // re-enter `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
-        // so no `&Self`/`&mut Self` may be live across it.
+        // re-enter `tunnel.write/shutdown/clear_connected_web_socket/close_socket/
+        // detach_upgrade_client`, so no `&Self`/`&mut Self` may be live across it.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
             unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
@@ -436,13 +440,52 @@ impl WebSocketProxyTunnel {
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
-    /// do not re-enter the upgrade client's terminate/clearData path.
+    /// do not re-enter the upgrade client's terminate/clearData path. The
+    /// upgrade client owns `socket` and is closing it (or reacting to its
+    /// close), so the handle goes with it: a later [`Self::close_socket`] from
+    /// the connected WebSocket must not touch a socket that is already gone.
     ///
     /// # Safety
     /// Same contract as [`Self::clear_connected_web_socket`].
     pub(crate) unsafe fn detach_upgrade_client(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).upgrade_client = UpgradeClientUnion::None };
+        // SAFETY: caller contract: `this` is live; raw place writes, field-scoped.
+        unsafe {
+            (*this).upgrade_client = UpgradeClientUnion::None;
+            (*this).socket = SocketUnion::None;
+        }
+    }
+
+    /// Close the proxy connection: the tunnel-mode counterpart of the connected
+    /// WebSocket closing its `tcp` when it drops the connection itself
+    /// (`terminate()`, a protocol failure, finalization). The upgrade client
+    /// that owns the socket only closes it when the peer does, so without this
+    /// a client-side teardown leaves the connection, and the upgrade client
+    /// whose keep-alive holds the event loop, open until the proxy gives up.
+    ///
+    /// The close dispatches the upgrade client's `handle_close`, which drops
+    /// its ref on this tunnel and frees the upgrade client; the caller must
+    /// hold its own ref on `this` across the call. A TLS hop to the proxy still
+    /// gets a close_notify but is not kept open for the peer's reply the way
+    /// `Normal` would: `handle_close` is the only thing that releases the
+    /// upgrade client. A plain hop is reset, like `tcp.close()` on a plain
+    /// socket. No-op once the upgrade client has detached, i.e. the socket is
+    /// already closed or closing.
+    ///
+    /// # Safety
+    /// `this` must point to a live tunnel that `WebSocket::clear_data` has
+    /// already detached from its WebSocket: the upgrade client's teardown
+    /// shuts the tunnel down again, which must not reach back into a WebSocket
+    /// that is mid-teardown. Takes `*mut Self` because of that re-entry; the
+    /// socket handle is moved out first so no borrow of `*this` spans the close.
+    pub(crate) unsafe fn close_socket(this: *mut Self) {
+        bun_core::scoped_log!(WebSocketProxyTunnel, "closeSocket");
+        // SAFETY: caller contract: `this` is live; field-scoped raw take.
+        let socket = unsafe { ptr::replace(ptr::addr_of_mut!((*this).socket), SocketUnion::None) };
+        match socket {
+            SocketUnion::Ssl(socket) => socket.close(CloseCode::FastShutdown),
+            SocketUnion::Tcp(socket) => socket.close(CloseCode::Failure),
+            SocketUnion::None => {}
+        }
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -569,7 +612,13 @@ impl WebSocketProxyTunnel {
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
     pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
-        // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
+        // A write error fires `on_close(ctx)` → `WebSocket::fail` → `cancel`,
+        // which releases the WebSocket's ref and, via `close_socket`, the
+        // upgrade client's: without this ref the allocation `w` lives in
+        // would be freed while `write_data()` is still running.
+        // SAFETY: caller contract: `this` is live.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        // SAFETY: `this` is live; projection covers only `wrapper`.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {

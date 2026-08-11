@@ -1950,8 +1950,8 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
   expect(exception.stack.frames[0]).toEqual({
     function_name: "inner",
     file: join(String(dir), "server.ts"),
-    // 1-based, pointing at `TypeError` — the same position `bun` prints to the terminal
-    position: { line: 3, column: 19 },
+    // 1-based, pointing at `new`, the same position `bun` prints to the terminal
+    position: { line: 3, column: 15 },
     scope: 3, // function
   });
   expect(exception.stack.source_lines).toContainEqual({

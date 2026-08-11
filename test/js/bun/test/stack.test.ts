@@ -274,18 +274,27 @@ describe("SyntaxError .stack", () => {
     }
   });
 
-  test("a SyntaxError whose frames were collected by GC gets no <parse> frame when captured again", () => {
+  test.each([
+    ["new SyntaxError()", '(() => new SyntaxError("collected"))()', /^SyntaxError: collected$/],
+    // JSC flags a syntax error in eval code as a parse error but records no location for it, so
+    // once GC has recorded one it must not be rendered either. (Unlike new Function(), eval's
+    // parse-error path does not materialize .stack, so it is fine under BUN_JSC_validateExceptionChecks.)
+    ["eval()", '(() => { try { eval("{"); } catch (e) { return e; } })()', /^SyntaxError: /],
+    ["indirect eval", '(() => { try { (0, eval)("{"); } catch (e) { return e; } })()', /^SyntaxError: /],
+  ])("a SyntaxError from %s whose frames GC collected gets no <parse> frame when captured", (_, source, header) => {
     // Nothing but the error refers to the function that created it, so a full GC collects the
     // function and flushes the error's frames, recording gc-me.js as the error's sourceURL.
     // A few rounds in case a stale pointer on the native stack keeps the function alive once.
     for (let i = 0; i < 4; i++) {
-      const err: SyntaxError = new vm.Script('(() => new SyntaxError("collected"))()', {
-        filename: "gc-me.js",
-      }).runInThisContext();
+      const err: SyntaxError = new vm.Script(source, { filename: "gc-me.js" }).runInThisContext();
+      // The VM holds on to the most recently thrown exception, frames included, until the next throw.
+      try {
+        throw new Error("displaces the eval error as the VM's last exception");
+      } catch {}
       Bun.gc(true);
       Error.captureStackTrace(err);
       expect(stackLines(err).slice(0, 2)).toEqual([
-        "SyntaxError: collected",
+        expect.stringMatching(header),
         expect.stringMatching(/^    at .*stack\.test\.ts:\d+:\d+\)?$/),
       ]);
     }
@@ -298,8 +307,8 @@ describe("SyntaxError .stack", () => {
 
   test("a parser SyntaxError in a source without a URL has no <parse> frame", () => {
     // There is no file to point at, so an "at <parse> (:1)" line would only be noise.
-    // Not new Function("{") or eval: those materialize .stack from inside JSC's own parse-error
-    // path, which never checks for an exception from the stack hook, so they abort under
+    // Not new Function("{"): it materializes .stack from inside JSC's own parse-error path, which
+    // never checks for an exception from the stack hook, so it aborts under
     // BUN_JSC_validateExceptionChecks (see #30823). node:vm's path checks.
     const stack = caught(() => vm.compileFunction("{")).stack!;
     expect(stack).not.toContain("<parse>");

@@ -253,9 +253,18 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
     fn arena(&self) -> &bun_alloc::Arena {
         self.arena
     }
-    #[inline]
-    fn module_ref(&self) -> Ref {
-        self.module_ref
+    fn is_module_ref(&self, ref_: Ref) -> bool {
+        if ref_.eql(self.module_ref) {
+            return true;
+        }
+        if !ref_.is_symbol() {
+            return false;
+        }
+        // A file with ESM exports has no `module` binding (see
+        // `prepare_for_visit_pass`), so its `require.main === module` refers to
+        // an unbound `module`. Keep rewriting that to `import.meta.main`.
+        let symbol = &self.symbols[ref_.inner_index() as usize];
+        symbol.kind == bun_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"module"
     }
 }
 

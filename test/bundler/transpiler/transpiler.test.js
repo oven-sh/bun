@@ -3052,6 +3052,28 @@ console.log(resolve.length)
       expectPrinted_("Math.log('hi')", 'console.error("hi")');
     });
 
+    it("define replaces module/exports only where they are not CommonJS bindings", () => {
+      const defineModule = new Bun.Transpiler({
+        loader: "ts",
+        define: { module: '"defined-module"', exports: '"defined-exports"' },
+      });
+      const print = code => defineModule.transformSync(code).trim();
+
+      // A file with an `export` or top-level `await` has no `module`/`exports` bindings.
+      expect(print("export const a = [module, exports];")).toBe(
+        'export const a = ["defined-module", "defined-exports"];',
+      );
+      expect(print("await 0;\nconsole.log(module, exports);")).toBe(
+        'await 0;\nconsole.log("defined-module", "defined-exports");',
+      );
+
+      // A CommonJS file binds them to the wrapper's arguments, so the define does not apply.
+      expect(print("console.log(module, exports);")).toBe("console.log(module, exports);");
+      expect(print("import x from './x';\nconsole.log(module, exports, x);")).toBe(
+        'import x from "./x";\nconsole.log(module, exports, x);',
+      );
+    });
+
     it("jsx symbol should work", () => {
       expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });

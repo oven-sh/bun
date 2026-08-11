@@ -2146,6 +2146,110 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  // A file with ESM exports has no CommonJS `module`/`exports` bindings, so bare
+  // references to them are free identifiers and must be left alone. They used to
+  // bind to the file's internal CommonJS symbols, which the bundler renamed to
+  // `module_<file>` (never declared) and `exports_<file>` (the ESM namespace
+  // object), and `module.id` was inlined.
+  itBundled("edgecase/ESMFileModuleAndExportsAreFreeIdentifiers", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { describeEnv } from './lib';
+        // Exporting keeps ESM syntax in the output so it also runs as an ES module.
+        export const env = describeEnv();
+        console.log(env);
+      `,
+      "/lib.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        declare const module: any;
+        declare const exports: any;
+
+        export function describeEnv() {
+          return [
+            capture(typeof module),
+            capture(typeof exports),
+            typeof module === 'undefined' ? 'no module' : capture(module.id),
+            typeof exports === 'undefined' ? 'no exports' : capture(exports.foo),
+            capture(require.main === module),
+          ].join(', ');
+        }
+      `,
+    },
+    capture: ["typeof module", "typeof exports", "module.id", "exports.foo", "false"],
+    run: {
+      stdout: "undefined, undefined, no module, no exports, false",
+    },
+  });
+  itBundled("edgecase/ESMFileModuleAndExportsAreFreeIdentifiersMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        await Promise.resolve();
+        console.log(capture(typeof module), capture(typeof exports));
+      `,
+    },
+    minifyIdentifiers: true,
+    capture: ["typeof module", "typeof exports"],
+    run: {
+      stdout: "undefined undefined",
+    },
+  });
+  // With the CommonJS output format the free identifiers refer to the output
+  // file's own `module`/`exports`, as they would in the unbundled source.
+  itBundled("edgecase/ESMFileModuleAndExportsAreFreeIdentifiersFormatCJS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { install } from './install';
+        install();
+      `,
+      "/install.ts": /* ts */ `
+        declare const module: any;
+        declare const exports: any;
+
+        export function install() {
+          console.log(typeof module, typeof exports, module.exports === exports);
+        }
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(/\b(?:module|exports)_install\b/);
+    },
+    run: [{ stdout: "object object true" }, { runtime: "node", stdout: "object object true" }],
+  });
+  // `define` only applies to free identifiers, so it replaces `module`/`exports`
+  // in a file with ESM exports but not in a CommonJS file, where they are the
+  // wrapper's arguments.
+  itBundled("edgecase/DefineModuleAndExportsInESMFile", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { esm } from './esm';
+        import { cjs } from './cjs';
+        console.log(esm(), cjs());
+      `,
+      "/esm.ts": /* ts */ `
+        declare const module: string;
+        declare const exports: string;
+
+        export function esm() {
+          return module + ' ' + exports;
+        }
+      `,
+      "/cjs.js": /* js */ `
+        exports.cjs = function () {
+          return typeof module + ' ' + typeof exports;
+        };
+      `,
+    },
+    define: {
+      module: '"defined-module"',
+      exports: '"defined-exports"',
+    },
+    run: {
+      stdout: "defined-module defined-exports object object",
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

@@ -385,7 +385,9 @@ static int us_quic_sni_eq(const char *a, const char *b, size_t len) {
     return 1;
 }
 
-/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
+/* Exact match, then `*.tail` wildcards. Like the TCP listener's SNI tree
+ * (crypto/sni_tree.cpp), the `*` stands for exactly one label: "a.tail"
+ * matches, "tail" and "a.b.tail" do not. */
 static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
     if (!sni) return ctx->ssl_ctx;
     size_t sl = strlen(sni);
@@ -397,7 +399,9 @@ static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni
         const char *n = ctx->sni[i].name;
         if (n[0] == '*' && n[1] == '.') {
             size_t tl = strlen(n + 1);
-            if (sl > tl && us_quic_sni_eq(sni + sl - tl, n + 1, tl)) return ctx->sni[i].ctx;
+            if (sl > tl && !memchr(sni, '.', sl - tl) && us_quic_sni_eq(sni + sl - tl, n + 1, tl)) {
+                return ctx->sni[i].ctx;
+            }
         }
     }
     return ctx->ssl_ctx;

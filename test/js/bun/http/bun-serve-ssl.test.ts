@@ -225,10 +225,9 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 
-  test("a case-variant SNI cannot bypass a gated serverName entry", async () => {
-    // SNI server names are DNS names, so matching is case-insensitive
-    // (RFC 4343). A byte-for-byte match would let ADMIN.EXAMPLE.COM fall
-    // through to the ungated default context.
+  test("the entry's policy applies however the client spells the name", async () => {
+    // SNI server names are DNS names (RFC 4343): ADMIN.EXAMPLE.COM selects the
+    // admin.example.com entry, not the default one.
     using server = Bun.serve({
       port: 0,
       tls: [

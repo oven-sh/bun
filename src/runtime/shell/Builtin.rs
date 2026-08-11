@@ -290,7 +290,7 @@ impl Drop for PinnedArrayBuf {
 }
 
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
+/// dropping the last one releases the blob's store.
 pub struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }

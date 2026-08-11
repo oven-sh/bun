@@ -4473,16 +4473,10 @@ unsafe fn transpile_file(
             return ptr::null_mut();
         }
     };
-    // Deinit the blob (if any) on scope exit.
-    // Note: reshaped for borrowck — capture the `is_some()` flag *before*
-    // moving the option into the scopeguard so the `transpile_async` predicate
-    // can still read it without aliasing the guard's `&mut`.
+    // `blob_to_deinit` stays alive (and so does the store `lr` /
+    // `virtual_source_to_use` point into) until this function returns, where
+    // its drop releases the store.
     let had_blob = blob_to_deinit.is_some();
-    let _blob_guard = scopeguard::guard(blob_to_deinit, |mut slot| {
-        if let Some(mut blob) = slot.take() {
-            blob.deinit();
-        }
-    });
 
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {

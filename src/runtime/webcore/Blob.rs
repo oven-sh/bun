@@ -141,7 +141,7 @@ pub use bun_jsc::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 // BlobExt — `bun_runtime`-tier behaviour layered on the `bun_jsc` data type.
-// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/`deinit`/…)
+// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/…)
 // live on `bun_jsc::webcore_types::Blob`; everything that touches the event
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
@@ -584,7 +584,6 @@ impl BlobExt for Blob {
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) {
                     self.poll.unref(bun_io::js_vm_ctx());
-                    self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
                     // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
@@ -650,7 +649,7 @@ impl BlobExt for Blob {
                 payer = s3.request_payer;
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
-            // it stays valid until `Task::done` deinits the blob in the callback.
+            // it stays valid until `Task::done` drops the task in the callback.
             let path = unsafe { &*path };
             let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
@@ -4075,16 +4074,15 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // Bun.file() keeps its window's end. MAX_SIZE means unknown.
     let mut file_size: Option<u64> = None;
 
-    let blob: *mut Blob = match store_tag {
-        store::SerializeTag::Bytes => 'bytes: {
+    // `blob` stays by value until every field has been read: an early return
+    // below drops it, which releases its store (and with it the payload
+    // bytes). It is heap-promoted only once the record has fully parsed.
+    let blob: Blob = match store_tag {
+        store::SerializeTag::Bytes => {
             let bytes_len = reader.read_int_le::<u32>()?;
             let bytes = read_slice(reader, bytes_len as usize)?;
 
             let blob = Blob::init(bytes, global_this);
-            // `blob` now owns `bytes` (via its Store when non-empty). If any
-            // of the remaining reads fail before we heap-promote it, Drop on
-            // `blob` releases the store so the payload bytes don't leak.
-            let guard = scopeguard::guard(blob, |mut b| b.deinit());
 
             'versions: {
                 if version == 1 {
@@ -4094,8 +4092,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let name_len = reader.read_int_le::<u32>()?;
                 let name = read_slice(reader, name_len as usize)?;
 
-                // ScopeGuard derefs to its inner Blob.
-                if let Some(store) = (*guard).store() {
+                if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
@@ -4109,10 +4106,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
             }
 
-            let blob = scopeguard::ScopeGuard::into_inner(guard);
-            break 'bytes Blob::new(blob);
+            blob
         }
-        store::SerializeTag::File => 'file: {
+        store::SerializeTag::File => {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
@@ -4132,11 +4128,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
-                        &mut path_or_fd,
-                        global_this,
-                        true,
-                    ));
+                    Blob::find_or_create_file_from_path(&mut path_or_fd, global_this, true)
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
@@ -4154,25 +4146,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
                         bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
                     ));
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
-                        &mut dest,
-                        global_this,
-                        true,
-                    ));
+                    Blob::find_or_create_file_from_path(&mut dest, global_this, true)
                 }
             }
         }
-        store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
+        store::SerializeTag::Empty => Blob::init_empty(global_this),
     };
-    // `blob` is heap-allocated past this point; on any remaining error
-    // (truncated trailer fields) tear down both the heap object and its
-    // store. `content_type` is handled by its own Drop above since it
-    // hasn't been attached to `blob` yet.
-    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
-    // SAFETY: `blob_guard` holds the sole pointer to the fresh heap allocation.
-    // Shared access only — Blob state is Cell/JsCell-based.
-    let blob = unsafe { &**blob_guard };
 
     'versions: {
         if version == 1 {
@@ -4197,11 +4176,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             break 'versions;
         }
     }
-
-    debug_assert!(
-        blob.is_heap_allocated(),
-        "expected blob to be heap-allocated"
-    );
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
@@ -4229,9 +4203,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         blob.content_type_was_set.set(content_type_was_set);
     }
 
-    let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
-    // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
-    // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+    let blob_ptr = Blob::new(blob);
+    // SAFETY: `blob_ptr` is the fresh `Blob::new` allocation; `to_js` hands it
+    // to the JS wrapper, whose finalizer releases the count `new` gave it.
     Ok(unsafe { BlobExt::to_js(&*blob_ptr, global_this) })
 }
 
@@ -5881,9 +5855,8 @@ impl S3BlobDownloadTask {
 
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
-        Blob::deinit(&mut self.blob);
         self.poll_ref.unref(bun_io::js_vm_ctx());
-        // promise: Drop handles deinit.
+        // `blob` and `promise` are released by their own drops.
     }
 }
 

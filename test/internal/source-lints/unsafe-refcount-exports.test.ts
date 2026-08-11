@@ -10,8 +10,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // Adjusting an intrusive count is only sound when the caller holds a count on
 // an object that is actually refcounted, and no signature can prove that:
 // releasing a count nobody owns frees the object out from under its owner, and
-// bumping the count of a by-value instance turns its ordinary teardown into a
-// free of a non-heap address. That obligation has to be an `unsafe` contract on
+// bumping the count of a by-value instance makes the release that later
+// balances it free a non-heap address. That obligation has to be an `unsafe` contract on
 // the export itself, because the same symbol is callable from Rust (the
 // `ExternalSharedDescriptor` impl, finalizers) as well as from the C++
 // `RefDerefTraits` it exists for.

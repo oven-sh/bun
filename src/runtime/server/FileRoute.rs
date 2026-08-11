@@ -23,7 +23,6 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = FileRoute::deinit)]
 pub struct FileRoute {
     // Owned via intrusive refcount; the
     // raw `*mut FileRoute` is round-tripped through `FileResponseStream`'s
@@ -129,16 +128,6 @@ impl FileRoute {
             status_code: opts.status_code,
             stat_hash: Cell::new(StatHash::default()),
         }))
-    }
-
-    fn deinit(this: *mut FileRoute) {
-        // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
-        // intrusive ref_count has reached 0.
-        // `headers` is freed by its own Drop when the Box is dropped.
-        unsafe {
-            (*this).blob.deinit();
-            drop(bun_core::heap::take(this));
-        }
     }
 
     pub fn from_js(global: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut FileRoute>> {

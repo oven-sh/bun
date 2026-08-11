@@ -177,7 +177,12 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            // The synthetic <parse> frame shows the source JSC's parser rejected, which it
+            // records on the error via addErrorInfo(). A SyntaxError from user code, JSON.parse,
+            // RegExp, etc. records no sourceURL, so there is no parse location to show.
+            // (isParseError() is not usable here: ParserError::toErrorObject sets it only after
+            // addErrorInfo() has already materialized .stack.)
+            if (err->errorType() == ErrorType::SyntaxError && !err->sourceURL().isEmpty() && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
                 // /* empty comment */

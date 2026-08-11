@@ -2,6 +2,8 @@
 // entrypoint has top-level await. loadEntryPoint() returns a promise without
 // blocking, so the call site at bun.js.zig:466 is hit synchronously before the
 // main event loop spins — TLA resolution happens later in that loop.
+// BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, read by the compiled binary at
+// runtime, skips the hint.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "node:path";
@@ -43,6 +45,40 @@ test.skipIf(isWindows || !isDebug)(
       // Scoped loggers write to the debug-writer stream (stdout by default).
       // Either the success or failure variant proves the call site is reached.
       expect(stdout).toContain("hintSourcePagesDontNeed:");
+      expect(stdout).not.toContain("hintSourcePagesDontNeed: skipped");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE is read by the compiled
+    // executable at runtime (the binary above was built without it), and a
+    // falsy value leaves the hint enabled.
+    for (const [value, skipped] of [
+      ["1", true],
+      ["0", false],
+    ] as const) {
+      await using proc = Bun.spawn({
+        cmd: [out],
+        env: {
+          ...bunEnv,
+          BUN_DEBUG_StandaloneModuleGraph: "1",
+          BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: value,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("before-await");
+      expect(stdout).toContain("after-await");
+      if (skipped) {
+        expect(stdout).toContain("hintSourcePagesDontNeed: skipped (BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE)");
+        expect(stdout).not.toContain("hintSourcePagesDontNeed: MADV_DONTNEED");
+        expect(stdout).not.toContain("hintSourcePagesDontNeed: madvise failed");
+      } else {
+        expect(stdout).toContain("hintSourcePagesDontNeed:");
+        expect(stdout).not.toContain("hintSourcePagesDontNeed: skipped");
+      }
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     }

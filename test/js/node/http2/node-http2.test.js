@@ -2539,6 +2539,145 @@ it("http2 client.setNextStreamID validates input", async () => {
   });
 });
 
+// node defines setNextStreamID on Http2Session, so a server session has it as well: there it
+// chooses the id of the next pushed stream.
+it("http2 server session setNextStreamID picks the id of the next pushed stream", async () => {
+  const serverSide = {};
+  const { promise: serverDone, resolve: onServerDone, reject: onServerError } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const { session } = stream;
+    try {
+      serverSide.beforeSet = session.state.nextStreamID;
+      session.setNextStreamID(100);
+      serverSide.afterSet = session.state.nextStreamID;
+    } catch (err) {
+      onServerError(err);
+      stream.respond({ ":status": 500 });
+      stream.end();
+      return;
+    }
+    stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+      if (err) {
+        onServerError(err);
+        stream.destroy(err);
+        return;
+      }
+      serverSide.pushedId = pushed.id;
+      serverSide.afterPush = session.state.nextStreamID;
+      pushed.respond({ ":status": 200 });
+      pushed.end("pushed");
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+      onServerDone();
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const { promise: pushed, resolve: onPushed, reject: onClientError } = Promise.withResolvers();
+    client.on("error", onClientError);
+    client.on("stream", (pushStream, headers) => {
+      pushStream.on("error", onClientError);
+      pushStream.setEncoding("utf8");
+      let body = "";
+      pushStream.on("data", chunk => (body += chunk));
+      pushStream.on("end", () => onPushed({ id: pushStream.id, path: headers[":path"], body }));
+    });
+    const { promise: response, resolve: onResponse } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onClientError);
+    req.setEncoding("utf8");
+    let responseBody = "";
+    req.on("data", chunk => (responseBody += chunk));
+    req.on("end", () => onResponse(responseBody));
+
+    // Promise.all: an error on either side fails the test right away instead of stalling it.
+    const [, pushedStream, body] = await Promise.all([serverDone, pushed, response]);
+    expect(serverSide).toEqual({ beforeSet: 2, afterSet: 100, pushedId: 100, afterPush: 102 });
+    expect(pushedStream).toEqual({ id: 100, path: "/pushed", body: "pushed" });
+    expect(body).toBe("ok");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 server session setNextStreamID validates its argument like the client", async () => {
+  const { promise: observed, resolve: onObserved, reject: onUnexpected } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("session", session => {
+    const thrownBy = fn => {
+      try {
+        fn();
+        return "did not throw";
+      } catch (err) {
+        return { name: err.name, code: err.code, message: err.message };
+      }
+    };
+    try {
+      const initial = session.state.nextStreamID;
+      const errors = {
+        zero: thrownBy(() => session.setNextStreamID(0)),
+        negative: thrownBy(() => session.setNextStreamID(-1)),
+        tooLarge: thrownBy(() => session.setNextStreamID(2 ** 32)),
+        string: thrownBy(() => session.setNextStreamID("1")),
+        missing: thrownBy(() => session.setNextStreamID()),
+      };
+      const afterRejectedCalls = session.state.nextStreamID;
+      session.destroy();
+      onObserved({
+        initial,
+        errors,
+        afterRejectedCalls,
+        destroyed: thrownBy(() => session.setNextStreamID(2)),
+        // The destroyed check runs before argument validation, as it does on a client session.
+        destroyedMissing: thrownBy(() => session.setNextStreamID()),
+      });
+    } catch (err) {
+      onUnexpected(err);
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", onUnexpected);
+  try {
+    const outOfRange = received => ({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "id" is out of range. It must be > 0 and <= 4294967295. Received ${received}`,
+    });
+    const invalidType = received => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "id" argument must be of type number. Received ${received}`,
+    });
+    const invalidSession = {
+      name: "Error",
+      code: "ERR_HTTP2_INVALID_SESSION",
+      message: "The session has been destroyed",
+    };
+    expect(await observed).toEqual({
+      initial: 2,
+      errors: {
+        zero: outOfRange("0"),
+        negative: outOfRange("-1"),
+        tooLarge: outOfRange("4294967296"),
+        string: invalidType("type string ('1')"),
+        missing: invalidType("undefined"),
+      },
+      afterRejectedCalls: 2,
+      destroyed: invalidSession,
+      destroyedMissing: invalidSession,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 request.destroy() with error", async () => {
   const server = http2.createServer();
 

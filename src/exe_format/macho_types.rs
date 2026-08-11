@@ -1,13 +1,6 @@
 //! Mach-O type definitions needed by `macho.rs`. All structs are `#[repr(C)]`
 //! POD matching the on-disk Mach-O format so they can be read/written via
 //! unaligned `ptr::{read,write}_unaligned`.
-//!
-//! `LoadCommandIterator` deliberately stores a raw `*const u8` rather than a
-//! borrowed `&'a [u8]`: macho.rs interleaves iterator reads with in-place
-//! mutation of the same backing `Vec<u8>`. Holding a Rust borrow across that
-//! mutation would force a structural rewrite; raw pointers avoid that.
-//! SAFETY contract: callers must not reallocate or shrink the backing buffer
-//! while a `LoadCommandIterator` derived from it is live.
 
 #![allow(non_camel_case_types, non_snake_case)]
 
@@ -15,7 +8,8 @@
 // crate, also consumed by `crash_handler`). Re-export so `exe_format::macho`
 // keeps its existing `macho::segment_command_64` etc. paths.
 pub use bun_sys::macho::{
-    cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
+    LoadCommandIterator, cpu_subtype_t, cpu_type_t, load_command, mach_header_64,
+    segment_command_64, vm_prot_t,
 };
 
 pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
@@ -82,6 +76,10 @@ pub(crate) struct linkedit_data_command {
     pub dataoff: u32,
     pub datasize: u32,
 }
+// SAFETY: `#[repr(C)]` 4×u32: no padding, every bit pattern is valid.
+unsafe impl bytemuck::Zeroable for linkedit_data_command {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for linkedit_data_command {}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -189,11 +187,6 @@ unsafe impl bytemuck::NoUninit for CodeDirectory {}
 unsafe impl bytemuck::NoUninit for BlobIndex {}
 // SAFETY: `#[repr(C)]` 3×u32 → size 12, align 4, no padding. `Copy + 'static`.
 unsafe impl bytemuck::NoUninit for SuperBlob {}
-
-// ── load-command iterator ─────────────────────────────────────────────────
-// Canonical impl lives in `bun_sys::macho` (raw-ptr storage; see module-level
-// SAFETY note above for why a borrowed `&[u8]` does not work for `macho.rs`).
-pub use bun_sys::macho::{LoadCommand, LoadCommandIterator, RawSlice};
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {

@@ -3168,8 +3168,8 @@ declare module "bun" {
      * included in {@link BuildOutput.outputs} with a {@link BuildArtifact.kind} of
      * `"metafile-json"` or `"metafile-markdown"`.
      *
-     * The `bun build --metafile <path>` and `--metafile-md <path>` CLI flags resolve
-     * their paths relative to the working directory.
+     * The `bun build --metafile=<path>` and `--metafile-md=<path>` CLI flags resolve
+     * their paths relative to the working directory instead.
      *
      * @default false
      *

@@ -5175,15 +5175,21 @@ pub mod bv2_impl {
             content: &[u8],
             output_kind: crate::options::OutputKind,
         ) -> Result<(), Error> {
-            let dest_path: Box<[u8]> = {
+            let dest_path: Option<Box<[u8]>> = {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                Box::from(bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Auto,
-                >(
+                bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                     self.transpiler.fs().top_level_dir,
                     &mut buf[..],
                     &[&*self.transpiler.options.output_dir, file_path],
-                ))
+                )
+                .map(Box::from)
+            };
+            let Some(dest_path) = dest_path else {
+                self.linker.log_mut().add_sys_error(
+                    &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open),
+                    format_args!("writing metafile {}", bun_core::fmt::quote(file_path)),
+                );
+                return Err(Error::WriteFailed);
             };
 
             if let Err(err) = bun_sys::File::make_open(

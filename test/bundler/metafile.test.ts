@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -952,6 +952,38 @@ describe("Bun.build metafile paths", () => {
     expect(result.logs.map(log => log.message)).toEqual([expect.stringContaining("writing metafile")]);
     expect(result.logs[0].message).toContain("meta.json");
     expect(result.success).toBe(false);
+  });
+
+  test.concurrent("a metafile path longer than the path buffer fails the build", async () => {
+    using dir = tempDir("metafile-path-too-long", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: { markdown: Buffer.alloc(100_000, "a").toString() },
+      throw: false,
+    });
+
+    expect(result.logs.map(log => log.message)).toEqual([expect.stringContaining("writing metafile")]);
+    expect(result.success).toBe(false);
+  });
+
+  test.concurrent("with compile, the written metafiles stay in result.outputs", async () => {
+    using dir = tempDir("metafile-path-compile", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      compile: { outfile: "app" },
+      metafile: { json: "meta.json", markdown: "meta.md" },
+    });
+
+    expect(result.outputs.map(output => output.kind)).toEqual(["entry-point", "metafile-json", "metafile-markdown"]);
+    expect(metafileOutputs(result, String(dir))).toEqual([
+      { kind: "metafile-json", path: join("dist", "meta.json") },
+      { kind: "metafile-markdown", path: join("dist", "meta.md") },
+    ]);
+    expect(readdirSync(`${dir}/dist`).sort()).toEqual([isWindows ? "app.exe" : "app", "meta.json", "meta.md"]);
+    expect(await result.outputs[1].json()).toEqual(result.metafile);
   });
 });
 

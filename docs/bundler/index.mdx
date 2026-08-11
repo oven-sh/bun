@@ -1345,7 +1345,7 @@ Generate metadata about the build in a structured format. The metafile describes
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json
     ```
   </Tab>
 </Tabs>
@@ -1355,14 +1355,16 @@ Generate metadata about the build in a structured format. The metafile describes
 Use `--metafile-md` to generate a markdown metafile, which is LLM-friendly and readable in the terminal:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile-md=./dist/meta.md
 ```
 
 Both `--metafile` and `--metafile-md` can be used together:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json --metafile-md=./dist/meta.md
 ```
+
+The path is optional and must be attached with `=`. `bun build ./src/index.ts --outdir ./dist --metafile` writes `meta.json` (and `--metafile-md` writes `meta.md`) in the working directory; a bare `--metafile ./dist/meta.json` would treat `./dist/meta.json` as another entry point. Paths given to these flags are relative to the working directory, not to `--outdir`.
 
 #### `metafile` option formats
 
@@ -1394,7 +1396,7 @@ await Bun.build({
 });
 ```
 
-These paths are resolved like `compile.outfile`: a relative path is relative to `outdir` (or to the working directory when there is no `outdir`), and an absolute path is used as-is. The written files are also included in `result.outputs`, with a `kind` of `"metafile-json"` or `"metafile-markdown"`. The `--metafile` and `--metafile-md` CLI flags, like every other CLI path, are relative to the working directory.
+These paths are resolved like `compile.outfile`: a relative path is relative to `outdir` (or to the working directory when there is no `outdir`), and an absolute path is used as-is. The written files are also included in `result.outputs` (including with `compile`), with a `kind` of `"metafile-json"` or `"metafile-markdown"`. Unlike the CLI flags above, these paths are resolved against `outdir`.
 
 The metafile structure contains:
 

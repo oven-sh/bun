@@ -533,16 +533,16 @@ impl WebWorker {
         let mut live = !vm_ptr.is_null() && !loop_ptr.is_null();
         if live {
             // SAFETY: both published under `vm_lock`, held here; the idle counter, loop start and
-            // idle base are atomics. Raw field reads only: the worker thread owns `&mut`.
+            // idle base are atomics. Only the two atomic fields are borrowed, never a
+            // `&VirtualMachine`: the worker thread owns `&mut` to the whole struct.
             unsafe {
                 // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
                 let raw_idle_ns = bun_uws::us_loop_idle_ns(loop_ptr);
-                let elapsed =
-                    VirtualMachine::loop_elapsed_ms_from(&*(&raw const (*vm_ptr).loop_start_ns));
+                let elapsed = VirtualMachine::loop_elapsed_ms_from(&(*vm_ptr).loop_start_ns);
                 match elapsed {
                     Some(elapsed_ms) => {
                         *out_idle_ms = VirtualMachine::loop_idle_ms_from(
-                            &*(&raw const (*vm_ptr).loop_idle_base_ns),
+                            &(*vm_ptr).loop_idle_base_ns,
                             raw_idle_ns,
                         );
                         *out_elapsed_ms = elapsed_ms;

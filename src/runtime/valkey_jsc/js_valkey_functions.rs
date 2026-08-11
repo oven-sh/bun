@@ -76,11 +76,8 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, false)
 }
 
-/// Appends the arguments a caller passed after a command's named ones, for
-/// commands whose Redis syntax ends in optional arguments (`PFADD key
-/// [element ...]`, `EXPIRE key seconds [NX | XX | GT | LT]`, ...). The values
-/// are forwarded verbatim for the server to validate; `undefined`/`null` are
-/// skipped so an optional argument can be passed through as `undefined`.
+/// Forwards the arguments after a command's named ones (the `[NX | XX | GT | LT]` of
+/// `EXPIRE`), skipping `undefined`/`null` so an omitted optional argument sends nothing.
 fn push_rest_args(
     global: &JSGlobalObject,
     function_name: &'static [u8],
@@ -192,9 +189,7 @@ pub(crate) mod compile {
 // cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
 // cmd_key_value! (key: RedisKey, value: RedisValue),
 // cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
-// cmd_required_varargs! (required0: RedisValue, ..., requiredN: RedisValue, ...optional: RedisValue[])
-//   (each named argument is validated and reported by name; whatever follows
-//   is forwarded as-is, skipping undefined/null),
+// cmd_required_varargs! (required0: RedisValue, ..., requiredN: RedisValue, ...optional: RedisValue[]),
 // cmd_strings_varargs! (...strings: string[]),
 // cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
 

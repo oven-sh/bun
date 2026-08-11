@@ -406,7 +406,7 @@ fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<(
     Err(crate::Error::InstallFailed)
 }
 
-/// Checked after `from_api`, which is where `$VAR` and `:_authToken=` URL-suffix credentials resolve.
+/// Checked after `from_api`, where `$VAR` and `:_authToken=` URL-suffix credentials resolve.
 fn load_scope(
     name: &[u8],
     registry: Api::NpmRegistry,

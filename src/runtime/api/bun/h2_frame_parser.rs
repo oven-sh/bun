@@ -6869,7 +6869,6 @@ impl H2FrameParser {
         if !error_code_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
-        // u32 like node's Uint32Value: an i32 read saturates codes above 0x7fffffff on the wire.
         let error_code = ErrorCode(error_code_arg.to_u32());
 
         let mut last_stream_id = this.last_peer_stream_id.get();

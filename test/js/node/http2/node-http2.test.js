@@ -1938,27 +1938,26 @@ it.each([
   ["client", 0xffffffff, undefined],
   ["client", 0x80000000, Buffer.from([0xde, 0xad, 0xbe, 0xef])],
 ])("http2 %s session.goaway() sends an error code of %d unchanged", async (sender, code, opaqueData) => {
-  const server = http2.createServer();
-  const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+  const { promise: goawayReceived, resolve: onGoaway, reject } = Promise.withResolvers();
   const onGoawayEvent = (receivedCode, lastStreamID, receivedData) =>
     onGoaway({ code: receivedCode, lastStreamID, opaqueData: receivedData });
+  // The receiving side emits 'goaway' before it tears the session down with ERR_HTTP2_SESSION_ERROR,
+  // so the error and close events below only settle the promise when the frame never arrived.
+  const server = http2.createServer();
+  server.on("sessionError", reject);
   server.on("session", session => {
+    session.on("close", () => reject(new Error("server session closed before 'goaway'")));
     if (sender === "server") session.goaway(code, 0, opaqueData);
     else session.on("goaway", onGoawayEvent);
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  // A non-zero GOAWAY destroys the session that receives it with ERR_HTTP2_SESSION_ERROR.
-  client.on("error", () => {});
+  client.on("error", reject);
+  client.on("close", () => reject(new Error("client session closed before 'goaway'")));
+  if (sender === "client") client.once("connect", () => client.goaway(code, 0, opaqueData));
+  else client.on("goaway", onGoawayEvent);
   try {
-    if (sender === "client") {
-      await new Promise(resolve => client.once("connect", resolve));
-      client.goaway(code, 0, opaqueData);
-    } else {
-      client.on("goaway", onGoawayEvent);
-    }
-
     expect(await goawayReceived).toEqual({
       code,
       lastStreamID: 0,

@@ -246,8 +246,7 @@ void JSDOMException::finishCreation(VM& vm)
     Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
 
-    // ErrorInstance leaves .stack unset for an empty trace (e.g. a native timer
-    // firing with no JS frames); other engines still give the name: message header.
+    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the name: message header.
     auto* trace = stackTrace();
     if (!trace || trace->isEmpty()) {
         auto& impl = wrapped();
@@ -266,8 +265,7 @@ void JSDOMException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    // Heap only sweeps dead frames out of vm.errorInstanceSpace(); this class
-    // lives in its own subspace, so it must keep its frames alive itself.
+    // Heap sweeps dead frames only for vm.errorInstanceSpace(); this subspace must keep its own alive.
     Locker locker { thisObject->cellLock() };
     if (auto* stackTrace = thisObject->stackTrace()) {
         for (auto& frame : *stackTrace)

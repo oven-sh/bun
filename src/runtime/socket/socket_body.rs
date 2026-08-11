@@ -5254,10 +5254,7 @@ pub mod testing_apis {
         }
     }
 
-    /// `quicInternals.setSocketBufferSize(bytes)`: the SO_RCVBUF / SO_SNDBUF
-    /// size quic.c requests for QUIC UDP sockets created from now on
-    /// (`Bun.serve({ http3 })` listeners and the fetch() HTTP/3 endpoint);
-    /// 0 leaves them at the kernel default.
+    /// `quicInternals.setSocketBufferSize(bytes)`, see quic.h.
     #[bun_jsc::host_fn]
     pub(crate) fn js_set_quic_socket_buffer_size(
         global: &JSGlobalObject,

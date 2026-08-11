@@ -758,11 +758,7 @@ export const fetchH3Internals = {
 };
 
 export const quicInternals = {
-  /**
-   * Process-wide: the SO_RCVBUF / SO_SNDBUF size quic.c requests for every QUIC
-   * UDP socket created afterwards (`Bun.serve({ http3 })` listeners and the
-   * fetch() HTTP/3 endpoint). 0 leaves new sockets at the kernel default.
-   */
+  /** SO_RCVBUF / SO_SNDBUF quic.c requests for QUIC UDP sockets created afterwards (process-wide); 0 keeps the kernel default. */
   setSocketBufferSize: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetQuicSocketBufferSize", 1) as (
     bytes: number,
   ) => void,

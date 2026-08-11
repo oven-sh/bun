@@ -13,11 +13,6 @@ use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
 
-pub const STATUS_FAILED: i32 = 0;
-pub const STATUS_ENABLED: i32 = 1;
-pub const STATUS_ALREADY_ENABLED: i32 = 2;
-pub const STATUS_DISABLED: i32 = 3;
-
 const MAGIC: u32 = 0xb0bcace2;
 const HASH_SIZE: usize = 32;
 /// `magic u32 | code_size u32 | cache_size u32 | code sha256 | blob sha256`.
@@ -267,10 +262,24 @@ fn version_tag() -> String {
 // Enable / init
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct EnableResult {
-    pub status: i32,
-    pub directory: Option<Vec<u8>>,
-    pub message: Option<String>,
+/// Each variant carries the one field `module.enableCompileCache()` reports next to `status`.
+pub enum EnableResult {
+    Failed(String),
+    Enabled(Vec<u8>),
+    AlreadyEnabled(Option<Vec<u8>>),
+    Disabled(&'static str),
+}
+
+impl EnableResult {
+    /// `module.constants.compileCacheStatus` value (NodeModuleModule.cpp).
+    pub fn status(&self) -> i32 {
+        match self {
+            Self::Failed(_) => 0,
+            Self::Enabled(_) => 1,
+            Self::AlreadyEnabled(_) => 2,
+            Self::Disabled(_) => 3,
+        }
+    }
 }
 
 #[inline]
@@ -328,19 +337,11 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
         cclog!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n");
         // A previously-uninitialized state stays off.
         let _ = ENABLED.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
-        return EnableResult {
-            status: STATUS_DISABLED,
-            directory: None,
-            message: Some("Disabled by NODE_DISABLE_COMPILE_CACHE".to_string()),
-        };
+        return EnableResult::Disabled("Disabled by NODE_DISABLE_COMPILE_CACHE");
     }
 
     if is_enabled() {
-        return EnableResult {
-            status: STATUS_ALREADY_ENABLED,
-            directory: get_dir(),
-            message: None,
-        };
+        return EnableResult::AlreadyEnabled(get_dir());
     }
 
     let default_buf: Vec<u8>;
@@ -400,14 +401,10 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         let cwd_len = match sys::getcwd(&mut cwd_buf[..]) {
             Ok(n) => n,
             Err(e) => {
-                return EnableResult {
-                    status: STATUS_FAILED,
-                    directory: None,
-                    message: Some(format!(
-                        "Cannot resolve cache directory: {}",
-                        errno_name(&e)
-                    )),
-                };
+                return EnableResult::Failed(format!(
+                    "Cannot resolve cache directory: {}",
+                    errno_name(&e)
+                ));
             }
         };
         bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::resolve_path::platform::Auto>(
@@ -418,11 +415,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         .as_bytes()
     };
     if abs.len() + 1 + tag.len() + 2 > MAX_PATH_BYTES {
-        return EnableResult {
-            status: STATUS_FAILED,
-            directory: None,
-            message: Some("Cannot create cache directory: path too long".to_string()),
-        };
+        return EnableResult::Failed("Cannot create cache directory: path too long".to_string());
     }
 
     let mut tagged: Vec<u8> = Vec::with_capacity(abs.len() + 1 + tag.len());
@@ -446,11 +439,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 tagged.as_bstr(),
                 errname
             );
-            return EnableResult {
-                status: STATUS_FAILED,
-                directory: None,
-                message: Some(format!("Cannot create cache directory: {errname}")),
-            };
+            return EnableResult::Failed(format!("Cannot create cache directory: {errname}"));
         }
     };
     cclog!(
@@ -464,11 +453,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         if let Some(existing) = state.as_ref() {
             // Lost an enable race (env init on another thread vs the API):
             // keep the installed cache — replacing it would drop live blobs.
-            return EnableResult {
-                status: STATUS_ALREADY_ENABLED,
-                directory: Some(existing.dir.to_vec()),
-                message: None,
-            };
+            return EnableResult::AlreadyEnabled(Some(existing.dir.to_vec()));
         }
         let mut tagged = tagged;
         if portable {
@@ -490,11 +475,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         ENABLED.store(2, Ordering::Relaxed);
     }
 
-    EnableResult {
-        status: STATUS_ENABLED,
-        directory: Some(directory),
-        message: None,
-    }
+    EnableResult::Enabled(directory)
 }
 
 /// The version-tagged cache directory (`module.getCompileCacheDir()`), or
@@ -1169,15 +1150,19 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
             Some(portable != 0)
         },
     );
-    if let Some(directory) = result.directory {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_directory = BunString::clone_utf8(&directory) };
+    let out_and_text = match &result {
+        EnableResult::Failed(message) => Some((out_message, message.as_bytes())),
+        EnableResult::Disabled(message) => Some((out_message, message.as_bytes())),
+        EnableResult::Enabled(directory) | EnableResult::AlreadyEnabled(Some(directory)) => {
+            Some((out_directory, directory.as_slice()))
+        }
+        EnableResult::AlreadyEnabled(None) => None,
+    };
+    if let Some((out, text)) = out_and_text {
+        // SAFETY: both out-params are valid for write per fn contract.
+        unsafe { *out = BunString::clone_utf8(text) };
     }
-    if let Some(message) = result.message {
-        // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_message = BunString::clone_utf8(message.as_bytes()) };
-    }
-    result.status
+    result.status()
 }
 
 #[unsafe(no_mangle)]

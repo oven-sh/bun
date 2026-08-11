@@ -135,36 +135,62 @@ async function tsc(name: string, files: Record<string, string>) {
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
 }
 
+// File extension to type-check a fenced @example block as, by the fence's
+// language tag. Fences in other languages (json, sh, ...) are not examples of
+// the types and are left out.
+const EXAMPLE_FENCE_EXTENSIONS: Record<string, string> = {
+  "": "ts",
+  ts: "ts",
+  typescript: "ts",
+  tsx: "tsx",
+};
+
 /**
- * The fenced code blocks of every `@example` tag on the members of the named
- * interfaces in a bun-types declaration file, as one `.ts` file per example.
+ * The fenced code blocks of every `@example` tag on the named declarations in a
+ * bun-types declaration file (the members of an interface, or a function
+ * itself), as one source file per block, named `<declaration>.<n>.<ext>`.
  * Each file starts with a comment pointing back at the tag it came from.
+ * A tag whose fence cannot be parsed is an error, not a silently skipped example.
  */
-function jsdocExamples(declarationFile: string, interfaceNames: string[]): Record<string, string> {
+function jsdocExamples(declarationFile: string, declarationNames: string[]): Record<string, string> {
   const path = join(BUN_TYPES_PACKAGE_ROOT, declarationFile);
   const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
   const examples: Record<string, string> = {};
+  const counters = new Map<string, number>();
+
+  function collect(key: string, host: ts.Node) {
+    for (const tag of ts.getJSDocTags(host)) {
+      if (tag.tagName.text !== "example") continue;
+
+      const { line } = source.getLineAndCharacterOfPosition(tag.getStart());
+      const location = `packages/bun-types/${declarationFile}:${line + 1}`;
+      const comment = ts.getTextOfJSDocComment(tag.comment) ?? "";
+      const fences = Array.from(comment.matchAll(/^[ \t]*```([^\n]*)\n([\s\S]*?)^[ \t]*```/gm));
+      if (fences.length === 0 && comment.includes("```")) {
+        throw new Error(`${location}: could not parse the code fence of this @example`);
+      }
+
+      for (const [, info, code] of fences) {
+        const extension = EXAMPLE_FENCE_EXTENSIONS[info.trim().split(/\s+/, 1)[0]!];
+        if (!extension) continue;
+
+        const index = counters.get(key) ?? 0;
+        counters.set(key, index + 1);
+        examples[`${key}.${index}.${extension}`] = `// ${location}\n${code}\n`;
+      }
+    }
+  }
 
   function visit(node: ts.Node) {
-    if (!ts.isInterfaceDeclaration(node) || !interfaceNames.includes(node.name.text)) {
-      ts.forEachChild(node, visit);
-      return;
-    }
-
-    for (const member of node.members) {
-      if (!member.name || !ts.isIdentifier(member.name)) continue;
-
-      let index = 0;
-      for (const tag of ts.getJSDocTags(member)) {
-        if (tag.tagName.text !== "example") continue;
-
-        const fence = /^```\w*\n([\s\S]*?)^```/m.exec(ts.getTextOfJSDocComment(tag.comment) ?? "");
-        if (!fence) continue;
-
-        const { line } = source.getLineAndCharacterOfPosition(tag.getStart());
-        examples[`${node.name.text}.${member.name.text}.${index++}.ts`] =
-          `// packages/bun-types/${declarationFile}:${line + 1}\n${fence[1]}\n`;
+    if (ts.isInterfaceDeclaration(node) && declarationNames.includes(node.name.text)) {
+      for (const member of node.members) {
+        const memberName = member.name?.getText(source).replace(/[^\w$.]/g, "") || ts.SyntaxKind[member.kind];
+        collect(`${node.name.text}.${memberName}`, member);
       }
+    } else if (ts.isFunctionDeclaration(node) && node.name && declarationNames.includes(node.name.text)) {
+      collect(node.name.text, node);
+    } else {
+      ts.forEachChild(node, visit);
     }
   }
 
@@ -435,13 +461,18 @@ describe("@types/bun integration test", () => {
     // The @example blocks are what editors show on hover, so they have to be
     // valid against the types they document. The `compile` examples used to
     // pass targets without the "bun-" prefix and put `outfile` at the top
-    // level, neither of which the types (or the runtime) accept.
+    // level, and a `build()` example used a loader `Loader` does not have;
+    // none of it type-checked, and none of it worked at runtime either.
     //
     // Explicit timeout: parsing the 10k-line bun.d.ts in-process takes a few
     // seconds on a debug build (well under 1s on release).
     test("JSDoc examples type-check against the declared types", async () => {
-      const examples = jsdocExamples("bun.d.ts", ["BuildConfig", "CompileBuildOptions", "BuildOutput"]);
-      expect(Object.keys(examples)).toContain("BuildConfig.compile.0.ts");
+      const examples = jsdocExamples("bun.d.ts", ["build", "BuildConfig", "CompileBuildOptions", "BuildOutput"]);
+      // The examples this test was added for; guards against the walk above
+      // quietly matching nothing.
+      expect(Object.keys(examples)).toEqual(
+        expect.arrayContaining(["build.3.ts", "BuildConfig.compile.0.ts", "BuildConfig.metafile.0.ts"]),
+      );
 
       const result = await tsc("build-jsdoc-examples-check", examples);
 

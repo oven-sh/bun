@@ -3188,10 +3188,12 @@ declare module "bun" {
      *
      * When `true`, creates an executable for the current platform. When a
      * {@link Bun.Build.CompileTarget} string such as `"bun-linux-x64"`,
-     * cross-compiles for that platform. Both name the executable after the
-     * entrypoint; pass a {@link CompileBuildOptions} object to choose the output
-     * path (`outfile` lives in that object, `Bun.build()` has no top-level
-     * `outfile`) and other executable options.
+     * cross-compiles for that platform. Both derive the executable's name from
+     * the entrypoint (`app.ts` becomes `app`, or `app.exe` for Windows targets;
+     * an `index.*` entrypoint uses its directory's name instead). Pass a
+     * {@link CompileBuildOptions} object to set the output path explicitly
+     * (`outfile` lives in that object, `Bun.build()` has no top-level `outfile`)
+     * or any of the other executable options.
      *
      * When used with `target: "browser"`, produces self-contained HTML files
      * with all scripts, styles, and assets inlined. All `<script>` tags become
@@ -3988,8 +3990,8 @@ declare module "bun" {
    *   entrypoints: ['./src/index.tsx'],
    *   outdir: './dist',
    *   loader: {
-   *     '.png': 'dataurl',
-   *     '.svg': 'file',
+   *     '.png': 'file',
+   *     '.svg': 'text',
    *     '.txt': 'text',
    *     '.json': 'json'
    *   },

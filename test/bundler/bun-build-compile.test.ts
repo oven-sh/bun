@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isGlibc, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -177,28 +177,38 @@ describe("compile target -glibc token", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "glibc-target-ok\n", stderr: "", exitCode: 0 });
   });
 
-  // libc is a Linux-only axis. These are rejected while parsing the target, on every host.
-  test.concurrent("bun build --compile rejects -glibc combined with a non-linux OS", async () => {
+  // Rejected while parsing the target, on every host: libc is a Linux-only axis, and a recognized
+  // "glibc" must not hide which segment of an otherwise broken target is the unknown one.
+  test.concurrent.each([
+    ["bun-windows-x64-glibc", "error: invalid target, glibc only exists on linux\n"],
+    [
+      "bun-linux-x64-glibc-invalid",
+      'error: Unsupported target "invalid" in "bun-linux-x64-glibc-invalid"\n' +
+        "To see the supported targets:\n" +
+        "  https://bun.com/docs/bundler/executables\n",
+    ],
+  ])("bun build --compile rejects --target=%s", async (target, expectedStderr) => {
     using dir = tempDir("build-compile-glibc-cli-invalid", {
       "app.js": `console.log("unreachable");`,
     });
 
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--target=bun-windows-x64-glibc", "app.js", "--outfile", "app"],
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, "app.js", "--outfile", "app"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
+    expect({ stdout, stderr, exitCode, files: readdirSync(String(dir)) }).toEqual({
       stdout: "",
-      stderr: "error: invalid target, glibc only exists on linux\n",
+      stderr: expectedStderr,
       exitCode: 1,
+      files: ["app.js"],
     });
   });
 
-  test("Bun.build rejects -glibc combined with a non-linux OS", () => {
+  test.each(["bun-darwin-arm64-glibc", "bun-linux-x64-glibc-invalid"])("Bun.build rejects target %s", target => {
     using dir = tempDir("build-compile-glibc-api-invalid", {
       "app.js": `console.log("unreachable");`,
     });
@@ -207,11 +217,11 @@ describe("compile target -glibc token", () => {
       Bun.build({
         entrypoints: [join(String(dir), "app.js")],
         compile: {
-          target: "bun-darwin-arm64-glibc" as Bun.Build.CompileTarget,
+          target: target as Bun.Build.CompileTarget,
           outfile: join(String(dir), "app"),
         },
       }),
-    ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-darwin-arm64-glibc"`);
+    ).toThrow(new TypeError(`Unknown compile target: ${target}`));
   });
 });
 

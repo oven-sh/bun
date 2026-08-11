@@ -397,8 +397,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// Credentials are sent verbatim in `Authorization`; a CR, LF or NUL in one would
-/// smuggle extra header lines (or a second request) into every registry request.
+/// Sent verbatim in `Authorization`, so CR/LF/NUL would inject header lines into every request.
 fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<()> {
     if !strings::contains_any(value, b"\r\n\0") {
         return Ok(());
@@ -407,8 +406,7 @@ fn check_credential(value: &[u8], source: fmt::Arguments<'_>) -> crate::Result<(
     Err(crate::Error::InstallFailed)
 }
 
-/// Checked here rather than in the .npmrc / bunfig loaders: `$VAR` indirections
-/// and `:_authToken=` URL suffixes only resolve inside `from_api`.
+/// Checked after `from_api`, which is where `$VAR` and `:_authToken=` URL-suffix credentials resolve.
 fn load_scope(
     name: &[u8],
     registry: Api::NpmRegistry,

@@ -1070,8 +1070,9 @@ describe("bundler", () => {
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
-      'Function("return 42")',
-      'Function("a", "b", "return a + b")',
+      // kept for the same reason as the Error constructors: the body's source origin comes from the calling frame
+      'new Function("return 42")',
+      'new Function("a", "b", "return a + b")',
       'new RegExp("test")',
       'new RegExp("test", "gi")',
       "new RegExp(/abc/)",

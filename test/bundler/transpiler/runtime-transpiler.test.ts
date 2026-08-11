@@ -252,3 +252,37 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// Rewriting `return new Function(...)` into `return Function(...)` makes it a proper tail call in
+// strict mode code, and the Function constructor then takes the source origin for the new body
+// from whichever frame is left: the caller's caller, in another file.
+test("a function body built with `return new Function()` resolves import() relative to the returning module", async () => {
+  using dir = tempDir("transpiler-new-function-origin", {
+    "main.mjs": /* js */ `
+      import { make } from "./lib/make.mjs";
+      const { which } = await make()();
+      console.log(which);
+    `,
+    "lib/make.mjs": /* js */ `
+      export function make() {
+        return new Function("return import('./which.mjs')");
+      }
+    `,
+    "lib/which.mjs": `export const which = "lib/which.mjs";`,
+    "which.mjs": `export const which = "which.mjs";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("lib/which.mjs\n");
+  expect(exitCode).toBe(0);
+});

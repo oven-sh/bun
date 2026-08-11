@@ -110,11 +110,13 @@ impl KnownGlobal {
             | KnownGlobal::ReferenceError
             | KnownGlobal::EvalError
             | KnownGlobal::URIError
-            | KnownGlobal::AggregateError => {
-                // `Error(...)` builds the same object as `new Error(...)`, but not the
-                // same `.stack`: in strict mode JSC turns `return Error(...)` into a
-                // proper tail call, so the function creating the error is already gone
-                // when the stack is captured. `new` is never a tail call. Keep it.
+            | KnownGlobal::AggregateError
+            | KnownGlobal::Function => {
+                // These build the same object with or without `new`, but they read the calling
+                // frame, and in strict mode JSC compiles `return Error(...)` to a proper tail
+                // call that has already popped it: the error's `.stack` loses the function that
+                // created it, and a `Function(...)` body takes its source origin (the base for
+                // `import()` inside it) from the caller's caller. `new` is never a tail call.
                 None
             }
 
@@ -257,10 +259,6 @@ impl KnownGlobal {
                 }
             }
 
-            KnownGlobal::Function => {
-                // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
-            }
             KnownGlobal::RegExp => {
                 // Don't optimize RegExp - the semantics are too complex:
                 // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance

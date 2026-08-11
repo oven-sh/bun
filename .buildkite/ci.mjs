@@ -404,15 +404,17 @@ function getLinkBunAgent(platform, options) {
 // queue is pinned to a single macOS 26 image, so only the aarch64 `latest` lane
 // can run there; and they bill per minute, so darwin tests run on main (the
 // canary gate) or when a commit subject opts in with `[macos tests]`, not on
-// every PR push. Delete this block, `darwinTestsEnabled`, and the filter in
-// getPipeline() to go back to the fleet.
+// every PR push. A manual (UI) build that picks a darwin lane in the options
+// form is its own opt-in. To go back to the fleet, revert the commit that added
+// this block: it also restores the tag-based `test-darwin` selector in
+// getTestAgent() and drops the filter in getPipeline().
 const darwinHostedQueue = "test-darwin-hosted";
 
 /**
  * @returns {boolean}
  */
 function darwinTestsEnabled() {
-  return isMainBranch() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  return isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
 }
 
 /**

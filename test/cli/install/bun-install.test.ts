@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isMacOS,
   isWindows,
   joinP,
   readdirSorted,
@@ -9487,6 +9488,138 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(err).toContain("unsafe folder path");
   expect(out).not.toContain("2 packages installed");
   expect(exitCode).toBe(1);
+});
+
+// The folder resolver builds `<folder>/package.json` in a path buffer of
+// MAX_PATH_BYTES (src/bun_core/util.rs: 4096 on Linux, 1024 on macOS,
+// 32767 * 3 + 1 on Windows), after normalizing `link:` values into a buffer of
+// the same size. Anything that does not fit has to fail like a path the OS
+// rejects instead of indexing past those buffers.
+describe.concurrent("folder and link: dependencies near the path buffer limit", () => {
+  const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isMacOS ? 1024 : 4096;
+  const PACKAGE_JSON_SUFFIX = "/package.json".length;
+
+  async function install(cwd: string, extraEnv: Record<string, string>, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, ...extraEnv },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** A relative path of exactly `length` bytes whose components stay well below NAME_MAX. */
+  function relativePathOfLength(length: number): string {
+    const components: string[] = [];
+    let remaining = length;
+    while (remaining > 0) {
+      let size = Math.min(200, remaining);
+      // Never leave exactly one byte, which would have to be a trailing separator.
+      if (remaining - size === 1) size -= 1;
+      components.push(Buffer.alloc(size, "b").toString());
+      remaining -= size;
+      if (remaining > 0) remaining -= 1;
+    }
+    return components.join("/");
+  }
+
+  // Package.rs accepts a folder whose absolute path fits the buffer (longer ones
+  // are rejected as "unsafe folder path", see above), so the resolver has to
+  // reject the ones that no longer fit once "/package.json" and the NUL are
+  // appended: MAX_PATH_BYTES - 13 is the shortest of those, MAX_PATH_BYTES the
+  // longest one that still reaches it.
+  it.each([MAX_PATH_BYTES - PACKAGE_JSON_SUFFIX, MAX_PATH_BYTES])(
+    "a file: folder whose absolute path is %i bytes long fails with ENAMETOOLONG",
+    async folderPathLength => {
+      using dir = tempDir("folder-dep-too-long", {});
+      const projectDir = realpathSync.native(String(dir));
+      const spec = "file:./" + Buffer.alloc(folderPathLength - projectDir.length - 1, "a").toString();
+      await write(join(projectDir, "package.json"), JSON.stringify({ name: "app", dependencies: { dep: spec } }));
+
+      const { stderr, exitCode } = await install(projectDir, {});
+
+      expect(stderr).toContain("error: ENAMETOOLONG");
+      expect(stderr).toContain(`error: dep@${spec} failed to resolve`);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // A path of MAX_PATH_BYTES - 1 bytes is the longest one the OS accepts on
+  // POSIX; on Windows MAX_PATH_BYTES is the UTF-8 worst case of a 32767 code
+  // unit path, so no path of that length can exist there.
+  it.skipIf(isWindows)("a file: folder whose package.json path is MAX_PATH_BYTES - 1 bytes long resolves", async () => {
+    using dir = tempDir("folder-dep-at-limit", {});
+    const projectDir = realpathSync.native(String(dir));
+    const folder = relativePathOfLength(MAX_PATH_BYTES - 1 - PACKAGE_JSON_SUFFIX - projectDir.length - 1);
+    expect(join(projectDir, folder, "package.json")).toHaveLength(MAX_PATH_BYTES - 1);
+    await mkdir(join(projectDir, folder), { recursive: true });
+    await Promise.all([
+      write(join(projectDir, folder, "package.json"), JSON.stringify({ name: "deep-dep", version: "1.0.0" })),
+      write(
+        join(projectDir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "deep-dep": "file:./" + folder } }),
+      ),
+    ]);
+
+    // Resolving reads the folder's package.json, which is what this exercises.
+    // Linking it into node_modules is skipped: the linker formats the
+    // resolution into a 512 byte buffer and cannot install a path this long yet.
+    const { stdout, stderr, exitCode } = await install(projectDir, {}, "--lockfile-only");
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("Saved bun.lock (2 packages)");
+    expect(await file(join(projectDir, "bun.lock")).text()).toContain(`"deep-dep": ["deep-dep@file:${folder}", {}]`);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    // Fits the buffer on its own, but not with the global link directory in
+    // front of it and "/package.json" behind it.
+    ["fills the path buffer on its own", Buffer.alloc(MAX_PATH_BYTES - PACKAGE_JSON_SUFFIX - 1, "a").toString()],
+    ["is longer than the path buffer", Buffer.alloc(100_000, "a").toString()],
+    // Normalizes to a short path, but the value is stored as written.
+    ["is an absolute path padded with separators", "/a" + Buffer.alloc(100_000, "/").toString()],
+  ])("a link: dependency whose value %s fails with ENAMETOOLONG", async (_, value) => {
+    using dir = tempDir("link-dep-too-long", {
+      "project/package.json": JSON.stringify({ name: "app", dependencies: { dep: "link:" + value } }),
+    });
+
+    const { stderr, exitCode } = await install(join(String(dir), "project"), {
+      BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global"),
+    });
+
+    expect(stderr).toContain("error: ENAMETOOLONG");
+    expect(stderr).toMatch(/^error: dep@link:.* failed to resolve$/m);
+    expect(exitCode).toBe(1);
+  });
+
+  // `link:` values used to be normalized into a 1024 byte buffer regardless of
+  // MAX_PATH_BYTES. On macOS the two are the same size, so a longer value can
+  // never be a valid path there.
+  it.skipIf(isMacOS)("a link: dependency whose value is longer than 1024 bytes resolves", async () => {
+    const value = relativePathOfLength(1200) + "/linked-pkg";
+    using dir = tempDir("link-dep-long-value", {
+      "project/package.json": JSON.stringify({ name: "app", dependencies: { "linked-pkg": "link:" + value } }),
+      [`global/node_modules/${value}/package.json`]: JSON.stringify({ name: "linked-pkg", version: "1.0.0" }),
+    });
+
+    // --lockfile-only for the same reason as the file: test above.
+    const { stdout, stderr, exitCode } = await install(
+      join(String(dir), "project"),
+      { BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global") },
+      "--lockfile-only",
+    );
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("Saved bun.lock (2 packages)");
+    expect(await file(join(String(dir), "project", "bun.lock")).text()).toContain(
+      `"linked-pkg": ["linked-pkg@link:${value}", {}]`,
+    );
+    expect(exitCode).toBe(0);
+  });
 });
 
 for (const field of ["resolutions", "overrides"]) {

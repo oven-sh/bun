@@ -2,6 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
+use bun_paths::resolve_path::normalize_string_buf;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
@@ -51,31 +52,37 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
         let joined_path: &mut PathBuffer =
             unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
-        let mut paths = normalize_package_json_path(
+        let workspace_path = self.manager.lockfile.str(str_to_use);
+        let rel: &[u8] = match normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
             joined_path,
-            self.manager.lockfile.str(str_to_use),
-        );
-
-        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
-        {
-            joined[0] = b'.';
-            joined[1] = SEP;
-            // `paths.rel` points into `joined[2..]`; extend the view backward
-            // by the two bytes just written via safe slicing of `joined`.
-            let n = paths.rel.len() + 2;
-            paths.rel = &joined[..n];
-        }
+            workspace_path,
+        ) {
+            Some(paths)
+                if strings::starts_with_char(paths.rel, b'.')
+                    || strings::starts_with_char(paths.rel, SEP) =>
+            {
+                paths.rel
+            }
+            Some(paths) => {
+                joined[0] = b'.';
+                joined[1] = SEP;
+                // `joined[2..]` starts with the same bytes as `paths.rel`; extend
+                // the view backward by the two bytes just written.
+                &joined[..paths.rel.len() + 2]
+            }
+            None => workspace_path,
+        };
 
         if self.quoted {
-            let quoted = QuotedFormatter { text: paths.rel };
+            let quoted = QuotedFormatter { text: rel };
             fmt::Display::fmt(&quoted, f)
         } else {
             // `fmt::Formatter` only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
             // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
             // `quoted = true`, so this branch is unreached today; if a future
             // caller needs byte-exact output it must use an `io::Write` sink.
-            write!(f, "{}", bstr::BStr::new(paths.rel))
+            write!(f, "{}", bstr::BStr::new(rel))
         }
     }
 }
@@ -91,10 +98,6 @@ pub struct Entry {
 
 // bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
-
-fn normalize(path: &[u8]) -> &[u8] {
-    FileSystem::instance().normalize(path)
-}
 
 pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
@@ -177,84 +180,88 @@ struct Paths<'a> {
     rel: &'a [u8],
 }
 
+/// Writes the NUL-terminated path of the folder's `package.json` into `joined`.
+/// `rel` is the folder relative to the project root; it is only stored by the
+/// folder and workspace resolutions, so it is empty for `Global` and
+/// `CacheFolder`.
+///
+/// Returns `None` when `non_normalized_path` or the `package.json` path does not
+/// fit a `PathBuffer`. `get_or_put` relies on the former for the copy of
+/// `non_normalized_path` it keeps for `link:` resolutions.
 fn normalize_package_json_path<'a>(
     global_or_relative: GlobalOrRelative<'_>,
     joined: &'a mut PathBuffer,
     non_normalized_path: &[u8],
-) -> Paths<'a> {
-    let abs: &[u8];
+) -> Option<Paths<'a>> {
+    // Normalizing grows a path by at most one byte (`C:` becomes `C:.`), so
+    // anything shorter than a `PathBuffer` normalizes into one.
+    if non_normalized_path.len() >= MAX_PATH_BYTES {
+        return None;
+    }
 
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
     } else if bun_paths::is_absolute(non_normalized_path) {
         strings::trim_right(non_normalized_path, SEP_STR.as_bytes())
     } else {
-        strings::trim_right(normalize(non_normalized_path), SEP_STR.as_bytes())
+        strings::trim_right(
+            normalize_string_buf::<true, bun_paths::platform::Auto, false>(
+                non_normalized_path,
+                &mut normalized_buf[..],
+            ),
+            SEP_STR.as_bytes(),
+        )
+    };
+
+    // The last byte of `joined` is reserved for the NUL terminator.
+    let capacity = joined.len() - 1;
+
+    let abs_len = if strings::starts_with_char(normalized, b'.') {
+        let parts: [&[u8]; 2] = [normalized, b"package.json"];
+        FileSystem::instance()
+            .abs_buf_checked(&parts, &mut joined[..capacity])?
+            .len()
+    } else {
+        let prefix: &[u8] = match global_or_relative {
+            GlobalOrRelative::Global(path) | GlobalOrRelative::CacheFolder(path) => {
+                strings::trim_right(path, SEP_STR.as_bytes())
+            }
+            GlobalOrRelative::Relative(_) => b"",
+        };
+        let sep: &[u8] = if prefix.is_empty() || normalized.is_empty() || normalized[0] == SEP {
+            b""
+        } else {
+            SEP_STR.as_bytes()
+        };
+        let parts: [&[u8]; 5] = [prefix, sep, normalized, SEP_STR.as_bytes(), b"package.json"];
+        let abs_len: usize = parts.iter().map(|part| part.len()).sum();
+        if abs_len > capacity {
+            return None;
+        }
+        let mut written = 0;
+        for part in parts {
+            joined[written..written + part.len()].copy_from_slice(part);
+            written += part.len();
+        }
+        abs_len
     };
 
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
-
-    let rel: &[u8] = if strings::starts_with_char(normalized, b'.') {
-        let mut tempcat = PathBuffer::uninit();
-
-        tempcat[..normalized.len()].copy_from_slice(normalized);
-        tempcat[normalized.len()] = SEP;
-        tempcat[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
-            .copy_from_slice(b"package.json");
-        let parts: [&[u8]; 2] = [
+    let rel: &[u8] = match global_or_relative {
+        GlobalOrRelative::Relative(_) => FileSystem::instance().relative(
             FileSystem::instance().top_level_dir(),
-            &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
-        ];
-        abs = FileSystem::instance().abs_buf(&parts, joined);
-        FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
-            &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        )
-    } else {
-        let joined_len = joined.len();
-        let mut remain: &mut [u8] = &mut joined[..];
-        match &global_or_relative {
-            GlobalOrRelative::Global(path) | GlobalOrRelative::CacheFolder(path) => {
-                if !path.is_empty() {
-                    let offset = path
-                        .len()
-                        .saturating_sub((path[path.len().saturating_sub(1)] == SEP) as usize);
-                    if offset > 0 {
-                        remain[0..offset].copy_from_slice(&path[0..offset]);
-                    }
-                    remain = &mut remain[offset..];
-                    if !normalized.is_empty() {
-                        if (path[path.len() - 1] != SEP) && (normalized[0] != SEP) {
-                            remain[0] = SEP;
-                            remain = &mut remain[1..];
-                        }
-                    }
-                }
-            }
-            GlobalOrRelative::Relative(_) => {}
-        }
-        remain[..normalized.len()].copy_from_slice(normalized);
-        remain[normalized.len()] = SEP;
-        remain[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
-            .copy_from_slice(b"package.json");
-        let remain_after = remain.len() - (normalized.len() + PACKAGE_JSON_LEN);
-        // Compute abs len from remaining capacity.
-        let abs_len = joined_len - remain_after;
-        abs = &joined[0..abs_len];
-        // We store the folder name without package.json
-        FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
-            &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        )
+            &joined[..abs_len - PACKAGE_JSON_LEN],
+        ),
+        GlobalOrRelative::Global(_) | GlobalOrRelative::CacheFolder(_) => b"",
     };
-    let abs_len = abs.len();
     joined[abs_len] = 0;
 
-    Paths {
+    Some(Paths {
         abs: ZStr::from_buf(joined, abs_len),
         rel,
-    }
+    })
 }
 
 fn read_package_json_from_disk<R: FolderResolverImpl>(
@@ -386,7 +393,11 @@ pub(crate) fn get_or_put(
     let mut joined = PathBuffer::uninit();
     #[cfg(windows)]
     let mut rel_buf = PathBuffer::uninit();
-    let paths = normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path);
+    let Some(paths) =
+        normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path)
+    else {
+        return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+    };
 
     #[cfg(not(windows))]
     let abs = paths.abs;

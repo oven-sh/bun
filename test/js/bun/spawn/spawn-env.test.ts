@@ -108,18 +108,6 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
       "SPAWN_ENV_CASE",
       { Spawn_Env_Case: "mixed" },
     ],
-    [
-      "{ Spawn_Env_Case, SPAWN_ENV_CASE: undefined } removes the variable",
-      { ...bunEnv, Spawn_Env_Case: "mixed", SPAWN_ENV_CASE: undefined },
-      "SPAWN_ENV_CASE",
-      {},
-    ],
-    [
-      "{ SPAWN_ENV_CASE, spawn_env_case: undefined } keeps the upper case one",
-      { ...bunEnv, SPAWN_ENV_CASE: "upper", spawn_env_case: undefined },
-      "SPAWN_ENV_CASE",
-      { SPAWN_ENV_CASE: "upper" },
-    ],
   ];
 
   test.concurrent.each(cases)("%s", async (_name, env, variable, expected) => {
@@ -130,9 +118,37 @@ describe.skipIf(!isWindows)("env names are case-insensitive on Windows", () => {
     expect({ spawn: viaSpawn, childProcess: viaChildProcess }).toEqual({ spawn: expected, childProcess: expected });
   });
 
-  test.concurrent("Bun.spawnSync applies the same rule", () => {
+  test("Bun.spawnSync applies the same rule", () => {
     const [, env, variable, expected] = cases[0];
     expect(variableViaSpawnSync(variable, env)).toEqual(expected);
+  });
+
+  // An undefined property is simply absent; it does not take the name away from
+  // another spelling. Tests all over the repo clear every spelling of a variable
+  // with undefined and then set one of them (see test/js/bun/http/proxy.test.ts).
+  // This is deliberately not what node's child_process does on Windows: it picks
+  // the spelling to keep before looking at the values, so whenever the undefined
+  // spelling sorts first the variable ends up unset.
+  const undefinedCases: [name: string, env: Env, expected: Env][] = [
+    [
+      "{ SPAWN_ENV_CASE: undefined, spawn_env_case }: the defined spelling is passed",
+      { ...bunEnv, SPAWN_ENV_CASE: undefined, spawn_env_case: "lower" },
+      { spawn_env_case: "lower" },
+    ],
+    [
+      "{ Spawn_Env_Case, SPAWN_ENV_CASE: undefined }: the defined spelling is passed",
+      { ...bunEnv, Spawn_Env_Case: "mixed", SPAWN_ENV_CASE: undefined },
+      { Spawn_Env_Case: "mixed" },
+    ],
+    [
+      "{ SPAWN_ENV_CASE, spawn_env_case: undefined }: the defined spelling is passed",
+      { ...bunEnv, SPAWN_ENV_CASE: "upper", spawn_env_case: undefined },
+      { SPAWN_ENV_CASE: "upper" },
+    ],
+  ];
+
+  test.concurrent.each(undefinedCases)("%s", async (_name, env, expected) => {
+    expect(await variableViaSpawn("SPAWN_ENV_CASE", env)).toEqual(expected);
   });
 
   // The PATH entry that wins is also the one the executable is looked up in.

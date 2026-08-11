@@ -396,6 +396,15 @@ extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 
+// Mirrors `EncodeIntoResult` in bun_core (repr(C)). size_t counts: `written`
+// can be exactly 2^32 (a full max-size Uint8Array), which would wrap a u32.
+typedef struct TextEncoderEncodeIntoResult {
+    size_t read;
+    size_t written;
+} TextEncoderEncodeIntoResult;
+extern "C" TextEncoderEncodeIntoResult TextEncoder__encodeInto8(const unsigned char* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" TextEncoderEncodeIntoResult TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
+
 extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
 extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size_t len);
 

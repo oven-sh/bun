@@ -69,7 +69,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
     let last = buf.len() - 1;
     let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
-    let written = encode_into_result.written as usize;
+    let written = encode_into_result.written;
     debug_assert!(written < buf.len());
     buf[written] = 0;
     ZStr::from_buf(buf, written)

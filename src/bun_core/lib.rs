@@ -1682,10 +1682,15 @@ pub(crate) mod strings_impl {
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
+    /// Counts are `usize` because `written` can be exactly 2^32 (JSC's max
+    /// ArrayBuffer size), which a `u32` would wrap to 0. `repr(C)` to return by
+    /// value from `TextEncoder__encodeInto8/16` (`TextEncoderEncodeIntoResult`
+    /// in `headers-handwritten.h`).
+    #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
     pub struct EncodeIntoResult {
-        pub read: u32,
-        pub written: u32,
+        pub read: usize,
+        pub written: usize,
     }
 
     /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
@@ -1741,8 +1746,8 @@ pub(crate) mod strings_impl {
             };
             if r.status == simdutf::Status::SUCCESS {
                 return EncodeIntoResult {
-                    read: utf16.len() as u32,
-                    written: r.count as u32,
+                    read: utf16.len(),
+                    written: r.count,
                 };
             }
         }
@@ -1760,10 +1765,7 @@ pub(crate) mod strings_impl {
             written += n;
             read += adv as usize;
         }
-        EncodeIntoResult {
-            read: read as u32,
-            written: written as u32,
-        }
+        EncodeIntoResult { read, written }
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
@@ -1827,8 +1829,8 @@ pub(crate) mod strings_impl {
             debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {
-                    written: u32::MAX,
-                    read: u32::MAX,
+                    written: usize::MAX,
+                    read: usize::MAX,
                 };
             }
             if buf_.len() - written < 2 {
@@ -1840,10 +1842,7 @@ pub(crate) mod strings_impl {
             read += 1;
         }
 
-        EncodeIntoResult {
-            written: written as u32,
-            read: read as u32,
-        }
+        EncodeIntoResult { written, read }
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so

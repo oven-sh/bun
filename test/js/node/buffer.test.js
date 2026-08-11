@@ -4695,3 +4695,70 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A UTF-16 source can encode to exactly 2**32 UTF-8 bytes (a full MAX_LENGTH
+// buffer). Pre-fix, Buffer.write/encodeInto reported the u32-wrapped count (0)
+// and TextEncoder.encode aborted. Needs ~10 GiB RSS per spawn.
+it.skipIf(os.totalmem() < 16 * 1024 ** 3)(
+  "Buffer.write/TextEncoder.encodeInto/TextEncoder.encode handle a byte count of exactly 2**32 without uint32 wrap",
+  async () => {
+    const script = `
+      const N = 2 ** 32;
+      // 1431655765 three-byte chars (U+0800 -> E0 A0 80) + one ASCII char
+      // encode to exactly N UTF-8 bytes.
+      const str = "\\u0800".repeat((N - 1) / 3) + "a";
+      const buf = Buffer.alloc(N);
+      const out = {};
+      out.byteLength = Buffer.byteLength(str, "utf8");
+      out.write_ret = buf.write(str, 0, N, "utf8");
+      // subarray instead of indexing: 2**32 - 1 is not a valid array index.
+      out.tail = Array.from(buf.subarray(N - 3));
+      const res = new TextEncoder().encodeInto(str, buf);
+      out.encode_read = res.read;
+      out.encode_written = res.written;
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        byteLength: 4294967296,
+        write_ret: 4294967296,
+        tail: [0xa0, 0x80, 0x61],
+        encode_read: 1431655766,
+        encode_written: 4294967296,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+
+    // TextEncoder.encode in a second spawn (sequential, so the ~10 GiB
+    // envelopes don't overlap): the count wrap made this abort, not miscount.
+    const encodeScript = `
+      const N = 2 ** 32;
+      const str = "\\u0800".repeat((N - 1) / 3) + "a";
+      const arr = new TextEncoder().encode(str);
+      console.log(JSON.stringify({ byteLength: arr.byteLength, tail: Array.from(arr.subarray(N - 3)) }));
+    `;
+    await using proc2 = Bun.spawn({
+      cmd: [bunExe(), "-e", encodeScript],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+    expect({ stdout: stdout2.trim(), stderr: stderr2 }).toEqual({
+      stdout: JSON.stringify({ byteLength: 4294967296, tail: [0xa0, 0x80, 0x61] }),
+      stderr: "",
+    });
+    expect(exitCode2).toBe(0);
+  },
+  // Each spawn does multiple full 4.3 GB encode passes; ~1 min per spawn
+  // under a debug+ASAN build.
+  10 * 60 * 1000,
+);

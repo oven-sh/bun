@@ -2200,7 +2200,7 @@ impl<'a> PackageInstall<'a> {
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written as usize;
+            let mut offset: usize = res.written;
             if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;

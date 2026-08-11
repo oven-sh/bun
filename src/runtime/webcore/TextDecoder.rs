@@ -309,7 +309,7 @@ impl TextDecoder {
                 Ok(unsafe {
                     jsc::zig_string::to_external_u16(
                         bun_core::heap::into_raw(bytes).cast::<u16>(),
-                        out.written as usize,
+                        out.written,
                         global_this,
                     )
                 })

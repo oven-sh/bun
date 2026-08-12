@@ -525,10 +525,9 @@ impl WriteFile {
 
         #[cfg(target_os = "macos")]
         if self.is_named_pipe {
-            // This runs under the VM borrow `Job::run_on_pool` holds, which the
-            // VM's teardown waits for; a write loop that blocks in
-            // `block_until_writable` must not, so it runs as its own pool task,
-            // the way it does after an io-thread wake-up.
+            // Not inline: `Job::run_on_pool` holds a VM borrow around this call
+            // that teardown waits for, and this loop blocks; run it as a plain
+            // pool task, as after an io-thread wake-up.
             self.task = WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_write_loop_task,

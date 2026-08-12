@@ -679,9 +679,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         ($Ty:ty) => {
             poll_arm!($Ty, |h| {
                 // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                // `FilePoll::init` and is live on entry. Passed raw: the drain
-                // report may free the object embedding the writer (see
-                // `PosixPipeWriter::on_poll`).
+                // `FilePoll::init` and is live on entry; `on_poll` may free it.
                 unsafe { <$Ty>::on_poll(h, size_or_offset as isize, hup) }
             })
         };
@@ -734,8 +732,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         // `bun.shell.Interpreter.IOWriter.Poll`
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-            // set at `FilePoll::init`. Passed raw: the entry's keepalive may be
-            // the last ref to the `IOWriter` embedding it (see that fn).
+            // set at `FilePoll::init`; the entry may free it on the way out.
             unsafe { crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::DNS_RESOLVER => {

@@ -69,27 +69,18 @@ impl<'a> Writable<'a> {
         unsafe { FileSink::deref(pipe.as_ptr()) };
     }
 
-    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
+    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`, pinned by
+    /// the ref this variant holds (`RefPtr` deliberately has no `DerefMut`).
     ///
-    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
-    /// blocks (`ref`/`unref`/`close`/`finalize`, `take_pending_start_writer`
-    /// and `on_process_exit`) collapse to this one site. `RefPtr` deliberately
-    /// has no `DerefMut` (shared ownership). What makes the `&mut` sound is
-    /// that every caller is entered from JS, from GC or from the process-exit
-    /// callback, i.e. never from underneath the writer's own frames, so no
-    /// borrow of the writer is live: the writer's callbacks (`on_write`,
-    /// `on_error`, `on_close` → `on_close_io`) run inside `BufferedWriter`
-    /// methods that hold `&mut` to the `writer` field embedded in this very
-    /// allocation, and must not use this accessor. The writer lives in its own
-    /// heap allocation, pinned by the ref this variant holds, and access is
-    /// single-JS-mutator-thread.
+    /// Only for paths entered from JS, GC or process exit. The writer's own
+    /// callbacks (`on_close` → `on_close_io` included) run under a `&mut` to
+    /// its embedded `writer` field and must not use this.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn buffer_writer_mut<'b>(
         buffer: &'b RefPtr<StaticPipeWriter<'a>>,
     ) -> &'b mut StaticPipeWriter<'a> {
-        // SAFETY: see fn doc — no caller runs under the writer's frames, the
-        // variant's ref pins the allocation, single-thread.
+        // SAFETY: see fn doc; single JS thread.
         unsafe { &mut *buffer.as_ptr() }
     }
 

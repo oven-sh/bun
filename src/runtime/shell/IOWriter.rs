@@ -164,11 +164,9 @@ pub(crate) type Poll = WriterImpl;
 
 /// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
 /// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
-/// can drop the last external ref without freeing the `IOWriter` while
-/// PipeWriter is still on the stack. When they do, dropping `_keepalive` frees
-/// it, and `*writer` inside it, on the way out of this function, which is why
-/// `writer` is passed raw: a `&mut Poll` argument would still be live (and
-/// protected) at that point.
+/// can drop the last external ref without freeing the `IOWriter` under
+/// PipeWriter; when they do, `_keepalive`'s drop frees it (`*writer` included)
+/// on the way out, which a `&mut Poll` argument would still be covering.
 ///
 /// # Safety
 /// `writer` must be the live poll owner registered by `IOWriter::init`.

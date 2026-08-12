@@ -95,11 +95,10 @@ mod __pipe_reader_thread_confined {
 ///
 /// # Safety
 /// Caller must ensure no other `&`/`&mut StaticPipeWriter` to the same
-/// payload is live for the returned borrow. In particular this must not be
-/// reached from underneath the writer's own callbacks (`on_close` →
-/// `on_close_io`): those run inside `BufferedWriter` methods holding `&mut` to
-/// the `writer` field of the same allocation. The `(&RefPtr<T>) -> &mut T`
-/// shape cannot encode this; `unsafe fn` keeps the obligation at the callsite.
+/// payload is live for the returned borrow; the writer's own callbacks
+/// (`on_close` → `on_close_io`) run under one, so they must not use this.
+/// The `(&RefPtr<T>) -> &mut T` shape cannot encode this; `unsafe fn` keeps
+/// the obligation at the callsite.
 #[inline]
 #[allow(clippy::mut_from_ref)]
 unsafe fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
@@ -412,10 +411,8 @@ impl ShellSubprocess {
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
-                        // Reached only from `StaticPipeWriter::on_close`, which
-                        // has already detached the source and is running inside
-                        // the writer's own `close()`, so `buffer_mut` must not be
-                        // used here: just drop the ref.
+                        // Called from inside the writer's own close (it detached
+                        // the source already), so no `buffer_mut` here.
                         buffer.deref();
                     }
                 }

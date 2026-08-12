@@ -1117,10 +1117,8 @@ impl CompletionStruct for JSBundleCompletionTask {
     unsafe fn complete_on_bundle_thread(this: *mut Self) {
         // The bundle thread's last touch of this task and of the VM's memory:
         // hand it back (always queued — the VM waits for it) and stop counting.
-        // The post carries the creation ref, which `on_complete_anytask`
-        // releases, so the JS thread may free `*this` as soon as the post
-        // lands: everything needed afterwards is taken out first, through
-        // accesses that end at their `;`.
+        // The post carries the creation ref (`on_complete_anytask` releases it),
+        // so the JS thread may free `*this` once it lands: take the handle out first.
         //
         // SAFETY: trait contract — `this` is the started build, still ours.
         let handle = unsafe {

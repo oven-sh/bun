@@ -1035,8 +1035,6 @@ enum WaitError {
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
-    /// Steal cursor into the pool's `threads` stack. A `Cell` because other
-    /// workers are stealing from this struct while `pop` runs, so `pop` takes `&self`.
     target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,

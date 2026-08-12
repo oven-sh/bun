@@ -4343,8 +4343,7 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
-        /// `cp -R`: keep each link's target as stored. Off (`fs.cp`'s default), a
-        /// relative target is resolved against the source link's directory.
+        /// Keep link targets as stored (`cp -R`) instead of resolving relative ones (`fs.cp`).
         pub(crate) verbatim_symlinks: bool,
     }
 
@@ -8548,9 +8547,6 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
-    /// The junction `symlink_or_junction` falls back to needs an absolute
-    /// target, so a relative one is resolved from the copied link's directory,
-    /// which is where the symlink would have resolved it from.
     #[cfg(windows)]
     fn cp_symlink_verbatim(
         src: &OSPathSliceZ,
@@ -8574,6 +8570,7 @@ impl NodeFS {
         } else if paths::is_absolute(target.as_bytes()) {
             sys::symlink_or_junction(dest, target, None)
         } else {
+            // A junction needs an absolute target; resolve the link from the copy's own directory.
             let mut junction_buf = paths::path_buffer_pool::get();
             let junction_buf_len = junction_buf.len();
             let Some(junction_target) =

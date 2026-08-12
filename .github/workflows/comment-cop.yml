@@ -39,8 +39,8 @@ jobs:
 
             const SRC_EXT = /\.(rs|c|cc|cpp|h|hpp|m|mm|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
             const MIN_TEXT_LINES = 3;
-            // "//", "/*", "/**", "*", "*/": structure, not text.
-            const DELIMITER_ONLY = /^(\/\/|\/\*+|\*+\/?)$/;
+            // "//", "///", "//!", "/*", "/**", "*", "*/": structure, not text.
+            const DELIMITER_ONLY = /^(\/\/+!?|\/\*+|\*+\/?)$/;
 
             function isCommentLine(line) {
               const t = line.trimStart();

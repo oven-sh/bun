@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -477,7 +477,9 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
     },
     // Each test spawns its own echo-server subprocess; debug builds take
     // well over 1s to spawn + connect on slow CI runners.
-    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
+    // OHOS: release builds also need >1s (spawn + IPC ~1.2s measured),
+    // so use 10s unless an explicit per-test timeout is given.
+    { timeout: timeout ?? 10000 },
   );
 }
 

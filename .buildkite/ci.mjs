@@ -102,7 +102,10 @@ function getTargetLabel(target) {
  * @property {Profile} [profile]
  * @property {boolean} [crossCompile]
  * @property {Distro} [distro]
- * @property {string} release
+ * @property {string} [release]
+ *   Absent on a test lane that floats across every box of its os/arch
+ *   (currently darwin aarch64 off main, see testPlatforms): there is no
+ *   version to put in the step label or to assert on the agent.
  * @property {Tier} [tier]
  * @property {string[]} [features]
  */
@@ -177,19 +180,28 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
-  // `latest` (current macOS, 26 today) and one on `previous` (anything older
-  // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
-  // whichever Intel box is free. Intel Macs can't run latest macOS and the
-  // tier split bottlenecked the smaller pool, so x64 trades guaranteed
-  // version coverage for throughput. The `release` field only labels the step.
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
-  // lanes — see buildPlatforms).
+  // lanes — see buildPlatforms). A darwin lane with a `tier` only runs on the
+  // boxes tagged with that `release-tier` (see getTestAgent); one without a
+  // tier runs on any box of its arch.
+  //
+  // arm64 is listed both ways and runsByDefault() picks per branch: main runs
+  // the two pinned lanes, `latest` (current macOS, 26 today) and `previous`
+  // (anything older, currently 13/14/15), so the canary gate covers both; every
+  // other build runs the one unpinned lane. The `latest` pool is two boxes,
+  // `previous` eight: on 2026-08-12 `latest` ran flat out all day and 145 of
+  // the 220 PR builds that reached it still had the lane expire unrun (main's
+  // jobs, at a higher priority, waited ~5 min). Pin PRs again once `latest`
+  // has enough boxes to keep up with PR volume on its own.
+  //
+  // x64 is never pinned: Intel Macs can't run latest macOS and the split
+  // bottlenecked that pool too. Its `release` only labels the step.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "aarch64" },
   // x64 is off until enough Intel test agents are back on the queue.
-  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  // { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
@@ -202,17 +214,35 @@ const testPlatforms = [
 ];
 
 /**
+ * Whether a test lane runs on this branch when nothing picked lanes
+ * explicitly. Only darwin arm64 varies (see testPlatforms): pinned lanes on
+ * main, the unpinned one everywhere else. A manual build that picks a pinned
+ * lane in the options form gets it on any branch.
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function runsByDefault(platform) {
+  const { os, arch, tier } = platform;
+  if (os !== "darwin" || arch !== "aarch64") {
+    return true;
+  }
+  return isMainBranch() ? tier !== undefined : tier === undefined;
+}
+
+/**
  * @param {Platform} platform
  * @returns {string}
  */
 function getPlatformKey(platform) {
   const { distro, release } = platform;
-  const target = getTargetKey(platform);
-  const version = release.replace(/\./g, "");
+  let key = getTargetKey(platform);
   if (distro) {
-    return `${target}-${distro}-${version}`;
+    key += `-${distro}`;
   }
-  return `${target}-${version}`;
+  if (release) {
+    key += `-${release.replace(/\./g, "")}`;
+  }
+  return key;
 }
 
 /**
@@ -221,7 +251,7 @@ function getPlatformKey(platform) {
  */
 function getPlatformLabel(platform) {
   const { os, arch, baseline, profile, distro, release } = platform;
-  let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
+  let label = `${getBuildkiteEmoji(distro || os)} ${release ? `${release} ` : ""}${arch}`;
   if (baseline) {
     label += "-baseline";
   }
@@ -241,8 +271,10 @@ function getImageKey(platform) {
   // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
   // macOS SDK is fetched by the build itself). No separate image is baked.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
-  const version = release.replace(/\./g, "");
-  let key = `${hostOs}-${arch}-${version}`;
+  let key = `${hostOs}-${arch}`;
+  if (release) {
+    key += `-${release.replace(/\./g, "")}`;
+  }
   if (distro) {
     key += `-${distro}`;
   }
@@ -399,16 +431,15 @@ function getTestAgent(platform, options) {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
-    // major version. arm64 splits into `latest` (current macOS) + `previous`
-    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
-    // box — because the tier split bottlenecked the smaller pool and Intel
-    // can't run latest anyway.
+    // `release-tier` is emitted by scripts/agent.mjs (bare boxes) and
+    // scripts/darwin-ci (tart hosts) from the macOS major version the jobs run
+    // on. Which lanes pin a tier, and why the rest float, is decided in
+    // testPlatforms.
     return {
       queue: `test-${os}`,
       os,
       arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
+      ...(tier ? { "release-tier": tier } : {}),
     };
   }
 
@@ -820,10 +851,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
-      // `release` is only asserted where the lane pins an exact version:
-      // darwin aarch64 "previous" and darwin x64 intentionally float across
-      // macOS versions, and the windows "2019" label doesn't match the
-      // kernel-style version the agent reports.
+      // `release` is only asserted where the lane pins an exact version: every
+      // darwin lane except aarch64 `latest` intentionally floats across macOS
+      // versions (see testPlatforms), and the windows "2019" label doesn't
+      // match the kernel-style version the agent reports.
       EXPECTED_PLATFORM_OS: platform.os,
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
@@ -1240,7 +1271,7 @@ function getOptionsStep() {
       {
         key: "test-platforms",
         select: "If testing, which platforms do you want to test?",
-        hint: "If this is left blank, all platforms are tested",
+        hint: "If this is left blank, the platforms a push to this branch would test are tested",
         required: false,
         multiple: true,
         default: [],
@@ -1328,6 +1359,7 @@ async function getPipelineOptions() {
   const canary = await getCanaryRevision();
   const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
+  const defaultTestPlatforms = testPlatforms.filter(runsByDefault);
 
   if (isManual) {
     const { fields } = getOptionsStep();
@@ -1361,7 +1393,7 @@ async function getPipelineOptions() {
         : Array.from(buildPlatformsMap.values()),
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...testPlatformsMap.get(key), profile })))
-        : Array.from(testPlatformsMap.values()),
+        : defaultTestPlatforms,
       dryRun: parseBoolean(options["dry-run"]),
     };
   }
@@ -1416,7 +1448,7 @@ async function getPipelineOptions() {
     publishImages,
     imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
-    testPlatforms: Array.from(testPlatformsMap.values()),
+    testPlatforms: defaultTestPlatforms,
   };
 }
 

@@ -393,9 +393,14 @@ devTest("import.meta.hot.dispose runs when the update is accepted by an importer
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
+    // index handles every update below with its accept callback and is never
+    // evaluated again, so its own dispose callback must never run.
     "index.ts": `
       import { d } from "./d";
       console.log("index " + d);
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
       import.meta.hot.accept("./d", newModule => {
         console.log("index accepted " + newModule.d);
       });
@@ -448,27 +453,21 @@ devTest("import.meta.hot.dispose runs when the update is accepted by a self-acce
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    // index (self-accepting) -> mid -> d
+    // Both d (replaced) and index (the boundary) are evaluated again. All
+    // dispose callbacks run, and the promise index's returns is settled,
+    // before either module is evaluated.
     "index.ts": `
-      import { mid } from "./mid";
-      console.log("index " + mid());
-      import.meta.hot.dispose(() => {
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.dispose(async () => {
+        await null;
         console.log("index disposed");
       });
       import.meta.hot.accept();
     `,
-    "mid.ts": `
-      import { d } from "./d";
-      console.log("mid evaluated");
-      export function mid() {
-        return "mid(" + d + ")";
-      }
-      import.meta.hot.dispose(() => {
-        console.log("mid disposed");
-      });
-    `,
     "d.ts": `
       export const d = "d1";
+      console.log("evaluated " + d);
       import.meta.hot.dispose(() => {
         console.log("disposed " + d);
       });
@@ -476,16 +475,13 @@ devTest("import.meta.hot.dispose runs when the update is accepted by a self-acce
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("mid evaluated", "index mid(d1)");
+    await c.expectMessage("evaluated d1", "index d1");
 
-    // d (replaced) and index (the boundary) are both evaluated again, so both
-    // are disposed of first. mid keeps its instance and gets its import of d
-    // patched, so it is neither disposed of nor evaluated again.
     await dev.patch("d.ts", { find: "d1", replace: "d2" });
-    await c.expectMessage("disposed d1", "index disposed", "index mid(d2)");
+    await c.expectMessage("disposed d1", "index disposed", "evaluated d2", "index d2");
 
     await dev.patch("d.ts", { find: "d2", replace: "d3" });
-    await c.expectMessage("disposed d2", "index disposed", "index mid(d3)");
+    await c.expectMessage("disposed d2", "index disposed", "evaluated d3", "index d3");
   },
 });
 devTest("import.meta.hot.dispose runs once per module when one update replaces several modules", {
@@ -493,8 +489,8 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    // The boundary is reached from both replaced modules, and is reloaded
-    // before the second of them, which it imports. Each module must be
+    // The boundary is reached from both replaced modules, imports both, and
+    // comes between them in the update's reload order. Each module must be
     // disposed of once and evaluated once per update; the second round catches
     // dispose callbacks registered by a duplicate evaluation.
     "index.ts": `
@@ -525,7 +521,7 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
     await using c = await dev.client("/");
     await c.expectMessage("evaluated d1", "evaluated e1", "index evaluated");
     // The order the modules of one update are processed in is not specified;
-    // the dispose-before-evaluate ordering is covered by the tests above.
+    // the ordering between disposing and evaluating is pinned by the test above.
     {
       await using batch = await dev.batchChanges();
       await dev.patch("d.ts", { find: "d1", replace: "d2" });
@@ -552,6 +548,56 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
       "evaluated e3",
       "index evaluated",
     );
+  },
+});
+devTest("import.meta.hot.dispose runs for a copy whose evaluation threw when the module is replaced", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // The failing module is reached through import() so that the page itself
+    // stays up. What it set up before throwing still has to be torn down when
+    // the fixed copy replaces it.
+    "index.ts": `
+      globalThis.loadDep = async () => {
+        try {
+          return (await import("./dep")).value;
+        } catch (e) {
+          return "failed: " + e.message;
+        }
+      };
+      console.log("index evaluated");
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      import.meta.hot.dispose(() => {
+        console.log("dep disposed");
+      });
+      export const value = "v1";
+      throw new Error("dep is broken");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index evaluated");
+    expect(await c.js`loadDep()`).toBe("failed: dep is broken");
+
+    await dev.write(
+      "dep.ts",
+      `
+        import.meta.hot.dispose(() => {
+          console.log("dep disposed");
+        });
+        export const value = "v2";
+      `,
+    );
+    // dep is replaced and index, which imported it, self-accepts.
+    await c.expectMessage("dep disposed", "index evaluated");
+    expect(await c.js`loadDep()`).toBe("v2");
+
+    await dev.patch("dep.ts", { find: "v2", replace: "v3" });
+    await c.expectMessage("dep disposed", "index evaluated");
+    expect(await c.js`loadDep()`).toBe("v3");
   },
 });
 devTest("import.meta.hot.on listeners of a module accepted by its importer are removed when it is replaced", {

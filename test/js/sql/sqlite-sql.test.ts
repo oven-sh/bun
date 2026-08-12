@@ -1436,7 +1436,7 @@ describe("SQL helpers", () => {
         await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id AND name = :name", { id: 1 }),
     ).toThrow('Missing parameter "name"');
 
-    // The statement from the failed query is finalized and the connection stays usable.
+    // The connection stays usable after a rejected bind.
     const rows = await strictSql.unsafe("SELECT * FROM missing_binding_test WHERE id = :id", { id: 1 });
     expect(rows).toEqual([{ id: 1, name: "Alice" }]);
   });

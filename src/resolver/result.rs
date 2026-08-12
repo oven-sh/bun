@@ -235,10 +235,6 @@ impl Result {
         Self::deref_package_json(self.package_json)
     }
 
-    pub fn package_json_path(&self) -> Option<&'static [u8]> {
-        self.package_json_ref().map(|package_json| package_json.source.path.text)
-    }
-
     /// Field-value form of [`package_json_ref`] for sites where `self` is
     /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
     /// `Copy` field directly so the borrow checker only sees a field read.

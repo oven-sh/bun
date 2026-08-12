@@ -1,12 +1,16 @@
+use crate::resolve_message::esm_package_name;
 use crate::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    self as jsc, CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
     VirtualMachineRef as VirtualMachine,
 };
+use bstr::BStr;
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
 use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
+use bun_paths::resolve_path;
+use core::ptr::NonNull;
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -100,54 +104,91 @@ fn find_path_inner(
     .ok())
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn NodeModuleModule__findPackageJSON(
-    global: &JSGlobalObject,
-    specifier: BunString,
-    source: BunString,
-) -> JSValue {
-    jsc::host_fn::to_js_host_call(global, || find_package_json(global, specifier, source))
+// https://nodejs.org/api/module.html#modulefindpackagejsonspecifier-base
+#[crate::host_fn(export = "NodeModuleModule__findPackageJSON")]
+fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::mark_binding!();
+    if frame.arguments_count() == 0 {
+        return Err(global.throw_missing_arguments_value(&["specifier"]));
+    }
+    let specifier = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+    let base_value = frame.argument(1);
+    let base = if base_value.is_undefined() {
+        None
+    } else if base_value.is_string() || jsc::DOMURL::cast_(base_value, global.vm()).is_some() {
+        Some(OwnedString::new(base_value.to_bun_string(global)?))
+    } else {
+        return Err(global.throw_invalid_argument_type_value("base", "string", base_value));
+    };
+
+    let specifier = location_to_path(specifier.get());
+    let specifier_utf8 = specifier.get().to_utf8();
+    let specifier = specifier_utf8.slice();
+    let base = base.map(|base| location_to_path(base.get()));
+    let base_utf8 = base.as_ref().map(|base| base.get().to_utf8());
+
+    let top_level_dir = global.bun_vm().top_level_dir();
+    let mut base_buf = bun_paths::path_buffer_pool::get();
+    // `base` is the calling module (`__filename` / `import.meta.url`), so
+    // resolution starts in its directory; without one it starts in the cwd.
+    let (source_dir, referrer): (&[u8], &[u8]) = match &base_utf8 {
+        Some(base) => {
+            let base = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                top_level_dir,
+                &mut base_buf,
+                &[base.slice()],
+            );
+            (bun_paths::dirname(base).unwrap_or(base), base)
+        }
+        None => (top_level_dir, top_level_dir),
+    };
+
+    let mut log = bun_ast::Log::default();
+    // SAFETY: the per-thread VM outlives this synchronous call, and `log` is
+    // declared before the guard so it is still alive when the guard restores
+    // the resolver's previous log on drop.
+    let _restore_log = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*global.bun_vm_ptr()).transpiler.resolver),
+            NonNull::from(&mut log),
+        )
+    };
+
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    match resolver.find_package_json(source_dir, specifier) {
+        Ok(Some(package_json)) => {
+            jsc::bun_string_jsc::create_utf8_for_js(global, package_json.source.path.text)
+        }
+        Ok(None) => Ok(JSValue::UNDEFINED),
+        Err(_) => {
+            let (kind, name) = if bun_paths::is_package_path(specifier) {
+                ("package", esm_package_name(specifier))
+            } else {
+                ("module", specifier)
+            };
+            Err(global
+                .err(
+                    jsc::ErrorCode::ERR_MODULE_NOT_FOUND,
+                    format_args!(
+                        "Cannot find {} '{}' imported from {}",
+                        kind,
+                        BStr::new(name),
+                        BStr::new(referrer)
+                    ),
+                )
+                .throw())
+        }
+    }
 }
 
-fn find_package_json(
-    global: &JSGlobalObject,
-    specifier: BunString,
-    source: BunString,
-) -> JsResult<JSValue> {
-    let specifier = if specifier.has_prefix_comptime(b"file://") {
-        OwnedString::new(jsc::URL::path_from_file_url(specifier))
+/// Both arguments accept either a path or a `file:` URL (`import.meta.url`,
+/// `import.meta.resolve()`).
+fn location_to_path(location: BunString) -> OwnedString {
+    OwnedString::new(if location.has_prefix_comptime(b"file:") {
+        jsc::URL::path_from_file_url(location)
     } else {
-        OwnedString::new(specifier.dupe_ref())
-    };
-
-    let source = if source.has_prefix_comptime(b"file://") {
-        OwnedString::new(jsc::URL::path_from_file_url(source))
-    } else {
-        OwnedString::new(source.dupe_ref())
-    };
-
-    let mut resolved = ErrorableString::ok(BunString::empty());
-    VirtualMachine::resolve(
-        &mut resolved,
-        global,
-        specifier.get(),
-        source.get(),
-        None,
-        crate::virtual_machine::ResolveMode::PackageJson,
-    )?;
-
-    if !resolved.success {
-        // SAFETY: !success activates the error arm of ErrorableString.
-        return Err(global.throw_value(unsafe { resolved.result.err }.value));
-    }
-
-    // SAFETY: success activates the value arm of ErrorableString.
-    let mut resolved = OwnedString::new(unsafe { resolved.result.value });
-    if resolved.get().is_empty() {
-        Ok(JSValue::UNDEFINED)
-    } else {
-        resolved.transfer_to_js(global)
-    }
+        location.dupe_ref()
+    })
 }
 
 pub fn stat(path: &[u8]) -> i32 {

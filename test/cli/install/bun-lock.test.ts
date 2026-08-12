@@ -1,4 +1,5 @@
 import { file, spawn, write } from "bun";
+import { npa } from "bun:internal-for-testing";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
@@ -1043,4 +1044,38 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
+});
+
+it("parses the lockfile's ssh:// spelling of scp-form git repos back to scp form", () => {
+  // bun.lock serializes an scp-form repo ("git@host:path") with an "ssh://"
+  // prefix. Parsing must bring it back to the scp spelling, and must leave
+  // real ssh URLs alone: every git task id, package dedupe lookup, and store
+  // path hashes the exact repo bytes, so a dependency and a reloaded
+  // resolution that disagree never share work (a cold-cache isolated install
+  // waits forever on a checkout id nothing completes).
+  const cases: [spec: string, repo: string, ref?: string][] = [
+    // the prefix comes back off scp forms
+    ["git+ssh://git@host:user/repo.git", "git@host:user/repo.git"],
+    ["ssh://git@host:user/repo.git", "git@host:user/repo.git"],
+    ["git+ssh://git@host:user/repo.git#main", "git@host:user/repo.git", "main"],
+    ["git+ssh://git@host:/abs/repo.git", "git@host:/abs/repo.git"],
+    ["git+ssh://git@host:22a/path", "git@host:22a/path"], // not a numeric port
+    ["git+ssh://git@[::1]:path/repo.git", "git@[::1]:path/repo.git"],
+    ["git+ssh://host.com:path", "host.com:path"], // no userinfo
+    ["git+ssh://alice@myhost:team/repo.git", "alice@myhost:team/repo.git"], // non-git user
+    ["git+ssh://git.corp.io:libs/@scope/pkg.git", "git.corp.io:libs/@scope/pkg.git"], // @ in the path
+    // real URLs keep it
+    ["git+ssh://git@host:22/repo.git", "ssh://git@host:22/repo.git"], // numeric port
+    ["git+ssh://git@host:22", "ssh://git@host:22"],
+    ["git+ssh://git@host/repo.git", "ssh://git@host/repo.git"], // no scp separator
+    ["git+ssh://git@[::1]/repo.git", "ssh://git@[::1]/repo.git"], // bracketed IPv6 host
+    ["git+ssh://git@[::1]:2222/repo.git", "ssh://git@[::1]:2222/repo.git"],
+    ["git+ssh://user:pass@host:path/repo.git", "ssh://user:pass@host:path/repo.git"], // colon in userinfo
+    ["git+ssh://git@[::1", "ssh://git@[::1"], // unterminated bracket
+    // the bare scp form was never prefixed
+    ["git@host:user/repo.git", "git@host:user/repo.git"],
+  ];
+  for (const [spec, repo, ref] of cases) {
+    expect({ spec, ...npa(spec).version }).toEqual({ spec, type: "git", owner: "", repo, ref: ref ?? "" });
+  }
 });

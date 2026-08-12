@@ -1,10 +1,11 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
+import { chmodSync, existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
+import { fakeSshScript, makeBareRepo, runIsolatedInstall, sshInstallEnv } from "./git-ssh-helpers";
 
 const registry = new VerdaccioRegistry();
 
@@ -2686,4 +2687,154 @@ describe("hoist", () => {
       join(".bun", "two-range-deps@1.0.0", "node_modules", "two-range-deps"),
     );
   });
+});
+
+// bun.lock writes an scp-form git repo ("git@host:path") with an "ssh://"
+// prefix, and every git task id hashes the exact repo bytes. If parsing does
+// not strip that prefix back off, the loaded resolution ("ssh://git@host:path")
+// and the freshly parsed dependency ("git@host:path") enqueue disjoint
+// clone/checkout tasks: the store entry waits on the resolution's checkout id
+// while the re-enqueue after the clone keys the dependency's, so a cold-cache
+// install from the lockfile never finishes.
+test.skipIf(isWindows)("cold cache install from bun.lock with an scp-form git dependency completes", async () => {
+  using dir = tempDir("isolated-scp-git", {
+    "fake-ssh.sh": fakeSshScript,
+    "upstream/package.json": JSON.stringify({ name: "scp-dep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
+
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "scp-project",
+      dependencies: {
+        // scp form with an absolute path so the fake ssh finds the repo
+        "scp-dep": `git@localhost:${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
+
+  // stderr content is not asserted (the https attempt that precedes the ssh
+  // fallback fails with a git error even on the happy path); it is the
+  // failure message so a broken install surfaces git's diagnostics
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
+    name: "scp-dep",
+    version: "1.0.0",
+  });
+
+  // the lockfile keeps the ssh:// spelling of the scp form
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"scp-dep@git+ssh://git@localhost:');
+
+  // reinstall from the lockfile with a cold cache
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(String(dir), "ssh.log"), { force: true });
+
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "scp-dep", "package.json")).json()).toMatchObject({
+    name: "scp-dep",
+    version: "1.0.0",
+  });
+
+  // both spellings converging on the same clone task means the cold install
+  // clones once (further lines would be git's ssh -G config probe, not a
+  // transfer), and the lockfile round trip is byte-stable
+  const sshLog = await file(join(String(dir), "ssh.log")).text();
+  expect(sshLog.split("\n").filter(line => line.includes("git-upload-pack"))).toHaveLength(1);
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
+});
+
+// An scp form whose user is not git takes the ssh scheme fallback at clone
+// time ("ssh://alice@host/path", not a second "git@" prepended), and its
+// lockfile round trip converges the same way as the git@ form.
+test.skipIf(isWindows)("cold cache install of an scp git dependency with a non-git user", async () => {
+  using dir = tempDir("isolated-scp-user-git", {
+    "fake-ssh.sh": fakeSshScript,
+    "upstream/package.json": JSON.stringify({ name: "alice-dep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
+
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "alice-project",
+      dependencies: {
+        "alice-dep": `alice@localhost:${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
+
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "alice-dep", "package.json")).json()).toMatchObject({
+    name: "alice-dep",
+    version: "1.0.0",
+  });
+
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"alice-dep@git+ssh://alice@localhost:');
+
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "alice-dep", "package.json")).json()).toMatchObject({
+    name: "alice-dep",
+    version: "1.0.0",
+  });
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
+});
+
+// A dependency that really is an ssh URL (bracketed IPv6 host here) must keep
+// its ssh:// form: stripping would turn "ssh://git@[::1]/path" into
+// "git@[::1]/path", which git reads as a local path (no scp separator after
+// the brackets). The full keep-or-strip boundary matrix is pinned at parse
+// level in bun-lock.test.ts.
+test.skipIf(isWindows)("cold cache install of a bracketed IPv6 ssh URL git dependency", async () => {
+  using dir = tempDir("isolated-ipv6-git", {
+    "fake-ssh.sh": fakeSshScript,
+    "upstream/package.json": JSON.stringify({ name: "v6-dep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "fake-ssh.sh"), 0o755);
+  makeBareRepo(String(dir), "upstream", "repo.git");
+
+  const projectDir = join(String(dir), "project");
+  await write(
+    join(projectDir, "package.json"),
+    JSON.stringify({
+      name: "v6-project",
+      dependencies: {
+        // the fake ssh ignores the host, so the URL path carries the repo
+        "v6-dep": `ssh://git@[::1]${join(String(dir), "repo.git")}`,
+      },
+    }),
+  );
+
+  const first = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-fresh"));
+  expect(first.exitCode, first.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
+
+  // the URL keeps its ssh:// form and its bracketed host in the lockfile
+  const lockAfterFirst = await file(join(projectDir, "bun.lock")).text();
+  expect(lockAfterFirst).toContain('"v6-dep@git+ssh://git@[::1]');
+
+  await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+  const second = await runIsolatedInstall(projectDir, sshInstallEnv(String(dir), "cache-cold"));
+  expect(second.exitCode, second.stderr).toBe(0);
+  expect(await file(join(projectDir, "node_modules", "v6-dep", "package.json")).json()).toMatchObject({
+    name: "v6-dep",
+    version: "1.0.0",
+  });
+  expect(await file(join(projectDir, "bun.lock")).text()).toBe(lockAfterFirst);
 });

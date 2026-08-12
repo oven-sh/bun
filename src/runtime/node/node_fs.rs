@@ -3,7 +3,7 @@
 // The top-level functions assume the arguments are already validated
 
 use bun_paths::strings;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -693,7 +693,7 @@ mod _async_tasks {
             task.tracker.did_schedule(global_object);
 
             let loop_ = uv::Loop::get();
-            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
+            task.req.data = core::ptr::from_mut::<Self>(task).cast();
 
             // The match resolves at compile time (`F` is a const generic), but
             // each arm's body needs `A` re-asserted to its concrete `args::*`
@@ -942,17 +942,35 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-            // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
-            let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
+        /// Settles the promise and frees the request (the task queue's entry point).
+        ///
+        /// Raw-pointer receiver: this function ends in `destroy(this)`. A `&mut self`
+        /// argument would be protected for the whole frame, and freeing the allocation
+        /// while that protector is live is UB ("deallocating while item is protected");
+        /// the borrows below are plain locals whose last use precedes the free.
+        ///
+        /// # Safety
+        /// `this` is the pointer leaked in `create()`, enqueued exactly once (by the
+        /// libuv callback, or by `create()` itself for the no-op `writev`), and is not
+        /// used after this call.
+        pub(crate) unsafe fn run_from_js_thread(
+            this: *mut Self,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            // SAFETY: fn contract — frees `*this` once, on every return path, after
+            // everything below has run.
+            let _deinit = scopeguard::guard(this, |p| unsafe { Self::destroy(p) });
+            // Move `result` out (the sentinel left behind is dropped in `destroy()`) so
+            // the rest of the function only needs shared access.
+            // SAFETY: fn contract — exclusive access; the `&mut` is statement-scoped.
+            let mut result =
+                core::mem::replace(unsafe { &mut (*this).result }, Err(sys::Error::default()));
+            // SAFETY: fn contract — `*this` is live until the guard runs and nothing
+            // below mutates it.
+            let task = unsafe { &*this };
+            let global_object = task.global_object();
             let success = matches!(result, Ok(_));
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
+            let promise_value = task.promise.value();
+            let promise = task.promise.get();
             let result = match &mut result {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
@@ -969,7 +987,7 @@ mod _async_tasks {
             };
             promise_value.ensure_still_alive();
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let _dispatch = task.tracker.dispatch(global_object);
 
             if success {
                 promise.resolve(global_object, result)?;
@@ -1403,7 +1421,7 @@ mod _async_tasks {
         /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
-        /// original write provenance for `on_subtask_done`'s `&mut` promotion.
+        /// original write provenance that `on_subtask_done`'s completion frees with.
         pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
@@ -1454,9 +1472,9 @@ mod _async_tasks {
         }
 
         fn run_owned(self: Box<Self>) {
-            // `ParentRef` preserves the `Box::leak` mutable provenance so
-            // `on_subtask_done` may later promote it to `&mut` via `as_mut_ptr()`
-            // once the refcount reaches zero.
+            // `ParentRef` preserves the `Box::leak` mutable provenance so the
+            // completion `on_subtask_done` enqueues (via `as_mut_ptr()`) may free
+            // the parent once the refcount reaches zero.
             let cp_task = self.cp_task;
             // Shared borrow only — other workpool threads (and the directory-scan
             // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
@@ -1646,8 +1664,8 @@ mod _async_tasks {
         ///
         /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
         /// mutable provenance from the original `Box::leak`; the JS-thread
-        /// callback later materializes `&mut *this`, which would be UB if the
-        /// pointer were derived from a shared reference.
+        /// callback later frees the allocation through it, which would be UB if
+        /// the pointer were derived from a shared reference.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -1667,8 +1685,8 @@ mod _async_tasks {
             }
 
             // Count reached zero ⇒ exclusive access. `this` carries mutable
-            // provenance from `Box::leak`, so the enqueued callback may safely
-            // form `&mut *this` on the JS thread.
+            // provenance from `Box::leak`, so the enqueued `run_from_js_thread`
+            // may free `*this` on the JS thread.
             let poster = this_ref.poster.clone();
             if poster.is_js() {
                 let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
@@ -1677,13 +1695,14 @@ mod _async_tasks {
                     unreachable!("VM handle closed with an fs.cp outstanding");
                 };
             } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
-                    this,
-                    |p: *mut Self, ctx| {
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        unsafe { (*p).run_from_js_thread_mini(ctx) }
-                    },
-                );
+                let at =
+                    AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
+                        debug_assert!(IS_SHELL, "only the shell posts cp tasks to a mini loop");
+                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked
+                        // task. The shell specialization settles no promise, so there is
+                        // no termination to report: the result is always `Ok`.
+                        let _ = unsafe { Self::run_from_js_thread(p) };
+                    });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
@@ -1691,25 +1710,37 @@ mod _async_tasks {
             poster.embedded_work_finished();
         }
 
-        pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
-            let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
-        }
-
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        /// Delivers the result (settles the promise, or hands it to the shell's
+        /// `ShellCpTask`) and frees the task. Posted by `on_subtask_done`.
+        ///
+        /// Raw-pointer receiver: this function ends in `destroy(this)`. A `&mut self`
+        /// argument would be protected for the whole frame, and freeing the allocation
+        /// while that protector is live is UB ("deallocating while item is protected");
+        /// the borrows below are plain locals whose last use precedes the free.
+        ///
+        /// # Safety
+        /// `this` is the pointer `schedule_new()` leaked, every subtask has dropped its
+        /// reference (`subtask_count` reached zero, so this thread has exclusive
+        /// access), and it is not used after this call.
+        pub(crate) unsafe fn run_from_js_thread(
+            this: *mut Self,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            // SAFETY: fn contract — frees `*this` once, on every return path, after
+            // everything below has run.
+            let _deinit = scopeguard::guard(this, |p| unsafe { Self::destroy(p) });
+            // SAFETY: fn contract — `*this` is live until the guard runs; `result` is a
+            // `Cell`, so moving it out below needs only this shared borrow.
+            let task = unsafe { &*this };
+            // `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
+            let mut result = task.result.replace(Ok(()));
             if IS_SHELL {
-                // SAFETY: shelltask is set by create_for_shell and outlives this task
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
+                let shelltask = task.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
-                // outlives this task; `cp_on_finish` enqueues it concurrently.
+                // outlives this task; `cp_on_finish` continues it in place.
                 unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
-                // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
-            let go_ptr = self.evtloop.global_object();
+            let go_ptr = task.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
                     "No global object, this indicates a bug in Bun. Please file a GitHub issue."
@@ -1717,41 +1748,31 @@ mod _async_tasks {
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
-            let success = (*self.result.get_mut()).is_ok();
-            let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
-            let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = match self.result.get_mut() {
-                // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
+            let success = result.is_ok();
+            let promise_value = task.promise.value();
+            let promise = task.promise.get();
+            let result = match &mut result {
+                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }.reject(global_object, Err(e));
+                        return promise.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }.reject(global_object, Err(e));
+                        return promise.reject(global_object, Err(e));
                     }
                 },
             };
             promise_value.ensure_still_alive();
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let _dispatch = task.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             if success {
-                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
+                promise.resolve(global_object, result)?;
             } else {
-                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
+                promise.reject(global_object, Ok(result))?;
             }
             Ok(())
         }

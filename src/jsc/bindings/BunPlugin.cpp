@@ -818,6 +818,7 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         return;
 
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     Vector<std::pair<String, JSC::Strong<JSC::JSObject>>, 8> toReplace;
 
@@ -831,21 +832,20 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         auto* ns = moduleMock->mustEvictEsm ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
         if (ns) {
             if (auto* originals = moduleMock->esmOriginalExports.get()) {
-                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                 JSObject::getOwnPropertyNames(originals, globalObject, names, DontEnumPropertiesMode::Exclude);
-                if (!topExceptionScope.exception()) [[likely]] {
-                    for (auto& name : names) {
-                        JSValue originalValue = originals->getDirect(vm, name);
-                        if (!originalValue)
-                            continue;
-                        ns->overrideExportValue(globalObject, name, originalValue);
-                        if (topExceptionScope.exception()) [[unlikely]]
-                            (void)topExceptionScope.tryClearException();
-                    }
-                } else {
-                    (void)topExceptionScope.tryClearException();
+                if (scope.exception()) [[unlikely]]
+                    break;
+                for (auto& name : names) {
+                    JSValue originalValue = originals->getDirect(vm, name);
+                    if (!originalValue)
+                        continue;
+                    ns->overrideExportValue(globalObject, name, originalValue);
+                    if (scope.exception()) [[unlikely]]
+                        break;
                 }
+                if (scope.exception()) [[unlikely]]
+                    break;
             }
         } else {
             // No ESM snapshot: evict so the next import re-loads the real source.
@@ -860,13 +860,13 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
             JSValue original = moduleMock->cjsOriginalExports.get();
             cjs->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original ? original : jsUndefined(), 0);
         } else {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             globalObject->requireMap()->remove(globalObject, jsString(vm, entry.key));
-            if (topExceptionScope.exception()) [[unlikely]]
-                (void)topExceptionScope.tryClearException();
+            if (scope.exception()) [[unlikely]]
+                break;
         }
     }
 
+    // On exception: visited entries still leave the map, unvisited ones stay for a retry.
     for (auto& [key, prior] : toReplace) {
         if (prior)
             virtualModules->set(key, std::move(prior));

@@ -1476,9 +1476,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSMock__resetSpies(zigGlobalObject);
     zigGlobalObject->onLoadPlugins.restoreModuleMocks(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

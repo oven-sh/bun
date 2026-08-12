@@ -2967,7 +2967,7 @@ pub mod bv2_impl {
                         "Failed to create a worker thread for the bundler: {errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
                     ),
                 );
-                return Err(errno.into());
+                return Err(Error::ThreadSpawnFailed);
             }
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));

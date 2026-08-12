@@ -8,6 +8,7 @@
 // only kills a timed-out test's dangling children for non-concurrent tests.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { constants } from "node:os";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -21,8 +22,9 @@ const skip = !isLinux || !cc;
 // client thread, which also uses this size; see the install test.
 const POOL_WORKER_STACK_SIZE = 4 * 1024 * 1024;
 
-// POOL_SPAWN_PLAN is one letter per spawn attempt of such a thread, 'f' = fail
-// with EAGAIN, 's' = succeed; the last letter repeats for every further attempt.
+// POOL_SPAWN_PLAN is one letter per spawn attempt of such a thread, 'f' = fail,
+// 's' = succeed; the last letter repeats for every further attempt. Failures
+// return EAGAIN unless POOL_SPAWN_ERRNO names another errno value.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -34,12 +36,15 @@ const SHIM_C = /* c */ `
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static const char *plan;
 static size_t plan_len;
+static int fail_errno = EAGAIN;
 static int attempts;
 
 __attribute__((constructor)) static void init(void) {
   real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
   plan = getenv("POOL_SPAWN_PLAN");
   plan_len = plan ? strlen(plan) : 0;
+  const char *err = getenv("POOL_SPAWN_ERRNO");
+  if (err) fail_errno = atoi(err);
 }
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
@@ -47,7 +52,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
   if (attr) pthread_attr_getstacksize(attr, &stack_size);
   if (stack_size == ${POOL_WORKER_STACK_SIZE} && plan_len > 0) {
     size_t i = __sync_fetch_and_add(&attempts, 1);
-    if (plan[i < plan_len ? i : plan_len - 1] == 'f') return EAGAIN;
+    if (plan[i < plan_len ? i : plan_len - 1] == 'f') return fail_errno;
   }
   return real_pthread_create(thread, attr, start, arg);
 }
@@ -114,12 +119,17 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-function spawnWithPlan(plan: string, ...args: string[]) {
+function spawnWithPlan(plan: string, args: string[], errno?: number) {
   const existing = bunEnv.LD_PRELOAD;
   return Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, POOL_SPAWN_PLAN: plan },
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+      POOL_SPAWN_PLAN: plan,
+      ...(errno === undefined ? {} : { POOL_SPAWN_ERRNO: String(errno) }),
+    },
     stdout: "pipe",
     stderr: "pipe",
     // Kill switch: without the fix every 'f'-only run below waits forever for
@@ -129,16 +139,17 @@ function spawnWithPlan(plan: string, ...args: string[]) {
   });
 }
 
-async function runWithPlan(plan: string, ...args: string[]) {
-  await using proc = spawnWithPlan(plan, ...args);
+async function runWithPlan(plan: string, args: string[], errno?: number) {
+  await using proc = spawnWithPlan(plan, args, errno);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signalCode: proc.signalCode };
 }
 
 // The bundler warms its pool before scheduling anything, so it can report the
 // failure through its own log.
-const BUNDLER_ERROR =
-  "Failed to create a worker thread for the bundler: EAGAIN. The process or thread limit may have been reached (ulimit -u, or the container's pids limit).";
+function bundlerError(errno: string) {
+  return `Failed to create a worker thread for the bundler: ${errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit).`;
+}
 
 // Pools that are only ever fed through fire-and-forget schedule() calls have
 // nobody to return the error to; the process exits with it instead of hanging.
@@ -148,21 +159,41 @@ const STRANDED_TASKS_STDERR = [
 ].join("\n");
 
 test.skipIf(skip)("bun build reports a bundler pool that cannot spawn any worker and exits", async () => {
-  expect(await runWithPlan("f", "build", "entry.js")).toEqual({
+  expect(await runWithPlan("f", ["build", "entry.js"])).toEqual({
     stdout: "",
-    stderr: `error: ${BUNDLER_ERROR}`,
+    stderr: `error: ${bundlerError("EAGAIN")}`,
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+test.skipIf(skip)("the error names the errno the OS returned", async () => {
+  expect(await runWithPlan("f", ["build", "entry.js"], constants.errno.EPERM)).toEqual({
+    stdout: "",
+    stderr: `error: ${bundlerError("EPERM")}`,
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+// The failure happens before the watcher exists, so a watch build has nothing
+// left to wait for; it must exit like a plain build instead of parking.
+test.skipIf(skip)("bun build --watch exits too when the pool cannot spawn any worker", async () => {
+  expect(await runWithPlan("f", ["build", "--watch", "entry.js"])).toEqual({
+    stdout: "",
+    stderr: `error: ${bundlerError("EAGAIN")}`,
     exitCode: 1,
     signalCode: null,
   });
 });
 
 test.skipIf(skip)("Bun.build() rejects when the pool cannot spawn any worker", async () => {
-  expect(await runWithPlan("f", "build-api.js")).toEqual({
+  expect(await runWithPlan("f", ["build-api.js"])).toEqual({
     stdout: JSON.stringify({
       settled: "rejected",
       name: "AggregateError",
       message: "Bundle failed",
-      errors: [BUNDLER_ERROR],
+      errors: [bundlerError("EAGAIN")],
     }),
     stderr: "",
     exitCode: 0,
@@ -171,7 +202,7 @@ test.skipIf(skip)("Bun.build() rejects when the pool cannot spawn any worker", a
 });
 
 test.skipIf(skip)("the dev server exits with the error when the pool cannot spawn any worker", async () => {
-  await using proc = spawnWithPlan("f", "dev-server.js");
+  await using proc = spawnWithPlan("f", ["dev-server.js"]);
   const stderr = proc.stderr.text();
   const decoder = new TextDecoder();
   let stdout = "";
@@ -189,14 +220,14 @@ test.skipIf(skip)("the dev server exits with the error when the pool cannot spaw
   const exitCode = await proc.exited;
   expect({ stdout: stdout.trim(), stderr: (await stderr).trim(), exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: expect.stringMatching(/^PORT \d+$/),
-    stderr: `error: ${BUNDLER_ERROR}`,
+    stderr: `error: ${bundlerError("EAGAIN")}`,
     exitCode: 1,
     signalCode: null,
   });
 });
 
 test.skipIf(skip)("a node:fs promise whose WorkPool cannot spawn any worker exits with the error", async () => {
-  expect(await runWithPlan("f", "read-file.js")).toEqual({
+  expect(await runWithPlan("f", ["read-file.js"])).toEqual({
     stdout: "",
     stderr: STRANDED_TASKS_STDERR,
     exitCode: 1,
@@ -207,7 +238,7 @@ test.skipIf(skip)("a node:fs promise whose WorkPool cannot spawn any worker exit
 // bun install starts the HTTP client thread (the 's': it uses the same stack
 // size) before scheduling the tarball extraction on its own, never warmed pool.
 test.skipIf(skip)("bun install exits with the error when its pool cannot spawn any worker", async () => {
-  expect(await runWithPlan("sf", "install", "--cwd", "install")).toEqual({
+  expect(await runWithPlan("sf", ["install", "--cwd", "install"])).toEqual({
     stdout: expect.stringContaining("bun install v1."),
     stderr: STRANDED_TASKS_STDERR,
     exitCode: 1,
@@ -216,7 +247,7 @@ test.skipIf(skip)("bun install exits with the error when its pool cannot spawn a
 });
 
 test.skipIf(skip)("the pool's first worker is retried after a transient spawn failure", async () => {
-  expect(await runWithPlan("fs", "read-file.js")).toEqual({
+  expect(await runWithPlan("fs", ["read-file.js"])).toEqual({
     stdout: "read: export const a = 1;",
     stderr: "",
     exitCode: 0,
@@ -225,7 +256,7 @@ test.skipIf(skip)("the pool's first worker is retried after a transient spawn fa
 });
 
 test.skipIf(skip)("a pool that got one worker keeps working when the remaining spawns fail", async () => {
-  expect(await runWithPlan("sf", "build", "entry.js")).toEqual({
+  expect(await runWithPlan("sf", ["build", "entry.js"])).toEqual({
     stdout: ["// a.js", "var a = 1;", "", "// entry.js", "console.log(a);"].join("\n"),
     stderr: "",
     exitCode: 0,

@@ -38,6 +38,11 @@ pub enum Error {
     FormatError,
     #[error("ResolveMessage")]
     ResolveMessage,
+    /// The bundle's thread pool could not get a single worker; the OS error is
+    /// in the log. `BundleV2::init` raises it before anything else (the CLI's
+    /// watcher included) exists, so callers must not wait on a rebuild.
+    #[error("ThreadSpawnFailed")]
+    ThreadSpawnFailed,
     #[error("JSError")]
     Js(bun_core::JsError),
     #[error(transparent)]
@@ -123,6 +128,7 @@ impl Error {
             Self::EmptyAST => "EmptyAST",
             Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
+            Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
             Self::Sys(e) => <&'static str>::from(e),

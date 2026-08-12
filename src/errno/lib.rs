@@ -524,6 +524,34 @@ mod errno_name_tests {
     }
 
     #[test]
+    fn io_error_to_errno() {
+        // Deliberately not EAGAIN, which is what the callers fall back to.
+        #[cfg(not(windows))]
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM)),
+            Some(SystemErrno::ENOMEM)
+        );
+        #[cfg(windows)]
+        {
+            // `raw_os_error()` holds Win32 codes there: ERROR_NOT_ENOUGH_MEMORY
+            // and ERROR_ACCESS_DENIED, which would read as ENOEXEC and EIO if
+            // taken for errno values.
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(8)),
+                Some(SystemErrno::ENOMEM)
+            );
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(5)),
+                Some(SystemErrno::EPERM)
+            );
+        }
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::other("not from the OS")),
+            None
+        );
+    }
+
+    #[test]
     fn coreutils_map() {
         assert_eq!(
             coreutils_error_map::get(2),

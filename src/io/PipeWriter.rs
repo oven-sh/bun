@@ -3,7 +3,8 @@ use core::mem;
 
 use bun_collections::ByteVecExt;
 use bun_core::OOM;
-use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for the writers that launder
+#[cfg(windows)]
+use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for the Windows writers
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -57,20 +58,33 @@ pub trait PosixPipeWriter {
     /// releases its last ref there): freeing an allocation while a reference to
     /// it is a live argument of some frame is rejected by both aliasing models,
     /// so every frame between the poll dispatch and that release holds the
-    /// writer as a raw pointer.
+    /// writer as a raw pointer. The same goes for [`on_error`](Self::on_error)
+    /// and [`register_poll`](Self::register_poll), which end in the `on_close`
+    /// a parent may free itself from.
     ///
     /// # Safety
     /// `this` must point to the live writer. After a `Drained` or `EndOfFile`
     /// report the caller must not touch `this` again; a `Pending` report leaves
     /// the writer alive (see the `*WriterParent::on_write` contracts).
     unsafe fn on_write(this: *mut Self, written: usize, status: WriteStatus);
-    /// Optional. Implement as no-op when not needed and set
-    /// `HAS_REGISTER_POLL = false`.
-    fn register_poll(&mut self);
+    /// Re-arms the poll after a `Pending` report. Optional: implement as a
+    /// no-op when not needed and set `HAS_REGISTER_POLL = false`.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer. A failed registration is reported
+    /// to the parent like a write error, after which the parent may have freed
+    /// the object embedding the writer, so the caller must not touch `this`
+    /// afterwards.
+    unsafe fn register_poll(this: *mut Self);
     const HAS_REGISTER_POLL: bool = true;
-    /// The parent's error handler may end or detach the writer but must leave
-    /// it alive: the writer closes itself right after reporting.
-    fn on_error(&mut self, err: sys::Error);
+    /// Reports a write error to the parent and closes the writer. The parent's
+    /// error handler must leave the writer alive for that close; the `on_close`
+    /// the close delivers may free the parent, and the writer with it.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer; the caller must not touch it
+    /// afterwards.
+    unsafe fn on_error(this: *mut Self, err: sys::Error);
     fn get_file_type(&self) -> FileType;
     fn get_force_sync(&self) -> bool;
 
@@ -158,8 +172,9 @@ pub trait PosixPipeWriter {
 
                 if Self::HAS_REGISTER_POLL {
                     // SAFETY: caller contract, plus the `Pending` contract on
-                    // `on_write`; the borrow is scoped to the call.
-                    unsafe { (*this).register_poll() };
+                    // `on_write`. Last use of `this`: a failed re-arm ends in
+                    // an error report.
+                    unsafe { Self::register_poll(this) };
                 }
             }
             // `Drained`: the buffer was fully written before the report. If
@@ -171,9 +186,11 @@ pub trait PosixPipeWriter {
             // SAFETY: as for `Drained`; the writer closes itself (and so may be
             // freed by its parent's `on_close`) before this returns.
             WriteResult::Done(amt) => unsafe { Self::on_write(this, amt, WriteStatus::EndOfFile) },
-            // SAFETY: caller contract; the error report leaves the writer
-            // alive (see `on_error`) and this is the last use of `this`.
-            WriteResult::Err(err) => unsafe { (*this).on_error(err) },
+            // SAFETY: caller contract. Last use of `this`: the writer closes
+            // itself after the report, and the parent may free the object
+            // embedding it from that `on_close` (the security scanner's
+            // `StaticPipeWriter` always does).
+            WriteResult::Err(err) => unsafe { Self::on_error(this, err) },
         }
     }
 
@@ -210,8 +227,18 @@ pub trait PosixPipeWriter {
 
     /// Re-derives the slice from `self.get_buffer()` each iteration.
     /// `try_write` only needs `&self`, so the shared borrow of the buffer
-    /// coexists with it, and the `&mut self` for `on_error` is taken after
-    /// the temporary slice borrow has ended — no raw-pointer escape needed.
+    /// coexists with it.
+    ///
+    /// An error with nothing drained is returned to [`on_poll`](Self::on_poll),
+    /// which reports it with nothing borrowed. An error after a partial drain
+    /// is reported from in here, under this frame's `&mut self`, and the caller
+    /// then reports the drained bytes through `on_write` as well; both of those
+    /// assume the parent does not free itself from that error's `on_close`,
+    /// which the security scanner's `StaticPipeWriter` does. Closing that gap
+    /// means changing what the partial case reports (`StaticPipeWriter`
+    /// currently relies on the trailing `on_write` to release its `start()`
+    /// ref), not how it is dispatched, so it is not part of the dispatch fixes
+    /// made here.
     fn drain_buffered_data(&mut self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
@@ -241,7 +268,15 @@ pub trait PosixPipeWriter {
                 }
                 WriteResult::Err(err) => {
                     if drained > 0 {
-                        self.on_error(err);
+                        // SAFETY: `self` is live; see the doc comment for why
+                        // this report is made from under this frame's borrow.
+                        // Laundered (PORT_NOTES_PLAN R-2) so the close inside
+                        // sees what the parent's handler wrote re-entrantly
+                        // rather than values cached under this `noalias`
+                        // receiver.
+                        unsafe {
+                            Self::on_error(core::hint::black_box(core::ptr::from_mut(self)), err)
+                        };
                         return WriteResult::Wrote(drained);
                     } else {
                         return WriteResult::Err(err);
@@ -311,6 +346,13 @@ pub trait PosixBufferedWriterParent {
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
+    /// The writer's last access to itself on every path that reaches this (a
+    /// report from the poll, an error, or the parent's own `close()`), so the
+    /// parent may release its last ref from here. On the `close()` path the
+    /// caller's `&mut` to the writer is still live, so the parent, and whatever
+    /// it calls from here (an owner's `on_close_io`), must not form references
+    /// that cover the writer; reach the allocation's other fields by projection.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close(_this: *mut Self) {}
@@ -357,11 +399,15 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
         // SAFETY: forwarded caller contract.
         unsafe { Self::_on_write(this, written, status) }
     }
-    fn register_poll(&mut self) {
-        Self::register_poll(self);
+    unsafe fn register_poll(this: *mut Self) {
+        // SAFETY: caller contract. This writer's registration failure is only
+        // reported (`Parent::on_error`, which must leave the parent alive); it
+        // does not close, so nothing can be freed while the borrow is live.
+        unsafe { (*this).register_poll() }
     }
-    fn on_error(&mut self, err: sys::Error) {
-        self._on_error(err);
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::_on_error(this, err) }
     }
     fn get_file_type(&self) -> FileType {
         Self::get_file_type(self)
@@ -435,12 +481,23 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.handle.get_fd()
     }
 
-    fn _on_error(&mut self, err: sys::Error) {
+    /// Raw like [`_on_write`](Self::_on_write): the error report must leave
+    /// the parent alive (`PosixBufferedWriterParent::on_error`), but the
+    /// `on_close` that [`close_raw`](Self::close_raw) delivers right after it
+    /// may free the parent, and `*this` with it, so neither dispatch runs with
+    /// a borrow of `*this` live.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer; it may be freed when this returns.
+    unsafe fn _on_error(this: *mut Self, err: sys::Error) {
         debug_assert!(!err.is_retry());
 
-        self.parent_on_error(err);
-
-        self.close();
+        // SAFETY: caller contract; the borrow ends at the `;`.
+        let parent = unsafe { (*this).parent() };
+        // SAFETY: parent BACKREF valid.
+        unsafe { Parent::on_error(parent, err) };
+        // SAFETY: caller contract; last use of `this`.
+        unsafe { Self::close_raw(this) };
     }
 
     /// Raw (not `&mut self`): `Parent::on_write` re-enters this writer through
@@ -466,28 +523,39 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         unsafe { Parent::on_write(parent, written, status) };
         if eof {
             // SAFETY: the `EndOfFile` contract on `PosixBufferedWriterParent::
-            // on_write` keeps `*this` alive until here.
-            unsafe { Self::report_close(this) };
+            // on_write` keeps `*this` alive until here; this delivers the
+            // `on_close` deferred by `close_without_reporting` above.
+            unsafe { Self::close_raw(this) };
         }
     }
 
-    /// Delivers the `on_close` that [`close_without_reporting`](Self::
-    /// close_without_reporting) deferred, unless the parent's `on_write` already
-    /// had it delivered by calling [`close`](Self::close) itself. Raw like
-    /// [`_on_write`](Self::_on_write): the parent may release its last ref from
-    /// `on_close` and free itself, `*this` with it, so the dispatch holds no
-    /// borrow of `*this` and is the last use of `this`.
+    /// Closes the handle (unless that already happened without reporting) and
+    /// delivers `on_close` for a handle that was open. The parent may release
+    /// its last ref from `on_close` and free itself, `*this` with it, so the
+    /// handle is closed through a statement-scoped borrow first and the report
+    /// is dispatched with nothing borrowed, as the last use of `this`.
+    /// [`close`](Self::close) is this for callers that themselves keep the
+    /// parent alive across the call.
     ///
     /// # Safety
-    /// `this` must point to the live writer.
-    unsafe fn report_close(this: *mut Self) {
+    /// `this` must point to the live writer; it may be freed when this returns.
+    unsafe fn close_raw(this: *mut Self) {
         if !Parent::HAS_ON_CLOSE {
             return;
         }
         // SAFETY: caller contract; borrows end at each `;`.
         let parent = unsafe {
             if !mem::replace(&mut (*this).closed_without_reporting, false) {
-                return;
+                // `close_impl` would only report for a handle that is still
+                // open; close it without a callback and report below instead.
+                let was_open = (*this).get_fd() != Fd::INVALID;
+                let close_fd = (*this).close_fd;
+                (*this)
+                    .handle
+                    .close_impl(None, None::<fn(*mut c_void)>, close_fd);
+                if !was_open {
+                    return;
+                }
             }
             (*this).parent()
         };
@@ -540,22 +608,15 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
+    /// For the parent's own code paths (and `end()`): the `on_close` this
+    /// delivers runs while the caller's `&mut` to this writer is live, so such
+    /// callers have to be holding the parent alive across the call (the owners
+    /// of `StaticPipeWriter` claim its `start()` ref before closing it for that
+    /// reason). The poll chain uses [`close_raw`](Self::close_raw) directly.
     pub fn close(&mut self) {
-        if Parent::HAS_ON_CLOSE {
-            if self.closed_without_reporting {
-                self.closed_without_reporting = false;
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_close(self.parent()) };
-            } else {
-                let parent = self.parent();
-                self.handle.close_impl(
-                    Some(parent.cast()),
-                    // SAFETY: parent was set via set_parent with a *mut Parent.
-                    Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
-                    self.close_fd,
-                );
-            }
-        }
+        // SAFETY: `self` is live; the caller keeps its allocation alive across
+        // the call (see above).
+        unsafe { Self::close_raw(core::ptr::from_mut(self)) }
     }
 
     pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
@@ -657,6 +718,12 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_ready(_this: *mut Self) {}
+    /// The writer's last access to itself on every path that reaches this (an
+    /// error or a failed re-arm from the poll, or the parent's own `close()`),
+    /// so the parent may release its last ref from here. On the `close()` path
+    /// the caller's `&mut` to the writer is still live, so the parent must not
+    /// form references that cover the writer from in here.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close(this: *mut Self);
@@ -704,11 +771,13 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
         // SAFETY: forwarded caller contract.
         unsafe { Self::_on_write(this, written, status) }
     }
-    fn register_poll(&mut self) {
-        Self::register_poll(self);
+    unsafe fn register_poll(this: *mut Self) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::register_poll_raw(this) }
     }
-    fn on_error(&mut self, err: sys::Error) {
-        self._on_error(err);
+    unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::_on_error(this, err) }
     }
     fn get_file_type(&self) -> FileType {
         Self::get_file_type(self)
@@ -719,15 +788,6 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     fn handle(&self) -> &PollOrFd {
         &self.handle
     }
-}
-
-// SAFETY: writer is an intrusive field of `Parent`. The one laundered site is
-// `register_poll`'s error arm, and the `Parent::on_error` it spans may end the
-// writer but must leave it alive (`PosixStreamingWriterParent::on_error`);
-// single JS thread.
-unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
-    for PosixStreamingWriter<Parent>
-{
 }
 
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
@@ -817,16 +877,32 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.slice()
     }
 
-    fn _on_error(&mut self, err: sys::Error) {
+    /// Raw like [`_on_write`](Self::_on_write): the error report must leave
+    /// the parent alive (`PosixStreamingWriterParent::on_error`), but the
+    /// `on_close` that [`close_raw`](Self::close_raw) delivers right after it
+    /// may free the parent (`FileSink` drops its keep-alive ref there), and
+    /// `*this` with it, so neither dispatch runs with a borrow of `*this` live.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer; it may be freed when this returns.
+    unsafe fn _on_error(this: *mut Self, err: sys::Error) {
         debug_assert!(!err.is_retry());
 
+        // SAFETY: caller contract; the borrow ends when `fail` returns.
+        let parent = unsafe { (*this).fail() };
+        // SAFETY: parent BACKREF valid.
+        unsafe { Parent::on_error(parent, err) };
+        // SAFETY: caller contract; last use of `this`.
+        unsafe { Self::close_raw(this) };
+    }
+
+    /// Tears the writer down after a write error; returns the parent to report
+    /// to.
+    fn fail(&mut self) -> *mut Parent {
         self.close_without_reporting();
         self.is_done = true;
         self.outgoing.reset();
-
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::on_error(self.parent(), err) };
-        self.close();
+        self.parent()
     }
 
     /// Poll-path report. Raw (not `&mut self`): per the contract on
@@ -880,27 +956,48 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
     }
 
+    /// Write-path form of [`register_poll_raw`](Self::register_poll_raw): the
+    /// caller is the parent's own `write*()`, so the parent outlives the error
+    /// dispatch. The pointer is laundered (PORT_NOTES_PLAN R-2) because
+    /// `Parent::on_error` (e.g. `FileSink::on_error`) may re-enter and write
+    /// `is_done` / `handle` through the parent's field, and the close that
+    /// follows has to see that rather than values cached under this receiver's
+    /// `noalias`.
     fn register_poll(&mut self) {
-        let Some(poll) = self.get_poll() else { return };
+        // SAFETY: `self` is live, and the parent is on the stack below us.
+        unsafe { Self::register_poll_raw(core::hint::black_box(core::ptr::from_mut(self))) }
+    }
+
+    /// Arms the poll; a failed registration is reported like a write error,
+    /// after which the writer closes itself. Raw like [`_on_error`](Self::
+    /// _on_error): the report must leave the parent alive, but the `on_close`
+    /// delivered by [`close_raw`](Self::close_raw) may free it, and `*this`
+    /// with it, so neither dispatch runs with a borrow of `*this` live.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer; it may be freed when this returns.
+    unsafe fn register_poll_raw(this: *mut Self) {
+        // SAFETY: caller contract; the borrow ends when `try_register_poll`
+        // returns.
+        let err = match unsafe { (*this).try_register_poll() } {
+            sys::Result::Ok(()) => return,
+            sys::Result::Err(err) => err,
+        };
+        // SAFETY: caller contract; the borrow ends at the `;`.
+        let parent = unsafe { (*this).parent() };
+        // SAFETY: parent BACKREF valid.
+        unsafe { Parent::on_error(parent, err) };
+        // SAFETY: caller contract; last use of `this`.
+        unsafe { Self::close_raw(this) };
+    }
+
+    fn try_register_poll(&self) -> sys::Result<()> {
+        let Some(poll) = self.get_poll() else {
+            return sys::Result::Ok(());
+        };
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
-            sys::Result::Err(err) => {
-                // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-                // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
-                // a fresh `&mut Self` from the parent's intrusive `writer`
-                // field and may write `self.is_done` / `self.handle`.
-                // ASM-verified PROVEN_CACHED on the `self.close()` path's
-                // field reads. Launder so `close()` sees fresh state.
-                let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(Self::r(this).parent(), err) };
-                // `this` is still live (parent owns this writer; an on_error
-                // handler may end/detach but never frees mid-call).
-                Self::r(this).close();
-            }
-            sys::Result::Ok(()) => {}
-        }
+        poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd())
     }
 
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {
@@ -1128,21 +1225,43 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.close();
     }
 
+    /// For the parent's own code paths (`end()`, `start()`, `FileSink`'s
+    /// handlers): the `on_close` this delivers runs while the caller's `&mut`
+    /// to this writer is live, so such callers have to be holding the parent
+    /// alive across the call (`FileSink` holds a guard ref in its handlers).
+    /// The poll chain uses [`close_raw`](Self::close_raw) directly.
     pub fn close(&mut self) {
-        if self.closed_without_reporting {
-            self.closed_without_reporting = false;
-            debug_assert!(self.get_fd() == Fd::INVALID);
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_close(self.parent()) };
-            return;
-        }
+        // SAFETY: `self` is live; the caller keeps its allocation alive across
+        // the call (see above).
+        unsafe { Self::close_raw(core::ptr::from_mut(self)) }
+    }
 
-        let parent = self.parent;
-        self.handle.close(
-            Some(parent.cast()),
-            // SAFETY: parent was set via set_parent with a *mut Parent.
-            Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
-        );
+    /// Closes the handle (unless that already happened without reporting) and
+    /// delivers `on_close` for a handle that was open. The parent may release
+    /// its last ref from `on_close` and free itself, `*this` with it, so the
+    /// handle is closed through a statement-scoped borrow first and the report
+    /// is dispatched with nothing borrowed, as the last use of `this`.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer; it may be freed when this returns.
+    unsafe fn close_raw(this: *mut Self) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        let parent = unsafe {
+            if mem::replace(&mut (*this).closed_without_reporting, false) {
+                debug_assert!((*this).get_fd() == Fd::INVALID);
+            } else {
+                // `PollOrFd::close` would only report for a handle that is
+                // still open; close it without a callback and report below.
+                let was_open = (*this).get_fd() != Fd::INVALID;
+                (*this).handle.close(None, None::<fn(*mut c_void)>);
+                if !was_open {
+                    return;
+                }
+            }
+            (*this).parent()
+        };
+        // SAFETY: parent BACKREF valid; no borrow of `*this` is live.
+        unsafe { Parent::on_close(parent) };
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {

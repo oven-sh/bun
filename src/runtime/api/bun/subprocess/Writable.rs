@@ -72,20 +72,24 @@ impl<'a> Writable<'a> {
     /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
     ///
     /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
-    /// blocks (`ref`/`unref`/`close`/`finalize` and `Subprocess::on_close_io`/
-    /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
-    /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
-    /// here is that `Writable::Buffer` holds the *only* strong ref for the
-    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
-    /// `buffer.deref()` only after the variant is overwritten), the writer
-    /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
-    /// and access is single-JS-mutator-thread.
+    /// blocks (`ref`/`unref`/`close`/`finalize`, `take_pending_start_writer`
+    /// and `on_process_exit`) collapse to this one site. `RefPtr` deliberately
+    /// has no `DerefMut` (shared ownership). What makes the `&mut` sound is
+    /// that every caller is entered from JS, from GC or from the process-exit
+    /// callback, i.e. never from underneath the writer's own frames, so no
+    /// borrow of the writer is live: the writer's callbacks (`on_write`,
+    /// `on_error`, `on_close` → `on_close_io`) run inside `BufferedWriter`
+    /// methods that hold `&mut` to the `writer` field embedded in this very
+    /// allocation, and must not use this accessor. The writer lives in its own
+    /// heap allocation, pinned by the ref this variant holds, and access is
+    /// single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn buffer_writer_mut<'b>(
         buffer: &'b RefPtr<StaticPipeWriter<'a>>,
     ) -> &'b mut StaticPipeWriter<'a> {
-        // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
+        // SAFETY: see fn doc — no caller runs under the writer's frames, the
+        // variant's ref pins the allocation, single-thread.
         unsafe { &mut *buffer.as_ptr() }
     }
 

@@ -495,7 +495,10 @@ impl Subprocess<'_> {
                     else {
                         unreachable!()
                     };
-                    Writable::buffer_writer_mut(&buffer).source.detach();
+                    // Reached only from `StaticPipeWriter::on_close`, which has
+                    // already detached the source and is running inside the
+                    // writer's own `close()`, so the writer must not be
+                    // borrowed here (`buffer_writer_mut`): just drop the ref.
                     buffer.deref();
                 }
                 _ => {}

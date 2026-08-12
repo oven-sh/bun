@@ -103,7 +103,25 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
-    let id = read_or_create_cache_directory_id(&d);
+    let (id, id_err) = read_or_create_cache_directory_id(&d);
+    if let Some(err) = id_err {
+        // SAFETY: as above; `options` and `cache_directory_path` are covered by
+        // the caller contract and only read here.
+        let (log_level, cache_directory_path) = unsafe {
+            (
+                (*this).options.log_level,
+                (*this).cache_directory_path.as_bytes(),
+            )
+        };
+        if log_level != LogLevel::Silent {
+            bun_core::pretty_errorln!(
+                "<r><yellow>warn<r>: {} saving {}{}.id; packages fetched by this install will not be reused from the cache",
+                bun_fmt::s(err.name()),
+                bun_fmt::s(cache_directory_path),
+                bun_fmt::s(path::SEP_STR.as_bytes()),
+            );
+        }
+    }
     // SAFETY: as above; single writer of `cache_directory` / `cache_directory_id`.
     unsafe {
         (*this).cache_directory_id = id;
@@ -382,35 +400,46 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 /// fresh key written into it (its fingerprinted entries are then fetched
 /// again); if the file cannot be read or created at all, a per-process random
 /// key is used and this run does not reuse fingerprinted entries.
-fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
+fn read_or_create_cache_directory_id(
+    cache_dir: &Dir,
+) -> (integrity::CacheDirId, Option<sys::Error>) {
     let name = bun_core::zstr!(".id");
     let mut id: integrity::CacheDirId = [0; 16];
+    let mut last_err: Option<sys::Error> = None;
     for attempt in 0..3 {
         match File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0) {
             Ok(file) => match file.read_all(&mut id) {
-                Ok(len) if len == id.len() => return id,
+                Ok(len) if len == id.len() => return (id, None),
                 // empty: another install may be between creating and writing it
                 Ok(0) if attempt < 2 => continue,
                 // still empty, or a wrong length: write a fresh key in place
                 Ok(_) => {
                     bun_boringssl_sys::rand_bytes(&mut id);
-                    if File::openat(
+                    match File::openat(
                         cache_dir.fd(),
                         name.as_bytes(),
                         sys::O::WRONLY | sys::O::TRUNC,
                         0,
                     )
                     .and_then(|file| file.write_all(&id))
-                    .is_ok()
                     {
-                        return id;
+                        Ok(()) => return (id, None),
+                        Err(err) => {
+                            last_err = Some(err);
+                            break;
+                        }
                     }
+                }
+                Err(err) => {
+                    last_err = Some(err);
                     break;
                 }
-                Err(_) => break,
             },
             Err(err) if err.get_errno() == sys::E::ENOENT => {}
-            Err(_) => break,
+            Err(err) => {
+                last_err = Some(err);
+                break;
+            }
         }
         bun_boringssl_sys::rand_bytes(&mut id);
         match File::openat(
@@ -418,14 +447,17 @@ fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
             name.as_bytes(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
-        ) {
-            Ok(file) if file.write_all(&id).is_ok() => return id,
+        )
+        .and_then(|file| file.write_all(&id))
+        {
+            Ok(()) => return (id, None),
             // created concurrently by another install: read theirs
-            _ => {}
+            Err(err) if err.get_errno() == sys::E::EEXIST => {}
+            Err(err) => last_err = Some(err),
         }
     }
     bun_boringssl_sys::rand_bytes(&mut id);
-    id
+    (id, last_err)
 }
 
 pub struct CacheDir {

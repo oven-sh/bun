@@ -1061,7 +1061,7 @@ impl<'a> ReadFileUV<'a> {
                 self.loop_,
                 &mut self.req,
                 path.as_ptr(),
-                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+                libuv::O::RDONLY,
                 crate::node::fs::DEFAULT_PERMISSION as i32,
                 Some(Self::on_open),
             )

@@ -270,8 +270,7 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
   parser.socket = socket;
   socket.parser = parser;
-  // Header blocks past the native parser's 32-field buffer, and trailers, only arrive through
-  // kOnHeaders (a parser without it drops them); collect them like _http_common's pooled parsers.
+  // Blocks past the parser's 32-field buffer, and trailers, arrive via kOnHeaders (as in _http_common).
   parser._headers = [];
   parser._url = "";
   const { maxHeadersCount } = server;
@@ -394,8 +393,7 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
-    // What kOnHeaders collected since the header block is this message's trailers
-    // (_http_common's parserOnMessageComplete); _addHeaderLines files them as trailers once complete.
+    // Collected after the header block, so these are trailers (_http_common's parserOnMessageComplete).
     const trailers = parser._headers;
     if (trailers.length !== 0) parser._headers = [];
     parser._url = "";

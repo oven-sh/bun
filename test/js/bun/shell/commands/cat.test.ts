@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { closeSync, openSync } from "node:fs";
 
 // On POSIX the builtin `cat` is only used with this flag set (see
-// `Kind::DISABLED_ON_POSIX`); without it `cat` is the system binary.
+// `Kind::DISABLED_ON_POSIX`); without it `cat` is the system binary. On Windows
+// the builtin is the default and the flag does nothing.
 const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
 
 // Code for a child bun that runs `script` and prints the script's stdout
@@ -48,13 +49,12 @@ async function runScript(script: string, stdin: Stdin, { quiet = true } = {}) {
 
 // Every `cat` reading the script's stdin (or a pipeline stage's stdin)
 // registers on the single IOReader owned by that fd. Once the first `cat` has
-// consumed a read cycle (EOF or error), a later `cat` on the same fd has to
-// start a new one and must be the only listener notified by it.
-//
-// Skipped on Windows, where the reader closes its libuv source at EOF; a second
-// `cat` on the same fd there is covered by the fix in #29986.
-describe.skipIf(isWindows)("cat (builtin) sharing one stdin reader", () => {
-  describe("after the first cat reached EOF", () => {
+// consumed a read (EOF or error), a later `cat` on the same fd has to start a
+// new one and must be the only listener notified by it.
+describe("cat (builtin) sharing one stdin reader", () => {
+  // On Windows the reader closes its libuv source at EOF, so starting a new
+  // read there needs the separate fix in #29986.
+  describe.skipIf(isWindows)("after the first cat reached EOF", () => {
     const scripts: [script: string, stdout: string][] = [
       ["cat; echo ---; cat", "hi\n---\n"],
       ["cat && echo --- && cat", "hi\n---\n"],
@@ -113,24 +113,66 @@ describe.skipIf(isWindows)("cat (builtin) sharing one stdin reader", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hi\n---\nexit=0\n", stderr: "", exitCode: 0 });
     });
 
-    // The first cat fails on its stdout write while the read that delivered the
-    // chunk is still running and unregisters itself. With captured output the
-    // second cat registers right away, while that read is still in flight, and
-    // is served by it. With stdout going through an IOWriter, `echo` completes
-    // later, so the read reaches EOF with nobody listening and the second cat
-    // registers only after that.
+    // On a pipe the new read only reports EOF again, which looks the same as
+    // completing the second cat on the spot. A tty's EOF (^D) is used up by the
+    // read that sees it, so here the second cat only finishes if it really reads
+    // the fd again and gets the input typed after the first cat is done.
+    test.concurrent("stdin is a tty: the second cat reads the input typed for it", async () => {
+      let output = "";
+      const separator = Promise.withResolvers<void>();
+      const trailer = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        data(_, chunk) {
+          output += Buffer.from(chunk).toString();
+          if (output.includes("---\n")) separator.resolve();
+          if (/exit=\d+\n/.test(output)) trailer.resolve();
+        },
+      });
+      // Same values on Linux and macOS. Without these the typed input would be
+      // echoed into `output` and the child's "\n" would come back as "\r\n".
+      const ECHO = 0x8;
+      const OPOST = 0x1;
+      terminal.localFlags &= ~ECHO;
+      terminal.outputFlags &= ~OPOST;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childCode("cat; echo ---; cat", false)],
+        env: builtinEnv,
+        terminal,
+      });
+      terminal.write("hi\n\x04");
+      await separator.promise;
+      terminal.write("more\n\x04");
+      await trailer.promise;
+      expect(output).toBe("hi\n---\nmore\nexit=0\n");
+      expect(await proc.exited).toBe(0);
+    });
+
+    // The first cat fails its stdout write from inside the read that delivered
+    // the chunk and unregisters itself. With captured output the rest of the
+    // script runs before that read continues: the second cat attaches to it
+    // (re-registering the poll that is being serviced) and is served by its
+    // EOF; a third cat, started from the second one's EOF notification, is
+    // served by the wakeup that re-registration produces; with a subprocess
+    // after the second cat instead, that wakeup finds nobody to notify. With
+    // stdout going through an IOWriter, `echo` completes later, so the read
+    // reaches EOF with nobody listening and the second cat starts a new read.
     describe.if(isLinux)("first cat unregistering mid-read", () => {
-      test.concurrent.each([true, false])("quiet: %p", async quiet => {
-        const result = await runScript(
-          "cat > /dev/full || echo first-failed; cat && echo second-ok",
-          { input: "hi\n" },
-          { quiet },
-        );
-        expect(result).toEqual({ stdout: "first-failed\nsecond-ok\nexit=0\n", stderr: "", exitCode: 0 });
+      const first = "cat > /dev/full || echo first-failed";
+      test.concurrent.each([
+        [`${first}; cat && echo second-ok`, true, "first-failed\nsecond-ok\n"],
+        [`${first}; cat && echo second-ok; cat && echo third-ok`, true, "first-failed\nsecond-ok\nthird-ok\n"],
+        [`${first}; cat && echo second-ok; /bin/true`, true, "first-failed\nsecond-ok\n"],
+        [`${first}; cat && echo second-ok`, false, "first-failed\nsecond-ok\n"],
+      ])("%s (quiet: %p)", async (script, quiet, expected) => {
+        const result = await runScript(script, { input: "hi\n" }, { quiet });
+        expect(result).toEqual({ stdout: `${expected}exit=0\n`, stderr: "", exitCode: 0 });
       });
     });
   });
 
+  // Starting a new read after a failed one already worked everywhere; what
+  // these pin down is that its failure is reported to the second cat only. This
+  // block runs on Windows too.
   describe("after the first cat failed to read", () => {
     test.concurrent.each([
       "cat || echo first-failed; echo ---; cat || echo second-failed",

@@ -198,8 +198,7 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent. A failure to start is returned for the caller to finish itself with;
-    /// dispatching it to the listeners would nest a trampoline (cf. `IOWriter::on_sync_error`).
+    /// Idempotent. A start failure is returned, not dispatched (cf. `IOWriter::on_sync_error`).
     pub(crate) fn start(&self) -> sys::Result<()> {
         self.state().starting = true;
         let result = self.start_impl();

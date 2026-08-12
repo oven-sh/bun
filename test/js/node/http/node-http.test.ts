@@ -4281,4 +4281,33 @@ describe("connectionListener maxRequestsPerSocket", () => {
     ).toEqual({ statusCode: 503, connection: "close", keepAlive: undefined, body: "" });
     expect(events).toEqual(["request /1", "dropRequest /2"]);
   });
+
+  it("still hands off an Upgrade request once the limit is reached", async () => {
+    // Node's parserOnIncoming hands upgrades off before it counts requests, so the limit never
+    // turns an upgrade into a 503.
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("upgrade", (req, socket) => {
+      events.push(`upgrade ${req.url}`);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    using client = keepAliveClientOverEmittedConnection(server);
+
+    expect(await client.request("GET /1 HTTP/1.1\r\nHost: example.test\r\n\r\n")).toEqual({
+      statusCode: 200,
+      connection: "close",
+      keepAlive: undefined,
+      body: "served",
+    });
+    expect(
+      (await client.request("GET /ws HTTP/1.1\r\nHost: example.test\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n"))
+        .statusCode,
+    ).toBe(101);
+    expect(events).toEqual(["request /1", "upgrade /ws"]);
+  });
 });

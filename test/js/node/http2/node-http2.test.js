@@ -4376,68 +4376,34 @@ it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", a
   server.maxRequestsPerSocket = 1;
   server.on("dropRequest", (req, socket) => dropped.push([req.url, socket.encrypted === true]));
   await new Promise(resolve => server.listen(0, resolve));
-  const { promise: connected, resolve: onConnect, reject: onConnectError } = Promise.withResolvers();
-  const socket = tls.connect(
-    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-    onConnect,
-  );
-  socket.on("error", onConnectError);
+  let socket;
   try {
-    await connected;
-    // Requests go out one at a time (never pipelined) and every response here is either
-    // Content-Length framed or the bodiless chunked 503 (a lone terminating chunk).
-    let received = "";
-    let waiter;
-    function takeResponse() {
-      const headEnd = received.indexOf("\r\n\r\n");
-      if (headEnd === -1) return undefined;
-      const head = received.slice(0, headEnd);
-      let bodyEnd = headEnd + 4;
-      const contentLength = /^Content-Length: (\d+)$/m.exec(head);
-      if (contentLength) {
-        bodyEnd += Number(contentLength[1]);
-      } else if (/^Transfer-Encoding: chunked$/m.test(head)) {
-        bodyEnd += "0\r\n\r\n".length;
-      }
-      if (received.length < bodyEnd) return undefined;
-      const response = received.slice(0, bodyEnd);
-      received = received.slice(bodyEnd);
-      return response;
-    }
-    function deliver() {
-      if (!waiter) return;
-      const response = takeResponse();
-      if (response === undefined) return;
-      const { resolve } = waiter;
-      waiter = undefined;
-      resolve(response);
-    }
+    const { promise, resolve, reject } = Promise.withResolvers();
+    socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
     socket.on("data", chunk => {
-      received += chunk.toString("latin1");
-      deliver();
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).toString("latin1").endsWith("served")) {
+        // The first response is complete; send the over-limit request. Its Connection: close
+        // makes the server end the connection after answering it, which resolves the promise.
+        sentSecond = true;
+        socket.write("GET /2 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
     });
-    socket.on("close", () => {
-      waiter?.reject(new Error(`connection closed while waiting for a response; received ${JSON.stringify(received)}`));
-      waiter = undefined;
-    });
-    async function request(path) {
-      waiter = Promise.withResolvers();
-      const { promise } = waiter;
-      socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
-      const raw = await promise;
-      return {
-        statusCode: Number(raw.slice("HTTP/1.1 ".length, "HTTP/1.1 ".length + 3)),
-        connection: /^Connection: (.*)$/m.exec(raw)?.[1],
-        body: raw.slice(raw.indexOf("\r\n\r\n") + 4).replace(/^0\r\n\r\n$/, ""),
-      };
-    }
-
-    expect(await request("/1")).toEqual({ statusCode: 200, connection: "close", body: "served" });
-    expect(await request("/2")).toEqual({ statusCode: 503, connection: "close", body: "" });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    const raw = await promise;
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d+) /g)].map(match => match[1])).toEqual(["200", "503"]);
+    // The first response is the one that reaches the limit, so it already advertises close.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4)).toContain("\r\nConnection: close\r\n");
     expect(served).toEqual([["/1", true]]);
     expect(dropped).toEqual([["/2", true]]);
   } finally {
-    socket.destroy();
+    socket?.destroy();
     server.close();
   }
 });

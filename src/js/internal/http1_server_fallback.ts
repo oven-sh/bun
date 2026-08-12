@@ -337,11 +337,10 @@ function connectionListenerHTTP1(server, socket, options) {
       this.detachSocket(socket);
     });
 
-    // Node's parserOnIncoming maxRequestsPerSocket routing (the native dispatcher's
-    // reachedRequestsLimit branch in _http_server.ts). Like the Expect routing below, Node only
-    // counts HTTP/1.1 requests. maxRequestsOnConnectionReached makes renderNativeHeaders
-    // advertise Connection: close on the response that reaches the limit and on every 503 past
-    // it; as in Node, nothing here closes the connection itself.
+    // Node's parserOnIncoming request limit: the upgrades handed off above are never counted and,
+    // like the Expect routing below, only HTTP/1.1 requests are. maxRequestsOnConnectionReached
+    // makes renderNativeHeaders advertise Connection: close on the response that reaches the limit
+    // and on every 503 past it; as in Node, nothing here closes the connection itself.
     if (
       versionMajor === 1 &&
       versionMinor === 1 &&

@@ -318,9 +318,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-    // Node's parserOnIncoming: an HTTP/1.1 request without a Host header is answered 400 below
-    // instead of being dispatched (RFC 9112 §3.2). That reply advertises Connection: close, and
-    // the handle is what ends the connection after a response, so it must not see keep-alive.
+    // Node's parserOnIncoming (RFC 9112 §3.2): an HTTP/1.1 request without a Host header gets
+    // a 400 below and the connection is closed instead of the request being dispatched.
     const missingHostHeader =
       versionMajor === 1 && versionMinor === 1 && server.requireHostHeader && req.headers.host === undefined;
     if (missingHostHeader) shouldKeepAlive = false;

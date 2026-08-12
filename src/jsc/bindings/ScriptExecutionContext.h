@@ -4,7 +4,6 @@
 
 struct BunVmHandleRef;
 #include "SharedEnvStore.h"
-#include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>

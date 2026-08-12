@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
@@ -1371,4 +1372,45 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+test("file routes report the blob they hold in the server's memory cost", async () => {
+  // The same module under two names, so the two artifacts differ only in the
+  // length of the path they point at.
+  const shortEntry = "entry.js";
+  const longEntry = "entry-" + Buffer.alloc(100, "x").toString() + ".js";
+  using dir = tempDir("file-route-memory-cost", {
+    "index.html": "<h1>hello</h1>",
+    [shortEntry]: "export const s = 1;",
+    [longEntry]: "export const s = 1;",
+  });
+  const indexPath = join(String(dir), "index.html");
+  const outdir = join(String(dir), "out");
+  const [short] = (await Bun.build({ entrypoints: [join(String(dir), shortEntry)], outdir })).outputs;
+  const [long] = (await Bun.build({ entrypoints: [join(String(dir), longEntry)], outdir })).outputs;
+  const extraPathBytes = long.path.length - short.path.length;
+  expect(extraPathBytes).toBe(longEntry.length - shortEntry.length);
+
+  // A server's memory cost includes its routes. Reloading one server keeps
+  // everything else (port, URL, config) identical between measurements.
+  await using server = Bun.serve({ port: 0, fetch: () => new Response("fallback") });
+  function costWithRoute(route: any) {
+    server.reload({ routes: { "/": route }, fetch: () => new Response("fallback") });
+    return estimateShallowMemoryUsageOf(server);
+  }
+
+  // A Bun.file() route gets a Blob that was sized when it was handed to JS.
+  // The same file served through a bundled HTML import manifest entry is
+  // opened natively and has to cost the same.
+  const viaBunFile = costWithRoute(Bun.file(indexPath));
+  const viaManifest = costWithRoute({
+    index: indexPath,
+    files: [{ input: "index.html", path: indexPath, loader: "html", isEntry: true, headers: {} }],
+  });
+  expect(viaManifest).toBeGreaterThanOrEqual(viaBunFile);
+
+  // A route built from a BuildArtifact (directly or as a Response body) holds
+  // a blob pointing at the artifact's output path.
+  expect(costWithRoute(long) - costWithRoute(short)).toBeGreaterThanOrEqual(extraPathBytes);
+  expect(costWithRoute(new Response(long)) - costWithRoute(new Response(short))).toBeGreaterThanOrEqual(extraPathBytes);
 });

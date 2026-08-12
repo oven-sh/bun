@@ -20,7 +20,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
-use crate::webcore::{Blob, FetchHeaders, Response};
+use crate::webcore::{Blob, BlobExt as _, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = FileRoute::deinit)]
@@ -116,6 +116,10 @@ impl FileRoute {
     }
 
     pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
+        // `memory_cost` reads the estimate this caches. Only `Blob::to_js` and
+        // the Blob constructor compute it, so a blob that never went through
+        // them (bundled HTML manifest paths, BuildArtifact blobs) arrives at 0.
+        blob.calculate_estimated_byte_size();
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
@@ -132,8 +136,8 @@ impl FileRoute {
     }
 
     fn deinit(this: *mut FileRoute) {
-        // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
-        // intrusive ref_count has reached 0.
+        // SAFETY: `this` was allocated via heap::into_raw in init_from_blob and
+        // the intrusive ref_count has reached 0.
         // `headers` is freed by its own Drop when the Box is dropped.
         unsafe {
             (*this).blob.deinit();
@@ -174,21 +178,15 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
-                let status_code = response.status_code();
 
-                return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
-                    ref_count: Cell::new(1),
-                    server: Cell::new(None),
-                    has_last_modified_header: headers.get(b"last-modified").is_some(),
-                    has_content_length_header: headers.get(b"content-length").is_some(),
-                    has_content_range_header: headers.get(b"content-range").is_some(),
-                    has_date_header: headers.get(b"date").is_some(),
+                return Ok(Some(Self::init_from_blob(
                     blob,
-                    headers,
-                    status_code,
-                    stat_hash: Cell::new(StatHash::default()),
-                }))));
+                    &InitOptions {
+                        server: None,
+                        status_code: response.status_code(),
+                        headers: response.get_init_headers(),
+                    },
+                )));
             }
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
@@ -199,19 +197,7 @@ impl FileRoute {
                     !b.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
-                let headers = headers_from(None, &b);
-                return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
-                    ref_count: Cell::new(1),
-                    server: Cell::new(None),
-                    headers,
-                    blob: b,
-                    has_content_length_header: false,
-                    has_last_modified_header: false,
-                    has_content_range_header: false,
-                    has_date_header: false,
-                    status_code: 200,
-                    stat_hash: Cell::new(StatHash::default()),
-                }))));
+                return Ok(Some(Self::init_from_blob(b, &InitOptions::default())));
             }
         }
         Ok(None)

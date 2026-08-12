@@ -17,6 +17,7 @@ use bun_http_types::MimeType::MimeType;
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
+use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
@@ -66,7 +67,7 @@ impl OutputFileJsc for OutputFile {
         let mime_hint: &[u8] = owned_pathname.unwrap_or(b"");
         let mime = self.loader.to_mime_type(&[mime_hint]);
 
-        match value {
+        let (blob, path): (Blob, Box<[u8]>) = match value {
             OutputFileValue::Copy(copy) => {
                 let file_blob = match BlobStore::init_file(
                     PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref())),
@@ -79,18 +80,10 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
-                    blob: Blob::init_with_store(file_blob, global_object),
-                    hash: self.hash,
-                    loader: self.input_loader,
-                    output_kind: self.output_kind,
-                    path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                });
-
-                // Ownership transfers to the JS `BuildArtifact` wrapper
-                // (`finalize` reclaims it). Typed `Box`-taking entry point —
-                // the leak/from_raw pair lives once in the `#[js_class]` shim.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                (
+                    Blob::init_with_store(file_blob, global_object),
+                    Box::<[u8]>::from(copy.pathname.as_ref()),
+                )
             }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
@@ -116,16 +109,10 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
-                    blob: Blob::init_with_store(file_blob, global_object),
-                    hash: self.hash,
-                    loader: self.input_loader,
-                    output_kind: self.output_kind,
-                    path: Box::<[u8]>::from(path_to_use),
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                (
+                    Blob::init_with_store(file_blob, global_object),
+                    Box::<[u8]>::from(path_to_use),
+                )
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
@@ -138,22 +125,30 @@ impl OutputFileJsc for OutputFile {
                     None => Box::from(self.src_path.text),
                 };
 
-                let build_output = Box::new(BuildArtifact {
-                    blob,
-                    hash: self.hash,
-                    loader: self.input_loader,
-                    output_kind: self.output_kind,
-                    path,
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                (blob, path)
             }
             OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
                 unreachable!()
             }
-        }
+        };
+
+        // `BuildArtifact::estimated_size` reports this to the GC; the wrapper
+        // created below reports it as allocated, so it has to be computed first.
+        blob.calculate_estimated_byte_size();
+
+        let build_output = Box::new(BuildArtifact {
+            blob,
+            hash: self.hash,
+            loader: self.input_loader,
+            output_kind: self.output_kind,
+            path,
+        });
+
+        // Ownership transfers to the JS `BuildArtifact` wrapper (`finalize`
+        // reclaims it). Typed `Box`-taking entry point — the leak/from_raw pair
+        // lives once in the `#[js_class]` shim.
+        BuildArtifact::to_js_boxed(build_output, global_object)
     }
 
     fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error> {

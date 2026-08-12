@@ -373,6 +373,7 @@ impl FileRoute {
             }
         });
 
+        let mut probe_fifo_eof = false;
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
@@ -395,6 +396,7 @@ impl FileRoute {
             this.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
+                probe_fifo_eof = bun_io::fifo_needs_eof_probe(&stat);
                 break 'brk (true, _size, FileType::Pipe, true);
             }
 
@@ -510,6 +512,7 @@ impl FileRoute {
             vm: bun_ptr::BackRef::new(this.server.get().unwrap().vm()),
             file_type,
             pollable,
+            probe_fifo_eof,
             offset: body_offset,
             length: body_len,
             idle_timeout: this.server.get().unwrap().config().idle_timeout,

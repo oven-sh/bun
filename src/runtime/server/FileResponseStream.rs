@@ -22,6 +22,8 @@ use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, Task, VirtualMachine};
+#[cfg(target_os = "macos")]
+use crate::timer::fifo_eof_probe::{self, FifoEofProbe};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -50,7 +52,17 @@ pub(crate) struct FileResponseStream {
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
+
+    /// Attached in `start` for FIFO bodies; see `crate::timer::fifo_eof_probe`.
+    #[cfg(target_os = "macos")]
+    fifo_eof_probe: FifoEofProbe,
 }
+
+#[cfg(target_os = "macos")]
+static FIFO_EOF_PROBE_OPS: fifo_eof_probe::Ops = fifo_eof_probe::Ops {
+    ref_: FileResponseStream::fifo_eof_probe_ref,
+    unref: FileResponseStream::fifo_eof_probe_unref,
+};
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 #[repr(u8)]
@@ -105,6 +117,8 @@ pub(crate) struct StartOptions {
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
     pub pollable: bool,
+    /// `bun_io::fifo_needs_eof_probe` for `fd`.
+    pub probe_fifo_eof: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
@@ -149,6 +163,8 @@ impl FileResponseStream {
                 max_size: Cell::new(None),
                 sendfile: JsCell::new(Sendfile::default()),
                 state: Cell::new(State::default()),
+                #[cfg(target_os = "macos")]
+                fifo_eof_probe: FifoEofProbe::init(&FIFO_EOF_PROBE_OPS),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
         // any free until after `this_ref` is dead at the end of this frame.
@@ -205,6 +221,11 @@ impl FileResponseStream {
             }
             reader.set_parent(this.cast::<c_void>());
         });
+
+        if opts.probe_fifo_eof {
+            // Before `start()`, which makes the first registration.
+            this_ref.attach_fifo_eof_probe(this);
+        }
 
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
@@ -363,6 +384,42 @@ impl FileResponseStream {
         // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
         // witnesses exactly one outstanding ref taken in `hold_read_ref`.
         Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) })
+    }
+
+    // ───────────────────────── macOS FIFO EOF probe ─────────────────────────
+
+    #[cfg(target_os = "macos")]
+    fn attach_fifo_eof_probe(&self, this: *mut Self) {
+        // SAFETY: the probe and the reader are fields of the allocation `this`
+        // points at (`self` is a view of it), which outlives the reader;
+        // `finish()`, the funnel for every terminal path, cancels the probe.
+        unsafe {
+            self.fifo_eof_probe
+                .attach(this.cast::<c_void>(), self.reader.as_ptr());
+        }
+    }
+
+    /// `bun_io::fifo_needs_eof_probe` never holds off macOS.
+    #[cfg(not(target_os = "macos"))]
+    fn attach_fifo_eof_probe(&self, _this: *mut Self) {}
+
+    /// `fifo_eof_probe::Ops`: one ref while the probe is armed, like the
+    /// in-flight read ref.
+    ///
+    /// # Safety
+    /// `this` is the live stream the probe was attached with.
+    #[cfg(target_os = "macos")]
+    unsafe fn fifo_eof_probe_ref(this: *mut c_void) {
+        // SAFETY: caller contract.
+        unsafe { (*this.cast::<Self>()).ref_() };
+    }
+
+    /// # Safety
+    /// As [`Self::fifo_eof_probe_ref`]; may free the stream.
+    #[cfg(target_os = "macos")]
+    unsafe fn fifo_eof_probe_unref(this: *mut c_void) {
+        // SAFETY: releases the ref taken in `fifo_eof_probe_ref`.
+        unsafe { Self::deref(this.cast::<Self>()) };
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
@@ -554,6 +611,10 @@ impl FileResponseStream {
             return;
         }
         self.insert_state(State::FINISHED);
+        // Every path into `finish()` holds its own ref (see the vtable arms
+        // and the uWS callbacks), so releasing the probe's ref cannot free.
+        #[cfg(target_os = "macos")]
+        self.fifo_eof_probe.cancel();
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);

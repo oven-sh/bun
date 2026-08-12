@@ -1928,6 +1928,7 @@ where
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,
             pollable,
+            probe_fifo_eof: bun_io::fifo_needs_eof_probe(&stat),
             offset: sendfile.offset as u64,
             length: if is_regular {
                 Some(sendfile.remain as u64)

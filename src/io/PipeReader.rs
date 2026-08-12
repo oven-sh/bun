@@ -141,6 +141,37 @@ pub struct PosixBufferedReader {
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
+    /// See [`Self::set_poll_registered_hook`].
+    #[cfg(target_os = "macos")]
+    poll_registered_hook: Option<PollRegisteredHook>,
+}
+
+/// Callback a reader's owner installs with
+/// [`PosixBufferedReader::set_poll_registered_hook`]; `ctx` is handed back
+/// verbatim.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+pub struct PollRegisteredHook {
+    pub callback: unsafe fn(*mut c_void),
+    pub ctx: *mut c_void,
+}
+
+/// Whether a reader of the file `stat` describes needs a FIFO EOF probe (see
+/// [`PosixBufferedReader::set_poll_registered_hook`]): on macOS, a FIFO vnode
+/// (`mkfifo`) as opposed to a `pipe(2)` pipe. XNU's `pipe_stat` leaves a
+/// pipe's `st_dev` at 0, and pipes have their own kqueue filter that does
+/// report EOF. Always false elsewhere, where the readiness registration
+/// itself reports a FIFO's EOF.
+pub fn fifo_needs_eof_probe(stat: &sys::Stat) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        sys::S::ISFIFO(stat.st_mode as sys::Mode) && stat.st_dev != 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = stat;
+        false
+    }
 }
 
 bitflags::bitflags! {
@@ -175,6 +206,8 @@ impl PosixBufferedReader {
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
             maxbuf: None,
+            #[cfg(target_os = "macos")]
+            poll_registered_hook: None,
         }
     }
 
@@ -208,6 +241,10 @@ impl PosixBufferedReader {
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
             maxbuf: None,
+            // `other`'s hook belongs to `other`'s owner; the new owner
+            // installs its own.
+            #[cfg(target_os = "macos")]
+            poll_registered_hook: None,
         };
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
@@ -434,7 +471,28 @@ impl PosixBufferedReader {
         // SAFETY: caller contract; `try_register_poll`'s receiver borrow ends
         // when it returns — before the dispatch below.
         match unsafe { (*this).try_register_poll() } {
-            Ok(()) => true,
+            Ok(()) => {
+                #[cfg(target_os = "macos")]
+                {
+                    // `try_register_poll` also returns Ok when it registered
+                    // nothing (paused, not pollable); only report a live
+                    // registration.
+                    // SAFETY: caller contract; the reads end before the
+                    // callback runs, so it sees no borrow of `*this`.
+                    let hook = unsafe {
+                        if (*this).has_pending_read() {
+                            (*this).poll_registered_hook
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(hook) = hook {
+                        // SAFETY: `set_poll_registered_hook`'s contract.
+                        unsafe { (hook.callback)(hook.ctx) };
+                    }
+                }
+                true
+            }
             Err(err) => {
                 // SAFETY: caller contract; (Copy) vtable copied out, no borrow
                 // of `*this` spans the (maybe-freeing) callback.
@@ -539,6 +597,55 @@ impl PosixBufferedReader {
             PollOrFd::Fd(_) => true,
             _ => false,
         }
+    }
+
+    /// Installs the callback run every time this reader parks itself on a
+    /// readiness registration (the initial `start()` and every
+    /// re-registration after a drained read).
+    ///
+    /// This is how an owner reading a FIFO gets told when to run
+    /// [`Self::probe_fifo_eof`]: on macOS the registration never fires for
+    /// the last writer closing (see `bun_sys::select_is_readable`), so while
+    /// the reader is parked the owner periodically probes for that EOF; data
+    /// still arrives through the registration. Only fds for which
+    /// [`fifo_needs_eof_probe`] holds need this.
+    ///
+    /// # Safety
+    /// `callback(ctx)` is invoked from inside the reader's read paths, on the
+    /// owner's thread, for as long as the reader lives; `ctx` must stay valid
+    /// that long, and the callback must not read from or close the reader.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn set_poll_registered_hook(&mut self, hook: PollRegisteredHook) {
+        self.poll_registered_hook = Some(hook);
+    }
+
+    /// One tick of the FIFO EOF probe (see [`Self::set_poll_registered_hook`]).
+    /// If the parked FIFO has become readable, which includes its EOF, the
+    /// read the registration would have triggered runs now; it ends in the
+    /// EOF, or in data followed by a re-registration (which runs the hook
+    /// again), or in the owner stopping the reader. Returns whether the reader
+    /// is still parked afterwards, i.e. whether the owner should probe again
+    /// later.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::on_poll`]. The struct embedding `*this` must
+    /// outlive the call even if the read dispatched here finishes the reader;
+    /// owners hold their own reference across it.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn probe_fifo_eof(this: *mut Self) -> bool {
+        // SAFETY: caller contract; borrows end at `;`.
+        let (parked, fd) = unsafe { ((*this).has_pending_read(), (*this).get_fd()) };
+        if !parked {
+            return false;
+        }
+        // A failed select() is left for read() to report through the normal
+        // error path, so anything but a clean "not readable" dispatches.
+        if !matches!(sys::select_is_readable(fd), Ok(false)) {
+            // SAFETY: caller contract.
+            unsafe { Self::on_poll(this, 0, false) };
+        }
+        // SAFETY: caller contract (the embedding struct is still live).
+        unsafe { (*this).has_pending_read() }
     }
 
     /// # Safety

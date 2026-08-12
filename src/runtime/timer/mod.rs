@@ -271,6 +271,10 @@ mod date_header_timer_draft;
 #[path = "EventLoopDelayMonitor.rs"]
 mod event_loop_delay_monitor_draft;
 
+#[cfg(target_os = "macos")]
+#[path = "FifoEofProbe.rs"]
+pub(crate) mod fifo_eof_probe;
+
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
 // `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real

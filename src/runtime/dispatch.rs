@@ -1119,6 +1119,19 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
         }
+        EventLoopTimerTag::FifoEofProbe => {
+            #[cfg(target_os = "macos")]
+            {
+                use crate::timer::fifo_eof_probe::FifoEofProbe;
+                timer_arm!(FifoEofProbe, timer, |c, _now, _vm| FifoEofProbe::on_fire(c))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("FifoEofProbe timer on non-macOS");
+                }
+            }
+        }
     }
 }
 

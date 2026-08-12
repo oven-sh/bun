@@ -9,7 +9,16 @@ import {
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  openSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -466,6 +475,131 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   expect(output.length).toBe(large.length + 1);
   expect(output).toBe(large + "\n");
   expect(status).toBe(0);
+});
+
+// A FIFO's EOF is its last writer closing. Once the reader has drained the
+// pipe and gone back to waiting for it, something has to wake the reader up
+// for that close. On macOS the readiness registration never does (kqueue only
+// reports buffered bytes for a FIFO), so these streams ended only when the
+// writer happened to close before the drain loop's last read(), and hung
+// forever otherwise. Each test below therefore makes sure the reader is
+// waiting before the writer closes. The FIFO is held open read+write in the
+// test so that its open never blocks and the stream's own open finds a writer
+// attached; closing that descriptor is the EOF.
+describe.skipIf(isWindows)("Bun.file(fifo).stream() ends when the last writer closes", () => {
+  // Descriptors opened by a test, closed exactly once each: the test closes
+  // the writer itself at the point under test, and cleanup must not close the
+  // number again, since a concurrent test may have reused it by then.
+  function fds() {
+    const open = new Set();
+    return {
+      open(path, flags) {
+        const fd = openSync(path, flags);
+        open.add(fd);
+        return fd;
+      },
+      close(fd) {
+        if (open.delete(fd)) closeSync(fd);
+      },
+      [Symbol.dispose]() {
+        for (const fd of open) closeSync(fd);
+      },
+    };
+  }
+
+  test.concurrent("after the data it wrote was read", async () => {
+    using dir = tempDir("streams-fifo-eof", {});
+    using handles = fds();
+    const fifo = join(String(dir), "data.fifo");
+    mkfifo(fifo);
+    const writer = handles.open(fifo, "r+");
+
+    const reader = Bun.file(fifo).stream().getReader();
+    const firstRead = reader.read();
+    writeSync(writer, "hello");
+    const first = await firstRead;
+    expect(Buffer.from(first.value).toString()).toBe("hello");
+
+    // The chunk was delivered, so the reader has drained the pipe and is
+    // waiting again; the close has to be noticed from that state.
+    handles.close(writer);
+    expect(await reader.read()).toEqual({ done: true, value: undefined });
+  });
+
+  test.concurrent("without anything having been written", async () => {
+    using dir = tempDir("streams-fifo-eof-empty", {});
+    using handles = fds();
+    const fifo = join(String(dir), "empty.fifo");
+    mkfifo(fifo);
+    const writer = handles.open(fifo, "r+");
+
+    const reader = Bun.file(fifo).stream().getReader();
+    const read = reader.read();
+    // The stream opens the pipe and starts waiting on it from read()'s first
+    // pull, which runs in the microtasks behind read(), so by the next
+    // macrotask it is waiting. (A pipe whose writer is already gone when the
+    // stream opens it reads as EOF straight away on every platform, which is
+    // not the state under test.)
+    await new Promise(resolve => setImmediate(resolve));
+
+    handles.close(writer);
+    expect(await read).toEqual({ done: true, value: undefined });
+  });
+
+  // A FIFO inherited as stdin is read through the same reader's blocking-pipe
+  // path (the descriptor has no O_NONBLOCK, and stdio is left that way), which
+  // has to learn about the close without ever blocking in read().
+  test.concurrent("when the FIFO is a blocking descriptor inherited as stdin", async () => {
+    using dir = tempDir("streams-fifo-eof-stdin", {});
+    using handles = fds();
+    const fifo = join(String(dir), "stdin.fifo");
+    mkfifo(fifo);
+    // A blocking open for reading needs a writer to exist and a writer needs
+    // a reader; the read+write holder bootstraps both and goes away once
+    // `writer` is the only writer left.
+    const holder = handles.open(fifo, "r+");
+    const writer = handles.open(fifo, constants.O_WRONLY);
+    const stdinFd = handles.open(fifo, constants.O_RDONLY);
+    handles.close(holder);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for await (const chunk of Bun.stdin.stream()) {
+           process.stdout.write("chunk:" + Buffer.from(chunk).toString() + "\\n");
+         }
+         process.stdout.write("eof\\n");`,
+      ],
+      env: bunEnv,
+      stdin: stdinFd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    handles.close(stdinFd);
+    writeSync(writer, "hello");
+
+    // Once the child has echoed the chunk, its reader has delivered the data
+    // and gone back to waiting (it does that before user code runs), so the
+    // close is observed from the waiting state.
+    const stdoutReader = proc.stdout.getReader();
+    let stdout = "";
+    while (!stdout.includes("chunk:hello\n")) {
+      const { value, done } = await stdoutReader.read();
+      if (done) break;
+      stdout += Buffer.from(value).toString();
+    }
+    handles.close(writer);
+
+    while (true) {
+      const { value, done } = await stdoutReader.read();
+      if (done) break;
+      stdout += Buffer.from(value).toString();
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "chunk:hello\neof\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("exists globally", () => {

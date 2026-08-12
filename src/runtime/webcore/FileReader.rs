@@ -1,4 +1,6 @@
 use core::cell::{Cell, UnsafeCell};
+#[cfg(target_os = "macos")]
+use core::ffi::c_void;
 use core::mem;
 
 use bun_collections::VecExt;
@@ -11,6 +13,8 @@ use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
+#[cfg(target_os = "macos")]
+use crate::timer::fifo_eof_probe::{self, FifoEofProbe};
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
@@ -71,7 +75,17 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// Attached in `on_start` when the file is a FIFO; see
+    /// `crate::timer::fifo_eof_probe`.
+    #[cfg(target_os = "macos")]
+    pub(crate) fifo_eof_probe: FifoEofProbe,
 }
+
+#[cfg(target_os = "macos")]
+static FIFO_EOF_PROBE_OPS: fifo_eof_probe::Ops = fifo_eof_probe::Ops {
+    ref_: FileReader::fifo_eof_probe_ref,
+    unref: FileReader::fifo_eof_probe_unref,
+};
 
 impl Default for FileReader {
     fn default() -> Self {
@@ -96,6 +110,8 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            #[cfg(target_os = "macos")]
+            fifo_eof_probe: FifoEofProbe::init(&FIFO_EOF_PROBE_OPS),
         }
     }
 }
@@ -136,6 +152,9 @@ pub struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// `bun_io::fifo_needs_eof_probe` for the opened file.
+    #[cfg(target_os = "macos")]
+    pub(crate) probe_fifo_eof: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -146,6 +165,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(target_os = "macos")]
+            probe_fifo_eof: false,
         }
     }
 }
@@ -252,6 +273,10 @@ impl Lazy {
             this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
                 || is_nonblocking
                 || file.is_atty.unwrap_or(false);
+            #[cfg(target_os = "macos")]
+            {
+                this.probe_fifo_eof = bun_io::fifo_needs_eof_probe(&stat);
+            }
             this.file_type = if sys::S::ISFIFO(mode) {
                 FileType::Pipe
             } else if sys::S::ISSOCK(mode) {
@@ -334,6 +359,8 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        #[cfg(target_os = "macos")]
+        let mut probe_fifo_eof = false;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
@@ -361,6 +388,10 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                            }
+                            #[cfg(target_os = "macos")]
+                            {
+                                probe_fifo_eof = opened.probe_fifo_eof;
                             }
                             #[cfg(unix)]
                             {
@@ -419,6 +450,19 @@ impl FileReader {
                 // SAFETY: see `parent()`.
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
+            }
+            #[cfg(target_os = "macos")]
+            if probe_fifo_eof {
+                // Before `start()`, which makes the first registration.
+                // SAFETY: the probe and the reader are fields of this
+                // heap-allocated `Source`, which the I/O ref above keeps alive
+                // for as long as the reader is running; the terminal paths
+                // (`on_reader_done` / `on_reader_error` / `on_cancel` /
+                // `finalize_detach`) cancel it.
+                unsafe {
+                    self.fifo_eof_probe
+                        .attach(self.as_ctx_ptr().cast(), self.reader.get());
+                }
             }
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
@@ -604,7 +648,32 @@ impl FileReader {
         }
     }
 
+    /// `fifo_eof_probe::Ops`: the probe keeps the `Source` counted while it
+    /// is armed, like the I/O ref does while a read is outstanding.
+    ///
+    /// # Safety
+    /// `this` is the `FileReader` the probe was attached with, embedded in a
+    /// live `Source`.
+    #[cfg(target_os = "macos")]
+    unsafe fn fifo_eof_probe_ref(this: *mut c_void) {
+        // SAFETY: caller contract; see `parent()`.
+        unsafe { (*(*this.cast::<Self>()).parent()).increment_count() };
+    }
+
+    /// # Safety
+    /// As [`Self::fifo_eof_probe_ref`]; may free the `Source`, so callers must
+    /// not touch it afterwards.
+    #[cfg(target_os = "macos")]
+    unsafe fn fifo_eof_probe_unref(this: *mut c_void) {
+        // SAFETY: caller contract; see `parent()`.
+        let parent = unsafe { (*this.cast::<Self>()).parent() };
+        // SAFETY: releases the count taken in `fifo_eof_probe_ref`.
+        let _ = unsafe { Source::decrement_count(parent) };
+    }
+
     pub(crate) fn on_cancel(&self) {
+        #[cfg(target_os = "macos")]
+        self.fifo_eof_probe.cancel();
         self.unpipe_without_deref();
         if self.done.get() {
             return;
@@ -635,6 +704,10 @@ impl FileReader {
         if self.done.get() || !self.waiting_for_on_reader_done.get() {
             return false;
         }
+        // Still counted by the wrapper and the I/O ref the caller is about to
+        // release, so this cannot free.
+        #[cfg(target_os = "macos")]
+        self.fifo_eof_probe.cancel();
         self.waiting_for_on_reader_done.set(false);
         self.done.set(true);
         true
@@ -1126,6 +1199,8 @@ impl FileReader {
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
+        #[cfg(target_os = "macos")]
+        self.fifo_eof_probe.cancel();
         let sink = *self.sink.get();
         if sink.is_some() {
             self.consume_reader_buffer();
@@ -1173,6 +1248,11 @@ impl FileReader {
     }
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
+        // The reader is not closed on error, so its registration (and with it
+        // the probe) would otherwise outlive the stream. The across-read ref,
+        // released further down, keeps this from freeing the box.
+        #[cfg(target_os = "macos")]
+        self.fifo_eof_probe.cancel();
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());

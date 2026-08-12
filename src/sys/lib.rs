@@ -1411,6 +1411,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    #[cfg(target_os = "macos")]
+    pub(crate) const select: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1418,7 +1420,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1528,6 +1530,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "select",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1708,6 +1711,19 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // The `_DARWIN_UNLIMITED_SELECT` variant of select(2) (same
+        // `$DARWIN_EXTSN` scheme as `realpath` in `posix_impl`). libsyscall
+        // maps it straight onto the syscall, so there is no FD_SETSIZE check
+        // and each set is a bitmap of ceil(nfds / 32) 32-bit words rather
+        // than a `libc::fd_set`; hence the word pointers.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -7604,6 +7620,60 @@ pub fn kevent(
             E::EINTR => continue,
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
         }
+    }
+}
+
+/// Zero-timeout `select(2)` on one fd: is it readable right now, where
+/// readable includes EOF?
+///
+/// This exists for FIFOs (named pipes), which neither kqueue nor `poll(2)`
+/// can report EOF for on macOS. XNU attaches a FIFO's `EVFILT_READ` knote to
+/// the vnode, where it only activates while bytes are buffered
+/// (`filt_vnode_common` -> `vnode_readable_data_count` -> `fifo_charcount`),
+/// and `fifo_close_internal` posts nothing to the vnode when the last writer
+/// goes away (it only calls `socantrcvmore()` on the FIFO's socket). `poll(2)`
+/// is built on the same filter (`poll_nocancel` registers `EV_POLL` knotes).
+/// `select(2)` instead reaches that socket through `fifo_select`, and its
+/// readability includes the `SS_CANTRCVMORE` state the last writer's close
+/// sets; `read()` then returns 0. `pipe(2)` pipes have their own filter that
+/// reports `EV_EOF`, so they never need this.
+///
+/// Uses the `_DARWIN_UNLIMITED_SELECT` variant, so the fd number is not
+/// limited by `FD_SETSIZE`.
+#[cfg(target_os = "macos")]
+pub fn select_is_readable(fd: Fd) -> Maybe<bool> {
+    debug_assert!(fd.is_valid());
+    let index = usize::try_from(fd.native()).expect("open fds are non-negative");
+    let word = index / 32;
+    // 32 words cover every fd below FD_SETSIZE (1024) without allocating.
+    let mut inline_set = [0u32; 32];
+    let mut heap_set: Vec<u32>;
+    let read_set: &mut [u32] = if word < inline_set.len() {
+        &mut inline_set[..=word]
+    } else {
+        heap_set = vec![0u32; word + 1];
+        &mut heap_set
+    };
+    read_set[word] = 1 << (index % 32);
+    let mut timeout = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    // SAFETY: `read_set` holds the ceil(nfds / 32) words the kernel reads and
+    // writes back for `nfds = fd + 1`; the write and error sets may be null;
+    // `timeout` is a live stack value for the duration of the call.
+    let rc = unsafe {
+        nocancel::select(
+            fd.native() + 1,
+            read_set.as_mut_ptr(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            &raw mut timeout,
+        )
+    };
+    match get_errno(rc) {
+        E::SUCCESS => Ok(rc > 0),
+        e => Err(Error::from_code(e, Tag::select).with_fd(fd)),
     }
 }
 

@@ -651,7 +651,9 @@ pub use source::Source;
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+#[cfg(target_os = "macos")]
+pub use pipe_reader::PollRegisteredHook;
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags, fifo_needs_eof_probe};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

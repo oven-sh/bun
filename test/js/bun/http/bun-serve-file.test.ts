@@ -1162,6 +1162,105 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// A FIFO body ends when the pipe's last writer closes. By the time the client
+// has received any of the response, the server has opened the pipe, read it to
+// EAGAIN and parked itself on a readiness registration (all of that happens in
+// the frame that writes the status line, and client and server share this
+// event loop), so the close below always has to be noticed from that parked
+// state. On macOS the registration never reported it (kqueue only reports
+// buffered bytes for a FIFO), and the response stayed open until the idle
+// timeout killed it. These tests only check that the response ends; how the
+// body is framed at that point is covered separately.
+describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends once the parked server sees the writer close", () => {
+  // Both ways of serving a file body stream it through the same machinery
+  // but classify the file separately.
+  const servers = {
+    "fetch handler": (fifoPath: string) => ({
+      fetch: () => new Response(Bun.file(fifoPath)),
+    }),
+    "static route": (fifoPath: string) => ({
+      routes: { "/": new Response(Bun.file(fifoPath)) },
+      fetch: () => new Response("not found", { status: 404 }),
+    }),
+  };
+  const payloads = {
+    "after the payload was delivered": "pipe payload",
+    "when nothing was ever written": "",
+  };
+
+  for (const [serverName, makeServerOptions] of Object.entries(servers)) {
+    for (const [payloadName, payload] of Object.entries(payloads)) {
+      test.concurrent(`${serverName}: ${payloadName}`, async () => {
+        using dir = tempDir("serve-fifo-writer-close", {});
+        const fifoPath = join(String(dir), "body.fifo");
+        mkfifo(fifoPath);
+        // Read+write, so the open does not block and the server's own open
+        // finds a writer attached; closing it is the EOF.
+        let writer = openSync(fifoPath, "r+");
+        try {
+          await using server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            // A build that misses the EOF must hang here, not get rescued.
+            idleTimeout: 0,
+            ...makeServerOptions(fifoPath),
+          });
+
+          let wire = "";
+          const headSeen = Promise.withResolvers<void>();
+          const payloadSeen = Promise.withResolvers<void>();
+          const closed = Promise.withResolvers<void>();
+          await using client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open(s) {
+                // `Connection: close` makes the end of the response observable
+                // regardless of framing: the server closes the socket after it.
+                s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+              },
+              data(_s, d) {
+                wire += Buffer.from(d).toString("latin1");
+                // The head's terminating blank line only goes out with the
+                // first body write, so the status line is the signal here.
+                if (wire.includes("\r\n")) headSeen.resolve();
+                if (payload.length > 0 && wire.includes(payload)) payloadSeen.resolve();
+              },
+              close() {
+                closed.resolve();
+              },
+              error(_s, err) {
+                closed.reject(err);
+              },
+            },
+          });
+
+          await headSeen.promise;
+          if (payload.length > 0) {
+            writeSync(writer, payload);
+            // The bytes came out the other side: the server drained the pipe
+            // and parked itself again.
+            await payloadSeen.promise;
+          }
+          expect(server.pendingRequests).toBe(1);
+
+          closeSync(writer);
+          writer = -1;
+          await closed.promise;
+
+          expect({
+            status: wire.split("\r\n")[0],
+            bodyDelivered: wire.includes(payload),
+            pendingRequests: server.pendingRequests,
+          }).toEqual({ status: "HTTP/1.1 200 OK", bodyDelivered: true, pendingRequests: 0 });
+        } finally {
+          if (writer !== -1) closeSync(writer);
+        }
+      });
+    }
+  }
+});
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response

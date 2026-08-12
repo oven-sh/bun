@@ -202,6 +202,8 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    /// macOS only; `bun_runtime::timer::FifoEofProbe`.
+    FifoEofProbe,
 }
 
 impl Tag {
@@ -214,6 +216,7 @@ impl Tag {
             | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
             | Tag::DnsSdConnection // internal lookup pacing
+            | Tag::FifoEofProbe // internal io pacing
             => false,
             _ => true,
         }

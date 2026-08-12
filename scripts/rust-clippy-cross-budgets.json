@@ -2,7 +2,7 @@
   "x86_64-pc-windows-msvc": {
     "bun_bundler": 5,
     "bun_bunfig": 1,
-    "bun_cares_sys": 2,
+    "bun_cares_sys": 3,
     "bun_crash_handler": 9,
     "bun_install": 93,
     "bun_io": 30,
@@ -13,7 +13,7 @@
     "bun_paths": 5,
     "bun_resolver": 6,
     "bun_router": 1,
-    "bun_runtime": 276,
+    "bun_runtime": 280,
     "bun_spawn": 21,
     "bun_spawn_sys": 5,
     "bun_standalone_graph": 2,

@@ -12,11 +12,13 @@
  *
  * The JSON file is the budget: the number of hits each crate still has on that
  * target (unlisted crate = 0). A crate over its budget is a regression in the
- * change that added the hit; a crate under it must have its entry lowered
- * (`--update` rewrites the file from the current tree) so the budget only ever
- * goes down. Adding a target is adding its triple to the file with `{}` and
- * running `--update`; the Clippy workflow installs the std of every listed
- * triple.
+ * change that added the hit, to be fixed there (raising an entry is the
+ * exception and needs the same justification as an `#[allow]`); a crate under
+ * it must have its entry lowered, which is what `--update` does (it rewrites
+ * the file from the current tree). The counts depend only on the sources, so
+ * CI's run on the merge commit agrees with a local run on the same tree.
+ * Adding a target is adding its triple to the file with `{}` and running
+ * `--update`; the Clippy workflow installs the std of every listed triple.
  *
  * Lints are capped to warnings for the run (`--cap-lints=warn`), which is what
  * makes one `--workspace` invocation lint every crate: under the workspace's
@@ -113,7 +115,10 @@ function checkBudget(budget: Record<string, number>, counts: Map<string, number>
     const allowed = budget[crate] ?? 0;
     const actual = counts.get(crate) ?? 0;
     if (actual > allowed) {
-      problems.push(`${crate}: ${actual} clippy hits, budget is ${allowed}; fix the new ones (printed above)`);
+      problems.push(
+        `${crate}: ${actual} clippy hits, budget is ${allowed}; the crate's hits are printed above. ` +
+          "If none of the extra ones come from your change, the budget file is behind main: rebase first.",
+      );
     } else if (actual < allowed) {
       problems.push(
         `${crate}: ${actual} clippy hits, budget is ${allowed}; run \`bun run rust:clippy-cross --update\``,

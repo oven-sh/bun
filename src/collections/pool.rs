@@ -543,20 +543,14 @@ mod tests {
     static RESETS: AtomicUsize = AtomicUsize::new(0);
 
     /// `DROPS`/`RESETS` are process-wide but libtest runs `#[test]`s on parallel
-    /// threads, so every test asserting on them holds this for its duration
-    /// (pool teardown included: see [`in_pool_thread`]).
+    /// threads, so every test asserting on them holds this for its duration.
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn serial() -> MutexGuard<'static, ()> {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Runs `body` on its own thread and joins it, so the pool's `thread_local!`
-    /// free list is torn down (dropping the nodes still cached in it) before
-    /// this returns, i.e. while the caller still holds `SERIAL`; on the `#[test]`
-    /// thread that teardown would run after the test has released it. Keep the
-    /// explicit `join()`: `thread::scope`'s implicit join does not wait for the
-    /// thread's TLS destructors.
+    /// Runs `body` on its own thread and joins it, which tears down that thread's pool.
     fn in_pool_thread(body: impl FnOnce() + Send + 'static) {
         let name = std::thread::current()
             .name()
@@ -566,6 +560,7 @@ mod tests {
             .name(name)
             .spawn(body)
             .expect("spawn pool test thread")
+            // Not `thread::scope`: its implicit join does not wait for TLS destructors.
             .join();
         if let Err(panic) = joined {
             std::panic::resume_unwind(panic);

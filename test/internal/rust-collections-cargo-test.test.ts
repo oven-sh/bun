@@ -49,20 +49,22 @@ const POOL_TESTS = [
   "pool::tests::recycle::pool_recycles_the_same_node",
 ];
 
+async function run(cmd: string[], env: Record<string, string | undefined> = process.env) {
+  await using proc = Bun.spawn({ cmd, cwd: repoRoot, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 test.skipIf(isWindows || !cargo || !workspaceResolvable)(
   "bun_collections unit tests pass under libtest's thread-per-test concurrency",
-  () => {
-    const build = Bun.spawnSync({
-      cmd: [cargo!, "test", "--locked", "-p", "bun_collections", "--lib", "--no-run", "--message-format=json"],
-      cwd: repoRoot,
-      env: { ...process.env, CARGO_TERM_COLOR: "never" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect({ stderr: build.stderr.toString(), exitCode: build.exitCode }).toMatchObject({ exitCode: 0 });
+  async () => {
+    const build = await run(
+      [cargo!, "test", "--locked", "-p", "bun_collections", "--lib", "--no-run", "--message-format=json"],
+      { ...process.env, CARGO_TERM_COLOR: "never" },
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toMatchObject({ exitCode: 0 });
 
     const executables = build.stdout
-      .toString()
       .split("\n")
       .filter(line => line.startsWith("{"))
       .map(line => JSON.parse(line))
@@ -77,33 +79,20 @@ test.skipIf(isWindows || !cargo || !workspaceResolvable)(
     expect(executables).toHaveLength(1);
     const [testBinary] = executables;
 
-    const whole = Bun.spawnSync({ cmd: [testBinary], cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
-    const wholeStdout = whole.stdout.toString();
-    expect({ stdout: wholeStdout, stderr: whole.stderr.toString(), exitCode: whole.exitCode }).toMatchObject({
-      exitCode: 0,
-    });
+    const whole = await run([testBinary]);
+    expect(whole).toMatchObject({ exitCode: 0 });
     // The loop below filters on `pool::`; make sure that still names these tests.
     for (const name of POOL_TESTS) {
-      expect(wholeStdout).toContain(`test ${name} ... ok`);
+      expect(whole.stdout).toContain(`test ${name} ... ok`);
     }
 
-    for (let run = 1; run <= POOL_TEST_RUNS; run++) {
-      const pool = Bun.spawnSync({
-        cmd: [testBinary, "pool::", "--test-threads=4"],
-        cwd: repoRoot,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect({
-        run,
-        stdout: pool.stdout.toString(),
-        stderr: pool.stderr.toString(),
-        exitCode: pool.exitCode,
-      }).toMatchObject({ exitCode: 0 });
+    for (let attempt = 1; attempt <= POOL_TEST_RUNS; attempt++) {
+      const pool = await run([testBinary, "pool::", "--test-threads=4"]);
+      expect({ attempt, ...pool }).toMatchObject({ exitCode: 0 });
     }
   },
   // A fresh target dir compiles bun_core and its dependencies first (about 15s
   // on 12 cores); warm, the cargo step takes well under a second and the runs
-  // about a second.
+  // a few seconds under a debug build.
   120_000,
 );

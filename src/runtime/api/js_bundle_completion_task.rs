@@ -88,8 +88,9 @@ pub struct JSBundleCompletionTask {
     started_at_ns: u64,
 }
 
-/// Who gets the result. Fixed at construction: nothing writes to the task
-/// from the JS thread once it is enqueued (see [`CompletionStruct`]).
+/// Who gets the result. Fixed at construction: once the task is enqueued the
+/// JS thread only cancels it (`cancelled`) or releases it while it is still
+/// queued (the `stage` handshake); see [`CompletionStruct`].
 pub(crate) enum Deliver {
     /// `Bun.build()`: settle this promise.
     Promise(jsc::JSPromiseStrong),
@@ -153,9 +154,10 @@ unsafe impl Send for JSBundleCompletionTask {}
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
 ///
-/// The enqueue is the JS thread's last write to the task (`CompletionStruct`
-/// says why); the returned pointer is for cancelling it (`stop_for_vm_teardown`,
-/// `HTMLBundle::State::deinit`) until `on_complete_anytask` gets it back.
+/// After the enqueue the JS thread only cancels or releases the task
+/// (`stop_for_vm_teardown`, `HTMLBundle::State::deinit`; `CompletionStruct`
+/// says why nothing else may touch it) until `on_complete_anytask` gets it
+/// back, and that is what the returned pointer is for.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
@@ -899,9 +901,6 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 };
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
-// Field projections out of `this` only, never a reference to the whole task;
-// the trait doc says why.
-//
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
 unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     #[inline]
@@ -911,6 +910,8 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     }
 }
 
+// Field projections out of `this` only, never a reference to the whole task;
+// the trait doc says why.
 impl CompletionStruct for JSBundleCompletionTask {
     unsafe fn try_start(this: *mut Self) -> bool {
         use core::sync::atomic::Ordering;
@@ -1253,9 +1254,11 @@ fn configure_bundler(
     transpiler.options.metafile_markdown_path =
         Box::from(config.metafile_markdown_path.list.as_slice());
     if config.optimize_imports.count() > 0 {
-        // SAFETY: the task (and so `config`) outlives the transpiler, and until
-        // the build is over `config` is only borrowed shared again
-        // (`init_and_run`); a bump.alloc'd clone would leak (no Drop in arenas).
+        // SAFETY: only read while the bundle runs, which ends inside
+        // `init_and_run` before the task is handed back (the transpiler is
+        // dropped without reading it), and until then `config` is only
+        // borrowed shared again; a bump.alloc'd clone would leak (no Drop in
+        // arenas).
         transpiler.options.optimize_imports =
             Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
     }

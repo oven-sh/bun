@@ -33,12 +33,7 @@ pub enum BundleV2Result {
 
 /// Originally, bake.DevServer required a separate bundling thread, but that was
 /// later removed. The bundling thread's scheduling logic is generalized over
-/// the completion structure.
-///
-/// CompletionStruct's interface:
-///
-/// - `configureBundler` is used to configure `Bundler`.
-/// - `completeOnBundleThread` is used to tell the task that it is done.
+/// the completion structure, [`CompletionStruct`].
 // The trait bound lives on the `impl` (not the struct) so the
 // `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
 // provides the `CompletionStruct` impl for the forward-decl.
@@ -252,7 +247,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         }
     }
 
-    /// This is called from `Bun.build` in JavaScript.
+    /// One build, run by `thread_main` for each task it dequeues.
     ///
     /// # Safety
     /// `completion` was just started (`try_start`); see [`CompletionStruct`].
@@ -291,11 +286,9 @@ impl<C: CompletionStruct> BundleThread<C> {
             )
         };
 
-        // Straight-line teardown: log copy
-        // runs on both paths; `completeOnBundleThread` only on success (the error
-        // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
-        // (it owns `this`).
+        // The log copy runs on both paths; the hand-back only on success (on
+        // `Err`, `thread_main` stores the error and hands back). The bundle's
+        // own teardown happened inside `init_and_run`.
         let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` points at the task's log (set up by
         // `create_and_configure_transpiler`), live per the fn contract; the

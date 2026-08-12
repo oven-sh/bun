@@ -141,24 +141,38 @@ impl PatchTask {
     /// # Safety
     /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
     /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
-    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
-    /// granting exclusive access for the duration of the call.
+    /// point at the `task` field of a heap-allocated `PatchTask`, which this
+    /// thread owns until it pushes the task back to the main thread.
     pub(crate) unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
-        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
-        patch_task.run_from_thread_pool_impl();
+        let this = unsafe { PatchTask::from_task_ptr(task) };
+        // SAFETY: as above. The main thread reclaims the task's `Box` as soon as
+        // the push below lands, so the `&mut` the autoref forms is scoped to
+        // its statement and the push goes through `this`, not a reference.
+        let mgr = unsafe {
+            (*this).run_from_thread_pool_impl();
+            (*this).manager.as_ptr()
+        };
+        // SAFETY: `this` is non-null (recovered from a live task). `mgr` is a
+        // long-lived BACKREF; the worker thread only touches the lock-free
+        // `patch_task_queue` and the event-loop wake atomics, neither of which
+        // alias data the main thread holds an exclusive borrow on.
+        unsafe {
+            (*mgr)
+                .patch_task_queue
+                .push(core::ptr::NonNull::new_unchecked(this));
+            PackageManager::wake_raw(mgr);
+        }
     }
 
-    pub(crate) fn run_from_thread_pool_impl(&mut self) {
+    fn run_from_thread_pool_impl(&mut self) {
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadPoolImpl {}",
             <&'static str>::from(&self.callback)
         );
-        // There are no early returns in the body, so the ordering
-        // (body → push → wake) is inlined below.
         match &mut self.callback {
             Callback::CalcHash(_) => {
                 let result = self.calc_hash();
@@ -172,17 +186,6 @@ impl PatchTask {
                 // bun.handleOom(this.apply()) → panic on OOM.
                 self.apply().expect("OOM");
             }
-        }
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // the worker thread only touches the lock-free `patch_task_queue` and the
-        // event-loop wake atomics, neither of which alias data the main thread
-        // holds an exclusive borrow on.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
         }
     }
 

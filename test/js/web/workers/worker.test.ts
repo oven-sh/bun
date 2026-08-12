@@ -536,6 +536,38 @@ describe("web worker", () => {
       expect(stdout).toBe("PASS\n");
       expect(exitCode).toBe(0);
     });
+
+    // The worker's import()s are transpiled on the thread pool, in job slots
+    // that live inside the worker's VM. Terminating it while they are in flight
+    // makes the pool hand the remaining jobs back untranspiled and the teardown
+    // release them. Three workers per round share the pool, so part of each
+    // round's jobs is still queued when terminate() lands; the 0-3ms stagger
+    // varies how much.
+    test("terminate() while the worker's imports are still being transpiled", async () => {
+      const modules = 96;
+      const files: Record<string, string> = {
+        "worker.js": `for (let i = 0; i < ${modules}; i++) import("./mod" + i + ".js").catch(() => {});
+          postMessage("importing");`,
+      };
+      for (let i = 0; i < modules; i++) files[`mod${i}.js`] = `export const value = ${i};`;
+      using dir = tempDir("worker-transpile-churn", files);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `for (let r = 0; r < 2; r++) await Promise.all(Array.from({ length: 3 }, (_, i) => new Promise(res => {
+             const w = new Worker(process.argv[1]); w.addEventListener("close", res);
+             w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 4) })));
+           console.log("PASS");`,
+          path.join(String(dir), "worker.js"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: "", exitCode: 0 });
+    });
   });
 });
 

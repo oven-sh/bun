@@ -320,6 +320,104 @@ describe("bundler", () => {
       },
       stdout: "function",
     },
+    {
+      // dep.ts is both imported statically and import()ed, so (without
+      // splitting) it is inlined as an async __esm wrapper and the entry's
+      // import of it is printed as a top-level `await init_dep()`. No input
+      // file has a top-level await at the chunk's top level, but the chunk
+      // does; if the module record does not say so, JSC evaluates the chunk
+      // synchronously and everything after that await never runs (the binary
+      // used to print only "dep evaluated" and exit 0).
+      name: "AwaitInitOfAsyncWrappedDependency",
+      files: {
+        "/entry.ts": `
+          import { value } from "./dep.ts";
+          import { lazy } from "./helper.ts";
+          console.log("entry:", value);
+          lazy().then(m => console.log("lazy:", m.value));
+        `,
+        "/dep.ts": `
+          export const value = await Promise.resolve("tla value");
+          console.log("dep evaluated");
+        `,
+        "/helper.ts": `export const lazy = () => import("./dep.ts");`,
+      },
+      stdout: "dep evaluated\nentry: tla value\nlazy: tla value",
+    },
+    {
+      // The entry point itself is import()ed, so it becomes an async __esm
+      // wrapper and the chunk ends with the entry point tail's
+      // `await init_entry()`. With the record claiming no top-level await,
+      // JSC never observes that promise, so a rejected top-level await in the
+      // entry surfaced as an unhandled rejection. It has to be the entry
+      // module's evaluation error (an uncaught exception), which is what the
+      // same build without --bytecode and `bun run` report.
+      name: "AwaitInitOfAsyncWrappedEntryPoint",
+      files: {
+        "/entry.ts": `
+          import { lazy } from "./helper.ts";
+          process.on("uncaughtException", err => console.log("uncaughtException:", err.message));
+          process.on("unhandledRejection", err => console.log("unhandledRejection:", err.message));
+          console.log("entry:", typeof lazy);
+          await Promise.reject(new Error("tla rejected"));
+        `,
+        "/helper.ts": `export const lazy = () => import("./entry.ts");`,
+      },
+      stdout: "entry: function\nuncaughtException: tla rejected",
+    },
+    {
+      // The only top-level await in the input is dead code, so the printed
+      // chunk has none and JSC's own analysis of it says no top-level await.
+      // The record is built from the printed output, not from the parser's
+      // await keyword, so it must agree; debug builds cross-check the two and
+      // refuse to start the binary if the record claims an await that was
+      // never printed.
+      name: "DeadTopLevelAwait",
+      files: {
+        "/entry.ts": `
+          if (false) await Promise.resolve();
+          console.log("no await printed");
+        `,
+      },
+      stdout: "no await printed",
+    },
+    {
+      // The other spellings of a top-level await. Each lives in its own
+      // dynamically imported module, so each gets its own record: a module
+      // whose record misses its await is abandoned at that await and its
+      // output (or, for `await using`, its disposal) never happens.
+      name: "TopLevelAwaitForms",
+      files: {
+        "/entry.ts": `
+          await import("./for-await.ts");
+          await import("./await-using.ts");
+          await import("./for-await-using.ts");
+          console.log("entry done");
+        `,
+        "/for-await.ts": `
+          for await (const v of [Promise.resolve("a"), Promise.resolve("b")]) console.log("for await:", v);
+        `,
+        "/await-using.ts": `
+          await using res = { async [Symbol.asyncDispose]() { console.log("await using: disposed"); } };
+          console.log("await using: body");
+        `,
+        "/for-await-using.ts": `
+          const make = (n: string) => ({ async [Symbol.asyncDispose]() { console.log("for await using: disposed", n); } });
+          for (await using r of [make("x"), make("y")]) console.log("for await using: body");
+        `,
+      },
+      stdout: [
+        "for await: a",
+        "for await: b",
+        "await using: body",
+        "await using: disposed",
+        "for await using: body",
+        "for await using: disposed x",
+        "for await using: body",
+        "for await using: disposed y",
+        "entry done",
+      ].join("\n"),
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

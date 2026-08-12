@@ -3067,13 +3067,6 @@ fn transpile_source_code_inner(
                 } else {
                     None
                 };
-                // Propagate top-level-await to the
-                // cached module record (see the matching note in
-                // RuntimeTranspilerStore.rs for why this matters under
-                // --isolate / --parallel).
-                if let Some(mi) = module_info.as_deref_mut() {
-                    mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
-                }
                 // Derive the `*mut` from a `&mut` borrow (not `&x as *const _
                 // as *mut _`, which is Stacked-Borrows UB). The borrow ends
                 // here; the raw pointer stays valid until `module_info` is

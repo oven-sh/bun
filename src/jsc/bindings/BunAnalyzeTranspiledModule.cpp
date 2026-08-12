@@ -290,6 +290,10 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 
     stream.print("\nAnalyzing ModuleRecord key(", moduleRecord->moduleKey().impl(), ")\n");
 
+    // Selects the sync or async path in JSModuleRecord::execute; a false for a
+    // body that does contain a top-level await abandons the body at that await.
+    stream.print("    hasTLA: ", moduleRecord->hasTLA(), "\n");
+
     stream.print("    Dependencies: ", moduleRecord->requestedModules().size(), " modules\n");
     {
         Vector<String> sortedDeps;

@@ -7645,10 +7645,10 @@ pub mod bv2_impl {
         Javascript {
             source_index: IndexInt,
             result: bun_js_printer::PrintResult,
-            /// The imports/exports the printer emitted for this part range.
-            /// Only present when `LinkerOptions::generates_module_info()`;
-            /// `post_process_js_chunk` appends these to the chunk's
-            /// `ModuleInfo` in output order.
+            /// The imports/exports (and top-level await) the printer emitted for
+            /// this part range. Only present when
+            /// `LinkerOptions::generates_module_info()`; `post_process_js_chunk`
+            /// appends these to the chunk's `ModuleInfo` in output order.
             module_info: Option<Box<crate::analyze_transpiled_module::ModuleInfo>>,
         },
         Css {

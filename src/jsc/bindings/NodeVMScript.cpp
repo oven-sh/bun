@@ -315,6 +315,12 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // evaluate() caught like any other exception.
         if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
             return false;
+        // A `--watch` process.exit() termination stays pending so it unwinds
+        // past node:vm instead of being mapped to a SIGINT/timeout error.
+        if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+            scope.throwException(globalObject, vm.terminationException());
+            return true;
+        }
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

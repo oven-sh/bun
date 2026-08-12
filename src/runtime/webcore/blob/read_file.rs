@@ -897,6 +897,13 @@ impl ReadFile {
                         // call. We already know it's done.
                         && !self.read_eof)
                     {
+                        #[cfg(target_os = "macos")]
+                        if self.is_named_pipe {
+                            if self.block_until_readable() {
+                                continue;
+                            }
+                            break;
+                        }
                         if self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
@@ -906,13 +913,6 @@ impl ReadFile {
                                 bun_core::Pollable::NotReady => {}
                                 bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                             }
-                        }
-                        #[cfg(target_os = "macos")]
-                        if self.is_named_pipe {
-                            if self.block_until_readable() {
-                                continue;
-                            }
-                            break;
                         }
                         self.read_eof = false;
                         self.buffer = buffer;

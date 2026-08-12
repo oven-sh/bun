@@ -1511,9 +1511,9 @@ pub mod js_bundler {
             // plugin host's JS loop) when `Bun.build` runs the bundler on its
             // own Mini event loop.
             let ctx = self.parse_task.ctx.expect("ParseTask.ctx unset");
-            // Read before posting: the bundle thread writes to the `Load`
-            // (`on_notify_defer_mini`) once it has it.
-            let bv2 = self.bv2;
+            // Taken before posting: once the bundle thread has the `Load` it
+            // writes to it (`on_notify_defer_mini`) and carries on with the bundle.
+            let plugin = bv2_plugin(self.bv2);
             match ctx.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
@@ -1542,7 +1542,7 @@ pub mod js_bundler {
                 }
             }
 
-            Ok(bv2_plugin(bv2).append_defer_promise())
+            Ok(plugin.append_defer_promise())
         }
     }
 

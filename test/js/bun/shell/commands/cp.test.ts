@@ -1,7 +1,10 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, DirectoryTree, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
+import { lstatSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +173,147 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// cp(1) copies the file a symlink operand points at; only `cp -R` copies the
+// link itself. The builtin is the default only on Windows; on POSIX it is
+// switched on by an env var that is read once per process, so every cp below
+// runs in a child bun.
+describe.concurrent("bunshell cp follows a symlink operand unless -R is given", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  // Runs argv[2] through the shell inside `work/` and prints what cp returned.
+  const runCpScript = /* ts */ `
+    import { $ } from "bun";
+    import { join } from "node:path";
+    const result = await $\`\${{ raw: process.argv[2] }}\`.cwd(join(import.meta.dir, "work")).nothrow().quiet();
+    console.log(JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() }));
+  `;
+
+  /**
+   * A temp dir holding the runner script and `work/`, which contains
+   * `inner/target`, an empty `dest/`, the link `rel -> inner/target` and
+   * whatever `extra` adds. Returns the temp dir; `work()` locates the work dir.
+   */
+  function setup(name: string, extra: DirectoryTree = {}) {
+    const dir = tempDir(`shell-cp-follow-${name}`, {
+      "run-cp.ts": runCpScript,
+      "work": { "inner/target": "target\n", "dest": {}, ...extra },
+    });
+    symlinkSync(join("inner", "target"), join(work(dir), "rel"));
+    return dir;
+  }
+
+  function work(dir: string, ...inside: string[]): string {
+    return join(String(dir), "work", ...inside);
+  }
+
+  async function cp(dir: string, command: string): Promise<{ exitCode: number; stderr: string }> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run-cp.ts", command],
+      cwd: String(dir),
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  const copied = { exitCode: 0, stderr: "" };
+
+  /** What `work/<name>` is now: a regular file's contents, a symlink's target, or `missing`. */
+  function entry(dir: string, name: string): string {
+    const path = work(dir, name);
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (stat === undefined) return "missing";
+    if (stat.isSymbolicLink()) return `symlink -> ${readlinkSync(path)}`;
+    return `file: ${readFileSync(path, "utf8")}`;
+  }
+
+  test("cp link file copies the file the link points at", async () => {
+    using dir = setup("file");
+    expect(await cp(dir, "cp rel out")).toEqual(copied);
+    expect(entry(dir, "out")).toBe("file: target\n");
+  });
+
+  test("cp link... dir copies the files the links point at", async () => {
+    using dir = setup("into-dir", { "outside.txt": "outside\n", "elsewhere": {} });
+    symlinkSync(join("..", "outside.txt"), work(dir, "elsewhere", "up"));
+    expect(await cp(dir, "cp rel elsewhere/up dest")).toEqual(copied);
+    expect([entry(dir, "dest/rel"), entry(dir, "dest/up")]).toEqual(["file: target\n", "file: outside\n"]);
+  });
+
+  // Past 128 KiB the macOS copy switches from read/write to clonefile().
+  test("a link to a large file is copied as a file", async () => {
+    const big = Buffer.alloc(300 * 1024, "big file\n").toString();
+    using dir = setup("big", { big });
+    symlinkSync("big", work(dir, "biglink"));
+    expect(await cp(dir, "cp biglink out")).toEqual(copied);
+    expect(lstatSync(work(dir, "out")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(work(dir, "out"), "utf8")).toBe(big);
+  });
+
+  test("a dangling link is an error", async () => {
+    using dir = setup("dangling");
+    symlinkSync("missing", work(dir, "dangling"));
+    expect(await cp(dir, "cp dangling out")).toEqual({
+      exitCode: 1,
+      stderr: `cp: No such file or directory: ${work(dir, "dangling")}\n`,
+    });
+    expect(entry(dir, "out")).toBe("missing");
+  });
+
+  test("a link to a directory is an error without -R", async () => {
+    using dir = setup("dirlink");
+    symlinkSync("inner", work(dir, "dirlink"), "dir");
+    expect(await cp(dir, "cp dirlink out")).toEqual({
+      exitCode: 1,
+      stderr: "cp: dirlink is a directory (not copied)\n",
+    });
+    expect(entry(dir, "out")).toBe("missing");
+  });
+
+  test("a link and the file it points at are the same file", async () => {
+    using dir = setup("identical");
+    expect(await cp(dir, "cp rel inner/target")).toEqual({
+      exitCode: 1,
+      stderr: "cp: rel and inner/target are identical (not copied)\n",
+    });
+    expect(entry(dir, "inner/target")).toBe("file: target\n");
+  });
+
+  test("a link and the same-named file it points at in the destination directory are the same file", async () => {
+    using dir = setup("identical-in-dir", { "elsewhere": {} });
+    symlinkSync(join("..", "inner", "target"), work(dir, "elsewhere", "target"));
+    expect(await cp(dir, "cp elsewhere/target inner")).toEqual({
+      exitCode: 1,
+      stderr: `cp: elsewhere/target and ${p("inner/target")} are identical (not copied)\n`,
+    });
+    expect(entry(dir, "inner/target")).toBe("file: target\n");
+  });
+
+  test("cp -R copies the links themselves", async () => {
+    using dir = setup("recursive");
+    symlinkSync("inner", work(dir, "dirlink"), "dir");
+    expect(await cp(dir, "cp -R rel dirlink dest")).toEqual(copied);
+    expect(entry(dir, "dest/rel")).toStartWith("symlink -> ");
+    expect(entry(dir, "dest/dirlink")).toStartWith("symlink -> ");
+  });
+
+  // Following the link must not mean reading the FIFO: open(2) on a FIFO with
+  // no writer blocks forever.
+  test.skipIf(isWindows)("a link to a FIFO is refused", async () => {
+    using dir = setup("fifo");
+    mkfifo(work(dir, "fifo"));
+    symlinkSync("fifo", work(dir, "fifolink"));
+    expect(await cp(dir, "cp fifolink out")).toEqual({
+      exitCode: 1,
+      stderr: `cp: Operation not supported: ${work(dir, "fifolink")}\n`,
+    });
+    expect(entry(dir, "out")).toBe("missing");
   });
 });
 

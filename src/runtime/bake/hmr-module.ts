@@ -228,17 +228,13 @@ export class HMRModule {
   }
 
   on(event: string, cb: HotEventHandler) {
-    // Vite compatibility, but favor using Bun's event names.
-    if (event.startsWith("vite:")) {
-      event = "bun:" + event.slice(4);
-    }
-
+    event = normalizeEventName(event);
     (eventHandlers[event] ??= []).push(cb);
     this.dispose(() => this.off(event, cb));
   }
 
   off(event: string, cb: HotEventHandler) {
-    const handlers = eventHandlers[event];
+    const handlers = eventHandlers[normalizeEventName(event)];
     if (!handlers) return;
     const index = handlers.indexOf(cb);
     if (index !== -1) {
@@ -815,6 +811,12 @@ function createAcceptArray(modules: string[], key: Id) {
   DEBUG.ASSERT(i !== -1);
   arr[i] = getEsmExports(registry.get(key)!);
   return arr;
+}
+
+/** `vite:*` is accepted as an alias of `bun:*` for Vite compatibility. Both
+ * `on` and `off` go through this, so a handler can be removed by either name. */
+function normalizeEventName(event: string): string {
+  return event.startsWith("vite:") ? "bun:" + event.slice("vite:".length) : event;
 }
 
 export function emitEvent(event: HMREvent, data: any) {

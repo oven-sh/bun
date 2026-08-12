@@ -141,11 +141,7 @@ test("concurrent bunx spawns of the same package do not corrupt the shared insta
   );
   const results = await Promise.all(
     procs.map(async proc => {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }),
   );

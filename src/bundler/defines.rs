@@ -51,9 +51,7 @@ fn env_string_store_put(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // Node and bytes both live in `bump` (the `Define` table's lifetime): the
-    // thread-local Expr store is reset when `configure_defines` returns, and
-    // `Bun__setEnvValue` frees the env-map entry `value` points into.
+    // Copied because `Bun__setEnvValue` frees the env-map entry `value` points into.
     let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),

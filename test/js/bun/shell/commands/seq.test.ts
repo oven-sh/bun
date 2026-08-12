@@ -260,6 +260,13 @@ describe("seq -w", async () => {
     .stderr("")
     .runAsTest("pads when stdout is captured");
 
+  TestBuilder.command`seq -w 8 11 > out.txt`
+    .exitCode(0)
+    .stdout("")
+    .stderr("")
+    .fileEquals("out.txt", "08\n09\n10\n11\n")
+    .runAsTest("pads when stdout is a file");
+
   // 1e-70000 parses as 0 but was written with 70000 implied decimals; more
   // than core::fmt can print, so the precision is capped at 1074 (the most
   // fractional digits any double has) instead of panicking.

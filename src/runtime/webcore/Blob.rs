@@ -33,6 +33,10 @@ bun_core::define_scoped_log!(debug, Blob, visible);
 /// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
 /// `href` slice to a `&mut Loader` borrow that we cannot keep open across the
 /// S3 request setup.
+///
+/// Call it after every option object has been read: a getter on one of them
+/// can assign `process.env.HTTP_PROXY`, which replaces (and frees) the map
+/// entry a value read earlier would point into.
 #[inline]
 fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
     // `Transpiler::env_mut` is the safe accessor for the process-singleton

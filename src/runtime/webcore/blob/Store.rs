@@ -20,7 +20,6 @@ use crate::webcore::s3::client::{
 };
 use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_url::URL;
 
 #[cfg(unix)]
 use super::SizeType;
@@ -332,17 +331,9 @@ impl S3Ext for S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
+        let proxy = super::http_proxy_href(global_this);
 
         s3_client::delete(
             &aws_options.credentials,
@@ -356,7 +347,7 @@ impl S3Ext for S3 {
                 global: bun_ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
-            proxy,
+            proxy.as_deref(),
             aws_options.request_payer,
         )?;
 
@@ -427,19 +418,11 @@ impl S3Ext for S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
+        let proxy = super::http_proxy_href(global_this);
 
         // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Slice`s);
         // box the wrapper first so the options live on the heap, then hand a
@@ -462,7 +445,7 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
-            proxy,
+            proxy.as_deref(),
         )?;
 
         Ok(value)

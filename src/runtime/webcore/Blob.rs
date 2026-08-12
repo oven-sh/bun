@@ -2055,8 +2055,7 @@ impl BlobExt for Blob {
         None
     }
 
-    /// The name `.name` reports, for consumers that derive something from it
-    /// (loader, `filename=`). `None` when there is none or it is empty.
+    /// [`Self::get_name_string`] as UTF-8; `None` when there is no name or it is empty.
     fn get_name_utf8(&self) -> Option<ZigStringSlice> {
         let name = self.get_name_string()?;
         if name.is_empty() {
@@ -4250,9 +4249,8 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-/// blob.cpp `toJS`: `this` is the natively held FormData entry, which shares
-/// its store with the blob the user appended, so the entry's filename is set
-/// on `this` alone. Empty means no filename was given.
+/// blob.cpp `toJS`: names the FormData entry's own Blob (its store is shared with
+/// the appended blob). An empty `path_str` means no filename was given.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
@@ -4266,8 +4264,7 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
-/// JSDOMFormData.cpp: the default entry filename when `append`/`set` is given
-/// none. Borrowed (`this` keeps it alive); the caller takes its own ref via
+/// JSDOMFormData.cpp's default entry filename. Borrowed: the caller refs it via
 /// `toWTFString` and never derefs it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
@@ -5539,19 +5536,14 @@ pub(crate) fn jsdom_file_construct(
         )));
     }
 
-    // +1 WTF ref; `OwnedString` releases it if `get` throws, otherwise
-    // `into_inner` hands it to `blob.name`.
     let mut name = OwnedString::new(BunString::from_js(args[1], global_this)?);
     if name.is_utf16() {
-        // `name` is a USVString: the UTF-8 round trip turns lone surrogates
-        // (only possible in a 16-bit string) into U+FFFD.
+        // USVString: the UTF-8 round trip replaces lone surrogates with U+FFFD.
         let utf8 = name.to_utf8();
         name = OwnedString::new(BunString::clone_utf8(utf8.slice()));
     }
     let blob = Blob::get::<false, true>(global_this, args[0])?;
-    // A single-Blob `bits` shares the source's store (and `dupe()` copied its
-    // name), so the name goes on this Blob only: writing it into the store
-    // would rename every Blob sharing it.
+    // Not into the store: a single-Blob `bits` shares the source's store.
     blob.name.set(name.into_inner());
 
     let mut set_last_modified = false;

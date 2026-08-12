@@ -45,11 +45,8 @@ impl Entry {
     }
 }
 
-/// The registry is shared by every thread; a `WTF::StringImpl` must not be.
-/// The first thread to use one as a property key turns it into an atom of its
-/// own string table, and dropping the last reference from any other thread
-/// then aborts in `AtomStringImpl::remove`. So the entry and every resolved
-/// copy each get a `name` impl that no thread's JS can reach.
+/// A name impl that some thread's JS can reach may become that thread's atom, and an
+/// atom must not be released on another thread (`AtomStringImpl::remove`), so none is shared.
 fn dupe_with_private_name(blob: &Blob) -> Blob {
     let copy = blob.dupe_with_content_type(true);
     let mut name = copy.name.replace(bun_core::String::dead()).into_inner();

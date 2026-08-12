@@ -138,9 +138,7 @@ pub struct Blob {
     pub ref_count: bun_ptr::RawRefCount,
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
-    /// Name given to this Blob in particular (`File` constructor, FormData
-    /// filename, `.name =`); `Dead` when none was, and the store's
-    /// [`Self::get_file_name`] applies.
+    /// This Blob's own name; `Dead` means the store's [`Self::get_file_name`] applies.
     pub name: bun_core::OwnedStringCell,
 }
 
@@ -436,10 +434,8 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the name the *store* carries: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed stores.
-    /// A name given to this Blob itself is in `name`; `BlobExt::get_name_string`
-    /// combines the two.
+    /// `Blob.getFileName()` — the store's name (`Bytes.stored_name`, the file path,
+    /// or the S3 key), which [`Self::name`] overrides. `None` for fd-backed or unnamed stores.
     pub fn get_file_name(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -615,11 +611,8 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Set when the store is created (standalone module graph, structured
-        /// clone) and never afterwards: the store is shared by every Blob
-        /// viewing it, so a name given to one Blob (`new File([blob], name)`,
-        /// a FormData filename) lives in `Blob::name` instead.
-        /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
+        /// Set only when the store is created; a name given to one of the Blobs
+        /// sharing the store goes in `Blob::name`. Heap-owned (or empty); freed by `Drop`.
         pub stored_name: Box<[u8]>,
     }
 

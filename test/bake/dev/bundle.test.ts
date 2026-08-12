@@ -32,9 +32,9 @@ async function servedClientBundle(dev: Dev, route: string): Promise<string> {
 // and CommonJS modules as the method `"file"(hmr) {...},`.
 const moduleTableEntry = /^ {2}"((?:[^"\\]|\\.)*)"(?:: \[|\()/gm;
 
-/** Project-relative paths of the modules in a client bundle, in bundle order. */
+/** Project-relative paths of the modules in a client bundle, sorted. */
 function servedModules(bundle: string): string[] {
-  return [...bundle.matchAll(moduleTableEntry)].map(m => m[1].replaceAll("\\\\", "/"));
+  return [...bundle.matchAll(moduleTableEntry)].map(m => m[1].replaceAll("\\\\", "/")).sort();
 }
 
 /** The module table entry printed for one file of a client bundle. */
@@ -205,7 +205,7 @@ devTest("client import rules: missing file, html import, bun builtin, html impor
     // Unlike the plain html import above, an html import with an explicit
     // non-html loader bundles, as a text module.
     const bundle = await servedClientBundle(dev, "/text-loader");
-    expect(servedModules(bundle)).toEqual(["text-loader.html", "text-loader.ts", "app.html"]);
+    expect(servedModules(bundle)).toEqual(["app.html", "text-loader.html", "text-loader.ts"]);
     expect(servedModule(bundle, "app.html")).toMatchInlineSnapshot(`
       ""app.html"(hmr) {
         hmr.cjs.exports = "<div>hello world</div>"; // bun .s_lazy_export

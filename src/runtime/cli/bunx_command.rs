@@ -1662,10 +1662,14 @@ impl BunxCommand {
                 }
                 _ => {}
             }
+        }
 
-            if let Some(lock) = &install_lock {
-                Self::mark_install_completed(lock);
-            }
+        // Stamp on the skip path too: a skipping waiter holds the exclusive
+        // lock past the recorded second, and without a refresh a chain of
+        // skippers can make a late arriver's wait_start exceed the stored
+        // time and force-reinstall under processes already running the tree.
+        if let Some(lock) = &install_lock {
+            Self::mark_install_completed(lock);
         }
 
         absolute_in_cache_dir = {

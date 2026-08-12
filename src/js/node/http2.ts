@@ -393,7 +393,6 @@ const kRequestHeaders = Symbol("requestHeaders");
 // set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
 // ERR_HTTP2_INVALID_STREAM.
 const kSendingTrailers = Symbol("sendingTrailers");
-// Http2Stream#[kWantTrailers]: the stream's body is on the wire and its trailer block is due.
 const kWantTrailers = Symbol("wantTrailers");
 const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
@@ -2633,13 +2632,10 @@ class Http2Stream extends Duplex {
     }
   }
 
-  // node's onStreamTrailers: with nobody listening for 'wantTrailers' the stream sends empty
-  // trailers itself, i.e. sendTrailers({}): an empty END_STREAM DATA frame, and the trailers count
-  // as sent, so a later sendTrailers() reports ERR_HTTP2_TRAILERS_ALREADY_SENT instead of writing a
-  // trailer HEADERS frame on a stream we already half-closed. A stream close()d while its last DATA
-  // was in flight is ended the same way: node never asks it for trailers (a listener's
-  // sendTrailers() could only throw ERR_HTTP2_INVALID_STREAM), and its writable has to finish for
-  // close()'s RST_STREAM to go out. Callers set StreamState.WantTrailer first.
+  // node's onStreamTrailers: without a 'wantTrailers' listener the stream sends empty trailers itself
+  // (sendTrailers({})), so a later sendTrailers() gets ERR_HTTP2_TRAILERS_ALREADY_SENT. A close()d
+  // stream is not asked either; it is still ended because its writable has to finish for close()'s
+  // RST_STREAM to go out.
   [kWantTrailers](native) {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 || this.listenerCount("wantTrailers") === 0) {
       this.#sentTrailers = {};

@@ -26,13 +26,9 @@ pub struct Cmd {
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
-    /// `Some` once the exec has reported (or a read error / expansion failure
-    /// ended the command early). `has_finished` and
-    /// `ShellSubprocess::on_process_exit` key off it, so it must stay `None`
-    /// until the exec starts.
+    /// `Some` means the exec has reported (`has_finished`, `on_process_exit`).
     pub(crate) exit_code: Option<ExitCode>,
-    /// Status of a sole `$(...)` argv atom: the command's status when it
-    /// expands to no words (POSIX 2.9.1), ignored once something runs.
+    /// Status of a sole `$(...)` argv atom; used only if it expands to no words.
     cmd_subst_exit_code: ExitCode,
 }
 
@@ -407,8 +403,7 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → nothing to run; the command's status is that
-        // of its sole command substitution, if any (else 0).
+        // Empty/null argv[0] → nothing to run.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {

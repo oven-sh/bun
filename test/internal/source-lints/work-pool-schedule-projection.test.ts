@@ -4,15 +4,15 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-// The task handed to `WorkPool::schedule` must be projected from the raw
-// pointer to the object that embeds it, never through a reference to that
-// object. Inside a `&mut self` method (or any function holding a reference),
+// The task handed to `WorkPool::schedule` must be projected from a raw pointer
+// to the object that embeds it, never through a reference:
 //
-//   WorkPool::schedule(&raw mut self.task);
+//   WorkPool::schedule(&raw mut self.task);        // `self: &mut Self`
 //   WorkPool::schedule(&raw mut this.task);        // `this` a `&mut T` local
+//   WorkPool::schedule(&raw mut raw.task);         // `raw` a leaked `&mut T`
 //   bun_jsc::WorkPool::schedule(this.task());      // accessor returning `&mut Task`
 //
-// is banned; the accepted spelling is the one `WorkPool::schedule_owned`
+// are banned; the accepted spelling is the one `WorkPool::schedule_owned`
 // (src/threading/work_pool.rs) and the tree's other schedulers use:
 //
 //   WorkPool::schedule(&raw mut (*this).task);
@@ -20,22 +20,26 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // where `this: *mut T` is the pointer the caller already held (the io action's
 // ctx, the timer's container, the hive slot, the box just released).
 //
-// Two things are wrong with the banned shape. `schedule` is the hand-over: a
-// pool thread may be running the object's callback before the call returns,
-// and when the argument is a reference (`&mut self`, `this: &mut Self`) that
-// reference stays live, and protected, until the method returns. Under the
-// aliasing models (Tree Borrows is what `bun run rust:miri` uses) a protected
-// reference is released with an implicit read of everything it touched, which
-// conflicts with the pool thread's writes and retires every reference the pool
-// thread derived from the pointer it was given; rustc's codegen makes the same
-// assumption (`noalias` + `dereferenceable` for the whole call). Separately, a
-// `&mut Task` accessor hands the pool a pointer whose provenance covers the
-// task field alone, while `IntrusiveWorkTask::from_task_ptr` (the pool-side
-// recovery) documents that it needs the whole allocation; `bun_core::
-// container_of` says the same ("a `&mut field` reborrow does not suffice").
-// `ReadFile::on_ready` / `on_io_error`, `WriteFile::on_ready`, the close
-// round trip in `impl_file_closer!`, `StatWatcherScheduler::timer_callback`
-// and `TranspilerJob::schedule` were the instances this was written for; the
+// The pool calls back with exactly the pointer it was given, and the callback
+// (`IntrusiveWorkTask::from_task_ptr`, `from_field_ptr!`) recovers the whole
+// object from it and then reads and writes the object's other fields through
+// the result. `from_task_ptr` and `bun_core::container_of` document that this
+// needs a pointer whose provenance covers the whole object ("a `&mut field`
+// reborrow does not suffice"). A projection taken through a reference does not
+// reliably give one: an accessor's `&mut Task` covers the field by definition,
+// and under Stacked Borrows so does `&raw mut self.task` (Miri: the callback's
+// write to a sibling field is "using <tag> ... created by a SharedReadWrite
+// retag at offsets [<the task field>]"). The raw projection `&raw mut
+// (*p).task` keeps `p`'s provenance and is accepted by Stacked and Tree
+// Borrows alike. Tree Borrows, which is what `bun run rust:miri` runs, accepts
+// the banned spellings too, and none of the crates involved are in its crate
+// set, so nothing but this lint reports a regression; keeping the argument a
+// raw projection also means no `&mut` to the object is a live function
+// argument (`noalias`, `dereferenceable`) while a pool thread may already be
+// running it. `ReadFile::on_ready` / `on_io_error`, `WriteFile::on_ready` /
+// `on_io_error`, the close round trip in `impl_file_closer!`,
+// `StatWatcherScheduler::timer_callback`, `TranspilerJob::schedule` and
+// `AsyncCpTask::schedule_new` were the instances this was written for; the
 // converted versions are the templates.
 //
 // Scope: the argument of a call spelled `..WorkPool::schedule(..)`, when it is
@@ -43,13 +47,16 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // x.f)`, `ptr::from_mut(&mut x.f)`) or one of the tree's reference-returning
 // task accessors (`x.task()`, `x.task_mut()`, `x.field_mut()`). A raw pointer
 // projected through `(*p).f`, a local holding the projected pointer, and
-// `schedule_owned` / `schedule_new` are the intended shapes. The same hazard
-// in other spellings is outside this lint: `Batch::from(&raw mut self.task)`
-// pushed onto a batch that is scheduled later (bundler, install, http), a
-// helper that returns a raw pointer (`x.task().as_ptr()` in the zlib binding),
-// and `IoRequestLoop::schedule(&mut self.io_request)`, which is the io-thread
-// twin of this hand-over. Siblings: self-receiver-reclaim.test.ts,
-// self-receiver-publish.test.ts, self-receiver-intrusive-post.test.ts.
+// `schedule_owned` / `schedule_new` are the intended shapes. Whether the
+// pointer the function was handed is itself whole-object is that function's
+// caller's business (the io thread's `FileAction.poll: &mut Poll` and
+// `Request` hand-offs narrow one level up; tracked separately). The same
+// defect in other spellings is outside this lint and tracked separately:
+// tasks that go into `Batch::from(..)` (bundler, install, http), and
+// `IoRequestLoop::schedule(&mut self.io_request)`, the io-thread twin of this
+// hand-over; #37772 adds a sibling lint for method calls in the argument, such
+// as the zlib binding's `x.task().as_ptr()`. Siblings: self-receiver-reclaim.
+// test.ts, self-receiver-publish.test.ts, self-receiver-intrusive-post.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

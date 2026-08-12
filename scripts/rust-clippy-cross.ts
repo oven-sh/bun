@@ -88,9 +88,12 @@ function lint(triple: string): Map<string, string[]> | null {
     // `code` is null on the per-crate "N warnings emitted" summary.
     if (level !== "warning" || code === null) continue;
     const crate = packageName(msg.package_id);
-    // cargo emits a diagnostic once per configuration a crate is built in
-    // (e.g. for the target and again for the host when a build script needs it).
-    if (!seen.add(`${crate}\0${rendered}`)) continue;
+    // A crate that proc-macros or build scripts also depend on is compiled for
+    // the host as well as for the target (bun_output_tags: three times), and
+    // every configuration reports the same hit again.
+    const key = `${crate}\0${rendered}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     let list = byCrate.get(crate);
     if (!list) byCrate.set(crate, (list = []));
     list.push(rendered);

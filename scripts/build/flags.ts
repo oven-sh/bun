@@ -301,8 +301,8 @@ export const globalFlags: Flag[] = [
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
-    desc: "Full debug info, zstd-compressed",
+    when: c => c.unix && (c.debug || c.asan),
+    desc: "Full debug info, zstd-compressed (asan builds keep variables inspectable)",
   },
   {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
@@ -312,16 +312,16 @@ export const globalFlags: Flag[] = [
     // bun's own objects and JSC's from the WebKit prebuilt, which carries its
     // own DWARF. Same types and variables in the debugger; BunObject.cpp
     // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
-    // same file is 5.25s), object 9.0 MB -> 5.2 MB. Debug only: release
-    // builds are line tables (-g1 below), which carry no type definitions
-    // either way.
+    // same file is 5.25s), object 9.0 MB -> 5.2 MB. Debug and asan only:
+    // other release builds are line tables (-g1 below), which carry no type
+    // definitions either way.
     flag: "-fno-standalone-debug",
-    when: c => c.unix && c.debug,
+    when: c => c.unix && (c.debug || c.asan),
     desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
   },
   {
     flag: "-g1",
-    when: c => c.unix && c.release,
+    when: c => c.unix && c.release && !c.asan,
     desc: "Minimal debug info for backtraces",
   },
 

@@ -18,6 +18,7 @@
  *   - "rust-only": codegen + cargo → libbun_rust.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
  *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
+ *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_rust.a (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
@@ -149,6 +150,8 @@ export interface BunOutput {
   rustObjects: string[];
   /** All compiled .o files. Empty in link-only/rust-only. */
   objects: string[];
+  /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
+  uploadStamps?: string[];
 }
 
 /**
@@ -257,9 +260,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
 
   // ─── Step 5: PCH ───
-  // In CI, only the cpp-only job uses PCH — full mode skips it since the
-  // cpp-only artifacts are what actually get used downstream.
-  const usePch = !cfg.ci || cfg.mode === "cpp-only";
+  // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
+  const usePch = !cfg.ci || cfg.mode !== "full";
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
 
   if (usePch) {
@@ -427,53 +429,42 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // cfg.archiveDeps they live in depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
-  // ─── Step 7: cpp-only → archive and return ───
+  // ─── Step 7: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
   // build-rust step produces libbun_rust.a independently; build-bun
   // downloads both artifacts and links them. Archive name uses the exe
   // name (not just "libbun") so asan/debug variants are distinguishable.
-  if (cfg.mode === "cpp-only") {
-    n.comment("─── Archive (cpp-only) ───");
+  const archived = cfg.mode === "cpp-only" || cfg.mode === "archive-link";
+  let archive: string | undefined;
+  const uploadStamps: string[] = [];
+  if (archived) {
+    n.comment(`─── Archive (${cfg.mode}) ───`);
     n.blank();
-    const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
-    const archive = ar(n, cfg, archiveName, allObjects);
+    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects);
 
     // Upload dep libs as soon as they're built — they're ready ~minutes
     // before the archive (WebKit copies from prefetch in seconds; lolhtml
     // builds in ~30s), so the upload overlaps the cxx compile instead of
     // waiting for it. Own pool so it doesn't take a compile slot. ci.ts's
     // uploadArtifacts() then only handles the archive.
-    let depUploadStamp: string | undefined;
-    if (cfg.buildkite && depLibs.length > 0) {
-      n.pool("bk_upload", 1);
-      n.rule("bk_upload", {
-        // Paths relative to buildDir (ninja's cwd) so artifact names match
-        // what link-only's downloadArtifacts() expects. ; is the agent's
-        // default delimiter — quoted so the host shell doesn't split it.
-        // Stamp written only after the agent exits 0 so a failed upload
-        // re-runs on the next ninja invocation.
-        command:
-          cfg.host.os === "windows"
-            ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
-            : `buildkite-agent artifact upload '$paths' && touch $out`,
-        description: "buildkite upload dep libs",
-        pool: "bk_upload",
-      });
-      depUploadStamp = resolve(cfg.buildDir, ".dep-libs-uploaded");
-      n.build({
-        outputs: [depUploadStamp],
-        rule: "bk_upload",
-        inputs: depLibs,
-        vars: { paths: depLibs.map(p => relative(cfg.buildDir, p)).join(";") },
-      });
+    if (cfg.buildkite) {
+      registerBkUploadRules(n, cfg);
+      if (depLibs.length > 0) uploadStamps.push(emitBkUpload(n, cfg, ".dep-libs-uploaded", depLibs));
+      // archive-link: each upload edge depends only on its input, so it starts the moment the archive / staticlib exists and overlaps the link.
+      if (cfg.mode === "archive-link") {
+        uploadStamps.push(emitBkUpload(n, cfg, ".archive-uploaded", [archive], { gzip: !cfg.windows }));
+        uploadStamps.push(emitBkUpload(n, cfg, ".rust-lib-uploaded", rustObjects, { gzip: !cfg.windows }));
+      }
     }
 
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
-    n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
-    n.default(["bun"]);
-    return { archive, deps, codegen, rustObjects, objects: allObjects };
+    if (cfg.mode === "cpp-only") {
+      n.phony("bun", [archive, ...depLibs, ...uploadStamps]);
+      n.default(["bun"]);
+      return { archive, deps, codegen, rustObjects, objects: allObjects };
+    }
   }
 
   // ─── Step 7: link ───
@@ -498,7 +489,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const shims = emitShims(n, cfg);
   // rustLtoLinkInputs(): on ELF cross-language LTO targets the Rust bitcode
   // is rewritten with a regular-LTO summary first (identity elsewhere).
-  const linkObjects = [...allObjects, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
+  const linkObjects = [
+    ...(archive !== undefined ? [archive] : allObjects),
+    ...rustLtoLinkInputs(n, cfg, rustObjects),
+    ...windowsRes,
+  ];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
@@ -513,7 +508,40 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 8: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
+  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+}
+
+function registerBkUploadRules(n: Ninja, cfg: Config): void {
+  n.pool("bk_upload", 1);
+  // Paths are buildDir-relative so artifact names match downloadArtifacts(); `;` is the agent's path delimiter.
+  const win = cfg.host.os === "windows";
+  n.rule("bk_upload", {
+    command: win
+      ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
+      : `buildkite-agent artifact upload '$paths' && touch $out`,
+    description: "buildkite upload $out",
+    pool: "bk_upload",
+  });
+  if (!win) {
+    n.rule("bk_upload_gz", {
+      command: `gzip -1 -k -f $in && buildkite-agent artifact upload '$paths' && touch $out`,
+      description: "gzip + buildkite upload $out",
+      pool: "bk_upload",
+    });
+  }
+}
+
+function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { gzip = false } = {}): string {
+  const useGz = gzip && cfg.host.os !== "windows";
+  const rel = files.map(p => relative(cfg.buildDir, p));
+  const out = resolve(cfg.buildDir, stamp);
+  n.build({
+    outputs: [out],
+    rule: useGz ? "bk_upload_gz" : "bk_upload",
+    inputs: files,
+    vars: { paths: (useGz ? rel.map(p => `${p}.gz`) : rel).join(";") },
+  });
+  return out;
 }
 
 /**

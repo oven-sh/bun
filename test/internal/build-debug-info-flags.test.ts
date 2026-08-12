@@ -98,6 +98,15 @@ describe("debug-info flag order", () => {
     }
   });
 
+  test("release-asan: full homed debug info, like debug", () => {
+    using dir = tempDir("build-debug-info", {});
+    const cfg = linuxConfig({ buildType: "Release", asan: true }, String(dir));
+    for (const flags of allCompileFlagLists(cfg)) {
+      expect(levelFlags(flags)).toEqual(["-glldb", "-g3"]);
+      expect(flags).toContain("-fno-standalone-debug");
+    }
+  });
+
   test("debug homes type definitions instead of the standalone kind -glldb implies; release has nothing to home", () => {
     using dir = tempDir("build-debug-info", {});
     const debug = linuxConfig({ buildType: "Debug" }, String(dir));

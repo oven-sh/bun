@@ -376,26 +376,13 @@ function getEc2Agent(platform, options, ec2Options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getCppAgent(platform, options) {
+function getBuildAgent(platform, options) {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
   return getEc2Agent(buildHostPlatform, options, {
-    instanceType: "c8g.4xlarge",
-  });
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getLinkBunAgent(platform, options) {
-  return getEc2Agent(buildHostPlatform, options, {
-    // rust-and-link runs cargo (~200 crates) then ThinLTO-links the full graph
-    // on one box; r8g.xlarge is too tight. ASAN's -Zbuild-std cargo pass
-    // doubles the IR, so size that lane for cores.
-    instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
+    // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
+    instanceType: "r8g.4xlarge",
   });
 }
 
@@ -470,7 +457,7 @@ function getTestAgent(platform, options) {
  *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
@@ -499,7 +486,7 @@ function getBuildArgs(target, options, mode) {
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildCommand(target, options, mode) {
@@ -516,11 +503,13 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildCppStep(platform, options) {
+function getBuildBunStep(platform, options) {
   const { os, arch } = platform;
   // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
   // (.buildkite/Dockerfile); best-effort install covers older images, and
@@ -533,34 +522,9 @@ function getBuildCppStep(platform, options) {
         ]
       : [];
   return {
-    key: `${getTargetKey(platform)}-build-cpp`,
-    label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
-    // everything the archive transitively needs). The old two-command
-    // split (--target bun, --target dependencies) was a cmake artifact.
-    command: [...nasmSetup, getBuildCommand(platform, options, "cpp-only")],
-  };
-}
-
-/**
- * cargo build + link on one agent. Runs in parallel with build-cpp (no
- * depends_on); the build script runs `ninja bun-rust` first, then polls
- * `buildkite-agent step get outcome` for `<target>-build-cpp`, downloads
- * its archive, and links. Key is `-build-bun` (it produces the final zip)
- * so test/release/verify-baseline/binary-size depends_on stay unchanged.
- *
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildBunStep(platform, options) {
-  return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getLinkBunAgent(platform, options),
+    agents: getBuildAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,
@@ -569,7 +533,7 @@ function getBuildBunStep(platform, options) {
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: getBuildCommand(platform, options, "rust-and-link"),
+    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };
 }
 
@@ -1472,7 +1436,7 @@ async function getPipeline(options = {}) {
   }
 
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
-  // Every build lane runs on buildHostPlatform (see getCppAgent/getLinkBunAgent),
+  // Every build lane runs on buildHostPlatform (see getBuildAgent),
   // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
   const imagePlatforms = new Map(
@@ -1520,7 +1484,7 @@ async function getPipeline(options = {}) {
 
     steps.push(
       ...relevantBuildPlatforms.map(target => {
-        // build-cpp/build-bun always run on buildHostPlatform regardless of
+        // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = [];
@@ -1528,14 +1492,12 @@ async function getPipeline(options = {}) {
           dependsOn.push(`${imageKey}-build-image`);
         }
 
-        const steps = [];
-        steps.push(getBuildCppStep(target, options));
-        steps.push(getBuildBunStep(target, options));
+        const steps = [getBuildBunStep(target, options)];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
           // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-cpp/build-bun don't wait for it.
+          // on the step itself so build-bun doesn't wait for it.
           const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
           const verifyDeps =
             verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
@@ -1554,7 +1516,7 @@ async function getPipeline(options = {}) {
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
           // The trace host's image, same as verify-baseline: on the step, so
-          // build-cpp/build-bun don't wait for it. Darwin has no cloud image.
+          // build-bun doesn't wait for it. Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
           const traceDeps =
             traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];

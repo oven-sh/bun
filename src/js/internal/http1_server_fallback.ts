@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, socketOnError, onRequestTimeout } = require("internal/http");
 
 // Node's server[kConnections]: a ConnectionsList holding every fallback connection's parser.
 const kHttp1Connections = Symbol("http1Connections");
@@ -359,30 +359,12 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   };
 
-  function onHttp1SocketError(err, rawPacket) {
-    // Match Node's http _connectionListener: attach err.rawPacket and, when no
-    // 'clientError' listener is present, write the same raw error response
-    // Node's socketOnError does before destroying.
-    prepareError(err, parser, rawPacket);
-    if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
-        const code = err?.code;
-        socket.write(
-          code === "HPE_HEADER_OVERFLOW"
-            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
-              ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
-              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
-          "latin1",
-        );
-      }
-      socket.destroy(err);
-    }
-  }
   function onHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, data);
+      // Node's onParserExecuteCommon.
+      prepareError(ret, parser, data);
+      socketOnError.$call(socket, ret);
       return;
     }
     if (pendingUpgrade) {
@@ -392,7 +374,7 @@ function connectionListenerHTTP1(server, socket, options) {
       const upgradeReq = pendingUpgrade;
       pendingUpgrade = null;
       socket.removeListener("data", onHttp1SocketData);
-      socket.removeListener("error", onHttp1SocketErrorListener);
+      socket.removeListener("error", socketOnError);
       socket.removeListener("end", onHttp1SocketEnd);
       socket.removeListener("close", freeHttp1Parser);
       freeHttp1Parser();
@@ -406,15 +388,12 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     }
   }
-  function onHttp1SocketErrorListener(err) {
-    onHttp1SocketError(err, undefined);
-  }
   // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
   // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
     const ret = parser.finish();
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, undefined);
+      socketOnError.$call(socket, ret);
       return;
     }
     if (!server.httpAllowHalfOpen) {
@@ -436,9 +415,19 @@ function connectionListenerHTTP1(server, socket, options) {
     socket.parser = null;
   }
   socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
+  socket.on("error", socketOnError);
   socket.once("end", onHttp1SocketEnd);
   socket.once("close", freeHttp1Parser);
+}
+
+// Node's checkConnections, run from _http_server.ts's connectionsCheckingInterval sweep.
+function checkHttp1Connections(server, headersTimeout, requestTimeout) {
+  const connections = server[kHttp1Connections];
+  if (!connections) return;
+  const expired = connections.expired(headersTimeout, requestTimeout);
+  for (let i = 0, length = expired.length; i < length; i++) {
+    onRequestTimeout(expired[i].socket);
+  }
 }
 
 // Node's Server#closeIdleConnections; a parser is busy from initialize() and from each message's
@@ -469,4 +458,5 @@ export default {
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
   closeAllHttp1Connections,
+  checkHttp1Connections,
 };

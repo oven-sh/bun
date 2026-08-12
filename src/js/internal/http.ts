@@ -432,6 +432,76 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
+
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
+const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
+const requestTimeoutResponse = Buffer.from(`HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n`, "latin1");
+const requestHeaderFieldsTooLargeResponse = Buffer.from(
+  `HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n`,
+  "latin1",
+);
+const requestChunkExtensionsTooLargeResponse = Buffer.from(
+  `HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n`,
+  "latin1",
+);
+
+// Default 'error' listener installed on every server connection, like
+// Node.js's socketOnError: route the error to the server's 'clientError'
+// event and, when nothing handles it, answer with a raw error response (only
+// if nothing has been written for the in-flight response yet) and destroy the
+// connection.
+function socketOnError(this: any, err) {
+  // Ignore further errors
+  this.removeListener("error", socketOnError);
+  if (this.listenerCount("error", noopOnError) === 0) {
+    this.on("error", noopOnError);
+  }
+
+  const server = this.server;
+  if (!server || !server.emit("clientError", err, this)) {
+    // Caution must be taken to avoid corrupting the remote peer.
+    // Reply an error segment if there is no in-flight `ServerResponse`,
+    // or no data of the in-flight one has been written yet to this socket.
+    const message = this._httpMessage;
+    // Node checks _headerSent (bytes reached the socket), not headersSent
+    // (writeHead called): after res.writeHead() but before write/end/flush,
+    // no bytes are on the wire yet so the raw error response is still safe.
+    if (this.writable && (!message || message[headerStateSymbol] !== NodeHTTPHeaderState.sent)) {
+      let response;
+      switch (err?.code) {
+        case "HPE_HEADER_OVERFLOW":
+          response = requestHeaderFieldsTooLargeResponse;
+          break;
+        case "HPE_CHUNK_EXTENSIONS_OVERFLOW":
+          response = requestChunkExtensionsTooLargeResponse;
+          break;
+        case "ERR_HTTP_REQUEST_TIMEOUT":
+          response = requestTimeoutResponse;
+          break;
+        default:
+          response = badRequestResponse;
+          break;
+      }
+      // Write through the native handle so the raw error response reaches the
+      // wire before the destroy below, regardless of the duplex's cork state.
+      const handle = this[kHandle];
+      if (handle && !handle.closed) {
+        handle.write(response);
+      } else {
+        this.write(response);
+      }
+    }
+    this.destroy(err);
+  }
+}
+function noopOnError() {}
+
+function onRequestTimeout(socket) {
+  socketOnError.$call(socket, $ERR_HTTP_REQUEST_TIMEOUT("Request timeout"));
+}
+
 const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
@@ -625,6 +695,7 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
+  kConnectionsCheckingInterval,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,
@@ -657,6 +728,7 @@ export {
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,
+  onRequestTimeout,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
@@ -670,6 +742,7 @@ export {
   setServerAppFlags,
   setServerCustomOptions,
   setServerIdleTimeout,
+  socketOnError,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

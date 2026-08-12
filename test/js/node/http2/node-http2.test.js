@@ -1,5 +1,6 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
+import { kConnectionsCheckingInterval } from "node:_http_server";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
 import fs from "node:fs";
@@ -4397,6 +4398,178 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
     partial.client.destroy();
     done.client.destroy();
     if (server.listening) server.close();
+  }
+});
+
+// With allowHTTP1, node's Http2SecureServer runs http.Server's checkConnections() sweep over the
+// HTTP/1 connections while it is listening: a connection that has not sent a request within
+// headersTimeout of being accepted, or not all of it within requestTimeout of starting it, gets
+// http's raw 408 and is closed. A request that arrived in full is subject to neither timeout, and
+// HTTP/2 sessions are not looked at.
+it("http2 allowHTTP1 enforces headersTimeout and requestTimeout on fallback connections", async () => {
+  const heldResponse = Promise.withResolvers();
+  const dispatched = [];
+  const server = http2.createSecureServer(
+    { ...TLS_CERT, allowHTTP1: true, headersTimeout: 200, requestTimeout: 400, connectionsCheckingInterval: 10 },
+    (req, res) => {
+      dispatched.push(`HTTP/${req.httpVersion} ${req.url}`);
+      if (req.httpVersion === "2.0") res.end("h2");
+      // "/body" is left unanswered: its request body never completes, so requestTimeout has to.
+      else if (req.url === "/held") heldResponse.resolve(res);
+    },
+  );
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const connections = [];
+  let h2;
+
+  // headersTimeout starts counting when the server accepts the connection (its 'secureConnection'
+  // listener runs before the one below), so whatever the connection is going to send goes out as
+  // soon as it is up. Everything the server sends back is collected until it closes the connection.
+  async function connectHttp1(requestBytes) {
+    const accepted = new Promise(resolve => server.once("secureConnection", resolve));
+    const client = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+    const connection = {
+      client,
+      serverSocket: null,
+      received: "",
+      closed: new Promise(resolve => client.once("close", resolve)),
+    };
+    connections.push(connection);
+    client.on("error", () => {});
+    client.on("data", chunk => (connection.received += chunk.toString("latin1")));
+    await new Promise(resolve => client.once("secureConnect", resolve));
+    if (requestBytes) client.write(requestBytes);
+    connection.serverSocket = await accepted;
+    return connection;
+  }
+
+  try {
+    const held = await connectHttp1("GET /held HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const silent = await connectHttp1();
+    const body = await connectHttp1("POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc");
+    h2 = http2.connect(`https://localhost:${port}`, { ca: TLS_CERT.cert });
+    h2.on("error", () => {});
+    const heldRes = await heldResponse.promise;
+    await Promise.all([silent.closed, body.closed]);
+
+    const timeoutResponse = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+    expect({
+      received: { silent: silent.received, body: body.received, held: held.received },
+      destroyed: {
+        silent: silent.serverSocket.destroyed,
+        body: body.serverSocket.destroyed,
+        held: held.serverSocket.destroyed,
+      },
+    }).toEqual({
+      received: { silent: timeoutResponse, body: timeoutResponse, held: "" },
+      destroyed: { silent: true, body: true, held: false },
+    });
+
+    // The held request came in before "body" was even accepted, so both timeouts have elapsed for it
+    // as well; it is still answered (and, having asked for Connection: close, ended by the server).
+    heldRes.end("answered");
+    await held.closed;
+    expect(held.received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(held.received).toEndWith("\r\n\r\nanswered");
+    // The session that sat through every sweep still serves requests.
+    const h2Status = await new Promise((resolve, reject) => {
+      const stream = h2.request({ ":path": "/h2" });
+      stream.on("response", headers => resolve(headers[":status"]));
+      stream.on("error", reject);
+      stream.end();
+    });
+    expect({ h2Status, dispatched: dispatched.sort() }).toEqual({
+      h2Status: 200,
+      dispatched: ["HTTP/1.1 /body", "HTTP/1.1 /held", "HTTP/2.0 /h2"],
+    });
+  } finally {
+    for (const { client } of connections) client.destroy();
+    h2?.destroy();
+    server.close();
+  }
+});
+
+// The HTTP/1 side of an allowHTTP1 server is configured by http.Server's storeHTTPOptions over
+// { ...options, ...options.http1Options } (same defaults, same validation, headersTimeout capped at
+// requestTimeout), and its connections-checking interval is armed on 'listening' (unref'd) and
+// cleared by close(). Without allowHTTP1 none of it exists, as in node.
+it("http2 allowHTTP1 takes http.Server's timeout options and checks connections while listening", async () => {
+  const timeouts = server => ({
+    headersTimeout: server.headersTimeout,
+    requestTimeout: server.requestTimeout,
+    connectionsCheckingInterval: server.connectionsCheckingInterval,
+    keepAliveTimeout: server.keepAliveTimeout,
+  });
+  const rejectedWith = http1Options => {
+    try {
+      http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...http1Options });
+    } catch (error) {
+      return error.code;
+    }
+  };
+  expect({
+    defaults: timeouts(http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true })),
+    configured: timeouts(
+      http2.createSecureServer({
+        ...TLS_CERT,
+        allowHTTP1: true,
+        requestTimeout: 30_000,
+        connectionsCheckingInterval: 1_000,
+        http1Options: { connectionsCheckingInterval: 250 },
+      }),
+    ),
+    withoutAllowHTTP1: timeouts(http2.createSecureServer({ ...TLS_CERT, headersTimeout: 200, requestTimeout: 100 })),
+    rejected: {
+      headersTimeoutAboveRequestTimeout: rejectedWith({ headersTimeout: 200, requestTimeout: 100 }),
+      negative: rejectedWith({ headersTimeout: -1 }),
+      string: rejectedWith({ requestTimeout: "100" }),
+      fraction: rejectedWith({ connectionsCheckingInterval: 1.5 }),
+    },
+  }).toEqual({
+    defaults: {
+      headersTimeout: 60_000,
+      requestTimeout: 300_000,
+      connectionsCheckingInterval: 30_000,
+      keepAliveTimeout: 5_000,
+    },
+    configured: {
+      headersTimeout: 30_000,
+      requestTimeout: 30_000,
+      connectionsCheckingInterval: 250,
+      keepAliveTimeout: 5_000,
+    },
+    withoutAllowHTTP1: {
+      headersTimeout: undefined,
+      requestTimeout: undefined,
+      connectionsCheckingInterval: undefined,
+      keepAliveTimeout: undefined,
+    },
+    rejected: {
+      headersTimeoutAboveRequestTimeout: "ERR_OUT_OF_RANGE",
+      negative: "ERR_OUT_OF_RANGE",
+      string: "ERR_INVALID_ARG_TYPE",
+      fraction: "ERR_OUT_OF_RANGE",
+    },
+  });
+
+  const withAllowHTTP1 = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
+  const withoutAllowHTTP1 = http2.createSecureServer({ ...TLS_CERT });
+  try {
+    await Promise.all(
+      [withAllowHTTP1, withoutAllowHTTP1].map(server => new Promise(resolve => server.listen(0, resolve))),
+    );
+    const interval = withAllowHTTP1[kConnectionsCheckingInterval];
+    expect({
+      armed: interval !== undefined,
+      keepsProcessAlive: interval?.hasRef(),
+      withoutAllowHTTP1: withoutAllowHTTP1[kConnectionsCheckingInterval],
+    }).toEqual({ armed: true, keepsProcessAlive: false, withoutAllowHTTP1: undefined });
+    await new Promise(resolve => withAllowHTTP1.close(resolve));
+    expect(interval._destroyed).toBe(true);
+  } finally {
+    if (withAllowHTTP1.listening) withAllowHTTP1.close();
+    withoutAllowHTTP1.close();
   }
 });
 

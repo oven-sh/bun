@@ -68,6 +68,7 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return result;
@@ -95,6 +96,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
 
         if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -122,6 +124,7 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return result;
@@ -149,7 +152,9 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
 
         if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
+            RETURN_IF_EXCEPTION(scope, {});
             active->remove(globalObject, item);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

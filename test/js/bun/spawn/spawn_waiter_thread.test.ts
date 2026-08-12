@@ -39,5 +39,7 @@ async function run(withWaiterThread: boolean) {
 // ~50% and could both slip under the limit.
 test.serial("issue #9404: default process watcher", () => run(false));
 
-// The waiter thread is the fallback for kernels without pidfd. Forcing it is Linux only.
+// Bun only falls back to the waiter thread on its own on Linux (kernels without pidfd);
+// macOS always has EVFILT_PROC. The flag forces the thread there too, but that exercises
+// a non-Linux idle loop nothing ships with, so it is only asserted on Linux.
 test.serial.skipIf(!isLinux)("issue #9404: waiter thread", () => run(true));

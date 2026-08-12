@@ -32,6 +32,7 @@ pub struct UpdateRequest {
     pub(crate) version_buf: bun_ptr::RawSlice<u8>,
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
+    pub(crate) resolve_npm_alias: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
     /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
@@ -48,6 +49,7 @@ impl Default for UpdateRequest {
             version_buf: bun_ptr::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
+            resolve_npm_alias: false,
             failed: false,
             e_string: None,
         }
@@ -283,9 +285,18 @@ impl UpdateRequest {
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             }
 
+            let resolve_npm_alias = match version.tag {
+                dependency::Tag::DistTag => value.starts_with(b"npm:"),
+                dependency::Tag::Npm => {
+                    version.npm().is_alias
+                        && value.len() == b"npm:".len() + version.npm().name.slice(input).len()
+                }
+                _ => false,
+            };
             let mut request = UpdateRequest {
                 version,
                 version_buf: bun_ptr::RawSlice::new(input),
+                resolve_npm_alias,
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {

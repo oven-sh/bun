@@ -1539,6 +1539,7 @@ pub(crate) fn edit(
                             }
                         }
                         if request.version.tag == dependency::Tag::DistTag
+                            || request.resolve_npm_alias
                             || (manager.subcommand == Subcommand::Update
                                 && request.version.tag == dependency::Tag::Npm
                                 && !request.version.npm().version.is_exact())
@@ -1560,23 +1561,19 @@ pub(crate) fn edit(
                                 v
                             };
 
-                            if request.version.tag == dependency::Tag::Npm
-                                && request.version.npm().is_alias
-                            {
-                                let dep_literal =
-                                    request.version.literal.slice(request.version_buf());
-                                if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
-                                    let at_index = at_index as usize;
-                                    let mut v = Vec::new();
-                                    write!(
-                                        &mut v,
-                                        "{}@{}",
-                                        bstr::BStr::new(&dep_literal[0..at_index]),
-                                        bstr::BStr::new(&new_version)
-                                    )
-                                    .unwrap();
-                                    break 'npm arena_str(arena, &v);
-                                }
+                            if request.resolve_npm_alias {
+                                let alias_name = manager.lockfile.packages.items_name()
+                                    [request.package_id as usize]
+                                    .slice(manager.lockfile.buffers.string_bytes.as_slice());
+                                let mut v = Vec::new();
+                                write!(
+                                    &mut v,
+                                    "npm:{}@{}",
+                                    bstr::BStr::new(alias_name),
+                                    bstr::BStr::new(&new_version)
+                                )
+                                .unwrap();
+                                break 'npm arena_str(arena, &v);
                             }
 
                             break 'npm arena_str(arena, &new_version);

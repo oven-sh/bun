@@ -1,18 +1,22 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
+  createTestContext,
+  destroyTestContext,
   dummyAfterAll,
   dummyAfterEach,
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  dummyRegistryForContext,
   package_dir,
   requested,
   root_url,
+  setContextHandler,
   setHandler,
 } from "./dummy.registry";
 
@@ -1239,6 +1243,127 @@ it("should add aliased dependency (npm)", async () => {
     ),
   );
   await access(join(package_dir, "bun.lockb"));
+});
+
+describe("npm aliases", () => {
+  const packageJSON = {
+    name: "foo",
+    version: "0.0.1",
+  };
+  const registryVersions = {
+    "0.0.3": { bin: { "baz-run": "index.js" } },
+    "0.0.5": { bin: { "baz-run": "index.js" } },
+    latest: "0.0.3",
+  };
+  const registryDistTags = {
+    rc: "0.0.5",
+  };
+  let ctx: import("./dummy.registry").TestContext;
+  let urls: string[];
+
+  beforeEach(async () => {
+    ctx = await createTestContext({ linker: "hoisted" });
+    urls = [];
+    const registry = dummyRegistryForContext(ctx, urls, registryVersions);
+    setContextHandler(ctx, async request => {
+      const response = await registry(request);
+      if (request.url.endsWith(".tgz")) {
+        return response;
+      }
+
+      const manifest = await response.json();
+      Object.assign(manifest["dist-tags"], registryDistTags);
+      return Response.json(manifest);
+    });
+    await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify(packageJSON));
+  });
+
+  afterEach(() => destroyTestContext(ctx));
+
+  test.each(
+    [
+      {
+        args: ["format@npm:baz"],
+        resolved: { name: "baz", version: "0.0.3" },
+        expected: { dependencies: { format: "npm:baz@^0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@latest"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@rc"],
+        resolved: { name: "@scope/baz", version: "0.0.5" },
+        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.5" } },
+      },
+      {
+        args: ["--exact", "bar@npm:@scope/baz"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@0.0.3"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@^0.0.3"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@~0.0.2"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@~0.0.2" } },
+      },
+      {
+        args: ["bar@npm:@scope/baz@>=0.0.2"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { dependencies: { bar: "npm:@scope/baz@>=0.0.2" } },
+      },
+      {
+        args: ["--dev", "bar@npm:@scope/baz"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { devDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+      {
+        args: ["--optional", "bar@npm:@scope/baz"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { optionalDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+      {
+        args: ["--peer", "bar@npm:@scope/baz"],
+        resolved: { name: "@scope/baz", version: "0.0.3" },
+        expected: { peerDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
+      },
+    ].map(testCase => ({ ...testCase, command: `bun add ${testCase.args.join(" ")}` })),
+  )("$command", async ({ args, resolved, expected }) => {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", ...args],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(await stderr.text()).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+    expect(urls.sort()).toEqual([
+      `${ctx.registry_url}${resolved.name.replace("/", "%2f")}`,
+      `${ctx.registry_url}${resolved.name}-${resolved.version}.tgz`,
+    ]);
+    expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
+      ...packageJSON,
+      ...expected,
+    });
+  });
 });
 
 it("should add aliased dependency (GitHub)", async () => {

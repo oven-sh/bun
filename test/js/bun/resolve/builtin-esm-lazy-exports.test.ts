@@ -34,12 +34,45 @@ const helper = `
   export { fs };
 `;
 
-async function run(files: Record<string, string>, args: string[] = ["entry.mjs"]) {
-  using dir = tempDir("builtin-esm-lazy-exports", { "helper.mjs": helper, ...files });
+// The "bun" module is generated natively from the Bun object (generateNativeModule_BunObject). Most Bun.* properties
+// are PropertyCallback entries of its static table that construct their value (a class, the shell, the default
+// SQL/S3/Redis clients, ...) the first time they are read, at which point they become own properties of the object.
+// bun:jsc's describe() dumps the object's Structure, i.e. exactly the set of properties that have been constructed,
+// which is the readout used here. WATCHED is a sample of them plus `write`, the plain function the entries below import.
+//
+// Note that a literal `import ... from "bun"` (and `import("bun")` / `require("bun")`) is rewritten by the
+// transpiler into a read of globalThis.Bun and never loads the module; the module is what `export ... from "bun"`
+// and a non-literal import() specifier go through.
+const WATCHED = ["$", "CryptoHasher", "Glob", "S3Client", "SQL", "TOML", "Transpiler", "secrets", "write"] as const;
+
+const bunHelper = `
+  import { describe } from "bun:jsc";
+  const WATCHED = ${JSON.stringify(WATCHED)};
+  /** The WATCHED names that are own properties of the Bun object by now, i.e. whose value has been constructed. */
+  export function constructed() {
+    const properties = /\\{([^}]*)\\}/.exec(describe(Bun))[1];
+    const names = properties.split(",").map(entry => entry.trim().split(":")[0]);
+    return WATCHED.filter(name => names.includes(name));
+  }
+  export function print(result) {
+    console.log(JSON.stringify(result));
+  }
+  // import(specifier) with this really loads the module; a literal (or a const the transpiler can inline) would be
+  // rewritten to globalThis.Bun instead.
+  export const specifier = "bun";
+`;
+
+const bunReexport = `
+  export * from "bun";
+  export { default as BunObject, Glob as RenamedGlob } from "bun";
+`;
+
+async function run(files: Record<string, string>, args: string[] = ["entry.mjs"], env: Record<string, string> = {}) {
+  using dir = tempDir("builtin-esm-lazy-exports", { "helper.mjs": helper, "bun-helper.mjs": bunHelper, ...files });
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -47,8 +80,8 @@ async function run(files: Record<string, string>, args: string[] = ["entry.mjs"]
   return { stdout, stderr, exitCode };
 }
 
-async function runEntry(entry: string, extraFiles: Record<string, string> = {}) {
-  const { stdout, stderr, exitCode } = await run({ ...extraFiles, "entry.mjs": entry });
+async function runEntry(entry: string, extraFiles: Record<string, string> = {}, env: Record<string, string> = {}) {
+  const { stdout, stderr, exitCode } = await run({ ...extraFiles, "entry.mjs": entry }, undefined, env);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return JSON.parse(stdout);
@@ -227,6 +260,145 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
     ["test", "lazy.test.ts"],
   );
   expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
+  const result = await runEntry(
+    `
+      // Linking this import is what constructs Bun.write; nothing else is read.
+      import { write } from "./reexport.mjs";
+      import * as reexported from "./reexport.mjs";
+      import { constructed, print } from "./bun-helper.mjs";
+      const afterLink = constructed();
+      const present = "SQL" in reexported;
+      const afterIn = constructed();
+      const RenamedGlob = reexported.RenamedGlob;
+      const afterRenamedRead = constructed();
+      const SQL = reexported.SQL;
+      print({
+        afterLink,
+        present,
+        afterIn,
+        afterRenamedRead,
+        afterStarRead: constructed(),
+        write: write === Bun.write,
+        renamedGlob: typeof RenamedGlob === "function" && RenamedGlob === Bun.Glob,
+        sql: typeof SQL === "function" && SQL === Bun.SQL,
+        secondReadIsStable: reexported.SQL === SQL,
+        defaultIsBun: reexported.BunObject === Bun,
+      });
+    `,
+    { "reexport.mjs": bunReexport },
+  );
+  expect(result).toEqual({
+    afterLink: ["write"],
+    present: true,
+    afterIn: ["write"],
+    afterRenamedRead: ["Glob", "write"],
+    afterStarRead: ["Glob", "SQL", "write"],
+    write: true,
+    renamedGlob: true,
+    sql: true,
+    secondReadIsStable: true,
+    defaultIsBun: true,
+  });
+});
+
+test.concurrent('"bun": import() namespace has the same export list, and every export is the Bun.* value', async () => {
+  const result = await runEntry(`
+    import { constructed, print, specifier } from "./bun-helper.mjs";
+    const ns = await import(specifier);
+    const afterImport = constructed();
+    // Neither [[OwnPropertyKeys]] of the namespace nor Object.keys of the Bun object reads any of the properties.
+    const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string").sort();
+    const exportListMatches = exportNames.join() === [...Object.keys(Bun), "default"].sort().join();
+    const afterListing = constructed();
+    const TOML = ns.TOML;
+    const afterRead = constructed();
+    print({
+      afterImport,
+      exportListMatches,
+      afterListing,
+      toml: typeof TOML === "object" && TOML === Bun.TOML,
+      afterRead,
+      defaultIsBun: ns.default === Bun,
+      everyExportIsTheProperty: Object.keys(Bun).every(name => ns[name] === Bun[name]),
+      afterReadingEverything: constructed(),
+    });
+  `);
+  expect(result).toEqual({
+    afterImport: [],
+    exportListMatches: true,
+    afterListing: [],
+    toml: true,
+    afterRead: ["TOML"],
+    defaultIsBun: true,
+    everyExportIsTheProperty: true,
+    afterReadingEverything: [...WATCHED],
+  });
+});
+
+test.concurrent('"bun": a property whose getter throws only fails the binding that reads it', async () => {
+  // Bun.redis builds the default client from REDIS_URL when it is first read, and throws on an invalid URL. That used
+  // to fail loading the module (and so any module re-exporting from it) up front; now it is the problem of whoever
+  // reads `redis`, and it is the same error a direct read of Bun.redis produces.
+  const result = await runEntry(
+    `
+      import { write } from "./reexport.mjs";
+      import * as reexported from "./reexport.mjs";
+      import { print } from "./bun-helper.mjs";
+      function message(read) {
+        try {
+          read();
+          return "did not throw";
+        } catch (error) {
+          return error.message;
+        }
+      }
+      const viaNamespace = message(() => reexported.redis);
+      print({
+        write: write === Bun.write,
+        viaNamespace,
+        sameErrorAsDirectRead: viaNamespace === message(() => Bun.redis),
+        otherExportsStillWork: reexported.Glob === Bun.Glob,
+      });
+    `,
+    { "reexport.mjs": bunReexport },
+    { REDIS_URL: "http://[::1" },
+  );
+  expect(result).toEqual({
+    write: true,
+    viaNamespace: expect.stringContaining("URL"),
+    sameErrorAsDirectRead: true,
+    otherExportsStillWork: true,
+  });
+});
+
+test.concurrent('"bun": mock.module replaces a binding without constructing the property it shadows', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as reexported from "./reexport.mjs";
+        import { constructed } from "./bun-helper.mjs";
+
+        test("mock.module('bun')", () => {
+          expect(constructed()).toEqual([]);
+          mock.module("bun", () => ({ SQL: "mocked" }));
+          expect(reexported.SQL).toBe("mocked");
+          expect(reexported.Glob).toBe(Bun.Glob);
+          // The mock went into the module binding; Bun.SQL itself was neither read nor replaced.
+          expect(constructed()).toEqual(["Glob"]);
+          expect(typeof Bun.SQL).toBe("function");
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });

@@ -1148,56 +1148,41 @@ JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
     return JSBunObject::create(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject));
 }
 
-static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
-{
-    exportNames.reserveCapacity(std::size(bunObjectTableValues) + 1);
-    exportValues.ensureCapacity(std::size(bunObjectTableValues) + 1);
-
-    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
-
-    for (const auto& propertyName : propertyNames) {
-        exportNames.append(propertyName);
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        // Yes, we have to call getters :(
-        JSValue value = object->get(globalObject, propertyName);
-
-        if (topExceptionScope.exception()) {
-            (void)topExceptionScope.tryClearException();
-            value = jsUndefined();
-        }
-        exportValues.append(value);
-    }
-}
-
 } // namespace Bun
 
 namespace Zig {
-void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
+// Every export except `default` is declared without a value: JSC reads `Bun[name]` the first time
+// something binds to it (SyntheticModuleRecord::materializeLazyExport), so importing the module does
+// not run the PropertyCallbacks in bunObjectTable, most of which construct a class or load a builtin.
+JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();
 
-    // :'(
-    if (object->hasNonReifiedStaticProperties()) [[likely]] {
-        object->reifyAllStaticProperties(lexicalGlobalObject);
+    // Static table entries are listed whether or not they have been reified.
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    exportNames.reserveCapacity(propertyNames.size() + 1);
+    exportValues.ensureCapacity(propertyNames.size() + 1);
+
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
+
+    for (const auto& propertyName : propertyNames) {
+        if (propertyName == vm.propertyNames->defaultKeyword) [[unlikely]]
+            continue;
+        exportNames.append(propertyName);
+        exportValues.append(JSValue());
     }
 
-    RETURN_IF_EXCEPTION(scope, void());
-
-    Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
+    return object;
 }
 
 } // namespace Zig

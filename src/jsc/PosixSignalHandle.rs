@@ -266,6 +266,21 @@ pub extern "C" fn Bun__noteUserSignalDelivered(number: i32) {
     }
 }
 
+/// Shared tail of both signal-delivery paths (same pair as above): a kill
+/// signal while the watcher is parked after a watch exit ends the watcher,
+/// since nothing deferred from the handler may fire there.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__endParkedWatcherOnKillSignal(global_object: &JSGlobalObject) {
+    if user_kill_signal_delivered() {
+        let vm = global_object.bun_vm().as_mut();
+        if vm.watch_exit_requested {
+            bun_core::Output::flush();
+            vm.on_exit();
+            vm.global_exit();
+        }
+    }
+}
+
 /// Runs the JS handlers of the configured `--watch-kill-signal` synchronously,
 /// mirroring node delivering that signal to the watched child before restart.
 /// SIGKILL/SIGSTOP are uncatchable in node, so nothing is emitted for them.
@@ -292,17 +307,7 @@ impl PosixSignalTask {
             bun_core::Output::flush();
             bun_core::Global::exit(0);
         }
-        // A kill signal while the watcher is parked after a watch exit: the
-        // run is over and nothing deferred from the handler may fire there,
-        // so end the watcher now with the completed run's exit code.
-        if user_kill_signal_delivered() {
-            let vm = global_object.bun_vm().as_mut();
-            if vm.watch_exit_requested {
-                bun_core::Output::flush();
-                vm.on_exit();
-                vm.global_exit();
-            }
-        }
+        Bun__endParkedWatcherOnKillSignal(global_object);
     }
 }
 

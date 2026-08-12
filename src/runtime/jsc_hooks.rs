@@ -903,10 +903,11 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {
             return Ok(promise);
         }
-        // A stop was requested (worker terminate()/exit) while it loaded: the
-        // caller checks the same and shuts down; load nothing more.
+        // A stop was requested (worker terminate()/exit) or a `--watch`
+        // process.exit() unwound this preload while it loaded: the caller
+        // checks the same and shuts down; load nothing more.
         // SAFETY: per fn contract.
-        if !unsafe { &*vm }.script_allowed() {
+        if !unsafe { &*vm }.script_allowed() || unsafe { &*vm }.watch_exit_requested {
             return Ok(core::ptr::null_mut());
         }
         // `_protected` drops here → unprotect.

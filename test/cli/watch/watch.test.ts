@@ -220,18 +220,20 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
 }
 
 // process.exit() in a --preload script unwinds inside load_preloads' own
-// promise-spin loop, which must bail like load_entry_point's does.
+// promise-spin loop, which must bail like load_entry_point's does, and must
+// not go on to load the remaining preloads or the entry point.
 test("--watch: process.exit() in a --preload script keeps the watcher alive", async () => {
   const fixture = (n: number) =>
     `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`;
   using dir = tempDir("watch-preload-exit", {
     "preload.ts": fixture(0),
+    "preload2.ts": `console.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
     "index.ts": `console.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
   });
   const path = join(String(dir), "preload.ts");
 
   await using proc = spawn({
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "--preload=./preload.ts", "index.ts"],
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "--preload=./preload.ts", "--preload=./preload2.ts", "index.ts"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

@@ -25,15 +25,18 @@ async function run(withWaiterThread: boolean) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout, stderr).toMatch(/^\{.*\}\n$/);
-  const { cpuUs, wallUs, childAlive } = JSON.parse(stdout);
-  expect(childAlive).toBe(true);
+  const report = JSON.parse(stdout);
+  expect(report).toEqual({ cpuUs: expect.any(Number), wallUs: expect.any(Number), childAlive: true });
+  const { cpuUs, wallUs } = report;
   expect(wallUs).toBeGreaterThan(400_000);
   const cpuPercent = (cpuUs / wallUs) * 100;
   expect(cpuPercent, `cpuUs=${cpuUs} wallUs=${wallUs}`).toBeLessThan(50);
   expect(exitCode).toBe(0);
 }
 
-test.concurrent("issue #9404: default process watcher", () => run(false));
+// One fixture at a time: two spinning fixtures sharing a core would each measure
+// ~50% and could both slip under the limit.
+test.serial("issue #9404: default process watcher", () => run(false));
 
 // The waiter thread is the fallback for kernels without pidfd. Forcing it is Linux only.
-test.concurrent.skipIf(!isLinux)("issue #9404: waiter thread", () => run(true));
+test.serial.skipIf(!isLinux)("issue #9404: waiter thread", () => run(true));

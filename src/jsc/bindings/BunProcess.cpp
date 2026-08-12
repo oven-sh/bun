@@ -4431,14 +4431,10 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    // The event loop only drains the nextTick queue of the thread's default global
-    // (GlobalObject::drainMicrotasks and the onEachMicrotaskTick hooks). A ShadowRealm is a
-    // separate Zig::GlobalObject with its own `process` on that same event loop, so its
-    // process.nextTick has to feed the default global's queue; one of its own would never run.
+    // Only the default global's queue is drained (GlobalObject::drainMicrotasks), so a
+    // ShadowRealm's process shares the default global's nextTick.
     auto* eventLoopGlobalObject = defaultGlobalObject();
     if (eventLoopGlobalObject != globalObject) {
-        // Lazy property builder: exceptions must not propagate into
-        // reifyStaticProperty, which performs no exception check.
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue nextTickFunction = eventLoopGlobalObject->processObject()->get(eventLoopGlobalObject, Identifier::fromString(vm, "nextTick"_s));
         if (auto* exception = scope.exception()) [[unlikely]] {

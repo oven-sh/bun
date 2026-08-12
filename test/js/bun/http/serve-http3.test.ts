@@ -242,6 +242,14 @@ describe("Bun.serve HTTP/3", () => {
       const odd = { host: "EXAMPLE.com:443", "x-raw-url": "1" };
       expect(await viaH3("/p", odd)).toBe("https://example.com/p");
       expect(await viaH1("/p", odd)).toBe("https://example.com/p");
+
+      // Inside the Host byte set but still not a URL authority: falls back to
+      // the path on both transports rather than an unparsable absolute URL.
+      for (const host of ["example.com:abc", "example.com:99999", "exa%zzmple.com"]) {
+        const hdrs = { host, "x-raw-url": "1" };
+        expect(await viaH3("/p", hdrs)).toBe("/p");
+        expect(await viaH1("/p", hdrs)).toBe("/p");
+      }
     });
   });
 

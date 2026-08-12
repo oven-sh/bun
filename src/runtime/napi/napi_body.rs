@@ -2403,15 +2403,9 @@ extern "C" fn napi_internal_enqueue_finalizer(
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
 /// `thread_count` references, and whoever drops the last one frees it.
 ///
-/// Addon threads use `lock`, `blocking_condvar`, the atomics and (under `lock`)
-/// `queue` for as long as they hold references, including while the JS thread
-/// is inside `dispatch_one` or `env_teardown`, and after `env_teardown_done`
-/// one of them may free the allocation. So the JS-thread entry points take
-/// `*mut Self` and borrow one field per statement (a `&mut self` argument
-/// would claim the whole object for the duration of the call), and the
-/// finalize task `maybe_queue_finalizer` posts carries that pointer itself: one
-/// made from a receiver is dead by the time `destroy` frees through it, since
-/// `on_dispatch` keeps using the object after the receiver's call returns.
+/// Addon threads use this object (and may free it) while the JS thread is inside
+/// `dispatch_one` / `env_teardown`, so those take `*mut Self` and borrow one
+/// field per statement; the finalize task carries that same pointer.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
@@ -2980,9 +2974,8 @@ impl ThreadSafeFunction {
         // allocation over: `env_teardown_done` is what lets another thread free
         // it, so it is published in the same critical section that reads
         // thread_count (Node's ReleaseResources + MaybeDelete).
-        // SAFETY: fn contract; until `env_teardown_done` is published below
-        // nothing frees us, and once the guard drops nothing here touches
-        // `*this` again.
+        // SAFETY: fn contract; freeing needs `lock`, which the guard holds, and
+        // nothing here outlives the guard.
         unsafe {
             let _g = (*this).lock.lock_guard();
             (*this).callback = TsfnCallback::Js(StrongOptional::empty());
@@ -3250,9 +3243,8 @@ extern "C" fn napi_unref_threadsafe_function(
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    // SAFETY: `func` was null-checked above; `poll_ref` is JS-thread-only, like
-    // this entry point (as in Node). Only that field is borrowed: addon threads
-    // may be using the rest of the object right now.
+    // SAFETY: `func` was null-checked above; `poll_ref` belongs to the JS thread,
+    // like this entry point (as in Node), and only that field is borrowed.
     unsafe { (*func).poll_ref.unref(bun_io::js_vm_ctx()) };
     NapiStatus::ok as napi_status
 }

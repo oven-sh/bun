@@ -1504,38 +1504,6 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
     ) -> Result<&T, ResolveError> {
-        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
-    }
-
-    /// Like `find_resolution`, but stops the upward walk one level above a
-    /// bundled package, mirroring `Tree::hoist_dependency`, which never
-    /// searches past a bundled dependency's hoist root when it re-derives
-    /// optional peer edges (#37346).
-    ///
-    /// Only `"bundled": true` entries bound the walk: a transitive dependency
-    /// of a bundled package also inherits the bundle's hoist root in
-    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
-    /// indistinguishable from an ordinary conflict-nested package whose hoist
-    /// root is the lockfile root.
-    fn find_resolution_bounded_at_bundle(
-        &self,
-        pkg_path: &[u8],
-        dep: &Dependency,
-        string_buf: &[u8],
-        path_buf: &mut [u8],
-        bundled_pkgs: &PkgPathSet,
-    ) -> Result<&T, ResolveError> {
-        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
-    }
-
-    fn find_resolution_impl(
-        &self,
-        pkg_path: &[u8],
-        dep: &Dependency,
-        string_buf: &[u8],
-        path_buf: &mut [u8],
-        bundled_pkgs: Option<&PkgPathSet>,
-    ) -> Result<&T, ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1546,7 +1514,6 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
-        let mut at_bundle_root = false;
         let mut valid = true;
         while valid {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
@@ -1556,12 +1523,8 @@ impl<T> PkgMap<T> {
                 return Ok(entry);
             }
 
-            if offset == 0 || at_bundle_root {
+            if offset == 0 {
                 return Err(ResolveError::Unresolvable);
-            }
-
-            if let Some(bundled_pkgs) = bundled_pkgs {
-                at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
@@ -2824,6 +2787,18 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
+                // Optional peers (here and in the two loops below) are left for
+                // `lockfile.resolve` to bind, as the fresh resolver and
+                // `Package::clone` leave them to the hoister. An edge bound from
+                // the printed paths hoists differently (it ignores the hoist
+                // root of a bundled dependency's subtree and places its target
+                // earlier), so the tree built here would differ from the one
+                // `clean_with_logger` rebuilds, which `Lockfile::eql` reports as
+                // a changed lockfile (#37346).
+                if dep.behavior.is_optional_peer() {
+                    continue;
+                }
+
                 let peer_res_id = if is_deferred_peer(dep) {
                     resolve_peer_dep_version_based(
                         dep,
@@ -2886,6 +2861,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = _dep_id;
                     let dep = &mut dependencies[dep_id as usize];
+                    if dep.behavior.is_optional_peer() {
+                        continue;
+                    }
                     let dep_name = dep.name.slice(string_buf);
 
                     let workspace_node_modules = {
@@ -2977,6 +2955,9 @@ pub(crate) fn parse_into_binary_lockfile(
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
+                if dep.behavior.is_optional_peer() {
+                    continue;
+                }
 
                 let peer_res_id = if is_deferred_peer(dep) {
                     resolve_peer_dep_version_based(
@@ -2992,21 +2973,8 @@ pub(crate) fn parse_into_binary_lockfile(
                 let res_id = match peer_res_id {
                     Some(id) => id,
                     None => {
-                        // Bounded so the loaded lockfile binds optional peers
-                        // exactly like the hoister that re-derives them after
-                        // `Package::clone` resets them (#37346).
-                        let found = if dep.behavior.is_optional_peer() {
-                            pkg_map.find_resolution_bounded_at_bundle(
-                                pkg_path,
-                                dep,
-                                string_buf,
-                                &mut path_buf[..],
-                                &bundled_pkgs,
-                            )
-                        } else {
-                            pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
-                        };
-                        match found {
+                        match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
+                        {
                             Ok(&id) => id,
                             Err(ResolveError::InvalidPackageKey) => {
                                 log.add_error(Some(source), row.key_loc, b"Invalid package path");
@@ -3055,10 +3023,11 @@ pub(crate) fn parse_into_binary_lockfile(
 /// True for peer edges the fresh resolver defers to its second phase
 /// (`install_peer`) and binds by version there. Two exemptions, matching
 /// `enqueue_dependency_with_main_and_success_fn`: optional peers return
-/// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// before the deferred phase and are only ever bound by `process_subtree`
+/// (the loops in `parse_into_binary_lockfile` skip them so `Lockfile::resolve`
+/// binds them here as well), and `*` peers express no version preference
+/// and bind to whatever sibling pin existed first, which is exactly what the
+/// printed tree's path walk reproduces, so they keep it.
 fn is_deferred_peer(dep: &Dependency) -> bool {
     dep.behavior.is_peer()
         && !dep.behavior.is_optional_peer()

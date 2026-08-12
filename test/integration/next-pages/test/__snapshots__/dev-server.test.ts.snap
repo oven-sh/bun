@@ -26725,7 +26725,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
           "package_id": 315,
         },
         "jiti": {
-          "id": 434,
+          "id": 937,
           "package_id": 316,
         },
         "js-tokens": {

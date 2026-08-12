@@ -153,6 +153,10 @@ impl SocketGroup {
             && self.low_prio_count == 0
     }
 
+    /// On failure, at most one of the out-params is written: `err` gets the
+    /// errno of the failing socket call, `dns_err` the raw `getaddrinfo(3)`
+    /// return code when `host` did not resolve (feed it to
+    /// `c_ares::Error::init_eai`). Both must be 0 on entry.
     pub fn listen(
         &mut self,
         kind: SocketKind,
@@ -162,6 +166,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
+        dns_err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
@@ -174,6 +179,7 @@ impl SocketGroup {
                 options,
                 socket_ext_size,
                 err,
+                dns_err,
             )
         }
     }
@@ -318,6 +324,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
+        dns_err: *mut c_int,
     ) -> *mut ListenSocket;
     fn us_socket_group_listen_unix(
         group: *mut SocketGroup,

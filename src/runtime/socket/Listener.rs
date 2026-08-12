@@ -7,6 +7,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
+use bun_cares_sys::c_ares_draft as c_ares;
 use bun_io::KeepAlive;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
@@ -439,6 +440,7 @@ impl Listener {
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
+        let mut dns_error: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
@@ -452,6 +454,7 @@ impl Listener {
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
                         &mut errno,
+                        &mut dns_error,
                     )
                 });
                 if !ls.is_null() {
@@ -494,6 +497,18 @@ impl Listener {
                 UnixOrHost::Unix(u) => u,
                 UnixOrHost::Fd(_) => b"",
             };
+            // The hostname did not resolve: report it the way `Bun.connect` and
+            // `node:dns` do (`getaddrinfo ENOTFOUND <host>`), which is also the
+            // error node:net emits from `server.listen()` on such a host.
+            if let Some(dns_err) = c_ares::Error::init_eai(dns_error) {
+                log!("Failed to resolve listen hostname {}", dns_error);
+                let err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+                    dns_err,
+                    b"getaddrinfo",
+                    hostname_bytes,
+                );
+                return Err(global.throw_value(err.to_error_instance(global)));
+            }
             let err = global.create_error_instance(format_args!(
                 "Failed to listen at {}",
                 bstr::BStr::new(hostname_bytes)

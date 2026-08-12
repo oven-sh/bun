@@ -1,10 +1,13 @@
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certs, tempDir } from "harness";
+import { createServer as createHttpServer } from "http";
+import { createServer as createHttpsServer } from "https";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
+import { createServer as createTlsServer } from "tls";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -226,6 +229,47 @@ describe("net.createServer listen", () => {
         done();
       }),
     );
+  });
+});
+
+describe("server.listen() on a hostname that does not resolve", () => {
+  // A DNS label longer than 63 bytes is invalid (RFC 1035 section 2.3.4), so
+  // getaddrinfo rejects it locally without touching the network.
+  const unresolvable = Buffer.alloc(64, "a").toString() + ".com";
+
+  // Node emits the dns.lookup() failure as-is: it names the hostname and
+  // getaddrinfo, not a listen(2) errno.
+  const expected = {
+    name: "Error",
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname: unresolvable,
+    message: `getaddrinfo ENOTFOUND ${unresolvable}`,
+  };
+
+  function listenError(server: Server) {
+    const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+    server.once("error", ({ name, code, syscall, hostname, message }: any) =>
+      resolve({ name, code, syscall, hostname, message }),
+    );
+    server.once("listening", () => {
+      const address = server.address();
+      server.close();
+      reject(new Error(`expected listen() to fail, but the server is listening on ${JSON.stringify(address)}`));
+    });
+    server.listen(0, unresolvable);
+    return promise;
+  }
+
+  // net/tls servers listen through Bun.listen, http/https servers through
+  // Bun.serve: two native paths that must report the same error.
+  it.each([
+    ["net", () => createServer()],
+    ["tls", () => createTlsServer(certs)],
+    ["http", () => createHttpServer()],
+    ["https", () => createHttpsServer(certs)],
+  ])("%s server emits the resolver error", async (_, create) => {
+    expect(await listenError(create())).toEqual(expected);
   });
 });
 

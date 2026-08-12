@@ -27,6 +27,7 @@ fn server_js_create(
     }
 }
 
+use bun_cares_sys::c_ares_draft as c_ares;
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1961,9 +1962,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the configured
+    /// hostname failed to resolve (`socket` is then `None`), 0 otherwise.
+    pub(crate) fn on_listen(
+        &mut self,
+        socket: Option<*mut uws_sys::app::ListenSocket<SSL>>,
+        dns_error: c_int,
+    ) {
         let Some(socket) = socket else {
-            return self.on_listen_failed();
+            return self.on_listen_failed(dns_error);
         };
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
@@ -1983,22 +1990,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// error-stack drain is still TODO; the EADDRINUSE/
     /// EACCES paths below cover the node:http `server.listen` error contract.
     #[cold]
-    pub(crate) fn on_listen_failed(&mut self) {
+    pub(crate) fn on_listen_failed(&mut self, dns_error: c_int) {
         self.listener = None;
         let global = self.global_this();
 
         let error_instance = match &self.config.address {
-            server_config::Address::Tcp {
-                port,
-                hostname: _hostname,
-            } => {
+            server_config::Address::Tcp { port, hostname } => {
+                // The hostname did not resolve, so no socket call ran and errno
+                // is whatever the resolver left behind. Report the resolver
+                // error in the shape `Bun.connect`/`fetch`/`node:dns` use.
+                if let Some(dns_err) = c_ares::Error::init_eai(dns_error) {
+                    let host = hostname.as_ref().map(|h| h.as_bytes()).unwrap_or(b"");
+                    let err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+                        dns_err,
+                        b"getaddrinfo",
+                        host,
+                    );
+                    let _ = global.throw_value(err.to_error_instance(global));
+                    return;
+                }
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     let errno = bun_sys::get_errno(-1i32);
                     if errno == bun_sys::E::EACCES {
-                        let host = _hostname
+                        let host = hostname
                             .as_ref()
                             .map(|h| h.as_bytes())
                             .unwrap_or(b"0.0.0.0");
@@ -3298,6 +3315,7 @@ mod trampoline {
 
     pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
         socket: *mut UwsListenSocket,
+        dns_error: c_int,
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
@@ -3307,7 +3325,7 @@ mod trampoline {
         } else {
             Some(socket.cast::<uws_sys::app::ListenSocket<SSL>>())
         };
-        server.on_listen(socket);
+        server.on_listen(socket, dns_error);
     }
 
     pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
@@ -3316,7 +3334,8 @@ mod trampoline {
         _flags: i32,
         user_data: *mut c_void,
     ) {
-        on_listen::<SSL, DEBUG>(socket, user_data);
+        // A unix path is never resolved, so there is no dns_error to forward.
+        on_listen::<SSL, DEBUG>(socket, 0, user_data);
     }
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(

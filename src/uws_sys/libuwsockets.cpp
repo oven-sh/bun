@@ -439,16 +439,16 @@ extern "C"
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+                            user_data](struct us_listen_socket_t *listen_socket, int dns_error)
+                     { handler(listen_socket, dns_error, user_data); });
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
       uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+                            user_data](struct us_listen_socket_t *listen_socket, int dns_error)
+                     { handler(listen_socket, dns_error, user_data); });
     }
   }
 
@@ -462,9 +462,9 @@ extern "C"
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(
           hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          [handler, user_data](struct us_listen_socket_t *listen_socket, int dns_error)
           {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
+            handler(listen_socket, dns_error, user_data);
           });
     }
     else
@@ -472,9 +472,9 @@ extern "C"
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->listen(
           hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          [handler, user_data](struct us_listen_socket_t *listen_socket, int dns_error)
           {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
+            handler(listen_socket, dns_error, user_data);
           });
     }
   }

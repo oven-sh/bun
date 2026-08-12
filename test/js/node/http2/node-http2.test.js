@@ -4488,9 +4488,11 @@ it("http2 allowHTTP1 enforces headersTimeout and requestTimeout on fallback conn
 
 // The HTTP/1 side of an allowHTTP1 server is configured by http.Server's storeHTTPOptions over
 // { ...options, ...options.http1Options } (same defaults, same validation, headersTimeout capped at
-// requestTimeout), and its connections-checking interval is armed on 'listening' (unref'd) and
-// cleared by close(). Without allowHTTP1 none of it exists, as in node.
-it("http2 allowHTTP1 takes http.Server's timeout options and checks connections while listening", async () => {
+// requestTimeout), except that node then replaces shouldUpgradeCallback with its own "is anyone
+// listening for 'upgrade'" check, so a caller-supplied one is validated but not used. The
+// connections-checking interval is armed on 'listening' (unref'd) and cleared by close(). Without
+// allowHTTP1 none of it exists, as in node.
+it("http2 allowHTTP1 takes http.Server's options and checks connections while listening", async () => {
   const timeouts = server => ({
     headersTimeout: server.headersTimeout,
     requestTimeout: server.requestTimeout,
@@ -4504,6 +4506,19 @@ it("http2 allowHTTP1 takes http.Server's timeout options and checks connections 
       return error.code;
     }
   };
+  let callerUpgradeCallbackCalls = 0;
+  const callerUpgradeCallback = () => {
+    callerUpgradeCallbackCalls++;
+    return true;
+  };
+  const withUpgradeCallback = http2.createSecureServer({
+    ...TLS_CERT,
+    allowHTTP1: true,
+    shouldUpgradeCallback: callerUpgradeCallback,
+  });
+  const upgradeBeforeListener = withUpgradeCallback.shouldUpgradeCallback();
+  withUpgradeCallback.on("upgrade", () => {});
+  const upgradeWithListener = withUpgradeCallback.shouldUpgradeCallback();
   expect({
     defaults: timeouts(http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true })),
     configured: timeouts(
@@ -4521,6 +4536,15 @@ it("http2 allowHTTP1 takes http.Server's timeout options and checks connections 
       negative: rejectedWith({ headersTimeout: -1 }),
       string: rejectedWith({ requestTimeout: "100" }),
       fraction: rejectedWith({ connectionsCheckingInterval: 1.5 }),
+      nonFunctionUpgradeCallback: rejectedWith({ shouldUpgradeCallback: 1 }),
+    },
+    shouldUpgradeCallback: {
+      storedCallerCallback: withUpgradeCallback.shouldUpgradeCallback === callerUpgradeCallback,
+      callerCallbackCalls: callerUpgradeCallbackCalls,
+      upgradeBeforeListener,
+      upgradeWithListener,
+      withoutAllowHTTP1: http2.createSecureServer({ ...TLS_CERT, shouldUpgradeCallback: callerUpgradeCallback })
+        .shouldUpgradeCallback,
     },
   }).toEqual({
     defaults: {
@@ -4546,6 +4570,14 @@ it("http2 allowHTTP1 takes http.Server's timeout options and checks connections 
       negative: "ERR_OUT_OF_RANGE",
       string: "ERR_INVALID_ARG_TYPE",
       fraction: "ERR_OUT_OF_RANGE",
+      nonFunctionUpgradeCallback: "ERR_INVALID_ARG_TYPE",
+    },
+    shouldUpgradeCallback: {
+      storedCallerCallback: false,
+      callerCallbackCalls: 0,
+      upgradeBeforeListener: false,
+      upgradeWithListener: true,
+      withoutAllowHTTP1: undefined,
     },
   });
 

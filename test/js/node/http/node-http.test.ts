@@ -4398,6 +4398,58 @@ it("headersTimeout and requestTimeout expire emitted connections", async () => {
   }
 });
 
+// Which of the two timeouts governs a connection depends on whether the head of its current
+// request is complete, and a kept-alive connection is judged afresh for each request. With
+// requestTimeout out of reach, the connections still waiting for a head expire (one that sent
+// nothing, one that sent part of a head, and one that completed a request and then started the
+// next), while the one whose head is complete and whose body is still arriving is left alone.
+it("headersTimeout expires emitted connections whose request head is pending, including the next request on a kept-alive connection", async () => {
+  const server = createServer(
+    { headersTimeout: 50, requestTimeout: 60_000, connectionsCheckingInterval: 10 },
+    (req, res) => {
+      if (req.url !== "/body") {
+        res.end(`served ${req.url}`);
+        return;
+      }
+      let bodyBytes = 0;
+      req.on("data", chunk => (bodyBytes += chunk.length));
+      req.on("end", () => res.end(`body ${bodyBytes}`));
+    },
+  );
+  await listen(server);
+  const connections = connectionPairs(server, ["silent", "partial", "reused", "body"]);
+  try {
+    connections.emit("silent", "partial", "reused", "body");
+    const expired = connections.closed("silent", "partial", "reused");
+    // The /body head is complete before any of the others start their clocks, so every sweep that
+    // expires them has considered it as well.
+    connections.client("body").write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    connections.client("partial").write("GET /partial HTTP/1.1\r\nHost: x\r\n");
+    const firstReusedBody = readResponseBody(connections.client("reused"));
+    connections.client("reused").write("GET /reused-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await firstReusedBody).toBe("served /reused-1");
+    const firstReusedResponse = connections.received.reused;
+    connections.client("reused").write("GET /reused-2 HTTP/1.1\r\n");
+    await expired;
+    expect({ received: connections.received, destroyed: connections.destroyed() }).toEqual({
+      received: {
+        silent: requestTimeoutResponse,
+        partial: requestTimeoutResponse,
+        reused: firstReusedResponse + requestTimeoutResponse,
+        body: "",
+      },
+      destroyed: { silent: true, partial: true, reused: true, body: false },
+    });
+
+    const bodyResponse = readResponseBody(connections.client("body"));
+    connections.client("body").write("defghij");
+    expect(await bodyResponse).toBe("body 10");
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
 it("a request timeout on an emitted connection is reported to 'clientError' exactly once", async () => {
   const server = createServer({ headersTimeout: 50, requestTimeout: 50, connectionsCheckingInterval: 10 });
   await listen(server);

@@ -6758,6 +6758,9 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
+function shouldUpgradeHttp1Request(this: Http2SecureServer) {
+  return this.listenerCount("upgrade") > 0;
+}
 class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
@@ -6797,6 +6800,8 @@ class Http2SecureServer extends tls.Server {
       const { storeHTTPOptions, setupConnectionsTracking } = require("node:_http_server");
       const http1Options = { ...options, ...options.http1Options };
       storeHTTPOptions.$call(this, http1Options);
+      // Node overrides the stored shouldUpgradeCallback option for these servers (nodejs/node#59924).
+      this.shouldUpgradeCallback = shouldUpgradeHttp1Request;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
       this.on("listening", setupConnectionsTracking);

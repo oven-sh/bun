@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
+#include "HostCall.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -108,7 +109,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
         restoreAsyncContext = asyncContextData->getInternalField(0);                \
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());          \
     }                                                                               \
-    auto result = JSC::profiledCall(__VA_ARGS__);                                   \
+    auto result = Bun::hostCall(__VA_ARGS__);                                       \
     if (asyncContextData) {                                                         \
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);             \
     }                                                                               \
@@ -121,10 +122,10 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 #endif
 
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
-        return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+        return Bun::hostCall(global, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {

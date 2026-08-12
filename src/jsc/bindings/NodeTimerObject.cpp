@@ -13,6 +13,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+#include "HostCall.h"
 namespace Bun {
 using namespace JSC;
 
@@ -54,7 +55,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
             args.append(argumentsValue);
         }
 
-        JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
+        hostCall(globalObject, callbackValue, callData, timerObject, args);
     }
 
     bool hadException = false;

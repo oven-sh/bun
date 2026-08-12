@@ -17,7 +17,7 @@ public:
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
-    // The following is JSC::call but
+    // The following is Bun::hostCall (see HostCall.h) but
     // - it unwraps AsyncContextFrame
     // - does not take a CallData, because JSC::getCallData(AsyncContextFrame) -> not callable
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);

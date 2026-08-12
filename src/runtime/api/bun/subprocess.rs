@@ -29,7 +29,7 @@ use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
-use crate::webcore::{self, AbortSignal, FileSink};
+use crate::webcore::{self, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
@@ -361,10 +361,11 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
-    /// Shared borrow of the attached `AbortSignal`, if any.
+    /// The attached `AbortSignal`, if any; the returned ref outlives a
+    /// concurrent `clear_abort_signal`.
     #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
-        self.abort_signal.get().as_deref()
+    pub(crate) fn abort_signal_ref(&self) -> Option<jsc::AbortSignalRef> {
+        self.abort_signal.get().as_ref().map(|s| s.signal_ref())
     }
 
     #[bun_jsc::host_fn(method)]

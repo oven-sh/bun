@@ -1261,3 +1261,79 @@ devTest("an importer re-evaluated by a hot update ignores the dependencies its p
     });
   },
 });
+
+devTest("routes that loaded a module after it had already failed are evaluated again once it is fixed", {
+  // The first route records the failure; the second one is refused with it
+  // straight away and has to end up in the failed module's importers anyway.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "unreachable";
+      throw new Error("dep threw");
+    `,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      export default function () {
+        return new Response("index: " + value);
+      }
+    `,
+    "routes/other.ts": `
+      import { value } from "../dep";
+      export default function () {
+        return new Response("other: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expectErrorPage("dep threw");
+    await dev.fetch("/other").expectErrorPage("dep threw");
+    await dev.fetch("/").expectErrorPage("dep threw");
+    await dev.fetch("/other").expectErrorPage("dep threw");
+    await dev.write("dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/").equals("index: fixed");
+    await dev.fetch("/other").equals("other: fixed");
+  },
+});
+
+devTest("editing an unrelated import of a failing route keeps reporting the real failure until the cause is fixed", {
+  // The edit has the route evaluated again, which fails the same way; that
+  // failure has to be recorded so that the route keeps reporting it and is
+  // still found once the module that causes it is fixed.
+  framework: minimalFramework,
+  files: {
+    "tla.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("tla rejected");
+    `,
+    "service.ts": `
+      export { value } from "./tla";
+    `,
+    "other.ts": `
+      export const other = "other1";
+    `,
+    "routes/index.ts": `
+      import { value } from "../service";
+      import { other } from "../other";
+      export default function () {
+        return new Response(value + " " + other);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expectErrorPage("tla rejected");
+    await dev.write("other.ts", `export const other = "other2";`);
+    await dev.fetch("/").expectErrorPage("tla rejected");
+    await dev.fetch("/").expectErrorPage("tla rejected");
+    await dev.write(
+      "tla.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    await dev.fetch("/").equals("fixed other2");
+    await dev.write("other.ts", `export const other = "other3";`);
+    await dev.fetch("/").equals("fixed other3");
+  },
+});

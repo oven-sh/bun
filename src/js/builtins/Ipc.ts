@@ -56,9 +56,7 @@ export function parseHandle(target, serialized, fd) {
     case "net.Server": {
       const server = new net.Server();
       server.listen({ fd, exclusive: true });
-      // Not from the 'listening' callback: net.Server emits that from a timer, and the
-      // first poll of the adopted fd accepts its whole backlog, so 'connection' events
-      // emitted before the receiver holds the server would go to nobody.
+      // Not from the 'listening' callback (a timer): the first poll accepts the whole backlog before it fires.
       emit(target, serialized.msg, server);
       return;
     }

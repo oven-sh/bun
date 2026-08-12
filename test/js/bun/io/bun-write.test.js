@@ -11,6 +11,7 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -535,6 +536,46 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // Bun.write(Bun.file(fd), bytes) and Bun.file(fd).text() on a pipe run on
+  // the thread pool and, whenever poll() says the pipe is not ready, park on
+  // the io thread (src/io/lib.rs IoRequestLoop: epoll on Linux, kqueue on
+  // macOS) until it is. The reader below starts on an empty FIFO and the
+  // writer has several times more than any platform's pipe buffer holds, so
+  // both of them take that detour, repeatedly, before this resolves.
+  it.skipIf(isWindows)("Bun.write and Bun.file(fd).text() on a non-blocking FIFO wait for each other", async () => {
+    using dir = tempDir("bun-write-fifo", {});
+    const fifo = join(String(dir), "data.fifo");
+    mkfifo(fifo);
+    // O_RDWR: opening a FIFO for both directions never blocks waiting for a
+    // peer, and keeps a writer attached so the reader cannot see EOF early.
+    // O_NONBLOCK: a full pipe reports EAGAIN to the writer instead of blocking
+    // a pool thread. Two separate fds because epoll registers an fd only once,
+    // and the reader and the writer each register their own.
+    const flags = fs.constants.O_RDWR | fs.constants.O_NONBLOCK;
+    const readFd = fs.openSync(fifo, flags);
+    const writeFd = fs.openSync(fifo, flags);
+    try {
+      // 256 KiB is also the size from which Bun.write() always goes to the
+      // thread pool instead of first trying a synchronous write.
+      const payload = Buffer.alloc(256 * 1024, "0123456789abcdef\n").toString();
+
+      const reading = Bun.file(readFd).slice(0, payload.length).text();
+
+      const destination = Bun.file(writeFd);
+      // Bun.write() only waits for an fd destination to become writable once
+      // the fd's type has been resolved; reading .size does that up front.
+      destination.size;
+      const writing = Bun.write(destination, payload);
+
+      const [text, written] = await Promise.all([reading, writing]);
+      expect({ written, length: text.length }).toEqual({ written: payload.length, length: payload.length });
+      expect(text).toBe(payload);
+    } finally {
+      fs.closeSync(writeFd);
+      fs.closeSync(readFd);
+    }
   });
 
   it("Bun.file(0) survives GC", async () => {

@@ -6472,24 +6472,6 @@ impl Default for NtCreateFileOptions {
     }
 }
 
-/// `normalizePathWindows` options.
-#[cfg(windows)]
-#[derive(Copy, Clone)]
-pub struct NormalizePathWindowsOpts {
-    /// `false` emits Win32-consumable paths for kernel32 APIs: plain (no
-    /// `\??\`) for absolute inputs, `\\?\GLOBALROOT\Device\…` for dotted or
-    /// multi-component relatives. Bare names still pass through verbatim.
-    pub add_nt_prefix: bool,
-}
-#[cfg(windows)]
-impl Default for NormalizePathWindowsOpts {
-    fn default() -> Self {
-        Self {
-            add_nt_prefix: true,
-        }
-    }
-}
-
 /// `..`-clamp boundary from the kernel's own two answers (full NT object name
 /// minus volume-relative name), plus whether the device is an allowlisted
 /// share-rooted redirector. `None` when the names don't compose (rename race).
@@ -6554,20 +6536,6 @@ pub fn normalize_path_windows<'a>(
     path: &[u16],
     buf: &'a mut [u16],
 ) -> Maybe<&'a bun_core::WStr> {
-    normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
-}
-
-/// Like [`normalize_path_windows`]; `opts.add_nt_prefix = false` makes the
-/// output Win32-consumable: absolute inputs lose `\??\`, dotted or
-/// multi-component relatives become `\\?\GLOBALROOT\Device\…`, and bare names
-/// pass through verbatim (Win32 resolves those against the cwd).
-#[cfg(windows)]
-pub fn normalize_path_windows_opts<'a>(
-    dir_fd: Fd,
-    path: &[u16],
-    buf: &'a mut [u16],
-    opts: NormalizePathWindowsOpts,
-) -> Maybe<&'a bun_core::WStr> {
     use bun_core::WStr;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
 
@@ -6621,37 +6589,17 @@ pub fn normalize_path_windows_opts<'a>(
                 }
             }
         }
-        if opts.add_nt_prefix {
-            // Absolute → add `\??\` (idempotent if already present), normalize
-            // separators/`.`/`..` and NUL-terminate.
-            // `nt_prefix_headroom = 8`: reject when `path.len >
-            // buf.len - nt_prefix_headroom`.
-            // `normalizeStringGenericTZ` performs no bounds checking of its
-            // own, so reserve room for `\??\` + trailing-`\` growth + NUL
-            // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
-            // — it only normalizes slashes and leaves `.`/`..` segments in
-            // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
-            // OBJECT_NAME_NOT_FOUND).
-            if path.len() > buf.len().saturating_sub(8) {
-                return Err(too_long());
-            }
-            let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
-                u16,
-                /*ALLOW_ABOVE_ROOT*/ false,
-                /*PRESERVE_TRAILING_SLASH*/ false,
-                /*ZERO_TERMINATE*/ true,
-                /*ADD_NT_PREFIX*/ true,
-            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
-            let len = norm.len();
-            // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-            return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
-        }
-        // `add_nt_prefix = false` — produce a Win32 path
-        // (no `\??\` object prefix) for callers that feed kernel32 APIs
-        // (CreateDirectoryW / CopyFileW). With .add_nt_prefix = false the
-        // normalizer can still grow the input by one u16 (trailing `\` after a
-        // bare UNC volume name) plus the NUL terminator.
-        if path.len() > buf.len().saturating_sub(2) {
+        // Absolute → add `\??\` (idempotent if already present), normalize
+        // separators/`.`/`..` and NUL-terminate.
+        // `nt_prefix_headroom = 8`: reject when `path.len >
+        // buf.len - nt_prefix_headroom`.
+        // `normalizeStringGenericTZ` performs no bounds checking of its
+        // own, so reserve room for `\??\` + trailing-`\` growth + NUL
+        // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
+        // — it only normalizes slashes and leaves `.`/`..` segments in
+        // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
+        // OBJECT_NAME_NOT_FOUND).
+        if path.len() > buf.len().saturating_sub(8) {
             return Err(too_long());
         }
         let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
@@ -6659,7 +6607,7 @@ pub fn normalize_path_windows_opts<'a>(
             /*ALLOW_ABOVE_ROOT*/ false,
             /*PRESERVE_TRAILING_SLASH*/ false,
             /*ZERO_TERMINATE*/ true,
-            /*ADD_NT_PREFIX*/ false,
+            /*ADD_NT_PREFIX*/ true,
         >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
         let len = norm.len();
         // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
@@ -6695,14 +6643,6 @@ pub fn normalize_path_windows_opts<'a>(
     }
 
     // Otherwise: resolve `dir_fd` to its NT device path, join, normalize.
-    // Win32 consumers (`add_nt_prefix = false`) get the `\\?\GLOBALROOT`
-    // spelling of the same object — no mount manager, valid for kernel32.
-    const GLOBALROOT: &[u16] = bun_core::w!("\\\\?\\GLOBALROOT");
-    let g = if opts.add_nt_prefix {
-        0
-    } else {
-        GLOBALROOT.len()
-    };
     let base_fd = if dir_fd.is_valid() {
         dir_fd.native()
     } else {
@@ -6794,16 +6734,14 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut joined = bun_paths::w_path_buffer_pool::get();
     let joined_len = rest.len() + 1 + rel.len();
-    // `buf` holds `\\?\GLOBALROOT` (Win32 output only) + the copied prefix +
-    // the normalized remainder (never longer than `joined_len`) + NUL; keep
-    // 8 u16 of headroom to stay conservative.
+    // `buf` holds the copied prefix + the normalized remainder (never longer
+    // than `joined_len`) + NUL; keep 8 u16 of headroom to stay conservative.
     if joined_len > joined.0.len().saturating_sub(8)
-        || g + prefix_len + joined_len > buf.len().saturating_sub(8)
+        || prefix_len + joined_len > buf.len().saturating_sub(8)
     {
         return Err(too_long());
     }
-    buf[..g].copy_from_slice(&GLOBALROOT[..g]);
-    buf[g..g + prefix_len].copy_from_slice(&base[..prefix_len]);
+    buf[..prefix_len].copy_from_slice(&base[..prefix_len]);
     joined.0[..rest.len()].copy_from_slice(rest);
     joined.0[rest.len()] = b'\\' as u16;
     joined.0[rest.len() + 1..joined_len].copy_from_slice(rel);
@@ -6818,7 +6756,7 @@ pub fn normalize_path_windows_opts<'a>(
         /*ADD_NT_PREFIX*/ false,
     >(
         &joined.0[..joined_len],
-        &mut buf[g + prefix_len..],
+        &mut buf[prefix_len..],
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
     )
@@ -6827,11 +6765,11 @@ pub fn normalize_path_windows_opts<'a>(
     // directory-path prefix, keep it for a bare device name where it selects
     // the root directory over the volume device.
     if sub_len == 1 && whole_base {
-        buf[g + prefix_len] = 0;
-        return Ok(WStr::from_buf(&buf[..], g + prefix_len));
+        buf[prefix_len] = 0;
+        return Ok(WStr::from_buf(&buf[..], prefix_len));
     }
-    // ZERO_TERMINATE wrote NUL at buf[g + prefix_len + sub_len].
-    Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
+    // ZERO_TERMINATE wrote NUL at buf[prefix_len + sub_len].
+    Ok(WStr::from_buf(&buf[..], prefix_len + sub_len))
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -9739,18 +9677,6 @@ mod normalize_path_windows_tests {
         String::from_utf16(norm.as_slice()).unwrap()
     }
 
-    fn normalize_opts(dir: Fd, path: &str, add_nt_prefix: bool) -> String {
-        let mut buf = bun_paths::w_path_buffer_pool::get();
-        let norm = normalize_path_windows_opts(
-            dir,
-            &wide(path),
-            &mut buf.0[..],
-            NormalizePathWindowsOpts { add_nt_prefix },
-        )
-        .expect(path);
-        String::from_utf16(norm.as_slice()).unwrap()
-    }
-
     fn normalize_err(dir: Fd, path: &str) -> Error {
         let mut buf = bun_paths::w_path_buffer_pool::get();
         match normalize_path_windows(dir, &wide(path), &mut buf.0[..]) {
@@ -10181,38 +10107,6 @@ mod normalize_path_windows_tests {
         split_at("\\Device\\Mupp\\x", "\\x", "\\Device\\Mupp", false);
     }
 
-    #[test]
-    fn win32_output_uses_globalroot() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let tree = TempTree::new("nt_norm_gr");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize_opts(*dir, "a\\b", false);
-        assert!(got.starts_with("\\\\?\\GLOBALROOT\\Device\\"), "{got}");
-        assert!(got.ends_with("\\a\\b"), "{got}");
-        // rel `.`: GLOBALROOT + base, no trailing separator.
-        assert_eq!(
-            normalize_opts(*dir, ".", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*dir, "."))
-        );
-    }
-
-    #[test]
-    fn win32_globalroot_output_creates_directories() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let tree = TempTree::new("nt_norm_gr_mkdir");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let name = normalize_opts(*dir, ".\\fresh", false);
-        let wname: Vec<u16> = wide(&name).into_iter().chain([0u16]).collect();
-        // SAFETY: `wname` is NUL-terminated.
-        let ok = unsafe { w::CreateDirectoryW(wname.as_ptr(), core::ptr::null_mut()) };
-        assert_ne!(ok, 0, "CreateDirectoryW({name})");
-        assert!(std::fs::metadata(tree.0.join("fresh")).unwrap().is_dir());
-    }
-
     // ── branch-review matrix ────────────────────────────────────────────
 
     #[test]
@@ -10289,19 +10183,5 @@ mod normalize_path_windows_tests {
         // The bypass copies the ORIGINAL path (drive prefix included); only
         // the post-strip remainder decides the routing.
         assert_eq!(normalize(Fd::INVALID, "C:foo"), "C:foo");
-    }
-
-    #[test]
-    fn win32_globalroot_dotdot_composes() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let tree = TempTree::new("nt_norm_gr_dotdot");
-        std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(
-            normalize_opts(*child, "..\\x", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
-        );
     }
 }

@@ -37,6 +37,38 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
     });
 
+    // Longer than Windows' MAX_PATH (260) on its own, so the absolute paths
+    // exceed it whatever the temp directory is; each component stays under
+    // NAME_MAX (255). On Windows the native copy used to hand these paths to
+    // the Win32 file calls without the `\\?\` prefix that lifts the limit and
+    // threw ENOENT, while fs.copyFile on the same paths worked.
+    const longDir = Buffer.alloc(200, "d").toString() + "/" + Buffer.alloc(100, "e").toString();
+
+    test("single file with paths longer than MAX_PATH", async () => {
+      await using basename = tempDir("cp", {
+        [longDir + "/a.txt"]: "a",
+      });
+      const from = join(String(basename), longDir, "a.txt");
+      const to = join(String(basename), longDir, "to.txt");
+      expect(Math.min(from.length, to.length)).toBeGreaterThan(260);
+
+      await copy(from, to);
+
+      assertContent(to, "a");
+    });
+
+    test("single file into a missing directory, with paths longer than MAX_PATH", async () => {
+      await using basename = tempDir("cp", {
+        [longDir + "/a.txt"]: "a",
+      });
+      const from = join(String(basename), longDir, "a.txt");
+      const to = join(String(basename), longDir, "new", "to.txt");
+
+      await copy(from, to);
+
+      assertContent(to, "a");
+    });
+
     test("refuse to copy directory with 'recursive: false'", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

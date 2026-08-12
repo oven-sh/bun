@@ -357,15 +357,19 @@ impl QuicStream {
         if self.destroyed.get() {
             return;
         }
-        self.inbound.with_mut(|inbound| {
+        let enqueued = self.inbound.with_mut(|inbound| {
+            if inbound.errored {
+                return false;
+            }
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
             }
             if fin {
                 inbound.ended = true;
             }
+            true
         });
-        if !data.is_empty() {
+        if enqueued && !data.is_empty() {
             self.add_stat(IDX_STATS_BYTES_RECEIVED, data.len() as u64);
             self.write_stat(IDX_STATS_RECEIVED_AT, super::now_ns());
             let acc = self.read_stat(IDX_STATS_BYTES_ACCUMULATED) + data.len() as u64;

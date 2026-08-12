@@ -2013,10 +2013,7 @@ pub(crate) mod __gated_printer {
                 self.print_semicolon_after_statement();
             }
 
-            // The module's default export is the module object itself, so
-            // `import { default as bun } from "bun"` (and the `import` that the
-            // bundler turns `export { default } from "bun"` into) binds the whole
-            // module rather than reading a "default" property off of it.
+            // The default export is the module object itself, not a "default" property on it.
             let mut named_item_count: usize = 0;
             for item in slice_of(import.items).iter() {
                 if item.alias.slice() != b"default" {
@@ -2071,9 +2068,8 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Prints the module object that the bindings of `import` are read from:
-        /// the binding declared by an earlier `var` of the same statement when
-        /// there is one, otherwise the module expression itself.
+        /// The object the clause items are read from: a binding this statement
+        /// already declared, or else the module itself.
         fn print_internal_bun_import_value(
             &mut self,
             import: &S::Import,
@@ -2709,9 +2705,8 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
-                        // The linker asks for __toESM() when the import needs ESM
-                        // namespace semantics (a default import or `import *`); the
-                        // bare Bun object has no "default" property.
+                        // Set by the linker for default and namespace imports;
+                        // the Bun object itself has no "default".
                         let wrap_with_to_esm =
                             record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
                         if wrap_with_to_esm {

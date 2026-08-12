@@ -900,6 +900,141 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
 
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
 
+function frameSummary(f: Frame) {
+  return { type: f.type, flags: f.flags, length: f.length };
+}
+
+// A waitForTrailers stream whose body finished without a 'wantTrailers' listener is ended by
+// node itself (onStreamTrailers calls stream.sendTrailers({})): an empty END_STREAM DATA frame
+// goes out and the trailers count as sent, so a later sendTrailers() must fail with
+// ERR_HTTP2_TRAILERS_ALREADY_SENT rather than put a trailer HEADERS frame on the half-closed
+// stream (§8.1: the trailer section is the last frame of the message).
+describe("trailers after the stream was ended without a 'wantTrailers' listener (RFC 9113 §8.1)", () => {
+  test("client: a late sendTrailers() throws ERR_HTTP2_TRAILERS_ALREADY_SENT and sends nothing", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      req.end("hello");
+      await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.DATA && (f.flags & 0x1) !== 0);
+
+      expect(req.sentTrailers).toEqual({});
+      expect(() => req.sendTrailers({ "x-late": "1" })).toThrow(
+        expect.objectContaining({ code: "ERR_HTTP2_TRAILERS_ALREADY_SENT" }),
+      );
+      expect(req.sentTrailers).toEqual({});
+      // Anything the rejected call had written would reach the socket ahead of this PING's ACK.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(raw.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
+        { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: 5 },
+        { type: FrameType.DATA, flags: 0x1 /* END_STREAM */, length: 0 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("server: sendTrailers() from 'prefinish' or later throws ERR_HTTP2_TRAILERS_ALREADY_SENT and sends nothing", async () => {
+    const outcome = Promise.withResolvers<{ prefinish: string; finish: string; sentTrailers: unknown }>();
+    const srv = http2.createServer();
+    srv.on("stream", (stream: any) => {
+      stream.on("error", (err: Error) => outcome.reject(err));
+      const attempt = () => {
+        try {
+          stream.sendTrailers({ "x-late": "1" });
+          return "sent";
+        } catch (e: any) {
+          return e.code;
+        }
+      };
+      // 'prefinish' fires from inside the call that writes the END_STREAM frame; 'finish' a tick
+      // later. Both are after the stream ended itself, so both attempts are too late.
+      let prefinish = "not emitted";
+      stream.on("prefinish", () => (prefinish = attempt()));
+      stream.on("finish", () => outcome.resolve({ prefinish, finish: attempt(), sentTrailers: stream.sentTrailers }));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("ok");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // POST without END_STREAM: the request side stays open, so the response's END_STREAM only
+      // half-closes the stream (the stream object stays usable for the late sendTrailers calls).
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      expect(await outcome.promise).toEqual({
+        prefinish: "ERR_HTTP2_TRAILERS_ALREADY_SENT",
+        finish: "ERR_HTTP2_TRAILERS_ALREADY_SENT",
+        sentTrailers: {},
+      });
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
+        { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: 2 },
+        { type: FrameType.DATA, flags: 0x1 /* END_STREAM */, length: 0 },
+      ]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  // node's onStreamTrailers returns without emitting when the stream was closed in the meantime
+  // (a listener could only throw ERR_HTTP2_INVALID_STREAM); the stream is ended so close()'s
+  // RST_STREAM, which waits for 'finish', still goes out.
+  test("client: a stream close()d while its final DATA was flow-control blocked is ended without emitting 'wantTrailers'", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      // SETTINGS_INITIAL_WINDOW_SIZE = 0: every new stream starts with no send window.
+      const zeroWindow = Buffer.alloc(6);
+      zeroWindow.writeUInt16BE(0x4, 0);
+      zeroWindow.writeUInt32BE(0, 2);
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0, zeroWindow);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await once(client, "remoteSettings");
+
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      let wantTrailers = 0;
+      req.on("wantTrailers", () => wantTrailers++);
+      req.end("hello");
+      req.close();
+      await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.HEADERS);
+      expect(raw.frames.filter(f => f.streamId === 1 && f.type === FrameType.DATA)).toEqual([]);
+
+      const windowUpdate = Buffer.alloc(4);
+      windowUpdate.writeUInt32BE(1024, 0);
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, windowUpdate);
+      const rst = await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      expect(wantTrailers).toBe(0);
+      expect(raw.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
+        { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: 5 },
+        { type: FrameType.DATA, flags: 0x1 /* END_STREAM */, length: 0 },
+        { type: FrameType.RST_STREAM, flags: 0, length: 4 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("request header and body framing (RFC 9113 §8.1)", () => {
   let deferredServer: http2.Http2Server;
   let deferredPort: number;

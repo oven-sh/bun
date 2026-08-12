@@ -668,6 +668,59 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
       expect(exitCode).toBe(0);
     });
+
+    // On macOS the waiting happens on the pool thread running the write, and a
+    // Bun.write() starts out on that thread inside a borrow of its VM that the
+    // VM's teardown waits for. The write loop has to get out of that borrow
+    // before it first waits, or terminating a worker whose write is waiting for
+    // a reader that never reads would wait for that reader too: here the worker
+    // must be gone while the pipe is still full. (Linux parks the write on the
+    // io thread and passes either way.)
+    it("does not make a terminated worker's teardown wait for the reader", async () => {
+      using dir = tempDir("bun-write-fifo-worker", {});
+      const fifoPath = join(String(dir), "out.fifo");
+      mkfifo(fifoPath);
+      const host = `
+        const fs = require("node:fs");
+        const { Worker } = require("node:worker_threads");
+        const reader = fs.openSync(process.env.FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const writer = fs.openSync(process.env.FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const worker = new Worker(
+          \`const dest = Bun.file(\${writer});
+           dest.size;
+           Bun.write(dest, Buffer.alloc(1024 * 1024));
+           require("node:worker_threads").parentPort.postMessage("writing");\`,
+          { eval: true },
+        );
+        worker.once("message", function probe() {
+          // Our own byte being refused means the worker's write has filled the
+          // pipe and is waiting.
+          try {
+            fs.writeSync(writer, "x");
+          } catch (err) {
+            if (err.code !== "EAGAIN") throw err;
+            worker.terminate();
+            return;
+          }
+          setTimeout(probe, 1);
+        });
+        worker.on("exit", () => {
+          console.log("worker exited while the pipe was full");
+          fs.closeSync(reader);
+          fs.closeSync(writer);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", host],
+        env: { ...bunEnv, FIFO: fifoPath },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({ stdout: "worker exited while the pipe was full\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("Bun.file(0) survives GC", async () => {

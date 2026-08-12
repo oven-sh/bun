@@ -189,9 +189,7 @@ impl ArrayBufferSink {
     }
 }
 
-/// Whether a streaming sink holds bytes that `flush()` would hand out.
-/// `JSDirectStreamController` calls this with the null-checked
-/// `JSArrayBufferSink::wrapped()` pointer, like the codegen `__memoryCost` thunk.
+/// `JSDirectStreamController` passes a live (null-checked) `JSArrayBufferSink::wrapped()`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ArrayBufferSink__hasBufferedBytes(this: &ArrayBufferSink) -> bool {
     !this.bytes.is_empty()

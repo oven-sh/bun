@@ -803,3 +803,46 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent("plugins run for file imports whose query string contains a dot (#37699)", async () => {
+  using dir = tempDir("plugin-query-string-dot", {
+    "plain.ts": `export const source = "disk";`,
+    "entry.ts": `
+      Bun.plugin({
+        name: "query-string-dot",
+        setup(build) {
+          build.onLoad({ filter: /plain\\.ts/ }, () => ({
+            contents: "export const source = 'plugin'",
+            loader: "ts",
+          }));
+        },
+      });
+
+      const queries = ["?v=123", "?v=123.456", "?v=.456", "?v=123.", "?v=1.2.3", "?mtime=1786494961337.0317"];
+      const results = {};
+      for (const q of queries) {
+        const mod = await import("./plain.ts" + q).catch(err => ({ source: "error: " + err.message }));
+        results[q] = mod.source;
+      }
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    "?v=123": "plugin",
+    "?v=123.456": "plugin",
+    "?v=.456": "plugin",
+    "?v=123.": "plugin",
+    "?v=1.2.3": "plugin",
+    "?mtime=1786494961337.0317": "plugin",
+  });
+  expect(exitCode).toBe(0);
+});

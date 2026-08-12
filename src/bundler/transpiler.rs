@@ -86,19 +86,32 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
-            let ext = &specifier[last_dot + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-            {
+        // The loader is chosen from the path's extension, so judge
+        // "/a/b.ts?v=1.2" by ".ts", not ".2" (`normalizeSpecifier` splits the
+        // query off at the first '?' later). Also check the full specifier so
+        // paths that legitimately contain '?' keep passing this pre-filter.
+        if let Some(query_start) = bun_core::strings::index_of_char_usize(specifier, b'?') {
+            if Self::starts_with_letter_after_last_dot(&specifier[..query_start as usize]) {
                 return true;
             }
         }
+        if Self::starts_with_letter_after_last_dot(specifier) {
+            return true;
+        }
         !bun_paths::is_absolute(specifier)
             && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+    }
+
+    fn starts_with_letter_after_last_dot(specifier: &[u8]) -> bool {
+        let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') else {
+            return false;
+        };
+        let ext = &specifier[last_dot + 1..];
+        // '.' followed by either a letter or a non-ascii character
+        // maybe there are non-ascii file extensions?
+        // we mostly want to cheaply rule out "../" and ".." and "./"
+        !ext.is_empty()
+            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
     }
 }
 

@@ -114,6 +114,13 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                 i += 1;
             }
             b'{' => {
+                // `{{` is `format_args!`'s escaped literal brace, not the start
+                // of a spec: the text after it is still subject to markup.
+                if bytes.get(i + 1) == Some(&b'{') {
+                    out.push_str("{{");
+                    i += 2;
+                    continue;
+                }
                 // copy `{ ... }` verbatim, optionally rewriting legacy specs
                 let start = i;
                 while i < bytes.len() && bytes[i] != b'}' {

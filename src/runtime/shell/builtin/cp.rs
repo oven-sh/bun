@@ -581,19 +581,13 @@ impl ShellCpTask {
         }
     }
 
-    /// Whether `tgt`, the directory the copy of the directory `src` would be
-    /// written to, is `src` itself or lies somewhere below it. Copying there
-    /// would make the walk descend into the directories it is creating, so it
-    /// is refused up front like coreutils does.
-    ///
-    /// Compared by identity rather than by path so that a `tgt` reached
-    /// through a symlink to `src` (or to one of its parents) is caught too;
-    /// `tgt` and its nearest ancestors may not exist yet, those are skipped.
+    /// Is `tgt`, where the copy of the directory `src` would land, `src` itself or
+    /// below it? Compared by identity (so symlinked paths count), skipping the
+    /// parts of `tgt` that do not exist yet.
     fn dir_copy_relation(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> resolve_path::ParentEqual {
         use resolve_path::ParentEqual;
 
-        // lstat: on Windows `src` may be a directory symlink, which the copy
-        // treats as a file rather than descending into its target.
+        // lstat: a directory symlink `src` (possible on Windows) is copied as a file.
         let Ok(src_stat) = bun_sys::lstat(src) else {
             return ParentEqual::Unrelated;
         };
@@ -690,8 +684,7 @@ impl ShellCpTask {
         };
 
         let mut _copying_many = false;
-        // Set when `tgt` gains the source's basename below (`cp -R src
-        // existing_dir`), so errors can name the path the copy would land on.
+        // For error messages: names the path the copy would land on.
         let mut appended_basename: Option<&[u8]> = None;
 
         // The following logic is based on the POSIX spec.

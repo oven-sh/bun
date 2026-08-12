@@ -1501,10 +1501,9 @@ mod _async_tasks {
         }
     }
 
-    /// One directory still being read by `NewAsyncCpTask::cp_async_directory`;
-    /// owns the directory's descriptor (inside `iter`) until dropped.
-    /// `src_len`/`dest_len` delimit this directory's paths inside the walk's
-    /// shared path buffers; its children's paths are built right behind them.
+    /// A directory `cp_async_directory` is still reading; owns its descriptor
+    /// (inside `iter`). `src_len`/`dest_len` are its paths' lengths in the
+    /// walk's shared path buffers.
     struct CpDirFrame {
         #[cfg(windows)]
         iter: DirIterator::WrappedIteratorW,
@@ -1951,12 +1950,9 @@ mod _async_tasks {
             }
         }
 
-        /// Copies the tree rooted at `src_buf[..src_dir_len]` (a directory) to
-        /// `dest_buf[..dest_dir_len]`: directories are created on this thread,
-        /// each file becomes a `CpSingleTask`. The directories being read are
-        /// kept on an explicit stack rather than the call stack so the depth of
-        /// the tree is bounded by the path buffers, not by the pool thread's
-        /// stack. The first error ends the walk.
+        /// Copies the directory tree at `src_buf[..src_dir_len]` to
+        /// `dest_buf[..dest_dir_len]`; files are fanned out as `CpSingleTask`s.
+        /// Iterative: one call frame per level overflowed the pool thread's stack.
         fn cp_async_directory(
             nodefs: &mut NodeFS,
             this: *mut Self,
@@ -2000,8 +1996,7 @@ mod _async_tasks {
                         );
                     }
                 };
-                // Points into the top frame's readdir buffer: it has to be consumed
-                // before the next `next()` call or push below, which may move it.
+                // Points into the top frame's buffer: dead before `stack` grows below.
                 let cname = current.name.slice();
 
                 // The accumulated path for deep directory trees can exceed the fixed
@@ -2067,10 +2062,8 @@ mod _async_tasks {
             Ok(())
         }
 
-        /// Creates the destination directory for the source directory
-        /// `src_buf[..src_len]` and opens the source for reading. `None` when
-        /// the whole subtree was copied here already (macOS `clonefile`), so
-        /// there is nothing left to walk.
+        /// Creates the destination of the directory `src_buf[..src_len]` and opens
+        /// it for reading; `None` once macOS `clonefile` copied the whole subtree.
         fn cp_async_enter_directory(
             nodefs: &mut NodeFS,
             this: &Self,
@@ -2114,10 +2107,7 @@ mod _async_tasks {
             let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
             let fd = openat_os_path(FD::cwd(), src, open_flags, 0)
                 .map_err(|err| err.with_path(nodefs.os_path_into_sync_error_buf(src)))?;
-            // Built before the fallible steps below so that dropping it on their
-            // errors closes `fd`. On POSIX directory entries are always UTF-8, so
-            // monomorphise the const-generic path type on `U8` and let the
-            // Windows branch handle the wide path.
+            // Built first so that the `?`s below close `fd`.
             let frame = CpDirFrame {
                 #[cfg(windows)]
                 iter: DirIterator::iterate::<true>(fd),

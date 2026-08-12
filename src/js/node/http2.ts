@@ -4086,8 +4086,10 @@ function coerceHeaderValue(value) {
 // calls request()/pushStream() again would take the next id yet reach the wire first (RFC 9113
 // §5.1.1 requires ids to increase on the wire; nghttp2 ignores the lower one), with the two blocks'
 // HPACK table updates interleaved. Like node's buildNgHeaderString, coerce everything in JS before
-// an id is taken. Arrays are always copied so native only reads fresh arrays of primitives. The
-// input is not mutated: the object form backs sentHeaders, which node leaves uncoerced as well.
+// an id is taken. Native must only read storage this module created: the object form the callers
+// pass is already their own spread copy (plain data properties), so it is copied only when a value
+// needs coercing, while arrays (the caller's own) are always copied. The input is not mutated: the
+// object form backs sentHeaders, which node leaves uncoerced as well.
 function toWireHeaders(headers) {
   if ($isArray(headers)) {
     // Raw [name, value, ...] form: names are coerced natively as well.

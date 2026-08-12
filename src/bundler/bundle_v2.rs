@@ -2960,12 +2960,12 @@ pub mod bv2_impl {
             let mut tp = ThreadPool::init(&*this, thread_pool)?;
             if let Err(errno) = tp.start() {
                 tp.deinit();
+                let hint = bun_threading::thread_pool::thread_limit_hint(errno)
+                    .map_or_else(String::new, |hint| format!(". {hint}"));
                 this.transpiler.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Failed to create a worker thread for the bundler: {errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
-                    ),
+                    format_args!("Failed to create a worker thread for the bundler: {errno}{hint}"),
                 );
                 return Err(Error::ThreadSpawnFailed);
             }

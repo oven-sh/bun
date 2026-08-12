@@ -713,6 +713,13 @@ struct SpawnFailed {
     workers_left: u16,
 }
 
+/// Remedy for a failed thread spawn. Only EAGAIN points at a limit; ENOMEM (what Windows reports), EPERM or EINVAL do not.
+pub fn thread_limit_hint(errno: SystemErrno) -> Option<&'static str> {
+    (errno == SystemErrno::EAGAIN).then_some(
+        "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency",
+    )
+}
+
 /// Nothing will ever run the queued tasks and `schedule()` has no caller to return an error to, so this is the only way to report it.
 #[cold]
 #[inline(never)]
@@ -722,9 +729,9 @@ fn exit_with_stranded_tasks(errno: SystemErrno) -> ! {
         "failed to create a worker thread for the thread pool; the work already queued on it could never run",
         (),
     );
-    bun_core::note!(
-        "the process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
-    );
+    if let Some(hint) = thread_limit_hint(errno) {
+        bun_core::note!("{}", hint);
+    }
     bun_core::Global::exit(1)
 }
 

@@ -145,43 +145,48 @@ async function runWithPlan(plan: string, args: string[], errno?: number) {
   return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signalCode: proc.signalCode };
 }
 
+// Only EAGAIN means a limit was hit, so only it gets the remedy appended.
+const THREAD_LIMIT_HINT =
+  "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency";
+
 // The bundler warms its pool before scheduling anything, so it can report the
 // failure through its own log.
-function bundlerError(errno: string) {
-  return `Failed to create a worker thread for the bundler: ${errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit).`;
-}
+const BUNDLER_ERROR = `Failed to create a worker thread for the bundler: EAGAIN. ${THREAD_LIMIT_HINT}`;
 
 // Pools that are only ever fed through fire-and-forget schedule() calls have
 // nobody to return the error to; the process exits with it instead of hanging.
-const STRANDED_TASKS_STDERR = [
-  "EAGAIN: failed to create a worker thread for the thread pool; the work already queued on it could never run",
-  "note: the process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency",
-].join("\n");
+function strandedTasksError(errno: string) {
+  return `${errno}: failed to create a worker thread for the thread pool; the work already queued on it could never run`;
+}
+const STRANDED_TASKS_STDERR = `${strandedTasksError("EAGAIN")}\nnote: ${THREAD_LIMIT_HINT}`;
 
 test.skipIf(skip)("bun build reports a bundler pool that cannot spawn any worker and exits", async () => {
   expect(await runWithPlan("f", ["build", "entry.js"])).toEqual({
     stdout: "",
-    stderr: `error: ${bundlerError("EAGAIN")}`,
+    stderr: `error: ${BUNDLER_ERROR}`,
     exitCode: 1,
     signalCode: null,
   });
 });
 
-test.skipIf(skip)("the error names the errno the OS returned", async () => {
-  expect(await runWithPlan("f", ["build", "entry.js"], constants.errno.EPERM)).toEqual({
-    stdout: "",
-    stderr: `error: ${bundlerError("EPERM")}`,
-    exitCode: 1,
-    signalCode: null,
-  });
-});
+test.skipIf(skip)(
+  "the error names the errno the OS returned, without the limit hint for errors other than EAGAIN",
+  async () => {
+    expect(await runWithPlan("f", ["build", "entry.js"], constants.errno.EPERM)).toEqual({
+      stdout: "",
+      stderr: "error: Failed to create a worker thread for the bundler: EPERM",
+      exitCode: 1,
+      signalCode: null,
+    });
+  },
+);
 
 // The failure happens before the watcher exists, so a watch build has nothing
 // left to wait for; it must exit like a plain build instead of parking.
 test.skipIf(skip)("bun build --watch exits too when the pool cannot spawn any worker", async () => {
   expect(await runWithPlan("f", ["build", "--watch", "entry.js"])).toEqual({
     stdout: "",
-    stderr: `error: ${bundlerError("EAGAIN")}`,
+    stderr: `error: ${BUNDLER_ERROR}`,
     exitCode: 1,
     signalCode: null,
   });
@@ -193,7 +198,7 @@ test.skipIf(skip)("Bun.build() rejects when the pool cannot spawn any worker", a
       settled: "rejected",
       name: "AggregateError",
       message: "Bundle failed",
-      errors: [bundlerError("EAGAIN")],
+      errors: [BUNDLER_ERROR],
     }),
     stderr: "",
     exitCode: 0,
@@ -220,7 +225,7 @@ test.skipIf(skip)("the dev server exits with the error when the pool cannot spaw
   const exitCode = await proc.exited;
   expect({ stdout: stdout.trim(), stderr: (await stderr).trim(), exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: expect.stringMatching(/^PORT \d+$/),
-    stderr: `error: ${bundlerError("EAGAIN")}`,
+    stderr: `error: ${BUNDLER_ERROR}`,
     exitCode: 1,
     signalCode: null,
   });
@@ -241,6 +246,15 @@ test.skipIf(skip)("bun install exits with the error when its pool cannot spawn a
   expect(await runWithPlan("sf", ["install", "--cwd", "install"])).toEqual({
     stdout: expect.stringContaining("bun install v1."),
     stderr: STRANDED_TASKS_STDERR,
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+test.skipIf(skip)("the exit leaves out the limit hint for errors other than EAGAIN", async () => {
+  expect(await runWithPlan("sf", ["install", "--cwd", "install"], constants.errno.EPERM)).toEqual({
+    stdout: expect.stringContaining("bun install v1."),
+    stderr: strandedTasksError("EPERM"),
     exitCode: 1,
     signalCode: null,
   });

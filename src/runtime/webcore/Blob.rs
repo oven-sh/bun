@@ -2371,8 +2371,7 @@ impl BlobExt for Blob {
             }
         }
 
-        blob.calculate_estimated_byte_size();
-        Ok(Blob::new(blob))
+        Ok(new_for_bindings(blob))
     }
 
     // `finalize` is inherent on `Blob` (bun_jsc::webcore_types) so codegen's
@@ -4255,9 +4254,10 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
     }
 }
 
-/// Heap-promotes a Blob that C++ wraps directly (`WebCore::Blob`, `Blob__create`)
-/// instead of via `BlobExt::to_js`. `Blob__estimatedSize` only reads the cached
-/// size (it also runs on the GC thread), so it has to be computed here.
+/// Heap-promotes a Blob whose wrapper the bindings build from the returned pointer
+/// (the generated constructor, `Blob__create`, `WebCore::Blob`) rather than via
+/// `BlobExt::to_js`. `Blob__estimatedSize` only reads the cached size (it also
+/// runs on the GC thread), so it is computed here, once every field is final.
 fn new_for_bindings(blob: Blob) -> *mut Blob {
     blob.calculate_estimated_byte_size();
     Blob::new(blob)

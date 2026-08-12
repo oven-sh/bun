@@ -410,7 +410,7 @@ impl RefCountedTimer {
             return;
         }
         let now = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
+            bun_core::TimespecMockMode::ForceRealTime,
             i64::from(ms),
         );
         self.event_loop_timer.with_mut(|t| {

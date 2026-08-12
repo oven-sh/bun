@@ -205,18 +205,21 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// Whether `jest.useFakeTimers()` captures this timer. Only the timers a
+    /// program schedules itself (`setTimeout`/`setInterval`,
+    /// `AbortSignal.timeout()`, and `Bun.cron`, which is documented as
+    /// mockable) go into the fake heap, where they fire on
+    /// `advanceTimersByTime()` and are dropped by `useRealTimers()` /
+    /// `clearAllTimers()`. Everything else is a runtime-internal timeout
+    /// (subprocess kill, connection timeouts, c-ares polling, ...) that keeps
+    /// running on the real clock, as in Jest.
+    ///
+    /// This also decides which clock an owner arms with: a fakeable owner
+    /// computes its deadline with `TimespecMockMode::AllowMockedTime`; every
+    /// other owner must use `ForceRealTime`, because the real heap is drained
+    /// against the real clock (`timer::All::next`).
     pub fn allow_fake_timers(self) -> bool {
-        match self {
-            Tag::WTFTimer // internal
-            | Tag::BunTest // for test timeouts
-            | Tag::EventLoopDelayMonitor // probably important
-            | Tag::StatWatcherScheduler
-            | Tag::GcRepeating // internal GC pacing
-            | Tag::QuicEndpoint
-            | Tag::DnsSdConnection // internal lookup pacing
-            => false,
-            _ => true,
-        }
+        matches!(self, Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob)
     }
 }
 

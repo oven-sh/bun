@@ -565,6 +565,12 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     where
         T: Copy,
     {
+        *self.peek_item_ref(offset)
+    }
+
+    /// Borrows the item at `offset`; [`peek_item`](Self::peek_item) for
+    /// move-only `T`. Asserts offset is within bounds.
+    pub fn peek_item_ref(&self, offset: usize) -> &T {
         debug_assert!(offset < self.count);
 
         let mut index = self.head + offset;
@@ -573,7 +579,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             index %= self.buf_len();
         }
-        self.buf.as_slice()[index]
+        &self.buf.as_slice()[index]
     }
 
     /// Returns the item at `offset`.

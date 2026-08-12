@@ -131,7 +131,8 @@ impl Default for MySQLConnection {
 
 // SAFETY: `MySQLConnection` is the `connection` field embedded inside
 // `JSMySQLConnection`; never constructed standalone.
-bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; }
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn nonnull get_js_connection; }
 
 impl MySQLConnection {
     pub(crate) fn init(
@@ -216,7 +217,7 @@ impl MySQLConnection {
     }
 
     #[inline]
-    pub(crate) fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&mut self, request: bun_ptr::OwnedRef<JSMySQLQuery>) {
         self.queue.add(request);
     }
 
@@ -237,7 +238,7 @@ impl MySQLConnection {
     /// reshaped for borrowck — `self.queue.advance(js_connection)`
     /// would alias `&mut self.queue` with `&mut JSMySQLConnection` (which
     /// embeds `self`). Route through a single raw root:
-    /// `MySQLRequestQueue::advance` takes only `*mut JSMySQLConnection` and
+    /// `MySQLRequestQueue::advance` takes only `NonNull<JSMySQLConnection>` and
     /// reaches the queue via `ParentRef`/`JsCell` shared borrows (all queue
     /// fields are interior-mutable), so no `&mut` to the queue bytes is ever
     /// materialised concurrently with the connection backref.
@@ -245,8 +246,8 @@ impl MySQLConnection {
         let js_connection = self.get_js_connection();
         // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
         // full-allocation provenance. advance() only forms shared borrows of it
-        // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
-        // wrapped via the safe `ParentRef::from(NonNull)` inside.
+        // (queue mutation goes through `Cell`/`JsCell`) via the `ParentRef` it
+        // builds from this pointer.
         MySQLRequestQueue::advance(js_connection);
     }
 
@@ -385,8 +386,7 @@ impl MySQLConnection {
         // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
         // drives both safe inherent methods (`ext` / `start_tls_handshake`).
         let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-            core::ptr::NonNull::new(js_connection);
+        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() = Some(js_connection);
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });

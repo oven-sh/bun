@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, OwnedRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -62,6 +62,14 @@ impl JSMySQLQuery {
     pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
         unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    }
+
+    /// A ref to keep, for the connection's request queue; dropping it is the
+    /// release. Same precondition as [`ref_guard`](Self::ref_guard).
+    #[inline]
+    pub(crate) fn owned_ref(&self) -> OwnedRef<Self> {
+        // SAFETY: `&self` ⇒ the allocation is live and non-null.
+        unsafe { OwnedRef::acquire(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -174,7 +182,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.as_ctx_ptr());
+        connection.enqueue_request(this.owned_ref());
         Ok(JSValue::UNDEFINED)
     }
 

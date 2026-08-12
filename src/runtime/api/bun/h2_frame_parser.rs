@@ -1330,12 +1330,10 @@ pub struct H2FrameParser {
     /// node strictSingleValueFields session option (default true): when false, duplicate
     /// single-value headers and array values for them are encoded as-is instead of rejected.
     strict_single_value_fields: Cell<bool>,
-    /// Highest stream id registered in either direction (see highest_started_stream_id). Not
-    /// what a GOAWAY carries: that is `last_peer_stream_id`.
+    /// Highest stream id registered in either direction; a GOAWAY carries `last_peer_stream_id`.
     last_stream_id: Cell<u32>,
-    /// Mirror of `Connection::last_peer_stream_id`, kept current by the engine's
-    /// on_last_peer_stream_id callback: the last-stream-id every GOAWAY filled in on this side
-    /// must carry, and node's state.lastProcStreamID. The engine's own GOAWAYs read its field.
+    /// Copy of `Connection::last_peer_stream_id` (fed by on_last_peer_stream_id): what every
+    /// GOAWAY written on this side carries, and node's state.lastProcStreamID.
     last_peer_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.

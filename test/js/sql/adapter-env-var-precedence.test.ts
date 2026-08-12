@@ -26,8 +26,12 @@ describe("SQL adapter environment variable precedence", () => {
     'TLS_MARIADB_DATABASE_URL',
     'SQLITE_URL', 'SQLITEURL',
     'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'PG_HOST', 'PG_USER', 'PG_PASSWORD', 'PG_DATABASE', 'PG_PORT',
     'PGSSLMODE', 'PG_SSLMODE',
-    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
+    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT',
+    'MYSQLHOST', 'MYSQLUSER', 'MYSQLPASSWORD', 'MYSQLDATABASE', 'MYSQLPORT',
+    'MARIADB_HOST', 'MARIADB_USER', 'MARIADB_PASSWORD', 'MARIADB_DATABASE', 'MARIADB_PORT',
+    'MARIADBHOST', 'MARIADBUSER', 'MARIADBPASSWORD', 'MARIADBDATABASE', 'MARIADBPORT',
   ];
 
   beforeEach(() => {
@@ -291,6 +295,104 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(3306);
     expect(options.options.sslMode).toBe(2); // SSLMode.require
+  });
+
+  describe("database name precedence", () => {
+    // prettier-ignore
+    const databaseEnvVars = [
+      ["postgres", "PGDATABASE",       "postgres://urluser:urlpass@urlhost:5432"],
+      ["postgres", "PG_DATABASE",      "postgres://urluser:urlpass@urlhost:5432"],
+      ["mysql",    "MYSQL_DATABASE",   "mysql://urluser:urlpass@urlhost:3306"],
+      ["mysql",    "MYSQLDATABASE",    "mysql://urluser:urlpass@urlhost:3306"],
+      ["mariadb",  "MARIADB_DATABASE", "mariadb://urluser:urlpass@urlhost:3306"],
+      ["mariadb",  "MARIADBDATABASE",  "mariadb://urluser:urlpass@urlhost:3306"],
+    ] as const;
+
+    test.each(databaseEnvVars)("%s: the database named in the URL wins over $%s", (adapter, envVar, base) => {
+      process.env[envVar] = "envdb";
+
+      const expected = { adapter, hostname: "urlhost", username: "urluser", password: "urlpass", database: "urldb" };
+      expect(new SQL(`${base}/urldb`).options).toMatchObject(expected);
+      expect(new SQL(`${base}/urldb`, { adapter }).options).toMatchObject(expected);
+      expect(new SQL({ url: `${base}/urldb` }).options).toMatchObject(expected);
+      expect(new SQL({ adapter, url: `${base}/urldb` }).options).toMatchObject(expected);
+    });
+
+    test.each(databaseEnvVars)(
+      "%s: the database in the URL is percent-decoded before $%s is consulted",
+      (_, envVar, base) => {
+        process.env[envVar] = "envdb";
+
+        expect(new SQL(`${base}/url%20db`).options.database).toBe("url db");
+      },
+    );
+
+    test.each(databaseEnvVars)("%s: an explicit database option wins over both the URL and $%s", (_, envVar, base) => {
+      process.env[envVar] = "envdb";
+
+      expect(new SQL(`${base}/urldb`, { database: "optiondb" }).options.database).toBe("optiondb");
+      expect(new SQL(`${base}/urldb`, { db: "optiondb" }).options.database).toBe("optiondb");
+      expect(new SQL({ url: `${base}/urldb`, database: "optiondb" }).options.database).toBe("optiondb");
+    });
+
+    test.each(databaseEnvVars)(
+      "%s: $%s fills in the database when the URL does not name one",
+      (adapter, envVar, base) => {
+        process.env[envVar] = "envdb";
+
+        expect(new SQL(base).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+        expect(new SQL(`${base}/`).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+        expect(new SQL({ url: base }).options).toMatchObject({ adapter, hostname: "urlhost", database: "envdb" });
+      },
+    );
+
+    test.each([
+      ["postgres://urluser@urlhost:5432", "urluser"],
+      ["mysql://urluser@urlhost:3306", "mysql"],
+      ["mariadb://urluser@urlhost:3306", "mariadb"],
+    ])(
+      "%s falls back to the adapter default database when neither the URL nor the environment names one",
+      (url, database) => {
+        expect(new SQL(url).options.database).toBe(database);
+        expect(new SQL(`${url}/`).options.database).toBe(database);
+      },
+    );
+
+    // prettier-ignore
+    const urlEnvVars = [
+      ["postgres", "DATABASE_URL", "postgres://urluser@urlhost:5432/urldb", "PG"],       // $PGHOST, $PGUSER, $PGDATABASE
+      ["postgres", "POSTGRES_URL", "postgres://urluser@urlhost:5432/urldb", "PG"],
+      ["mysql",    "DATABASE_URL", "mysql://urluser@urlhost:3306/urldb",    "MYSQL_"],   // $MYSQL_HOST, ...
+      ["mysql",    "MYSQL_URL",    "mysql://urluser@urlhost:3306/urldb",    "MYSQL_"],
+      ["mariadb",  "MARIADB_URL",  "mariadb://urluser@urlhost:3306/urldb",  "MARIADB_"], // $MARIADB_HOST, ...
+    ] as const;
+
+    test.each(urlEnvVars)(
+      "%s: every field of a connection URL taken from $%s wins over the per-field variables, the database included",
+      (adapter, urlVar, url, prefix) => {
+        process.env[urlVar] = url;
+        process.env[`${prefix}HOST`] = "envhost";
+        process.env[`${prefix}USER`] = "envuser";
+        process.env[`${prefix}DATABASE`] = "envdb";
+
+        const expected = { adapter, hostname: "urlhost", username: "urluser", database: "urldb" };
+        expect(new SQL().options).toMatchObject(expected);
+        expect(new SQL({ adapter }).options).toMatchObject(expected);
+      },
+    );
+
+    test.each([
+      ["postgres", "PGDATABASE"],
+      ["mysql", "MYSQL_DATABASE"],
+      ["mariadb", "MARIADB_DATABASE"],
+    ] as const)(
+      "%s: the pathname of a host-less URL is a socket path, so $%s still names the database",
+      (adapter, envVar) => {
+        process.env[envVar] = "envdb";
+
+        expect(new SQL("unix:///tmp/bun-sql-database-precedence.sock", { adapter }).options.database).toBe("envdb");
+      },
+    );
   });
 
   describe("PGSSLMODE", () => {

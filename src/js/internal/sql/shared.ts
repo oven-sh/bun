@@ -1766,7 +1766,7 @@ function parseOptions(
   let port: number | string | undefined;
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
-  let database: string | undefined;
+  let database: string | null | undefined;
   let tls: Bun.TLSOptions | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
@@ -1790,6 +1790,12 @@ function parseOptions(
     port ||= options.port || url.port;
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
+    // postgres://host/<database>: the pathname names the database and, like the
+    // fields above, outranks PGDATABASE and friends. Without a host the pathname
+    // is a socket path (below); the per-adapter switch still falls back to it last.
+    if (url.hostname) {
+      database ||= options.database || options.db || decodeIfValid(url.pathname.slice(1));
+    }
 
     path ||= options.path || (url.hostname ? "" : url.pathname);
 

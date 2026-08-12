@@ -113,8 +113,8 @@ describe("Bun.deepEquals strict mode", () => {
   });
 
   // The switch that drops the constructor check (node's skipPrototype) is only
-  // reachable through util.isDeepStrictEqual; Bun.deepEquals has no fourth
-  // argument, so anything after `strict` is ignored.
+  // reachable through util.isDeepStrictEqual and the node:assert Assert class;
+  // Bun.deepEquals has no fourth argument, so anything after `strict` is ignored.
   it("ignores arguments after strict", () => {
     const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, ...rest: unknown[]) => boolean;
     class Foo {

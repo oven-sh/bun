@@ -2,6 +2,7 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
@@ -381,9 +382,9 @@ describe("SQL adapter environment variable precedence", () => {
       },
     );
 
-    // A host-less URL's pathname is taken as the unix socket path. None of these
-    // sockets need to exist: parseOptions drops a missing socket path but resolves
-    // the database name the same way either way.
+    // A host-less URL's pathname is taken as the unix socket path. The database
+    // name resolves the same way whether or not the socket exists (parseOptions
+    // only drops a missing socket path), so most of these use one that does not.
     describe("host-less URLs", () => {
       const socket = "/tmp/bun-sql-database-precedence.sock";
 
@@ -417,9 +418,23 @@ describe("SQL adapter environment variable precedence", () => {
         (_adapter, envVar, url) => {
           process.env[envVar] = "envdb";
 
-          expect(new SQL(`${url}?path=${socket}`).options.database).toBe("urldb");
-          expect(new SQL(url, { path: socket }).options.database).toBe("urldb");
-          expect(new SQL({ url, path: socket }).options.database).toBe("urldb");
+          // "/urldb" is an explicit socket path that happens to spell the same as the pathname.
+          for (const path of [socket, "/urldb"]) {
+            expect(new SQL(`${url}?path=${path}`).options.database).toBe("urldb");
+            expect(new SQL(url, { path }).options.database).toBe("urldb");
+            expect(new SQL({ url, path }).options.database).toBe("urldb");
+          }
+        },
+      );
+
+      test.each(hostlessUrls)(
+        "%s: an explicit socket path does not change which socket is used",
+        (_adapter, _envVar, url) => {
+          using dir = tempDir("sql-hostless-socket", { "db.sock": "" });
+          const path = join(String(dir), "db.sock");
+
+          expect(new SQL(`${url}?path=${path}`).options).toMatchObject({ database: "urldb", path });
+          expect(new SQL(url, { path }).options).toMatchObject({ database: "urldb", path });
         },
       );
     });

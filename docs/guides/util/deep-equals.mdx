@@ -34,6 +34,9 @@ class Foo {
   a = 1;
 }
 Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+
+// object literals vs objects with a null prototype
+Bun.deepEquals({ __proto__: null, a: 1 }, { a: 1 }, true); // false
 ```
 
 ---

@@ -82,8 +82,7 @@ export class HMRModule {
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
   cjs: CJSModule | any | null;
-  /** Loading a module that failed to load rethrows this, until a hot update
-   *  has it evaluated again. */
+  /** Rethrown by later loads, until a hot update has the module evaluated again */
   failure: unknown = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
@@ -663,16 +662,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           toDispose.push(mod);
         }
       }
-      // A module that failed to evaluate has no bindings to patch: its next
-      // load evaluates it again and reports any new failure (a replaced module
-      // is reloaded below). Its importers failed with it, so the walk goes on.
+      // Nothing to patch in a module that failed to evaluate: its next load evaluates it again.
+      // Its importers failed along with it, so the walk continues through it.
       else if (mod.state === State.Error) {
         mod.state = State.Stale;
         mod.failure = null;
       }
 
-      // A root that does not accept the update. The rest of the queue is still
-      // walked; the server applies the update regardless and needs all of it.
+      // Root that does not accept the update. The server applies it regardless, so keep walking.
       if (hadSelfAccept && mod.importers.size === 0) {
         failures ??= new Set();
         failures.add(key);

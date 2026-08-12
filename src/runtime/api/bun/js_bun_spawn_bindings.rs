@@ -1873,9 +1873,15 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
+    //
+    // Every deadline below is on the real monotonic clock: this loop blocks the
+    // JS thread, so a `jest.useFakeTimers()` clock cannot advance while it runs
+    // and a deadline measured against it would never be reached. The bun:test
+    // per-test deadline is already real-clock (`BunTest` is exempt from fake
+    // timers).
     {
         let mut absolute_timespec = Timespec::EPOCH;
-        let mut now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
             now.add_ms(i64::from(timeout_ms))
         } else {
@@ -1889,8 +1895,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
+                //
+                // A timer in the fake heap has a fake-clock deadline, and
+                // only `jest.advanceTimersByTime()` and friends can bring it
+                // due, so it cannot fire while spawnSync blocks the thread.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
+                    && abort_signal_timeout.event_loop_timer.in_heap != crate::timer::InHeap::Fake
                 {
                     let next = &abort_signal_timeout.event_loop_timer.next;
                     let next_ts = Timespec {
@@ -1959,7 +1970,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }) {
                 TickState::Completed => {}
                 TickState::Timeout => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::ForceRealTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);

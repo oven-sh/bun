@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -51,6 +51,46 @@ describe("spawnSync", () => {
       exitedDueToTimeout: result.exitedDueToTimeout,
       exitCode: result.exitCode,
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
+  });
+
+  // The fake clock cannot advance while spawnSync blocks the thread, so the
+  // deadlines spawnSync waits on have to be measured on the real clock.
+  describe("under jest.useFakeTimers()", () => {
+    it("timeout still fires", () => {
+      jest.useFakeTimers();
+      try {
+        const result = Bun.spawnSync({
+          // Exits on its own eventually so a build that ignores the timeout fails instead of hanging.
+          cmd: [bunExe(), "-e", "Bun.sleepSync(10_000)"],
+          env: bunEnv,
+          timeout: 100,
+        });
+        expect({ exitedDueToTimeout: result.exitedDueToTimeout, success: result.success }).toEqual({
+          exitedDueToTimeout: true,
+          success: false,
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("an AbortSignal.timeout() scheduled on the fake clock does not cut the child short", () => {
+      jest.useFakeTimers();
+      try {
+        // Fake time is never advanced, so this signal cannot fire during the call.
+        const result = Bun.spawnSync({
+          cmd: [bunExe(), "-e", "console.log('done')"],
+          env: bunEnv,
+          signal: AbortSignal.timeout(100),
+        });
+        expect({ stdout: result.stdout.toString(), exitCode: result.exitCode }).toEqual({
+          stdout: "done\n",
+          exitCode: 0,
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   it.skipIf(process.platform !== "linux")("should use memfd when possible", async () => {

@@ -1,5 +1,5 @@
 import { semver, write } from "bun";
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, jest } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
@@ -687,6 +687,17 @@ describe("spawnSync()", () => {
     const detachedPgid = childPgid(true);
     expect(detachedPgid).toMatch(/^\d+$/);
     expect(detachedPgid).not.toBe(parentPgid);
+  });
+
+  it("timeout still fires under jest.useFakeTimers()", () => {
+    jest.useFakeTimers();
+    try {
+      // Exits on its own eventually so a build that ignores the timeout fails instead of hanging.
+      const { error, status } = spawnSync(bunExe(), ["-e", "Bun.sleepSync(10_000)"], { env: bunEnv, timeout: 100 });
+      expect({ code: error?.code, status }).toEqual({ code: "ETIMEDOUT", status: null });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it.skipIf(isWindows)("drains piped stdio to EOF after the direct child exits", () => {

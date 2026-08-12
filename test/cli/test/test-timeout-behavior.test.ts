@@ -33,3 +33,21 @@ if (isFlaky && isLinux) {
     expect(combined).toContain("(pass) slow test after test timeout");
   });
 }
+
+// Nothing can advance the fake clock during a synchronous call, so spawnSync
+// has to measure the test deadline on the real one.
+test("processes get killed (sync, under jest.useFakeTimers())", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-fixture-sync-fake-timers.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "inherit",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = out + err;
+  expect(combined).not.toContain("This should not be printed!");
+  expect(combined).toContain("killed 1 dangling process");
+  expect(combined).toContain("(fail) test timeout kills dangling processes under fake timers");
+  expect(exitCode).toBe(1);
+});

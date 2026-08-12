@@ -1862,6 +1862,72 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
   });
 });
 
+// JS `pull()` input (readStreamIntoSink pump) whose output is consumed by a
+// JS reader (`pipeTo`). The reader's first read parks a pull on the output
+// ByteStream before any input arrives, so the first output byte of each input
+// chunk lands in that pull's view and the rest accumulates in the ByteStream
+// buffer past the pump path's 256-byte output high-water mark: `write` returns
+// Backpressure and the pump parks. The reader's next read takes the buffered
+// bytes through `ByteStream::drain()`, which is the only thing left to wake
+// the pump, so it has to signal with the buffer already emptied or the pump
+// stays parked with `end()` never reached.
+describe("JS pull input piped to a JS WritableStream", () => {
+  const unit = '<div id="x" a=1>hello<!--cm--><i>t</i></div>';
+  const rewrittenUnit = '<div id="x" a=1 q="1">hello<!--cm--><i>t</i></div>';
+  const head = "<!DOCTYPE html><html><body>";
+  const tail = "tail text</body></html>";
+
+  function rewrite(chunks) {
+    let i = 0;
+    let ended = false;
+    const input = new ReadableStream({
+      async pull(c) {
+        // Macrotask yield: lets `pipeTo` below attach and park its first
+        // read on the output stream before the first input chunk is written.
+        await setImmediatePromise();
+        if (i < chunks.length) c.enqueue(Buffer.from(chunks[i++]));
+        else c.close();
+      },
+    });
+    const out = new HTMLRewriter()
+      .on("div", { element: e => e.setAttribute("q", "1") })
+      .onDocument({
+        end(d) {
+          ended = true;
+          d.append("<!--end-->", { html: true });
+        },
+      })
+      .transform(new Response(input));
+    const received = [];
+    const piped = out.body.pipeTo(new WritableStream({ write: chunk => void received.push(chunk) }));
+    return { piped, received, ended: () => ended };
+  }
+
+  it("completes when the whole document arrives in one pull", async () => {
+    const units = 8;
+    const { piped, received, ended } = rewrite([head + Buffer.alloc(units * unit.length, unit).toString() + tail]);
+    await piped;
+    expect(Buffer.concat(received).toString()).toBe(
+      head + Buffer.alloc(units * rewrittenUnit.length, rewrittenUnit).toString() + tail + "<!--end-->",
+    );
+    expect(ended()).toBe(true);
+  });
+
+  // Every input chunk on its own produces more output than the high-water
+  // mark, so each one parks the pump and each wake has to re-pull upstream.
+  it("completes when every input chunk overflows the output buffer", async () => {
+    const unitsPerChunk = 8;
+    const block = Buffer.alloc(unitsPerChunk * unit.length, unit).toString();
+    const rewrittenBlock = Buffer.alloc(unitsPerChunk * rewrittenUnit.length, rewrittenUnit).toString();
+    const { piped, received, ended } = rewrite([head, block, block, block, tail]);
+    await piped;
+    expect(Buffer.concat(received).toString()).toBe(
+      head + rewrittenBlock + rewrittenBlock + rewrittenBlock + tail + "<!--end-->",
+    );
+    expect(ended()).toBe(true);
+  });
+});
+
 const payloads = [
   {
     name: "direct",

@@ -126,7 +126,7 @@ export class HMRModule {
     try {
       const mod = loadModuleSync(id, true, this);
       return mod.esm ? (mod.cjs ??= toCommonJS(mod.exports)) : mod.cjs.exports;
-    } catch (e: any) {
+    } catch (e) {
       // A new Error rather than a rewrite of `e`: enclosing require() calls and recorded failures rethrow it as-is.
       if (e instanceof AsyncImportError) {
         throw new Error(

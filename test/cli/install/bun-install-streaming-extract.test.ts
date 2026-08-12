@@ -713,3 +713,118 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
   expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
 });
+
+// -------------------------------------------------------------------
+// Buffered extract: a tarball whose ustar header declares a size far
+// larger than the body that follows must fail to extract without
+// leaving its temporary extraction directory behind, and without
+// allocating the declared size on disk. The declared size is
+// attacker-controlled and unbounded relative to the input.
+// -------------------------------------------------------------------
+describe("buffered extract: malformed tarball cleanup", () => {
+  function treeSize(root: string): number {
+    let total = 0;
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      const full = join(root, entry.name);
+      if (entry.isDirectory()) total += treeSize(full);
+      else if (entry.isFile()) total += statSync(full).size;
+    }
+    return total;
+  }
+
+  function leakedExtractionDirs(root: string): string[] {
+    // Temp extraction dirs are `.<hex>-<n>.<name>` directly under $TMPDIR.
+    return readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name.startsWith("."))
+      .map(d => d.name);
+  }
+
+  async function runInstallIsolated(root: string) {
+    const tmp = join(root, "bun-tmp");
+    const cache = join(root, "bun-cache");
+    mkdirSync(tmp, { recursive: true });
+    mkdirSync(cache, { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: root,
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        TEMP: tmp,
+        TMP: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, tmp, cache };
+  }
+
+  test("tar header size far exceeding body fails cleanly without leaking temp disk", async () => {
+    // A valid package.json entry followed by a file entry whose header
+    // claims 16 MiB but whose body is only 100 bytes; libarchive reports
+    // a truncated archive once it runs out of input. 16 MiB is well above
+    // the 1 MB preallocation threshold, so the unfixed build fallocated
+    // the full declared size on Linux before failing.
+    const DECLARED = 16 * 1024 * 1024;
+    const pj = Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }));
+    const body = Buffer.alloc(100, 0x78);
+    const tar = Buffer.concat([
+      tarHeader("package/package.json", pj.length, "0"),
+      pj,
+      pad512(pj.length),
+      tarHeader("package/big.bin", DECLARED, "0"),
+      body,
+      pad512(body.length),
+      Buffer.alloc(1024, 0),
+    ]);
+    const tgz = gzipSync(tar);
+    // The tarball itself is tiny; the damage is in the declared size.
+    expect(tgz.length).toBeLessThan(1024);
+
+    using dir = tempDir("tar-size-lie", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "file:./pkg.tgz" },
+      }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), tgz);
+
+    // Run twice to confirm the leak does not accumulate per attempt.
+    let lastStderr = "";
+    for (let i = 0; i < 2; i++) {
+      const { stderr, exitCode, tmp, cache } = await runInstallIsolated(String(dir));
+      lastStderr = stderr;
+      expect(stderr).toContain("extracting tarball");
+      expect(exitCode).not.toBe(0);
+      // The failed extraction's temp directory must be gone.
+      expect({ leaked: leakedExtractionDirs(tmp) }).toEqual({ leaked: [] });
+      // Nothing close to the declared size was left anywhere under the
+      // test-isolated tmp or cache directories.
+      expect(treeSize(tmp) + treeSize(cache)).toBeLessThan(1024 * 1024);
+    }
+    expect(existsSync(join(String(dir), "node_modules", "pkg"))).toBe(false);
+    expect(lastStderr).not.toBe("");
+  });
+
+  test("a tarball that fails to decompress does not leak its temp directory", async () => {
+    // Not a gzip stream at all: the buffered extractor creates its temp
+    // directory, then libarchive fails to open the input as an archive.
+    using dir = tempDir("tar-bad-gzip", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "file:./pkg.tgz" },
+      }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), Buffer.from("this is not a gzip stream"));
+
+    const { stderr, exitCode, tmp } = await runInstallIsolated(String(dir));
+    expect(stderr).toContain("error:");
+    expect({ leaked: leakedExtractionDirs(tmp) }).toEqual({ leaked: [] });
+    expect(exitCode).not.toBe(0);
+  });
+});

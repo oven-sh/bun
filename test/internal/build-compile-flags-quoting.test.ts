@@ -26,6 +26,7 @@ import { cc, cxx, pch, registerCompileRules, registerDirStamps } from "../../scr
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { computeDepFlags, computeFlags } from "../../scripts/build/flags.ts";
 import { Ninja, type CompileCommand } from "../../scripts/build/ninja.ts";
+import { quote, quoteArgs } from "../../scripts/build/shell.ts";
 import { registerDepRules, resolveDep, type Dependency } from "../../scripts/build/source.ts";
 
 /** A fully-populated fake toolchain; nothing in these tests spawns any of it. */
@@ -278,16 +279,47 @@ describe("compile flags are bare argv in compile_commands.json and quoted only i
     expect(cflags).toContain(` '-DSYNTH_NAME="a b"' -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
   });
 
-  test("windows hosts use the doubled-quote form the tool's own argv parser reads", async () => {
+  test("windows hosts use Win32 argv quoting, which every tool's argv parser reads the same way", async () => {
     const { cfg, ninja, compileCommands } = await emit("windows");
     const cxxflags = edgeVar(ninja, entryFor(compileCommands, "BunProcess.cpp").output, "cxxflags");
     const cflags = edgeVar(ninja, entryFor(compileCommands, "synth.c").output, "cflags");
 
     expect(cxxflags).toContain(` "-I${cfg.buildDir}" `);
-    expect(cxxflags).toContain(` "-DREPORTED_NODEJS_VERSION=""1.2.3""" -DREPORTED_NODEJS_ABI_VERSION=`);
-    expect(cflags).toContain(` "-DSYNTH_NAME=""a b""" -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
-    expect(edgeVar(ninja, join("deps", "synth", "codegen-tool.exe"), "flags")).toBe(`-w "-DGEN_BANNER=""gen tool"""`);
-    // Only the build.ninja side changes with the host.
+    expect(cxxflags).toContain(` "-DREPORTED_NODEJS_VERSION=\\"1.2.3\\"" -DREPORTED_NODEJS_ABI_VERSION=`);
+    expect(cflags).toContain(` "-DSYNTH_NAME=\\"a b\\"" -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
+    expect(edgeVar(ninja, join("deps", "synth", "codegen-tool.exe"), "flags")).toBe(`-w "-DGEN_BANNER=\\"gen tool\\""`);
+    // Only the build.ninja side changes with the host; the argv is the same.
     expect(compileCommands.flatMap(e => e.arguments).filter(a => SHELL_SYNTAX.test(a))).toEqual([]);
+    expect(entryFlags(entryFor(compileCommands, "synth.c"))).toContain('-DSYNTH_NAME="a b"');
+  });
+});
+
+describe("shell.ts quote()", () => {
+  test("passes plain flags and paths through unquoted on both hosts", () => {
+    for (const arg of ["-O2", "-DFOO=1", "-IC:\\bun\\src", "/clang:-march=armv8-a+crc", "--sysroot=/opt/x"]) {
+      expect(quote(arg, false)).toBe(arg);
+      expect(quote(arg, true)).toBe(arg);
+    }
+  });
+
+  test("posix: single-quotes, escaping embedded single quotes", () => {
+    expect(quoteArgs(['-DX="a b"', "-I/tmp/build dir", "it's", ""], false)).toBe(
+      `'-DX="a b"' '-I/tmp/build dir' 'it'\\''s' ''`,
+    );
+  });
+
+  test('windows: double-quotes, \\" for quotes, and doubles only the backslashes that precede a quote', () => {
+    expect(
+      ['-DX="a b"', '-DEMPTY=""', "-IC:\\build dir\\inc", "-IC:\\build dir\\", '-DP="C:\\x y\\"', ""].map(a =>
+        quote(a, true),
+      ),
+    ).toEqual([
+      `"-DX=\\"a b\\""`,
+      `"-DEMPTY=\\"\\""`,
+      `"-IC:\\build dir\\inc"`,
+      `"-IC:\\build dir\\\\"`,
+      `"-DP=\\"C:\\x y\\\\\\""`,
+      `""`,
+    ]);
   });
 });

@@ -780,7 +780,9 @@ use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. The owner is recovered from the embedded `io_poll` field.
+/// `bun_io`. The owner is recovered from the embedded `io_poll` field and
+/// stays a raw pointer: the handlers hand it to the work pool, which may be
+/// running it before they return, so no reference to it may be live here.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
@@ -788,14 +790,12 @@ use crate::webcore::blob::write_file::WriteFile;
 unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
         bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
+            // SAFETY: per fn contract; the owner is not touched after the call.
+            unsafe { ReadFile::on_ready(bun_core::from_field_ptr!(ReadFile, io_poll, poll)) };
         }
         bun_io::PollableTag::WriteFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
+            // SAFETY: as above.
+            unsafe { WriteFile::on_ready(bun_core::from_field_ptr!(WriteFile, io_poll, poll)) };
         }
         bun_io::PollableTag::Empty => {
             // Waker / unblock-only — caller already filtered this out.
@@ -805,7 +805,8 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
 }
 
 /// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
-/// `bun_io`.
+/// `bun_io`. Same hand-off as [`__bun_io_pollable_on_ready`]: the owner stays
+/// a raw pointer.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
@@ -817,16 +818,16 @@ unsafe fn __bun_io_pollable_on_io_error(
 ) {
     match tag {
         bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_io_error(err);
+            // SAFETY: per fn contract; the owner is not touched after the call.
+            unsafe {
+                ReadFile::on_io_error(bun_core::from_field_ptr!(ReadFile, io_poll, poll), err)
+            };
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
             let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            // WriteFile::on_io_error already takes `*mut ()` (it
-            // self-recovers via the io_request path elsewhere); reuse that
-            // shape rather than reborrowing `&mut`.
+            // `WriteFile::on_io_error` is shaped as the io action's error hook
+            // (`fn(*mut (), ..)`), so it takes the erased pointer.
             WriteFile::on_io_error(this.cast(), err);
         }
         bun_io::PollableTag::Empty => {
@@ -993,8 +994,9 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             })
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c)
-                .timer_callback())
+            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| {
+                StatWatcherScheduler::timer_callback(c)
+            })
         }
         EventLoopTimerTag::UpgradedDuplex => {
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)

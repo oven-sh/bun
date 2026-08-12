@@ -179,26 +179,51 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_ready(&mut self) {
+    /// io thread: the fd the write is waiting on became writable. Hands the
+    /// write back to the pool, which may be running it again before this
+    /// returns, so this takes the pointer the io thread holds rather than a
+    /// `&mut self` that would stay live (and protected) across the hand-off.
+    ///
+    /// # Safety
+    /// `this` is the live `WriteFile` whose `io_poll` fired; nothing on this
+    /// thread touches it after the call.
+    pub(crate) unsafe fn on_ready(this: *mut Self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut self.task);
+        // SAFETY: fn contract. The write of `task` ends at its statement, so no
+        // reference into the write is live when the pool gets it, and the task
+        // pointer is projected from `this` itself, as `from_task_ptr` requires.
+        unsafe {
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
+    /// io thread: registering or polling the fd failed. Records the error and
+    /// hands the write back to the pool to finish; same hand-off as
+    /// [`on_ready`](Self::on_ready). Shaped as `io::FileAction::on_error`
+    /// (`fn(*mut (), &sys::Error)`), which is how `on_request_writable`
+    /// registers it; the poll error dispatch calls it with the same pointer.
     pub(crate) fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
-        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        this.system_error = Some(err.to_system_error().into());
-        this.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut this.task);
+        let this = this.cast::<WriteFile>();
+        // SAFETY: `this` is the `*mut WriteFile` registered as the action's ctx
+        // in `on_request_writable` (or recovered from its `io_poll` by the
+        // dispatch), live until the pool task scheduled here finishes, and the
+        // io thread does not touch it after this call. See `on_ready` for why
+        // the accesses are statement-scoped and the task is projected from
+        // `this`.
+        unsafe {
+            (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            (*this).system_error = Some(err.to_system_error().into());
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
     #[cfg(not(windows))]
@@ -473,8 +498,9 @@ impl WriteFile {
     }
 
     fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_writable`/`init`; recover parent.
+        // SAFETY: only reached via `WorkPoolTask::callback` with the `task` field
+        // that `on_ready` / `on_io_error` projected from the live `WriteFile`'s
+        // own pointer; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]

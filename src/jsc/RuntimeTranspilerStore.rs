@@ -371,8 +371,8 @@ impl RuntimeTranspilerStore {
                 <&'static str>::from(unsafe { (*job).loader })
             );
         }
-        // SAFETY: job fully initialized above
-        unsafe { (*job).schedule() };
+        // SAFETY: job fully initialized above and not yet handed to anyone.
+        unsafe { TranspilerJob::schedule(job) };
         promise.cast::<c_void>()
     }
 }
@@ -589,15 +589,29 @@ impl TranspilerJob {
         )
     }
 
-    fn schedule(&mut self) {
-        // Note: the KeepAlive takes an
-        // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
-        // `bun_runtime::init`).
-        self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-        // The job is a slot inside this VM: counted, so teardown waits for it
-        // (see `VmHandle::embedded_work_scheduled`).
-        self.loop_handle.embedded_work_scheduled();
-        WorkPool::schedule(&raw mut self.work_task);
+    /// JS thread: hand a freshly initialised job to the pool, which may be
+    /// running it before this returns. Takes the slot pointer `transpile`
+    /// holds rather than a `&mut self` that would stay live (and protected)
+    /// across the hand-off.
+    ///
+    /// # Safety
+    /// `this` is a fully initialised job in this VM's store that nothing else
+    /// is using yet.
+    unsafe fn schedule(this: *mut Self) {
+        // SAFETY: fn contract. Both accesses end at their statement, so no
+        // reference into the slot is live once the pool has the task, and the
+        // task pointer is projected from `this` itself, as `from_field_ptr!`
+        // in `run_from_worker_thread` requires.
+        unsafe {
+            // Note: the KeepAlive takes an
+            // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
+            // `bun_runtime::init`).
+            (*this).poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            // The job is a slot inside this VM: counted, so teardown waits for it
+            // (see `VmHandle::embedded_work_scheduled`).
+            (*this).loop_handle.embedded_work_scheduled();
+            WorkPool::schedule(&raw mut (*this).work_task);
+        }
     }
 
     unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {

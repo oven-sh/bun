@@ -3,6 +3,7 @@
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
 const { STATUS_CODES } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
+const { ConnResetException } = require("internal/shared");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
@@ -401,6 +402,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
+      socket.removeListener("close", onHttp1SocketClose);
       connections.delete(socket);
       try {
         parser.close();
@@ -428,7 +430,6 @@ function connectionListenerHTTP1(server, socket, options) {
       return;
     }
     if (!server.httpAllowHalfOpen) {
-      if (req && !req.complete) req.destroy();
       if (socket.writable) socket.end();
       return;
     }
@@ -439,15 +440,26 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
-  socket.once("end", onHttp1SocketEnd);
-  socket.once("close", () => {
+  // Node's socketOnClose: free the parser, then abortIncoming(). The request
+  // node would still have in state.incoming is the one whose response is still
+  // assigned to the socket (a finished response detached itself on 'finish');
+  // destroying it emits 'aborted' and 'close', and 'error' (ECONNRESET) when
+  // something listens for it. Registered before any response's assignSocket()
+  // 'close' listener so req 'aborted' precedes res 'close', as in node.
+  function onHttp1SocketClose() {
     connections.delete(socket);
     try {
       parser.close();
     } catch {}
-  });
+    const inflightReq = socket._httpMessage?.req;
+    if (inflightReq && !inflightReq.destroyed) {
+      inflightReq.destroy(new ConnResetException("aborted"));
+    }
+  }
+  socket.on("data", onHttp1SocketData);
+  socket.on("error", onHttp1SocketErrorListener);
+  socket.once("end", onHttp1SocketEnd);
+  socket.once("close", onHttp1SocketClose);
 }
 
 function closeIdleHttp1Connections(server) {

@@ -4304,6 +4304,47 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback aborts the in-flight request when the HTTP/1.1 client goes away", async () => {
+  // Node's socketOnClose -> abortIncoming() applies to allowHTTP1 connections
+  // too: a request whose body was still arriving when the client disconnected
+  // emits 'aborted', then (after the response's 'close') 'error' ECONNRESET
+  // and 'close', and ends up destroyed. Event order is Node v26's.
+  const events = [];
+  const dispatched = Promise.withResolvers();
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    req.on("aborted", () => events.push("req-aborted"));
+    req.on("error", err => events.push("req-error:" + err.code));
+    req.on("close", () => events.push("req-close"));
+    res.on("close", () => events.push("res-close"));
+    const connectionClosed = new Promise(resolve => req.socket.on("close", resolve));
+    dispatched.resolve({ req, connectionClosed });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc"),
+  );
+  socket.on("error", dispatched.reject);
+  try {
+    const { req, connectionClosed } = await dispatched.promise;
+    expect(req.httpVersion).toBe("1.1");
+    socket.destroy();
+    await connectionClosed;
+    // The request's 'error'/'close' are process.nextTick hops behind the
+    // connection's 'close'; after a macrotask the event list is final.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual(["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"]);
+    expect({ destroyed: req.destroyed, aborted: req.aborted, complete: req.complete }).toEqual({
+      destroyed: true,
+      aborted: true,
+      complete: false,
+    });
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

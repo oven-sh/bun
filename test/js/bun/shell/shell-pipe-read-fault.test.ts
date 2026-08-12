@@ -2,8 +2,14 @@
 // on the eager read, or epoll_ctl() registering the pipe) so the reader error
 // surfaces synchronously from inside the spawn call. The command must finish
 // with the syscall errno as its exit code, not tear state down under the spawn.
+//
+// The last group does the same to the builtin `cat`'s own reader (a FIFO it
+// opened itself): the re-registration after the first chunk fails, so the read
+// error lands while that chunk is still queued on stdout.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -34,6 +40,12 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            recv guarantees the streaming inner loop's mid-read
 //                            flush (`head_start` past the half-buffer cutoff)
 //                            fires in a single poll wake.
+//   SHELL_FAIL_EPOLL_REARM_INO=N  the first epoll_ctl ADD/MOD on each fd open
+//                            on the FIFO with inode N succeeds; every later one
+//                            (the re-arm after a chunk was read) fails with
+//                            ENOMEM. Keyed by inode so only the named FIFO the
+//                            fixture hands to `cat` is affected, not the
+//                            capture pipes (anonymous pipes are FIFOs too).
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -65,9 +77,12 @@ static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
 static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
 static int recv_bulk = -1;       /* 0 = off, N >= 1 = number of fabricated full-buffer recvs */
+static unsigned long long rearm_ino; /* 0 = off, otherwise the inode of the FIFO whose re-arms fail */
+static int rearm_init;
 static unsigned char recv_count[MAX_FD];
 static unsigned char epoll_count[MAX_FD];
 static unsigned char bulk_count[MAX_FD];
+static unsigned char rearm_count[MAX_FD];
 
 static void init_modes(void) {
   if (fail_recv < 0) fail_recv = getenv("SHELL_FAIL_RECV") != NULL;
@@ -83,6 +98,16 @@ static void init_modes(void) {
     const char *s = getenv("SHELL_RECV_BULK");
     recv_bulk = s ? atoi(s) : 0;
   }
+  if (!rearm_init) {
+    const char *s = getenv("SHELL_FAIL_EPOLL_REARM_INO");
+    rearm_ino = s ? strtoull(s, NULL, 10) : 0;
+    rearm_init = 1;
+  }
+}
+
+static int is_rearm_fifo(int fd) {
+  struct stat st;
+  return rearm_ino != 0 && fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode) && st.st_ino == rearm_ino;
 }
 
 static int is_unix_sock(int fd) {
@@ -165,6 +190,12 @@ long syscall(long number, ...) {
           return -1;
         }
       }
+      if (target >= 0 && target < MAX_FD && is_rearm_fifo(target)) {
+        if (rearm_count[target]++ >= 1) {
+          errno = ENOMEM;
+          return -1;
+        }
+      }
     }
   }
   return real_syscall(number, a, b, c, d, e, f);
@@ -177,6 +208,7 @@ int close(int fd) {
     recv_count[fd] = 0;
     epoll_count[fd] = 0;
     bulk_count[fd] = 0;
+    rearm_count[fd] = 0;
   }
   return real_close(fd);
 }
@@ -228,6 +260,24 @@ const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.quiet().noth
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+// For SHELL_FAIL_EPOLL_REARM_INO: the builtin cat reads CAT_FIFO, either as a
+// file argument or through a stdin redirect (the two states of its state
+// machine). The fixture keeps its own read/write descriptor on the FIFO so the
+// reader never sees EOF: cat's first poll wake reads the payload and queues it
+// on stdout (the capture pipe, so the write waits for the event loop), and the
+// re-arm that follows is the call the shim fails. cat has to write the payload
+// out anyway and then finish with the errno. It used to cancel the queued
+// chunk and suspend forever instead.
+const CAT_FIFO_FIXTURE = /* js */ `
+import { $ } from "bun";
+import { constants, openSync, writeSync } from "node:fs";
+const fifo = process.env.CAT_FIFO;
+const keepWriterOpen = openSync(fifo, constants.O_RDWR);
+writeSync(keepWriterOpen, "queued before the fault\\n");
+const r = process.env.CAT_FIFO_VIA === "redirect" ? await $\`cat < \${fifo}\`.nothrow() : await $\`cat \${fifo}\`.nothrow();
+console.log(JSON.stringify({ exitCode: r.exitCode, stdout: r.stdout.toString() }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -239,6 +289,7 @@ beforeAll(async () => {
     "both-pipes.js": BOTH_PIPES_FIXTURE,
     "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
     "poll-chunk.js": POLL_CHUNK_FIXTURE,
+    "cat-fifo.js": CAT_FIFO_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -268,12 +319,13 @@ const MODES = [
   "SHELL_RECV_EAGAIN_FIRST",
 ] as const;
 // Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
-const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK"] as const;
+const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK", "SHELL_FAIL_EPOLL_REARM_INO"] as const;
 
 async function expectShellFault(
   script: string,
   modes: (typeof MODES)[number][],
-  extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
+  extraEnv: Record<string, string> = {},
+  expected: Record<string, unknown> = { exitCode: ENOMEM },
 ) {
   const existing = bunEnv.LD_PRELOAD;
   const env: Record<string, string | undefined> = {
@@ -306,7 +358,7 @@ async function expectShellFault(
   }
   // One combined assertion so a crash surfaces stderr and the exit code in the diff.
   expect({ parsed, stderr, exitCode }).toEqual({
-    parsed: { exitCode: ENOMEM },
+    parsed: expected,
     stderr: expect.any(String),
     exitCode: 0,
   });
@@ -386,5 +438,39 @@ test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
       SHELL_FAIL_EPOLL_FROM: "3",
       SHELL_RECV_BULK: "1",
     });
+  },
+);
+
+// Builtin cat (`Cat::on_io_reader_done`), both of its states. The read error
+// arrives with the chunk it just read still queued on stdout; cat must let
+// that chunk drain and then exit with the errno. On POSIX the builtin is only
+// used with BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS set.
+async function expectCatReadFaultAfterChunk(via: "arg" | "redirect") {
+  const fifo = join(String(dir), `cat-${via}.fifo`);
+  mkfifo(fifo);
+  await expectShellFault(
+    "cat-fifo.js",
+    [],
+    {
+      BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+      SHELL_FAIL_EPOLL_REARM_INO: String(statSync(fifo).ino),
+      CAT_FIFO: fifo,
+      CAT_FIFO_VIA: via,
+    },
+    { exitCode: ENOMEM, stdout: "queued before the fault\n" },
+  );
+}
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "builtin cat finishes when a file argument fails to read after a chunk was queued",
+  async () => {
+    await expectCatReadFaultAfterChunk("arg");
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "builtin cat finishes when redirected stdin fails to read after a chunk was queued",
+  async () => {
+    await expectCatReadFaultAfterChunk("redirect");
   },
 );

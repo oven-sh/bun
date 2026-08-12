@@ -455,7 +455,9 @@ const requestChunkExtensionsTooLargeResponse = Buffer.from(
 function socketOnError(this: any, err) {
   // Ignore further errors
   this.removeListener("error", socketOnError);
-  this.on("error", noopOnError);
+  if (this.listenerCount("error", noopOnError) === 0) {
+    this.on("error", noopOnError);
+  }
 
   const server = this.server;
   if (!server || !server.emit("clientError", err, this)) {

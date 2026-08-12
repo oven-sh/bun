@@ -4334,6 +4334,7 @@ function connectionPairs<const Name extends string>(server: Server, names: reado
       for (const name of emitted) server.emit("connection", pairs[name][1]);
     },
     client: (name: Name) => pairs[name][0],
+    serverSide: (name: Name) => pairs[name][1],
     nameOf: (socket: unknown) => names.find(name => pairs[name][1] === socket),
     destroyed: () => Object.fromEntries(names.map(name => [name, pairs[name][1].destroyed])),
     // duplexPair does not propagate destroy() to the other half, so watch the server half. Not
@@ -4503,11 +4504,11 @@ it("a request timeout does not append a 408 to a response that is already on the
 // Emitted connections use Node's socketOnError, which stops listening to the socket's errors
 // before reporting one, so the error it (or the 'clientError' listener) destroys the socket with
 // is not reported a second time. Like in Node, an error from execute() carries the bytes that
-// caused it and one the parser detects at EOF does not.
-it("a parse error on an emitted connection is reported to 'clientError' exactly once", async () => {
+// caused it; one the parser detects at EOF, or one the socket itself emits, does not.
+it("an error on an emitted connection is reported to 'clientError' exactly once", async () => {
   const server = createServer(() => {});
   await listen(server);
-  const connections = connectionPairs(server, ["garbage", "truncated"]);
+  const connections = connectionPairs(server, ["garbage", "truncated", "reset"]);
   const reports: { name: string | undefined; code: string; message: string; rawPacket: string | undefined }[] = [];
   server.on("clientError", (err: any, socket: any) => {
     reports.push({
@@ -4519,10 +4520,11 @@ it("a parse error on an emitted connection is reported to 'clientError' exactly 
     socket.destroy(err);
   });
   try {
-    connections.emit("garbage", "truncated");
-    const closed = connections.closed("garbage", "truncated");
+    connections.emit("garbage", "truncated", "reset");
+    const closed = connections.closed("garbage", "truncated", "reset");
     connections.client("garbage").write("GARBAGE\r\n\r\n");
     connections.client("truncated").end("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    connections.serverSide("reset").destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
     await closed;
     reports.sort((a, b) => a.name!.localeCompare(b.name!));
     expect({ reports, received: connections.received }).toEqual({
@@ -4533,10 +4535,69 @@ it("a parse error on an emitted connection is reported to 'clientError' exactly 
           message: "Parse Error: Invalid method encountered",
           rawPacket: "GARBAGE\r\n\r\n",
         },
+        { name: "reset", code: "ECONNRESET", message: "read ECONNRESET", rawPacket: undefined },
         { name: "truncated", code: "HPE_INVALID_EOF_STATE", message: "Parse Error", rawPacket: undefined },
       ],
-      received: { garbage: "", truncated: "" },
+      received: { garbage: "", truncated: "", reset: "" },
     });
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
+it("without a 'clientError' listener, a parse error on an emitted connection gets one 400 and reaches the socket's own 'error' listeners intact", async () => {
+  const server = createServer(() => {});
+  await listen(server);
+  const connections = connectionPairs(server, ["garbage"]);
+  // A 'clientError' listener would turn the default handling off, so count the emits at the source.
+  let clientErrorEmits = 0;
+  const emit = server.emit;
+  server.emit = function (event: string | symbol, ...args: any[]) {
+    if (event === "clientError") clientErrorEmits++;
+    return emit.call(this, event, ...args);
+  };
+  const socketErrors: { code: string; rawPacket: string }[] = [];
+  // Runs after the server's own 'connection' listener has set the connection up.
+  server.on("connection", socket => {
+    socket.on("error", (err: any) => socketErrors.push({ code: err.code, rawPacket: String(err.rawPacket) }));
+  });
+  try {
+    connections.emit("garbage");
+    const closed = connections.closed("garbage");
+    connections.client("garbage").write("GARBAGE\r\n\r\n");
+    await closed;
+    expect({ clientErrorEmits, received: connections.received, socketErrors }).toEqual({
+      clientErrorEmits: 1,
+      received: { garbage: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n" },
+      socketErrors: [{ code: "HPE_INVALID_METHOD", rawPacket: "GARBAGE\r\n\r\n" }],
+    });
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
+// Node's test-http-socket-error-listeners over an emitted connection: a listener that leaves the
+// connection open gets one 'clientError' per bad chunk, and the stand-in 'error' listener
+// socketOnError installs is installed once, not once per error.
+it("a 'clientError' listener that keeps an emitted connection open does not pile up 'error' listeners", async () => {
+  const server = createServer(() => {});
+  await listen(server);
+  const connections = connectionPairs(server, ["chunks"]);
+  const twelfthError = Promise.withResolvers<{ errors: number; errorListeners: number }>();
+  let errors = 0;
+  server.on("clientError", (_err, socket) => {
+    if (++errors === 12) {
+      twelfthError.resolve({ errors, errorListeners: socket.listenerCount("error") });
+    } else {
+      connections.client("chunks").write("*");
+    }
+  });
+  try {
+    connections.emit("chunks");
+    connections.client("chunks").write("*");
+    expect(await twelfthError.promise).toEqual({ errors: 12, errorListeners: 1 });
   } finally {
     connections.destroyAll();
     server.close();

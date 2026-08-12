@@ -4,6 +4,10 @@ import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from
 import Module, { _nodeModulePaths, builtinModules, createRequire, findPackageJSON, isBuiltin, wrap } from "module";
 import path from "path";
 import { pathToFileURL } from "url";
+// The fixtures Node.js uses for findPackageJSON in test/parallel/test-find-package-json.js:
+// each sub-package's index exports findPackageJSON("..", <its own location>).
+import nestedCjsPackageJSON from "../test/fixtures/packages/nested/sub-pkg-cjs/index.js";
+import nestedEsmPackageJSON from "../test/fixtures/packages/nested/sub-pkg-esm/index.js";
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
@@ -235,16 +239,9 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
       expect(() => findPackageJSON("root", base)).toThrow(notFound(`Cannot find package 'root' imported from ${base}`));
     });
 
-    // The fixtures Node.js uses for this in test/parallel/test-find-package-json.js:
-    // each sub-package's index exports findPackageJSON("..", <its own location>).
-    test("crawls up from a module's own location (Node.js fixtures)", async () => {
-      const nested = path.join(import.meta.dir, "..", "test", "fixtures", "packages", "nested");
-      const cjs = require(path.join(nested, "sub-pkg-cjs", "index.js"));
-      const { default: esm } = await import(path.join(nested, "sub-pkg-esm", "index.js"));
-      expect({ cjs, esm }).toEqual({
-        cjs: path.join(nested, "package.json"),
-        esm: path.join(nested, "package.json"),
-      });
+    test("crawls up from a module's own location (Node.js fixtures)", () => {
+      const nested = path.join(import.meta.dir, "..", "test", "fixtures", "packages", "nested", "package.json");
+      expect({ cjs: nestedCjsPackageJSON, esm: nestedEsmPackageJSON }).toEqual({ cjs: nested, esm: nested });
     });
 
     test("validates its arguments like Node.js", () => {

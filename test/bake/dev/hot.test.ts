@@ -612,6 +612,85 @@ devTest("hot update frames are not delivered to application websocket topics", {
   },
 });
 
+devTest("re-subscribing the hmr socket with fewer topics stops delivery of the dropped topics", {
+  files: {
+    // Two routes, so the SetUrl probe below always has a different route to switch to.
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"], body: "<h1>A</h1>" }),
+    "b.html": emptyHtmlFile({ body: "<h1>B</h1>" }),
+    "a.ts": `
+      console.log(0);
+    `,
+  },
+  async test(dev) {
+    // Bundle the route once so that editing a.ts triggers rebuilds. The
+    // harness's own hmr socket stays subscribed to the watch synchronization
+    // topic ('r') throughout, so every rebuild below publishes to that topic;
+    // whether the second socket receives it depends only on its subscription.
+    await dev.fetch("/a").expect.toInclude("<h1>A</h1>");
+
+    const received: string[] = [];
+    const probeReplies: PromiseWithResolvers<void>[] = [];
+    const opened = Promise.withResolvers<void>();
+    const ws = new WebSocket(dev.baseUrl.replace("http", "ws") + "/_bun/hmr");
+    ws.binaryType = "arraybuffer";
+    try {
+      let failure: Error | undefined;
+      const fail = (why: string) => {
+        failure ??= new Error(why);
+        opened.reject(failure);
+        for (const reply of probeReplies.splice(0)) reply.reject(failure);
+      };
+      ws.onerror = () => fail("hmr websocket errored");
+      ws.onclose = () => fail("hmr websocket closed");
+      ws.onmessage = event => {
+        const id = String.fromCharCode(new Uint8Array(event.data as ArrayBuffer)[0]);
+        if (id === "V") {
+          opened.resolve();
+        } else if (id === "n") {
+          probeReplies.shift()!.resolve();
+        } else {
+          received.push(id);
+        }
+      };
+      await opened.promise;
+
+      // The dev server answers SetUrl ('n' + route) directly on this socket,
+      // after handling every frame sent before it and after any frame it had
+      // already published to this socket. It only answers when the route
+      // changes, hence the alternation.
+      let probeRoute = "/a";
+      async function roundTrip() {
+        if (failure) throw failure;
+        probeRoute = probeRoute === "/a" ? "/b" : "/a";
+        const reply = Promise.withResolvers<void>();
+        probeReplies.push(reply);
+        ws.send("n" + probeRoute);
+        await reply.promise;
+      }
+
+      let edit = 0;
+      /** Subscribes to `topics`, rebuilds, and returns the message ids this socket was sent. */
+      async function messagesDuringRebuild(topics: string) {
+        ws.send("s" + topics);
+        await roundTrip();
+        received.length = 0;
+        await dev.write("a.ts", `console.log(${++edit});`);
+        await roundTrip();
+        return [...new Set(received)].sort();
+      }
+
+      // 'h' delivers hot updates ('u'), 'r' delivers watch synchronization ('r').
+      expect(await messagesDuringRebuild("hr")).toEqual(["r", "u"]);
+      expect(await messagesDuringRebuild("r")).toEqual(["r"]);
+      expect(await messagesDuringRebuild("")).toEqual([]);
+      expect(await messagesDuringRebuild("hr")).toEqual(["r", "u"]);
+    } finally {
+      ws.onclose = null;
+      ws.close();
+    }
+  },
+});
+
 devTest("dev.write resolves only after the new module body has run", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

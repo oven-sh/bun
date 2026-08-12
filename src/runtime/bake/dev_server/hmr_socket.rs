@@ -146,10 +146,7 @@ impl HmrSocket {
                                 _ => {}
                             }
                         }
-                    } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // Note: this `else if` condition is identical to the `if`
-                        // above and is therefore unreachable; likely a bug
-                        // (intended: `!new && old` → unsubscribe).
+                    } else if !new_bits.contains(bit) && self.subscriptions.contains(bit) {
                         let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }

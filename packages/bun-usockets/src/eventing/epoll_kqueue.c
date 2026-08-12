@@ -712,6 +712,12 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         do {
             rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
         } while (IS_EINTR(rc));
+        /* A paused socket that hung up was taken out of epoll by the dispatcher; put it back. */
+        if (rc == -1 && errno == ENOENT) {
+            do {
+                rc = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
+            } while (IS_EINTR(rc));
+        }
 #else
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif

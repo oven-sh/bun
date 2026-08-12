@@ -834,7 +834,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * are exempt (their peer's FIN must still close them promptly below),
              * as are error-flagged events. */
             if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
-                !us_socket_is_closed(s)) {
+                !us_socket_is_closed(s) && !(hangup && s->read_eof)) {
+#ifdef LIBUS_USE_EPOLL
+                /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail
+                 * stays in the kernel and us_poll_change re-adds the fd on resume()/shutdown(). */
+                if (hangup) us_poll_stop(&s->p, loop);
+#endif
                 eof = 0;
             }
             if(eof && s) {

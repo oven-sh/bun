@@ -305,6 +305,11 @@ export const globalFlags: Flag[] = [
     desc: "Full debug info, zstd-compressed",
   },
   {
+    flag: ["-g", "-gz=zstd"],
+    when: c => c.unix && c.release && !c.lto,
+    desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
+  },
+  {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
     // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
     // in, again. Homing (clang's default on Linux) emits a type once, in the
@@ -312,17 +317,17 @@ export const globalFlags: Flag[] = [
     // bun's own objects and JSC's from the WebKit prebuilt, which carries its
     // own DWARF. Same types and variables in the debugger; BunObject.cpp
     // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
-    // same file is 5.25s), object 9.0 MB -> 5.2 MB. Debug only: release
-    // builds are line tables (-g1 below), which carry no type definitions
-    // either way.
+    // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
+    // builds: line tables (-g1 below) carry no type definitions either way.
     flag: "-fno-standalone-debug",
-    when: c => c.unix && c.debug,
+    when: c => c.unix && (c.debug || !c.lto),
     desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
   },
   {
+    // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build; the -lto WebKit prebuilts make the same trade.
     flag: "-g1",
-    when: c => c.unix && c.release,
-    desc: "Minimal debug info for backtraces",
+    when: c => c.unix && c.release && c.lto,
+    desc: "Line tables only for LTO builds (backtraces and symbolication; no types)",
   },
 
   // ─── ASAN (global — passed to deps so they link against the same runtime) ───

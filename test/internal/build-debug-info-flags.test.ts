@@ -80,42 +80,46 @@ function allCompileFlagLists(cfg: Config): string[][] {
 }
 
 describe("debug-info flag order", () => {
-  test("release: -g1 is the last -g flag, after -glldb, for bun and for deps", () => {
+  test("release + LTO: -g1 is the last -g flag, after -glldb, for bun and for deps", () => {
     using dir = tempDir("build-debug-info", {});
-    const cfg = linuxConfig({ buildType: "Release" }, String(dir));
+    const cfg = linuxConfig({ buildType: "Release", lto: true }, String(dir));
     for (const flags of allCompileFlagLists(cfg)) {
       expect(levelFlags(flags)).toEqual(["-glldb", "-g1"]);
+      // Line tables carry no types, so there is nothing to home.
+      expect(flags).not.toContain("-fno-standalone-debug");
     }
   });
 
-  test("debug: -g3 is the last -g flag, after -glldb, for bun and for deps", () => {
+  test("release without LTO: full, homed debug info", () => {
+    using dir = tempDir("build-debug-info", {});
+    for (const partial of [{ buildType: "Release" }, { buildType: "Release", asan: true }] as const) {
+      const cfg = linuxConfig(partial, String(dir));
+      expect(cfg.lto).toBe(false);
+      for (const flags of allCompileFlagLists(cfg)) {
+        expect(levelFlags(flags)).toEqual(["-glldb", "-g"]);
+        expect(flags.indexOf("-gz=zstd")).toBe(flags.indexOf("-g") + 1);
+        expect(flags).toContain("-fno-standalone-debug");
+      }
+    }
+  });
+
+  test("debug: -g3 is the last -g flag, after -glldb, homed, for bun and for deps", () => {
     using dir = tempDir("build-debug-info", {});
     const cfg = linuxConfig({ buildType: "Debug" }, String(dir));
     for (const flags of allCompileFlagLists(cfg)) {
       expect(levelFlags(flags)).toEqual(["-glldb", "-g3"]);
       // The compression flag stays attached to the level flag it belongs to.
       expect(flags.indexOf("-gz=zstd")).toBe(flags.indexOf("-g3") + 1);
-    }
-  });
-
-  test("debug homes type definitions instead of the standalone kind -glldb implies; release has nothing to home", () => {
-    using dir = tempDir("build-debug-info", {});
-    const debug = linuxConfig({ buildType: "Debug" }, String(dir));
-    for (const flags of allCompileFlagLists(debug)) {
       expect(flags).toContain("-fno-standalone-debug");
-    }
-    const release = linuxConfig({ buildType: "Release" }, String(dir));
-    for (const flags of allCompileFlagLists(release)) {
-      expect(flags).not.toContain("-fno-standalone-debug");
     }
   });
 
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes
   // xcode-select for the real SDK. The flag tables are the same either way.
-  test.skipIf(isMacOS)("darwin release: the DWARF version flag comes first and -g1 still ends the list", () => {
+  test.skipIf(isMacOS)("darwin release + LTO: the DWARF version flag comes first and -g1 still ends the list", () => {
     using dir = tempDir("build-debug-info", {});
     const cfg = resolveConfig(
-      { os: "darwin", arch: "aarch64", buildType: "Release", buildDir: String(dir) },
+      { os: "darwin", arch: "aarch64", buildType: "Release", lto: true, buildDir: String(dir) },
       mockToolchain(),
     );
     for (const flags of allCompileFlagLists(cfg)) {

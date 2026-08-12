@@ -696,15 +696,12 @@ impl Response {
         if init.headers.is_none() {
             init.headers = Some(HeadersRef::create_empty());
 
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
+            if let Some(content_type) = self.body.get().value.get().content_type() {
+                init.headers.as_mut().unwrap().put(
+                    HTTPHeaderName::ContentType,
+                    &BunString::ascii(content_type),
+                    global_this,
+                )?;
             }
         }
 
@@ -724,11 +721,8 @@ impl Response {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
-            }
+        if let Some(content_type) = self.body.get().value.get().content_type() {
+            return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
         }
 
         Ok(None)
@@ -1093,9 +1087,13 @@ impl Response {
             }
         }
 
-        let headers_ref = response.get_or_create_headers(global_this)?;
+        // Set the JSON type before `get_or_create_headers` sees the string body.
+        let init = response.init_mut();
+        if init.headers.is_none() {
+            init.headers = Some(HeadersRef::create_empty());
+        }
         let json_mime = bun_http_types::MimeType::JSON;
-        headers_ref.put_default(
+        init.headers.as_mut().unwrap().put_default(
             HTTPHeaderName::ContentType,
             &BunString::ascii(json_mime.value.as_ref()),
             global_this,
@@ -1334,10 +1332,9 @@ impl Response {
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
-        if let BodyValue::Blob(blob) = body.value.get() {
+        if let Some(content_type) = body.value.get().content_type() {
             if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
+                if !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,
                         &BunString::ascii(content_type),

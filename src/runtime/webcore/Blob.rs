@@ -6397,7 +6397,9 @@ impl Any {
     pub(crate) fn has_content_type_from_user(&self) -> bool {
         match self {
             Any::Blob(b) => b.has_content_type_from_user(),
-            Any::WTFStringImpl(_) | Any::InternalBlob(_) => false,
+            // fetch "extract a body": a string body extracts with text/plain.
+            Any::WTFStringImpl(_) => true,
+            Any::InternalBlob(ib) => ib.was_string,
         }
     }
 }

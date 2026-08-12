@@ -1,5 +1,5 @@
 import { file } from "bun";
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import path from "path";
 
 // An outstanding bundler plugin request is only ever touched through its raw
@@ -403,19 +403,25 @@ function auditOutstandingNodeImpls(text: string): Found[] {
 }
 
 const FILES = [...new Set([...ENTRIES.map(e => e.file), "src/runtime/dispatch.rs"])];
-const sources = new Map<string, string>();
-for (const f of FILES) sources.set(f, stripCommentsAndStrings(await file(path.join(root, f)).text()));
 
-const found: Found[] = [];
-for (const entry of ENTRIES) found.push(...auditFn(entry, sources.get(entry.file)!));
-found.push(...auditDispatchArms(sources.get("src/runtime/dispatch.rs")!));
-found.push(...auditOutstandingList(sources.get("src/bundler/Graph.rs")!));
-found.push(...auditOutstandingNodeImpls(sources.get("src/bundler/bundle_v2.rs")!));
+// Read inside the suite rather than at module scope, so a moved or renamed
+// source file shows up as a failing test instead of a file that failed to load.
+let found: Found[] = [];
+let offenders: string[] = [];
+beforeAll(async () => {
+  const sources = new Map<string, string>();
+  for (const f of FILES) sources.set(f, stripCommentsAndStrings(await file(path.join(root, f)).text()));
 
-const offenders = found
-  .filter(f => f.complaints.length)
-  .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
-  .flatMap(f => f.complaints.map(c => `${f.file}:${f.line} (${f.name}): ${c}`));
+  found = ENTRIES.flatMap(entry => auditFn(entry, sources.get(entry.file)!));
+  found.push(...auditDispatchArms(sources.get("src/runtime/dispatch.rs")!));
+  found.push(...auditOutstandingList(sources.get("src/bundler/Graph.rs")!));
+  found.push(...auditOutstandingNodeImpls(sources.get("src/bundler/bundle_v2.rs")!));
+
+  offenders = found
+    .filter(f => f.complaints.length)
+    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+    .flatMap(f => f.complaints.map(c => `${f.file}:${f.line} (${f.name}): ${c}`));
+});
 
 test("the audited functions are still where this lint looks for them", () => {
   // A mismatch means something in this population was added, removed, moved

@@ -235,9 +235,7 @@ impl<'a> Graph<'a> {
             self.deferred_pending = 0;
             // Their units are back in `pending_items`.
             self.outstanding_loads.for_each(|load| {
-                // SAFETY: linked ⇒ arena-live. The load is still out with the
-                // plugin (its callback is parked in `.defer()`); `deferred` is
-                // this side's field (see `Load`), so nothing else is touched.
+                // SAFETY: linked ⇒ arena-live; `deferred` is this side's field (see `Load`).
                 unsafe { (*load).deferred = false };
             });
 
@@ -272,18 +270,15 @@ impl<T> Default for OutstandingLink<T> {
         }
     }
 }
-/// A linked node is shared with the side running the plugins, by field (see
-/// the docs on `api::JSBundler::Resolve` / `Load`): the list owns the link and
-/// nothing else, so it reaches the link through this raw projection and never
-/// forms a reference to the whole node.
+/// Raw, not `&mut self`: the list owns only the link inside a node it shares
+/// with the plugin side (see `api::JSBundler::Resolve`).
 pub trait OutstandingNode: Sized {
-    /// `&raw mut (*this).outstanding`.
-    ///
     /// # Safety
     /// `this` points at a live node.
     unsafe fn link_raw(this: *mut Self) -> *mut OutstandingLink<Self>;
 }
-/// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
+/// A bundle pass's outstanding plugin requests; pass side only. Every linked
+/// node is out with the plugins, so the list touches nothing but links.
 pub struct OutstandingList<T: OutstandingNode> {
     head: *mut T,
 }
@@ -296,9 +291,7 @@ impl<T: OutstandingNode> Default for OutstandingList<T> {
 }
 impl<T: OutstandingNode> OutstandingList<T> {
     pub(crate) fn push(&mut self, node: *mut T) {
-        // SAFETY: `node` is arena-live and unlinked; the current head is
-        // linked ⇒ arena-live (and possibly being answered by the plugins'
-        // thread right now, hence only its link is touched); bundle thread.
+        // SAFETY: `node` is arena-live and unlinked; the head is linked ⇒ arena-live.
         unsafe {
             let l = T::link_raw(node);
             debug_assert!(!(*l).linked);
@@ -313,9 +306,7 @@ impl<T: OutstandingNode> OutstandingList<T> {
     }
     /// No-op if `node` is not linked (already answered / never dispatched).
     pub(crate) fn unlink(&mut self, node: *mut T) {
-        // SAFETY: `node` is arena-live; its neighbours are linked ⇒ arena-live
-        // (and still out with the plugins' thread, hence only their links are
-        // touched); bundle thread.
+        // SAFETY: `node` is arena-live; its neighbours are linked ⇒ arena-live.
         unsafe {
             let l = T::link_raw(node);
             if !(*l).linked {
@@ -344,12 +335,11 @@ impl<T: OutstandingNode> OutstandingList<T> {
         self.unlink(head);
         Some(head)
     }
-    /// Every linked node, each still out with the plugins: `f` may only touch
-    /// the fields this side owns, and must not link or unlink.
+    /// `f` may only touch the pass side's fields of each node, and must not link or unlink.
     pub(crate) fn for_each(&self, mut f: impl FnMut(*mut T)) {
         let mut node = self.head;
         while !node.is_null() {
-            // SAFETY: linked ⇒ arena-live; only the link is read; bundle thread.
+            // SAFETY: linked ⇒ arena-live.
             let next = unsafe { (*T::link_raw(node)).next };
             f(node);
             node = next;

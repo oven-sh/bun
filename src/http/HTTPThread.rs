@@ -34,13 +34,10 @@ struct SslContextCacheEntry {
 
 /// Upgrade a custom-SSL context pointer to `&mut` for one use.
 ///
-/// INVARIANT: every `NonNull<NewHttpContext<true>>` reaching here is the
-/// pointer `connect` took from the `heap::release`d box before handing it to
-/// anyone (cache entry, `client.custom_ssl_ctx`); the cache holds one strong
-/// intrusive ref until eviction's `deref`, so the pointee is live. All access
-/// is HTTP-thread-only and every caller re-derives per use (the pointer is
-/// what gets stored; a `&mut` is never held across a call into the context),
-/// so the returned `&mut` is the sole live borrow for its scope.
+/// INVARIANT: `ctx` is the pointer `connect` took from the `heap::release`d
+/// box; the cache holds a strong ref on it until eviction, all access is
+/// HTTP-thread-only, and callers re-derive per use instead of holding the
+/// result across a call into the context.
 #[inline]
 fn custom_context_mut<'a>(ctx: NonNull<NewHttpContext<true>>) -> &'a mut NewHttpContext<true> {
     // SAFETY: see INVARIANT above.
@@ -416,9 +413,8 @@ impl HttpThread {
         RequestBodyBuffer::Stack(Box::new([0u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]))
     }
 
-    /// Park a heap buffer from [`Self::get_request_body_send_buffer`] for
-    /// reuse. One is kept; a second one (allocated while the parked one was
-    /// checked out by another request) is freed here.
+    /// Keeps one buffer for reuse; a second one (allocated while it was checked
+    /// out) is freed.
     fn put_request_body_send_buffer(&mut self, mut buffer: Box<HeapRequestBodyBuffer>) {
         if self.lazy_request_body_buffer.is_none() {
             buffer.cursor = 0;
@@ -433,8 +429,8 @@ impl HttpThread {
         }
     }
 
-    /// A request just finished: if tasks are parked behind the concurrency
-    /// cap and a slot is now free, wake the loop so `drain_events` starts them.
+    /// Called when a request finishes: a task parked behind the concurrency
+    /// cap can start now.
     pub(crate) fn wake_if_tasks_waiting(&self) {
         if (!self.queued_tasks.is_empty() || !self.deferred_tasks.is_empty())
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
@@ -456,18 +452,13 @@ impl HttpThread {
         self.lazy_libdeflater.as_deref_mut().unwrap()
     }
 
-    /// `*mut` to the default `http_context` / `https_context`, projected
-    /// straight out of the `HTTP_THREAD` static without going through a
-    /// `&mut HttpThread`. It is therefore not tied to any `http_thread()`
-    /// borrow: request code keeps it across calls that re-enter the accessor
-    /// (`HTTPClient::get_ssl_ctx`, the proxy-tunnel callbacks), and
-    /// [`Self::connect`] drives the context through it so no `&mut
-    /// HttpThread` is live while the context runs client code. Upgrade per
-    /// use via `HTTPClient::ssl_ctx_mut`.
+    /// The default context for `IS_SSL`, projected out of the static rather
+    /// than out of an `http_thread()` borrow, so holders (`get_ssl_ctx`
+    /// callers, the proxy tunnel) may keep it across request code. Upgrade
+    /// per use with `HTTPClient::ssl_ctx_mut`.
     pub(crate) fn default_context_ptr<const IS_SSL: bool>() -> *mut NewHttpContext<IS_SSL> {
         let thread = crate::http_thread_ptr();
-        // `NewHttpContext<true>` (resp. `<false>`) is `NewHttpContext<IS_SSL>`
-        // on the branch taken, so the `.cast()` is the identity.
+        // The `.cast()` is the identity: the field picked has type `NewHttpContext<IS_SSL>`.
         if IS_SSL {
             // SAFETY: field projection of the initialized static; nothing is
             // read and no reference is formed.
@@ -489,8 +480,7 @@ impl HttpThread {
         }
     }
 
-    /// Runs at most once per process: from [`Self::attach_loop`] when the user
-    /// supplied CA config, otherwise from the first `connect::<true>`.
+    /// Runs once: from `attach_loop` with user CA config, else from the first `connect::<true>`.
     #[cold]
     fn init_https_context(&mut self, opts: &InitOpts) {
         if let Err(err) = self
@@ -501,13 +491,9 @@ impl HttpThread {
         }
     }
 
-    /// Not a method: `HTTPContext::connect` may complete the request
-    /// synchronously (pooled-socket reuse runs `on_open`, a failure runs the
-    /// result callback), and that client code borrows the thread again through
-    /// `crate::http_thread()`. A `&mut self` here would still be live (and, as
-    /// a function argument, protected) under those borrows, so the thread is
-    /// only borrowed a statement at a time and the default context is reached
-    /// through [`Self::default_context_ptr`].
+    /// Not a method: `HTTPContext::connect` can run the request's client code
+    /// synchronously (pooled reuse, immediate failure), which borrows the thread
+    /// again through [`crate::http_thread()`].
     pub(crate) fn connect<const IS_SSL: bool>(
         client: &mut HttpClient,
     ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
@@ -561,10 +547,8 @@ impl HttpThread {
                     .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
                 }
 
-                // Cache miss - create new SSL context. `ctx_nn` is the one
-                // pointer everything else is derived from: the cache entry
-                // and `client.custom_ssl_ctx` store it, and each use below
-                // re-derives a `&mut` from it (see `custom_context_mut`).
+                // Cache miss - create new SSL context. Everything below goes
+                // through `ctx_nn` (see `custom_context_mut`).
                 let ctx_nn =
                     NonNull::from(bun_core::heap::release(Box::new(NewHttpContext::<true> {
                         ref_count: Cell::new(1),
@@ -582,9 +566,7 @@ impl HttpThread {
                     // `impl Drop for HTTPContext` tolerates an
                     // uninitialized group (skips close_all/destroy when
                     // `group.loop_` is null), so reclaiming the Box is safe.
-                    // SAFETY: the box was released just above and nothing
-                    // else has seen `ctx_nn` yet (refcount still 1); reclaim
-                    // and drop it.
+                    // SAFETY: released just above and not yet shared with anyone.
                     drop(unsafe { bun_core::heap::take(ctx_nn.as_ptr()) });
 
                     return Err(match err {
@@ -641,8 +623,7 @@ impl HttpThread {
         default_context().connect(client, hn, pt)
     }
 
-    /// Not a method for the same reason as [`Self::connect`]: failing the
-    /// waiter runs its result callback.
+    /// Not a method (as [`Self::connect`]): failing the waiter runs its result callback.
     fn abort_pending_h2_waiter(async_http_id: u32) -> bool {
         if HttpClient::ssl_ctx_mut(Self::default_context_ptr::<true>())
             .abort_pending_h2_waiter(async_http_id)
@@ -657,10 +638,7 @@ impl HttpThread {
         false
     }
 
-    /// Swap one of the JS-thread-fed queues out from under its lock. The
-    /// drain loops below own the returned `Vec`, so they hold no borrow of
-    /// the thread while the request code they dispatch to re-enters
-    /// [`crate::http_thread()`].
+    /// Swap a JS-thread-fed queue out from under its lock.
     fn take_queued<T>(
         &mut self,
         select: impl FnOnce(&mut Self) -> (&Mutex, &mut Vec<T>),
@@ -670,10 +648,8 @@ impl HttpThread {
         core::mem::take(queue)
     }
 
-    // The `drain_*` functions below have no `self` for the same reason as
-    // `connect`: they dispatch into clients and sessions, which borrow the
-    // thread again through `crate::http_thread()`. Every access here is a
-    // fresh statement-scoped borrow instead.
+    // The `drain_*` functions are not methods (as `connect`): the clients and
+    // sessions they dispatch to borrow the thread again through `http_thread()`.
 
     fn drain_queued_shutdowns() {
         loop {
@@ -923,8 +899,7 @@ impl HttpThread {
         // which we just drained — `drainQueuedShutdowns` sets
         // `has_pending_queued_abort` for any id it couldn't find in the socket
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
-        // start, so don't walk the lists. (The flag is consumed here either
-        // way; when we return early it was already clear.)
+        // start, so don't walk the lists.
         let has_pending_queued_abort =
             core::mem::take(&mut crate::http_thread().has_pending_queued_abort);
         if active >= max && !has_pending_queued_abort {
@@ -1191,8 +1166,7 @@ impl HttpThread {
     }
 }
 
-/// Evict SSL context cache entries that haven't been used for
-/// [`SSL_CONTEXT_CACHE_TTL_NS`]. `now` is a [`HttpThread::timer_read`].
+/// Evict cache entries idle for longer than `SSL_CONTEXT_CACHE_TTL_NS`.
 fn evict_stale_ssl_contexts(now: u64) {
     let map = custom_ssl_context_map();
     let mut i: usize = 0;
@@ -1237,9 +1211,7 @@ fn start_queued_task(http: *mut AsyncHttp) {
     // reborrow would be frozen by the first of them.
     let cloned_ptr = bun_core::heap::into_raw(cloned);
     let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
-    // Statement-scoped `http_thread()` borrow: `on_start` below runs the
-    // request, which re-enters the accessor (and, on a synchronous failure,
-    // removes this very entry again).
+    // Pushed before `on_start`, which may fail synchronously and remove it again.
     crate::http_thread()
         .in_flight
         .push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
@@ -1387,11 +1359,8 @@ mod _event_loop_draft {
     }
 
     impl HttpThread {
-        /// Bind the singleton to this thread's loop and bring up the
-        /// contexts. Nothing in here reaches back into `crate::http_thread()`
-        /// (the contexts take the loop as a parameter), which is what makes
-        /// holding `&mut self` across it sound; once requests run that stops
-        /// being true, so [`Self::process_events`] has no `self`.
+        /// Thread-start setup; the last thing that may hold `&mut self` for
+        /// more than a statement (no request code runs yet).
         fn attach_loop(
             &mut self,
             loop_: *const MiniEventLoop,
@@ -1427,12 +1396,8 @@ mod _event_loop_draft {
             self.has_awoken.store(true, Ordering::Release);
         }
 
-        /// The thread's main loop. Every step (draining the queues, the tick)
-        /// runs request code that borrows the singleton through
-        /// `crate::http_thread()`, so this holds no `&mut HttpThread` of its
-        /// own: each access is a fresh statement-scoped borrow. The `&mut
-        /// uws::Loop`s below point into the loop's own allocation, not into
-        /// `HttpThread`, so they are unaffected.
+        /// The main loop. Not a method: every step runs request code, which
+        /// borrows the thread through [`crate::http_thread()`].
         fn process_events() -> ! {
             let uws_loop = crate::http_thread().uws_loop_mut();
             #[cfg(unix)]

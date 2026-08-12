@@ -475,10 +475,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.secure.unwrap()
     }
 
-    // The `init*` family takes the uSockets loop as a parameter rather than
-    // reading it back out of `http::http_thread()`: the default contexts are
-    // initialized from inside `&mut HttpThread` methods (`attach_loop`,
-    // `init_https_context`), which a nested `http_thread()` borrow would alias.
+    // `loop_` is a parameter because `init*` runs inside `&mut HttpThread`
+    // methods, which `http::http_thread()` would alias.
     pub(crate) fn init_with_client_config(
         &mut self,
         client: &mut HTTPClient,

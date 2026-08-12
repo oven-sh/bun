@@ -361,8 +361,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
-    /// The attached `AbortSignal`, if any; the returned ref outlives a
-    /// concurrent `clear_abort_signal`.
+    /// Owned, so it stays valid if `clear_abort_signal` runs meanwhile.
     #[inline]
     pub(crate) fn abort_signal_ref(&self) -> Option<jsc::AbortSignalRef> {
         self.abort_signal.get().as_ref().map(|s| s.signal_ref())

@@ -770,17 +770,9 @@ impl<'a> AsyncHTTP<'a> {
                 // `ThreadlocalAsyncHTTP::new` (heap::alloc); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
-                let threadlocal_http: *mut ThreadlocalAsyncHTTP =
+                let threadlocal_http: *mut ThreadlocalAsyncHTTP<'static> =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
-                {
-                    let in_flight = &mut crate::http_thread().in_flight;
-                    if let Some(i) = in_flight
-                        .iter()
-                        .position(|n| n.as_ptr() == threadlocal_http)
-                    {
-                        in_flight.swap_remove(i);
-                    }
-                }
+                crate::http_thread().remove_in_flight(threadlocal_http);
                 // Note: reclaiming as `Box<_>` here would drop the
                 // bitwise-shared fields enumerated above and double-free with
                 // the JS-thread original; deallocate the storage directly
@@ -795,13 +787,7 @@ impl<'a> AsyncHTTP<'a> {
             }
         }
 
-        let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
-            && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
-                < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
-        {
-            thread.wakeup();
-        }
+        crate::http_thread().wake_if_tasks_waiting();
     }
 }
 

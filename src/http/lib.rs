@@ -956,11 +956,14 @@ pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPT
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Raw pointer to the initialized singleton. [`http_thread`] derives its
+/// `&mut` from this per call; `HTTPThread::default_context_ptr` projects the
+/// default contexts out of it without forming a `&mut` at all.
 #[inline]
-pub fn http_thread() -> &'static mut HTTPThread {
+pub(crate) fn http_thread_ptr() -> *mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
-    // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
+    // dereferencing the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
     // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
     // establishing happens-before for cross-thread callers that did not
@@ -970,15 +973,38 @@ pub fn http_thread() -> &'static mut HTTPThread {
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"
     );
-    // SAFETY: `HTTP_THREAD_INIT == true` (checked above) is set only after
-    // `HTTP_THREAD.write(..)` in `init_once`, so the `MaybeUninit` is fully
-    // written. Thread-affinity is documented (HTTP-thread-only after
-    // `on_start`); the `ThreadCell` owner assert covers debug.
-    unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
+    // `MaybeUninit<T>` is `repr(transparent)`, so this is the `T`'s address;
+    // `HTTP_THREAD_INIT == true` (checked above) is set only after
+    // `HTTP_THREAD.write(..)` in `init_once`, so it points at a fully written
+    // `HTTPThread`.
+    HTTP_THREAD.get().cast::<HTTPThread>()
 }
+
+/// Borrow the HTTP-thread singleton for **one statement**.
+///
+/// Each call is a fresh `&mut` to the whole struct, so it must not be used
+/// while an earlier one (or the `&mut self` of a method reached through an
+/// earlier one) is still live. Nearly everything a request does on this
+/// thread calls back in here (`connect`, `deflater`,
+/// `get_request_body_send_buffer`, the completion callback's
+/// `remove_in_flight`, …), so the result is never bound to a local or
+/// projected into a stored pointer: use it as `http_thread().method()` /
+/// `http_thread().field`, and put anything that needs more than one field
+/// access into a method on `HTTPThread` that itself does not run request
+/// code. The thread's own driver (`HTTPThread::process_events` and the
+/// `drain_*` functions) follows the same rule, which is what makes the
+/// re-entrant borrows sound. Enforced by
+/// `test/internal/source-lints/http-thread-held-borrow.test.ts`. A pointer
+/// that has to survive across request code comes from [`http_thread_ptr`]
+/// instead (`HTTPThread::default_context_ptr`).
 #[inline]
-pub(crate) fn http_thread_mut() -> &'static mut HTTPThread {
-    http_thread()
+pub fn http_thread() -> &'static mut HTTPThread {
+    // SAFETY: `http_thread_ptr` points at the initialized singleton. On this
+    // thread no two of these borrows overlap because every caller keeps its
+    // borrow to one statement (doc above). Thread-affinity is documented
+    // (HTTP-thread-only after `on_start`); the `ThreadCell` owner assert
+    // covers debug.
+    unsafe { &mut *http_thread_ptr() }
 }
 
 // TODO: this needs to be freed when Worker Threads are implemented
@@ -2304,15 +2330,16 @@ impl<'a> HTTPClient<'a> {
     /// Returns the SSL context for this client - either the custom context
     /// (for mTLS/custom TLS) or the default global context.
     pub(crate) fn get_ssl_ctx<const IS_SSL: bool>(&self) -> *mut GenHttpContext<IS_SSL> {
-        // Returns a raw ptr because the global/Arc lifetimes differ.
+        // Returns a raw ptr because the global/Arc lifetimes differ. Callers
+        // carry it through code that re-enters `http_thread()`, so the
+        // default context is projected out of the static
+        // (`default_context_ptr`), not out of an `http_thread()` borrow.
         if IS_SSL {
             if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
-            (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
-        } else {
-            (&raw mut http_thread().http_context).cast::<GenHttpContext<IS_SSL>>()
         }
+        HTTPThread::default_context_ptr::<IS_SSL>()
     }
 
     /// Upgrade a `*mut GenHttpContext<SSL>` (the value [`get_ssl_ctx`]
@@ -2320,8 +2347,8 @@ impl<'a> HTTPClient<'a> {
     /// through as a parameter) to `&mut`.
     ///
     /// INVARIANT: every value reaching here is one of two thread-owned,
-    /// set-once non-null pointers — `&raw mut http_thread().http(s)_context`
-    /// or the heap-boxed `custom_ssl_ctx` on which the client holds a strong
+    /// set-once non-null pointers — `HTTPThread::default_context_ptr()` or
+    /// the heap-boxed `custom_ssl_ctx` on which the client holds a strong
     /// intrusive ref — both live for the call. The context is a separate
     /// allocation from `HTTPClient`, so the returned `&mut` does not alias any
     /// `&self` borrow used to compute the call's other arguments.
@@ -2845,7 +2872,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        let socket = match http_thread().connect::<IS_SSL>(self) {
+        let socket = match HTTPThread::connect::<IS_SSL>(self) {
             Ok(Some(s)) => s,
             Ok(None) => {
                 // Coalesced onto an in-flight h2 connect; the leader will attach us

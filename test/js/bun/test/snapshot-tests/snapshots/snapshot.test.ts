@@ -371,6 +371,80 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+// Same format as jest's pretty-format: a hole prints as a line with only the
+// comma, so a sparse array and an array of explicit `undefined`s do not
+// serialize identically.
+test("array holes in inline snapshots", () => {
+  expect([1, , 3]).toMatchInlineSnapshot(`
+    [
+      1,
+      ,
+      3,
+    ]
+  `);
+  expect([1, undefined, 3]).toMatchInlineSnapshot(`
+    [
+      1,
+      undefined,
+      3,
+    ]
+  `);
+  expect([, "b"]).toMatchInlineSnapshot(`
+    [
+      ,
+      "b",
+    ]
+  `);
+  expect([1, 2, ,]).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+      ,
+    ]
+  `);
+  expect(new Array(2)).toMatchInlineSnapshot(`
+    [
+      ,
+      ,
+    ]
+  `);
+  expect({ a: [[, 1], , [2]] }).toMatchInlineSnapshot(`
+    {
+      "a": [
+        [
+          ,
+          1,
+        ],
+        ,
+        [
+          2,
+        ],
+      ],
+    }
+  `);
+
+  class List extends Array {}
+  const list = List.of(1, 2, 3);
+  delete list[1];
+  expect(list).toMatchInlineSnapshot(`
+    [
+      1,
+      ,
+      3,
+    ]
+  `);
+
+  // An index backed by an accessor is present, not a hole; the getter runs like in jest.
+  const accessor = [1, 2];
+  Object.defineProperty(accessor, 1, { get: () => "from getter", enumerable: true });
+  expect(accessor).toMatchInlineSnapshot(`
+    [
+      1,
+      "from getter",
+    ]
+  `);
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

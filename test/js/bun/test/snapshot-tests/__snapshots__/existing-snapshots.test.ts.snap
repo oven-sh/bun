@@ -69,3 +69,69 @@ exports[`it will work with an existing snapshot file made with bun 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`array holes match the snapshot entries jest writes 1`] = `
+[
+  1,
+  ,
+  3,
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 2`] = `
+[
+  ,
+  "b",
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 3`] = `
+[
+  1,
+  2,
+  ,
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 4`] = `
+[
+  ,
+  ,
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 5`] = `
+[
+  ,
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 6`] = `
+{
+  "a": [
+    ,
+    1,
+  ],
+}
+`;
+
+exports[`array holes match the snapshot entries jest writes 7`] = `
+[
+  [
+    ,
+    1,
+  ],
+  ,
+  [
+    2,
+  ],
+]
+`;
+
+exports[`array holes match the snapshot entries jest writes 8`] = `
+[
+  1,
+  undefined,
+  3,
+]
+`;

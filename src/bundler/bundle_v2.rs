@@ -30,7 +30,6 @@ pub use bv2_impl::{
     OnDependenciesAnalyze, singleton,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports::RequestedExports;
@@ -117,8 +116,6 @@ pub struct BundleV2<'a> {
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
-
-    pub(crate) drain_defer_task: DeferredBatchTask,
 
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
@@ -1309,7 +1306,6 @@ pub mod bv2_impl {
     use bun_sourcemap as SourceMap;
 
     use crate::AstBuilder::AstBuilder;
-    use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
@@ -2837,7 +2833,6 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),

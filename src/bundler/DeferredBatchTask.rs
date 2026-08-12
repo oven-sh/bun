@@ -12,27 +12,25 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 use core::ptr::NonNull;
 
-/// Embedded in the pass as `BundleV2::drain_defer_task`.
-#[derive(Default)]
+/// One per drain, allocated from the pass's arena like `Resolve` / `Load`.
 pub struct DeferredBatchTask {
-    /// `BundleV2::plugins`, copied by `schedule` for `run_on_js_thread`.
+    /// `BundleV2::plugins` as of `schedule`.
     plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {
     const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
-    /// Embedded in its `BundleV2`, which outlives the queue entry and owns
-    /// everything the drain would have touched; nothing to free.
+    /// As `Resolve`: arena-owned by its (cancelled) bundle pass; nothing to free.
     unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl DeferredBatchTask {
     /// Bundle thread.
     pub(crate) fn schedule(bv2: &mut BundleV2<'_>) {
-        bv2.drain_defer_task.plugins = bv2.plugins;
-        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(
-            &mut bv2.drain_defer_task,
-        )));
+        let this = bv2.arena().alloc(Self {
+            plugins: bv2.plugins,
+        });
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(this)));
         bv2.enqueue_on_js_loop_for_plugins(task);
     }
 

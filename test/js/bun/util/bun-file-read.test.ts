@@ -237,8 +237,8 @@ describe.skipIf(isWindows)("reading a named pipe", () => {
   // borrow, which terminate() waits for.
   it.concurrent("terminate() completes while a worker's read is waiting on an idle writer", async () => {
     using dir = tempDir("bun-file-read-fifo-worker", {
-      "main.ts": `
-        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+      "main.fixture.ts": `
+        const worker = new Worker(new URL("./worker.fixture.ts", import.meta.url).href);
         const closed = new Promise(resolve => worker.addEventListener("close", resolve));
         worker.addEventListener("message", ({ data }) => console.log(data));
         // Our stdin is closed once the test has connected a writer to the FIFO.
@@ -247,7 +247,7 @@ describe.skipIf(isWindows)("reading a named pipe", () => {
         await closed;
         console.log("terminated");
       `,
-      "worker.ts": `
+      "worker.fixture.ts": `
         const read = Bun.file(process.env.FIFO!).text();
         postMessage("reading");
         await read;
@@ -258,7 +258,7 @@ describe.skipIf(isWindows)("reading a named pipe", () => {
     mkfifo(fifo);
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
+      cmd: [bunExe(), "main.fixture.ts"],
       cwd: String(dir),
       env: { ...bunEnv, FIFO: fifo },
       stdin: "pipe",

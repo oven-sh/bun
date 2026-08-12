@@ -17,12 +17,6 @@ unsafe extern "C" {
         stream_ext: c_uint,
     ) -> *mut Context;
 
-    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
-    // `noalias`/`readonly` attribute. Shims taking only the handle + value
-    // types (incl. fn-pointer callbacks) are `safe fn`.
-    safe fn us_quic_socket_context_loop(ctx: &mut Context) -> *mut Loop;
-
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
         host: *const c_char,
@@ -34,6 +28,10 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
 
+    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
+    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
+    // `noalias`/`readonly` attribute. Shims taking only the handle + value
+    // types (incl. fn-pointer callbacks) are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),
@@ -93,15 +91,6 @@ impl Context {
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
         let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
         if p.is_null() { None } else { Some(p) }
-    }
-
-    #[inline]
-    pub fn r#loop(&mut self) -> *mut Loop {
-        // Returns a raw pointer because the Loop is shared across every
-        // context/socket/timer on the thread —
-        // materializing `&mut Loop` here would assert uniqueness we cannot
-        // guarantee.
-        us_quic_socket_context_loop(self)
     }
 
     pub fn connect(

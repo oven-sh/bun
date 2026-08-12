@@ -164,8 +164,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                let l = self.qctx_mut().r#loop();
-                PendingConnect::register(session, pending, l.cast::<UwsLoop>());
+                PendingConnect::register(session, pending);
             }
             ConnectResult::Err => {
                 bun_core::scoped_log!(

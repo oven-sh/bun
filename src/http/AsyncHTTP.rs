@@ -795,12 +795,12 @@ impl<'a> AsyncHTTP<'a> {
             }
         }
 
-        let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        if (crate::HTTPThread::has_queued_tasks()
+            || !crate::http_thread().deferred_tasks.is_empty())
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
-            thread.wakeup();
+            crate::HTTPThread::wakeup();
         }
     }
 }

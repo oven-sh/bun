@@ -1409,7 +1409,7 @@ impl S3DownloadStreamWrapper {
                 // Wake the HTTP thread so it observes the abort even when the
                 // socket is idle; otherwise the final `has_more == false`
                 // callback never fires and both the task and wrapper leak.
-                bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
+                bun_http::HTTPThread::schedule_shutdown_by_id((*task).async_http_id);
             }
         }
     }

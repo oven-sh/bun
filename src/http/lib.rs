@@ -947,25 +947,26 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
-// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
-// through [`http_thread_shared`] / `get_unchecked` until those fields are
-// hoisted out of the thread-confined struct.
+// type: `init_once` writes it before spawning the thread, `on_start` `claim()`s
+// it, and from then on debug builds panic on access from any other thread.
+// Other threads never need it — everything they hand to the HTTP thread goes
+// through the `Sync` static in `HTTPThread.rs` (the associated
+// `HTTPThread::schedule*` fns and `shutdown_for_exit`).
 pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// The HTTP thread's own state. HTTP-thread-only (see [`HTTP_THREAD`]); code
+/// on other threads uses the associated `HTTPThread::schedule*` fns instead.
 #[inline]
-pub fn http_thread() -> &'static mut HTTPThread {
+pub(crate) fn http_thread() -> &'static mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
     // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
-    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
-    // establishing happens-before for cross-thread callers that did not
-    // themselves go through `Once::call_once` (e.g. `schedule_*` paths from
-    // the JS thread). Cost is a single relaxed-on-x86 atomic load.
+    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`. Cost is
+    // a single relaxed-on-x86 atomic load.
     assert!(
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"

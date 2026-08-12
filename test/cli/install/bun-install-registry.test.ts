@@ -3732,9 +3732,6 @@ describe("hoisting", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        if (out.includes("installed")) {
-          console.log("stdout:", out);
-        }
         expect(out).not.toContain("package installed");
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());

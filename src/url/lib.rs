@@ -52,12 +52,9 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // Getters are `safe fn` taking `&URL`: the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read, and `URL` is an opaque ZST, so any non-null pointer reborrows to a
-    // valid `&URL`. `URL__deinit` `delete`s the allocation, so it takes a raw pointer and
-    // stays `unsafe fn` (see `URL::destroy`). `BunString*` inputs are `&mut String` to match
-    // the C ABI; callers pass a mutable local copy (see below).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
+    // Getters are `safe fn` over `&URL`: C++ (BunString.cpp) only reads, and `URL` is a ZST,
+    // so any non-null pointer is a valid `&URL`. `URL__deinit` (`delete`) and
+    // `URL__originLength` (raw slice pair) stay `unsafe fn`.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
@@ -113,14 +110,12 @@ pub mod whatwg {
     }
 
     impl URL {
-        /// `None` if `str` does not parse. Otherwise the returned pointer owns a fresh C++
-        /// allocation that the caller must pass to [`destroy`](Self::destroy) exactly once.
+        /// Owned by the caller; free with [`destroy`](Self::destroy). `None` if invalid.
         pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
             URL__fromString(&mut input)
         }
-        /// `None` if `input` does not parse. Otherwise the returned pointer owns a fresh C++
-        /// allocation that the caller must pass to [`destroy`](Self::destroy) exactly once.
+        /// Owned by the caller; free with [`destroy`](Self::destroy). `None` if invalid.
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
@@ -148,15 +143,14 @@ pub mod whatwg {
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
-        /// `delete`s the WTF::URL returned by `from_string`/`from_utf8`. Not a `Drop` and
-        /// not a `&mut self` method: `URL` is a ZST token for the C++ allocation, so a
-        /// reference to it does not prove the caller owns (or still has) the allocation.
+        /// `delete`s the WTF::URL. Takes a pointer, not `&mut self`: a reference to this ZST
+        /// proves neither ownership nor liveness.
         ///
         /// # Safety
-        /// `this` must have come from `from_string`/`from_utf8`, must not have been
-        /// destroyed already, and must not be used afterwards.
+        /// `this` came from `from_string`/`from_utf8`, has not been destroyed, and is not
+        /// used afterwards.
         pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: fn contract; C++ `delete`s the allocation exactly once.
+            // SAFETY: fn contract.
             unsafe { URL__deinit(this) }
         }
     }

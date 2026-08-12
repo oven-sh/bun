@@ -95,7 +95,11 @@ const passes: string[][] = [];
 if (extraArgs.length > 0) {
   passes.push(extraArgs);
   const hasTarget = extraArgs.some(a => a === "--target" || a.startsWith("--target="));
-  if (!hasTarget && MIRI_WINDOWS_CRATES.some(c => extraArgs.includes(c))) {
+  // `-p X` / `--package X` leave X as its own token; cargo also accepts `-pX` and `--package=X`.
+  const selectsWindowsCrate = MIRI_WINDOWS_CRATES.some(c =>
+    extraArgs.some(a => a === c || a === `-p${c}` || a === `--package=${c}`),
+  );
+  if (!hasTarget && selectsWindowsCrate) {
     passes.push(["--target", WINDOWS_TARGET, ...extraArgs]);
   }
 } else {

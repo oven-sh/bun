@@ -26,7 +26,8 @@ const skip = !isLinux || !cc;
 const BUNDLE_THREAD_STACK_SIZE = 2 * 1024 * 1024;
 
 // BUNDLE_THREAD_SPAWN_PLAN has one letter per such attempt: 'f' fails it with
-// EAGAIN, 's' lets it through; the last letter repeats.
+// EAGAIN (a thread limit), 'n' with ENOMEM, 's' lets it through; the last
+// letter repeats.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -56,7 +57,10 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
   if (stack_size == ${BUNDLE_THREAD_STACK_SIZE} && plan_len > 0 && armed_file &&
       syscall(SYS_gettid) == getpid() && access(armed_file, F_OK) == 0) {
     size_t i = __sync_fetch_and_add(&attempts, 1);
-    if (plan[i < plan_len ? i : plan_len - 1] == 'f') return EAGAIN;
+    switch (plan[i < plan_len ? i : plan_len - 1]) {
+      case 'f': return EAGAIN;
+      case 'n': return ENOMEM;
+    }
   }
   return real_pthread_create(thread, attr, start, arg);
 }
@@ -207,6 +211,17 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
   test.concurrent("resolves with success: false and the error in the logs under throw: false", async () => {
     expect(await runWithPlan("f", "build.js", "nothrow", "1")).toEqual({
       results: [{ settled: "resolved", success: false, logs: [EXPECTED_ERROR], onEnd: false }],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent("reports other errors without the thread-limit hint", async () => {
+    expect(await runWithPlan("n", "build.js", "nothrow", "1")).toEqual({
+      results: [
+        { settled: "resolved", success: false, logs: ["Failed to start the bundler thread: ENOMEM."], onEnd: false },
+      ],
       stderr: "",
       exitCode: 0,
       signalCode: null,

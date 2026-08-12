@@ -422,13 +422,18 @@ pub mod singleton {
             started,
             "a build that was never queued cannot have been released"
         );
+        // EAGAIN is what a thread limit produces; Windows reports ENOMEM, where
+        // the advice below would be wrong.
+        let hint = if errno == SystemErrno::EAGAIN {
+            " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
+        } else {
+            ""
+        };
         let mut log = bun_ast::Log::init();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!(
-                "Failed to start the bundler thread: {errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
-            ),
+            format_args!("Failed to start the bundler thread: {errno}.{hint}"),
         );
         completion.set_log(log);
         completion.set_result(BundleV2Result::Err(errno.into()));

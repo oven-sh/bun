@@ -42,6 +42,7 @@ const {
   kPendingCallbacks,
   kRequest,
   kCloseCallback,
+  kMustCloseConnection,
   NodeHTTPResponseFlags,
   emitErrorNextTickIfErrorListenerNT,
   getIsNextIncomingMessageHTTPS,
@@ -2437,7 +2438,6 @@ function renderNativeHeaders(res) {
   return flat;
 }
 
-const kMustCloseConnection = Symbol("kMustCloseConnection");
 function stopServerResponsePerf(this: any) {
   if (this[kServerResponseStatistics] && hasObserver("http")) {
     stopPerf(this, kServerResponseStatistics, {

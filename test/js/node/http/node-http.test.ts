@@ -4070,7 +4070,11 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     const server = createServer(() =>
       unexpectedRequest.reject(new Error("request handler must not run for a handled upgrade")),
     );
+    let timeoutListenersAtHandoff = -1;
     server.on("upgrade", (req, socket, head) => {
+      // Like Node (test-http-connect asserts the same), the listener gets the socket without
+      // the connection listener's 'timeout' handling, which would otherwise destroy the tunnel.
+      timeoutListenersAtHandoff = socket.listenerCount("timeout");
       socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\nHEAD:" + head.toString());
       socket.on("data", d => socket.write("TUNNEL:" + d));
     });
@@ -4097,6 +4101,7 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
     expect(out).toContain("HEAD:early");
     expect(out).toContain("TUNNEL:more");
+    expect(timeoutListenersAtHandoff).toBe(0);
     clientSide.destroy();
     serverSide.destroy();
   }
@@ -4167,4 +4172,34 @@ it("connectionListener closes a socket fed through emit('connection') once it ha
   } finally {
     netServer.close();
   }
+});
+
+it("connectionListener serves a Duplex that has no setTimeout() even when server.timeout and keepAliveTimeout are set", async () => {
+  // Like Node, the timeouts only apply to sockets that can carry one; a plain stream pair fed
+  // through emit('connection') (test-http-generic-streams style) is served without them.
+  const responseFinished = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    // The connection listener's own 'finish' listener (where keep-alive would be armed) runs
+    // before this one, so reaching it means that path coped with the missing setTimeout too.
+    res.on("finish", () => responseFinished.resolve());
+    res.end("ok");
+  });
+  server.setTimeout(100);
+  const [clientSide, serverSide] = duplexPair();
+  expect(typeof (serverSide as any).setTimeout).toBe("undefined");
+  server.emit("connection", serverSide);
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    clientSide.on("data", d => {
+      buf += d;
+      if (buf.endsWith("\r\n\r\nok")) resolve(buf);
+    });
+    clientSide.on("close", () => reject(new Error("closed before the response arrived: " + buf)));
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  });
+  await responseFinished.promise;
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(serverSide.destroyed).toBe(false);
+  clientSide.destroy();
+  serverSide.destroy();
 });

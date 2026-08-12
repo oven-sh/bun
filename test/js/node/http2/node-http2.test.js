@@ -4330,12 +4330,15 @@ async function openHttp1Connection(port) {
     get received() {
       return received;
     },
-    async waitForResponse() {
-      const before = responsesReceived();
-      while (responsesReceived() === before) {
+    async waitUntil(predicate) {
+      while (!predicate(received)) {
         await new Promise(resolve => (onData = resolve));
       }
       onData = () => {};
+    },
+    waitForResponse() {
+      const before = responsesReceived();
+      return this.waitUntil(() => responsesReceived() > before);
     },
     request(path, extraHeaders = "") {
       socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n${extraHeaders}\r\n`);
@@ -4391,17 +4394,19 @@ it("http2 allowHTTP1 fallback lets close() finish once a connection busy at clos
 // The arming itself, observed through socket.timeout (what net.Socket#setTimeout records), so
 // no timer has to fire: Node arms keepAliveTimeout + keepAliveTimeoutBuffer when a response
 // finishes with nothing else in flight, puts server.timeout back the moment the next request
-// arrives, and arms nothing after a response that closes the connection.
+// arrives, arms nothing after a response that closes the connection, and arms nothing at all
+// when keepAliveTimeout is 0 (server.timeout, if any, then stays in charge of the connection).
 it.each([
-  ["no server.timeout", 0],
-  ["server.setTimeout(7000)", 7000],
+  { label: "no server.timeout", serverTimeout: 0, keepAliveTimeout: 10_000, afterKeepAliveResponse: 10_500 },
+  { label: "server.setTimeout(7000)", serverTimeout: 7000, keepAliveTimeout: 10_000, afterKeepAliveResponse: 10_500 },
+  { label: "keepAliveTimeout: 0", serverTimeout: 7000, keepAliveTimeout: 0, afterKeepAliveResponse: 7000 },
 ])(
-  "http2 allowHTTP1 fallback arms the keep-alive idle timeout between requests (%s)",
-  async (_label, serverTimeout) => {
+  "http2 allowHTTP1 fallback arms the keep-alive idle timeout between requests ($label)",
+  async ({ serverTimeout, keepAliveTimeout, afterKeepAliveResponse }) => {
     const observed = [];
     const allFinished = Promise.withResolvers();
     const server = http2.createSecureServer(
-      { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 10_000, keepAliveTimeoutBuffer: 500 },
+      { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout, keepAliveTimeoutBuffer: 500 },
       (req, res) => {
         const entry = { url: req.url, onRequest: req.socket.timeout, afterFinish: undefined };
         observed.push(entry);
@@ -4422,8 +4427,8 @@ it.each([
       await allFinished.promise;
       await client.closed;
       expect(observed).toEqual([
-        { url: "/1", onRequest: serverTimeout, afterFinish: 10_500 },
-        { url: "/2", onRequest: serverTimeout, afterFinish: 10_500 },
+        { url: "/1", onRequest: serverTimeout, afterFinish: afterKeepAliveResponse },
+        { url: "/2", onRequest: serverTimeout, afterFinish: afterKeepAliveResponse },
         { url: "/3", onRequest: serverTimeout, afterFinish: serverTimeout },
       ]);
     } finally {
@@ -4431,6 +4436,56 @@ it.each([
     }
   },
 );
+
+// Node's res._last: a response whose own headers say the connection closes is followed by the
+// server ending the connection right away, not by a keep-alive idle period.
+it.each([
+  ["res.setHeader('Connection', 'close')", res => res.setHeader("Connection", "close")],
+  ["res.shouldKeepAlive = false", res => (res.shouldKeepAlive = false)],
+])("http2 allowHTTP1 fallback ends the connection after a response that closes it (%s)", async (_label, closeVia) => {
+  let timeoutAfterFinish;
+  const server = http2.createSecureServer(
+    { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 10_000, keepAliveTimeoutBuffer: 500 },
+    (req, res) => {
+      res.on("finish", () => (timeoutAfterFinish = req.socket.timeout));
+      closeVia(res);
+      res.end("ok");
+    },
+  );
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = await openHttp1Connection(server.address().port);
+    // A keep-alive request: only the response asks for the connection to close.
+    await client.request("/");
+    await client.closed;
+    expect(client.received.toLowerCase()).toContain("\r\nconnection: close\r\n");
+    expect(timeoutAfterFinish).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback stops destroying a connection on timeout once it has been handed to an 'upgrade' listener", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
+  // server.timeout stays armed on the handed-off socket (as in Node); what must go away with the
+  // handoff is the fallback's own destroy-on-timeout handling, so the protocol now owning the
+  // socket decides what a timeout means. Here it answers the timeout through the tunnel.
+  server.setTimeout(100);
+  server.on("upgrade", (req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: echo\r\nConnection: Upgrade\r\n\r\n");
+    socket.once("timeout", () => socket.write("still-open-after-timeout"));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = await openHttp1Connection(server.address().port);
+    client.socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: echo\r\nConnection: Upgrade\r\n\r\n");
+    await client.waitUntil(received => received.includes("still-open-after-timeout"));
+    expect(client.received).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    client.socket.destroy();
+  } finally {
+    server.close();
+  }
+});
 
 it("http2 allowHTTP1 fallback destroys a connection that stays silent for server.setTimeout()", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });

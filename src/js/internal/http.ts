@@ -98,6 +98,10 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+// Set on a ServerResponse whose headers commit it to closing the connection (Node's
+// res._last): renderNativeHeaders sets it, the response-finish hooks of both server paths
+// (_http_server.ts's native sockets, http1_server_fallback.ts) end the connection on it.
+const kMustCloseConnection = Symbol("kMustCloseConnection");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -635,6 +639,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kMustCloseConnection,
   kNeedDrain,
   kOptions,
   kOutHeaders,

@@ -235,7 +235,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, kMustCloseConnection } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
@@ -341,10 +341,16 @@ function connectionListenerHTTP1(server, socket, options) {
     // node's resOnFinish: release the socket once the response completes so the next
     // keep-alive request's response can attach (assignSocket throws
     // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned), then
-    // start the keep-alive idle clock on the connection.
+    // either end a connection the response headers committed to closing (Node's
+    // res._last; the request-side Connection: close case was already ended by
+    // onfinished above) or start the keep-alive idle clock.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
-      armKeepAliveTimeout();
+      if (this[kMustCloseConnection]) {
+        if (!socket.destroyed) socket.end();
+      } else {
+        armKeepAliveTimeout();
+      }
     });
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
@@ -465,8 +471,9 @@ function connectionListenerHTTP1(server, socket, options) {
   // The keep-alive branch of Node's resOnFinish: with no request in flight, the connection may
   // stay idle for the advertised keepAliveTimeout (plus keepAliveTimeoutBuffer, so a client that
   // reuses it right at the advertised deadline is not reset) before onHttp1SocketTimeout closes
-  // it. A response that ended the connection (Connection: close, close-delimited body) and a
-  // Duplex without setTimeout (emit('connection') callers) leave nothing to arm, as in Node.
+  // it. Nothing to arm when onfinished already ended the connection for a request that asked
+  // for Connection: close (writableEnded), or on a Duplex without setTimeout (emit('connection')
+  // callers); Node skips both the same way.
   function armKeepAliveTimeout() {
     if (
       socket[kHttp1ActiveRequests] !== 0 ||

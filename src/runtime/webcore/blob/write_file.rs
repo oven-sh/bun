@@ -951,20 +951,23 @@ mod windows_impl {
         }
 
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
-            // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
-            // by `mkdirp` above; sole owner on this concurrent path.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
             bun_output::scoped_log!(WriteFile, "mkdirp complete");
-            debug_assert!(this.err.is_none());
-            this.err = match err_ {
-                bun_sys::Result::Err(e) => Some(e),
-                bun_sys::Result::Ok(()) => None,
+            let this = ctx.cast::<WriteFileWindows>();
+            // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx` by
+            // `mkdirp` above, and this pool thread is the only thing touching it until the
+            // hop below is queued. The handle is cloned out because the JS thread may free
+            // the task as soon as that happens, before `post_task` returns, so nothing
+            // pointing into the task may be live across the post.
+            let loop_handle = unsafe {
+                debug_assert!((*this).err.is_none());
+                (*this).err = err_.err();
+                (*this).loop_handle.clone()
             };
             let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
                 this,
                 Self::on_mkdirp_complete_task,
             ));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = loop_handle.post_task(ct) {
                 // VM torn down: nobody will settle the promise. Free the hop (the
                 // ConcurrentTask owns the boxed ManagedTask); the operation's
                 // buffers/fd go with the process's teardown of its owner.

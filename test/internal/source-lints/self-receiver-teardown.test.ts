@@ -33,15 +33,16 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `heap::destroy` counts as a `destroy` spelling). An in-place `finalize(&mut
 // self)` called as `self.finalize()` never takes the receiver's address and so
 // is not matched. Deliberately outside it:
-//   - the other reclaim primitives (`heap::take(from_mut(self))`,
-//     `Box::from_raw(self as *mut _)`), a separate population one layer down;
+//   - the reclaim primitives themselves (`heap::take(from_mut(self))`,
+//     `Box::from_raw(self as *mut _)`), which self-receiver-reclaim.test.ts
+//     covers (a `heap::destroy(<self pointer>)` is reported by both, on purpose);
 //   - refcount releases (`Self::deref(from_mut(self))`), which only free on the
 //     last count, so each site needs its own argument about who else holds one;
 //   - a self-derived pointer stashed in a local and freed later, and reference
 //     parameters (`fn f(this: &mut T)` freeing `this`).
 //
-// Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
-// unsound-erased-box.test.ts.
+// Sibling guards: self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
+// frozen-nonnull-reborrow.test.ts, unsound-erased-box.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

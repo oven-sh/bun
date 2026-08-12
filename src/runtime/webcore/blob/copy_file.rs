@@ -1178,30 +1178,16 @@ impl<'a> CopyFileWindows<'a> {
     }
 }
 
-/// Closes the descriptors `prepare_pathlike` opened; a store's own descriptor is left alone.
+/// Queues closes for the descriptors `prepare_pathlike` opened (always libuv-owned, see there);
+/// a store's own descriptor is left alone.
 #[cfg(windows)]
 impl Drop for ReadWriteLoop {
     fn drop(&mut self) {
         if self.must_close_source_fd {
-            match self.source_fd.make_libuv_owned() {
-                Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
-                }
-                Err(_) => {
-                    self.source_fd.close();
-                }
-            }
+            aio::Closer::close(self.source_fd, aio::Loop::get());
         }
-
         if self.must_close_destination_fd {
-            match self.destination_fd.make_libuv_owned() {
-                Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
-                }
-                Err(_) => {
-                    self.destination_fd.close();
-                }
-            }
+            aio::Closer::close(self.destination_fd, aio::Loop::get());
         }
     }
 }
@@ -1810,7 +1796,8 @@ impl<'a> CopyFileWindows<'a> {
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut())
         };
-        // Descriptors are closed before script can observe the settled promise.
+        // Only queues the closes and releases the loop reference; script runs when `_guard`
+        // drops, after the settle.
         drop(task);
         let _ = match settled {
             Ok(written) => promise.resolve(global_this, written),
@@ -1878,13 +1865,15 @@ impl<'a> CopyFileWindows<'a> {
 #[cfg(windows)]
 fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
-    // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
-    // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
-    debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
+    let this = ctx.cast::<CopyFileWindows>();
+    // SAFETY: `ctx` is the task `mkdirp` stored in `AsyncMkdirp.completion_ctx`, and this pool
+    // thread is the only thing touching it until the hop below is queued. The handle is
+    // cloned out because the JS thread may free the task as soon as that happens, before
+    // `post_task` returns, so nothing pointing into the task may be live across the post.
+    let loop_handle = unsafe {
+        debug_assert!((*this).err.is_none());
+        (*this).err = err_.err();
+        (*this).loop_handle.clone()
     };
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
@@ -1899,7 +1888,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         this,
         call_erased,
     ));
-    if let jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
+    if let jsc::vm_handle::Posted::Refused(ct) = loop_handle.post_task(ct) {
         // VM torn down: nobody will settle the promise; free the hop.
         // SAFETY: refused ⇒ we own the task box.
         unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };

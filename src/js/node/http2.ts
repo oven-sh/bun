@@ -4057,15 +4057,13 @@ function buildSensitiveNames(headers, sensitives) {
   return map;
 }
 
-// The object form (node's sentHeaders shape) of an outbound raw [name, value, ...] list: keys keep
-// their casing, a repeated name accumulates its values into an array. An array given as a value is
-// copied first: the list itself is what gets encoded, so accumulating a later duplicate into the
-// caller's array would also put that duplicate on the wire twice.
+// Backs sentHeaders for the raw [name, value, ...] form.
 function rawHeadersToObject(rawHeadersList, sensitives) {
   const headersObject = { __proto__: null };
   for (let i = 0; i < rawHeadersList.length; i += 2) {
     const key = rawHeadersList[i];
     let value = rawHeadersList[i + 1];
+    // The list itself is what gets encoded: a later duplicate must not be pushed into the caller's array.
     if ($isArray(value)) value = value.slice();
     const existing = headersObject[key];
     if (existing === undefined) headersObject[key] = value;

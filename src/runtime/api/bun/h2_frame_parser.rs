@@ -8840,8 +8840,6 @@ impl H2FrameParser {
         // Raw (flat [name, value, ...] array) headers form: encode each pair in
         // its given order, pseudo-headers first (same two-pass split as the
         // object form below), preserving interleaved duplicates on the wire.
-        // A value slot holding an array sends one field per element, exactly
-        // like an array value in the object form.
         let headers_are_raw_pairs = headers_arg.js_type().is_array();
         if headers_are_raw_pairs {
             for ignore_pseudo_headers in 0..2usize {
@@ -8956,8 +8954,7 @@ impl H2FrameParser {
 
                     if value_js.js_type().is_array() {
                         let mut value_iter = value_js.array_iterator(global_object)?;
-                        // node (buildNgHeaderString): an empty array sends nothing and does not
-                        // count as an occurrence of a single-value field.
+                        // node (buildNgHeaderString): [] sends nothing and is not an occurrence.
                         if value_iter.len == 0 {
                             continue;
                         }

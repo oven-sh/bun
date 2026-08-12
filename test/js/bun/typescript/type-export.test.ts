@@ -20,8 +20,8 @@ function errorLine(stderr: string, dir: string) {
 
 // Fixtures whose entry point prints one JSON line when type-only exports are handled correctly. Each one is run
 // three ways (see the describe block below) by a generated runner that imports every fixture in turn and reports
-// all of the results keyed by fixture name, so one process (and, for `compile`, one standalone executable)
-// covers all of them while a failure still names the fixture that produced it.
+// each result under the fixture's name as it goes, so one process (and, for `compile`, one standalone executable)
+// covers all of them while a failure, or a crash part way through, still names the fixture responsible.
 type Fixture = { files: Record<string, string>; entry: string; expected: unknown };
 const fixtures: Record<string, Fixture> = {};
 
@@ -127,6 +127,7 @@ fixtures["import-only-used-in-decorator"] = {
       class OtherClass {
         other?: TestInterface;
       }
+      delete Reflect.metadata;
 
       export { TestInterface };
 
@@ -168,33 +169,39 @@ function runnerSource(entries: Record<string, string>) {
     ([name, specifier]) => `[${JSON.stringify(name)}, () => import(${JSON.stringify(specifier)})],`,
   );
   return `
-    const results = {};
     const log = console.log;
     for (const [name, load] of [
       ${imports.join("\n")}
     ]) {
       const lines = [];
       console.log = (...args) => lines.push(args.join(" "));
+      let result;
       try {
         await load();
-        results[name] = lines.length === 1 ? JSON.parse(lines[0]) : { lines };
+        result = lines.length === 1 ? JSON.parse(lines[0]) : { lines };
       } catch (error) {
-        results[name] = { error: String(error), lines };
+        result = { error: String(error), lines };
       } finally {
         console.log = log;
       }
+      console.log(JSON.stringify([name, result]));
     }
-    console.log(JSON.stringify(results));
   `;
 }
 
+/** The runner's output as `{ [fixture]: result }`; a fixture that took the process down is simply missing. */
 async function runFixtures(cmd: string[], cwd: string) {
   const { stdout, stderr, exitCode } = await run(cmd, cwd);
   let results: unknown = stdout;
   try {
-    results = JSON.parse(stdout);
+    results = Object.fromEntries(
+      stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    );
   } catch {
-    // The process died before the runner printed; the raw output is the best report there is.
+    // Whatever was printed instead is the best report there is.
   }
   return { results, stderr, exitCode };
 }

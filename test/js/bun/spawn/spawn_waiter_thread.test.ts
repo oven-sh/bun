@@ -24,7 +24,8 @@ async function run(withWaiterThread: boolean) {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout, stderr).toMatch(/^\{.*\}\n$/);
+  expect(stderr).toBe("");
+  expect(stdout).toMatch(/^\{.*\}\n$/);
   const report = JSON.parse(stdout);
   expect(report).toEqual({ cpuUs: expect.any(Number), wallUs: expect.any(Number), childAlive: true });
   const { cpuUs, wallUs } = report;

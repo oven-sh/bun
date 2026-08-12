@@ -613,8 +613,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     cb: HotAccept;
     key: Id;
   };
-  /** Every module this update replaces with a new copy (disposed of, then evaluated again): the replaced
-   * modules, the modules their updates propagate through, and the self-accepting modules they stop at. */
+  /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
@@ -659,8 +658,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
       if (propagates) {
         if (mod.importers.size === 0) {
-          // Keep walking: the server applies the update regardless, so the
-          // modules behind the other importers of `key` still have to be found.
+          // The server applies the update anyway, so the other importers of `key` are still walked.
           failures ??= new Set();
           failures.add(key);
         } else {
@@ -750,8 +748,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     await Promise.all(disposePromises);
   }
 
-  // Reload all modules. All of them are marked stale before any is loaded, so
-  // that one importing another has the loader evaluate the imported one first.
+  // Reload all modules. All are marked stale before any is loaded, so the loader evaluates a stale import first.
   const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
@@ -777,8 +774,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (mod.state === State.Loaded) {
         selfAccept(getEsmExports(mod));
       } else {
-        // Still loading (top-level await) on behalf of a module reloaded
-        // earlier in this loop that imports it; that module's promise waits for it.
+        // Still loading (top-level await) for an importer reloaded above, whose promise waits for it.
         acceptsAfterLoad.push([mod, selfAccept]);
       }
     }

@@ -149,12 +149,9 @@ devTest("onResolve + onLoad virtual file", {
 // });
 
 // When an onResolve callback returns nothing, the specifier falls through to
-// the builtin resolver (BundleV2::run_resolver). Resolution failures on that
-// path must behave like the synchronous resolver: a failure that the importer
-// handles itself (require inside try/catch) is not an error, so the importer
-// must still be bundled. Previously the importer's AST was invalidated before
-// checking for try/catch, so it was silently dropped from the bundle and the
-// browser failed with "Failed to load bundled module".
+// the builtin resolver (BundleV2::run_resolver). A resolution failure on that
+// path that the importer handles itself (require inside try/catch) is not an
+// error, so the importer must still be bundled.
 const onResolveFallThroughPlugin = {
   "bunfig.toml": `
     [serve.static]

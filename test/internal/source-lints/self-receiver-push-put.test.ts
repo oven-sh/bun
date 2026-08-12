@@ -169,7 +169,7 @@ const ALLOW: Record<string, number> = {
   // spill, when the poll was never registered; otherwise it is queued and
   // freed after the event loop turn). Every `FilePoll::deinit*` entry point is
   // `&mut self` and reached from many owners, so the conversion is a change of
-  // its own; tracked separately.
+  // its own: #37803. Delete both entries when it lands.
   "src/io/posix_event_loop.rs": 1,
   "src/io/windows_event_loop.rs": 1,
 };

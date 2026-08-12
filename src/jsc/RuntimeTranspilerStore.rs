@@ -238,22 +238,33 @@ impl RuntimeTranspilerStore {
     /// VM teardown (JS thread, heap alive, script forbidden, embedded work
     /// waited for so no job is mid-flight): jobs whose completion will not run —
     /// queued after the last tick, or posted after `close()` began — release
-    /// their source, log and module promise here instead of running.
+    /// their source, log and module promise here instead of running. (A batch
+    /// that `run_from_js_thread` had already popped when script was terminated
+    /// is released there.)
     pub fn release_queued_jobs_for_teardown(&mut self) {
-        let batch = self.queue.pop_batch();
-        let mut iter = batch.iterator();
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
-            }
-            // SAFETY: a live job popped from the intrusive queue; this thread
-            // owns it now (its worker-thread part finished before `close()`).
+        let mut iter = self.queue.pop_batch().iterator();
+        let first = iter.next();
+        self.release_unrun_jobs(first, &mut iter);
+    }
+
+    /// Releases `job` and whatever is left in `iter`: jobs whose completion
+    /// will not run drop their module promise here, on the JS thread, and go
+    /// back to the pool.
+    fn release_unrun_jobs(
+        &self,
+        mut job: *mut TranspilerJob,
+        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
+    ) {
+        while !job.is_null() {
+            // SAFETY: a live job popped from the intrusive queue, owned by this
+            // thread since its pool-thread part pushed it; `iter` has already
+            // moved past it, and nothing else refers to it.
             unsafe {
                 (*job).promise.deinit();
                 (*job).reset_for_pool();
                 self.store.put(job);
             }
+            job = iter.next();
         }
     }
 
@@ -287,6 +298,9 @@ impl RuntimeTranspilerStore {
             if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
                 .is_err()
             {
+                // Script was terminated. The rest of this batch is already off
+                // the queue, so the teardown would never see it: release it now.
+                self.release_unrun_jobs(job, &mut iter);
                 return;
             }
             // SAFETY: as for `first`.

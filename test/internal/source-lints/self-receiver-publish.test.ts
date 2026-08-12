@@ -9,27 +9,42 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 //   ConcurrentTask::create(Task::init(std::ptr::from_mut(self)))
 //   ConcurrentTask::create_from(self)            // `&mut Self` coerces to `*mut Self`
+//   loop_.enqueue_task(Task::init(self))          // same loop, drained later
 //   let this = std::ptr::from_mut(self); ... Task::init(this)
 //   let p: *mut Self = self;             ... ConcurrentTask::create_from(p)
 //
-// as the argument of `Task::init(..)` / `..::create_from(..)` /
-// `..::from_callback(..)` is banned.
+// as the argument of `Task::init(..)`, `ConcurrentTask::create_from(..)`,
+// `ConcurrentTask::from_callback(..)` or the intrusive `.from(..)` is banned.
 //
-// The post is the hand-over. From the moment it lands, the consumer (another
-// thread, for a `ConcurrentTask`) may write to the object or, when the post
-// carries its last ref, free it, and it does so while `self` is still a live
-// argument of the method that posted it. A reference argument is protected
-// for the duration of its call, and writing to or deallocating protected
-// memory is UB under both aliasing models whether or not the method touches
-// `self` again: Tree Borrows (what `bun run rust:miri` uses) reports
-// "deallocation through <tag> is forbidden ... the strongly protected tag
-// disallows deallocations", pointing at the receiver, and Stacked Borrows
-// reports "deallocating while item [Unique] is strongly protected". Codegen
-// relies on the same guarantee: a reference argument is annotated as
-// dereferenceable for the whole call. `JSBundleCompletionTask::
-// complete_on_bundle_thread(&mut self)` was the instance this was written
-// for: every `Bun.build()` ended with the bundle thread posting the task's
-// only ref to the JS thread, which frees it, from inside its own `&mut self`.
+// Two things are wrong with it, and which one bites depends on who drains the
+// queue:
+//
+//   - Another thread (a `ConcurrentTask`): the post is the hand-over. From the
+//     moment it lands the consumer may write to the object or, when the post
+//     carries its last ref, free it, while `self` is still a live argument of
+//     the posting method. A reference argument is protected for the duration
+//     of its call, and writing to or deallocating protected memory is UB under
+//     both aliasing models whether or not the method touches `self` again:
+//     Tree Borrows (what `bun run rust:miri` uses) reports "deallocation
+//     through <tag> is forbidden ... the strongly protected tag disallows
+//     deallocations", pointing at the receiver, and Stacked Borrows reports
+//     "deallocating while item [Unique] is strongly protected". Codegen relies
+//     on the same guarantee: a reference argument is annotated as
+//     dereferenceable for the whole call.
+//   - The same thread, later: the queued pointer carries the provenance of the
+//     receiver reborrow it was spelled from, and that reborrow is dead as soon
+//     as anything reaches the object through the owner's own pointer again (the
+//     caller that holds it, the next event, a state CAS on the way out of the
+//     dispatch). When the queue is drained the task is read, or freed, through
+//     a dead pointer: "reborrow through <tag> is forbidden" (Tree Borrows) /
+//     "that tag does not exist in the borrow stack" (Stacked Borrows). This is
+//     why `SendQueue` in src/runtime/ipc.rs keeps its allocation pointer in a
+//     field and posts `root_ptr()`.
+//
+// `JSBundleCompletionTask::complete_on_bundle_thread(&mut self)` was the
+// instance this was written for: every `Bun.build()` ended with the bundle
+// thread posting the task's only ref to the JS thread, which frees it, from
+// inside its own `&mut self`.
 //
 // The object was a raw pointer in the caller's hands before it became `self`
 // (the queue entry, the callback ctx, the backref), so the fix is to keep it
@@ -39,14 +54,23 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `complete_on_bundle_thread` in src/runtime/api/js_bundle_completion_task.rs
 // (and its caller in src/bundler/BundleThread.rs, which keeps the pointer
 // raw), `async_job_run` in src/runtime/node/node_zlib_binding.rs, `post_job`
-// in src/jsc/VmHandle.rs.
+// in src/jsc/VmHandle.rs, the `(*this).concurrent_task.from(this, ..)` posts
+// in src/runtime/webcore/s3/.
 //
-// Scope: the spellings above, with `self` as the receiver and the three task
-// constructors as the callee. A pointer produced by a helper (`self.as_ptr()`),
-// a `NonNull::from(self)` binding posted through `.as_ptr()`, the intrusive
-// `ConcurrentTask::from(..)` form, and reference *parameters* other than
-// `self` (`fn f(load: &mut Load)` posting `from_mut(load)`) are the same
-// hazard but outside this lint. Siblings: self-receiver-reclaim.test.ts,
+// Scope: the spellings above, with `self` as the receiver and those four
+// callees. The same hand-over spelled some other way is outside the regex and
+// is the same bug; the instances known at the time of writing, each tracked
+// for its own conversion, are `napi_async_work::run` / `post_to_js_thread` in
+// src/runtime/napi/napi_body.rs (posts a `*mut Self` parameter the caller made
+// from its `&mut self`), `FetchTasklet::deref_from_thread` in
+// src/runtime/webcore/fetch/FetchTasklet.rs (posts `this`, but through
+// `post(&self)` and the handle field inside the object it is freeing),
+// `StatWatcher::post_to_js_thread(&self)` in src/runtime/node/
+// node_fs_stat_watcher.rs (a helper's pointer, `self.as_ctx_ptr()`), and
+// `TranspilerJob::dispatch_to_main_thread(&mut self)` in
+// src/jsc/RuntimeTranspilerStore.rs (pushes `NonNull::from(&mut *self)` onto
+// its own queue). Convert anything of that shape on sight; the ratchet below
+// only tracks what the regex can see. Siblings: self-receiver-reclaim.test.ts,
 // fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
@@ -66,12 +90,15 @@ const tracked: Set<string> | null = (() => {
 })();
 
 // `Task::init(`, `ConcurrentTask::create_from(`, `ConcurrentTask::from_callback(`,
-// however the path in front is spelled, optionally turbofished. The `\b`
-// before `Task` keeps `NapiFinalizerTask::init(self)` (a constructor that
-// copies out of `self`) out; `create_from` / `from_callback` require a path
-// in front so a method call of the same name does not count. `\s*` after the
-// paren so a rustfmt-wrapped argument still matches.
-const POST = String.raw`\b(?:Task::init|[\w:]+::create_from|[\w:]+::from_callback)(?:::<[^>]*>)?\(\s*`;
+// however the path in front is spelled (`jsc::`, `bun_event_loop::ConcurrentTask::`,
+// the `ConcurrentTaskItem` alias), optionally turbofished, plus the intrusive
+// `.from(` of an embedded `ConcurrentTask` / `AnyTask` (the tree's only
+// method-call `.from(`). The `\b` before `Task` keeps `NapiFinalizerTask::
+// init(self)` (a constructor that copies out of `self`) out, and pinning the
+// other two to a `ConcurrentTask*` path keeps unrelated `create_from`
+// constructors out. `\s*` after the paren so a rustfmt-wrapped argument still
+// matches.
+const POST = String.raw`(?:\bTask::init|\bConcurrentTask\w*::(?:create_from|from_callback)|\.from)(?:::<[^>]*>)?\(\s*`;
 
 // The ways of spelling "`self`, as a raw pointer" as the first argument. Each
 // is anchored at its front only, so a trailing `.cast_mut()` / `.as_ptr()`
@@ -139,15 +166,16 @@ function lineOf(text: string, offset: number): number {
 }
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
-// shape. Each has been read; none frees the receiver from the consumer's side,
-// and each needs a change elsewhere before its own receiver can be converted.
-// Lower an entry when you convert one; do not add entries.
+// shape. Each has been read and is the bug described above, not a false
+// positive; each is listed because its conversion is a change of its own,
+// tracked separately, not because it is safe. Lower an entry when you convert
+// one; do not add entries.
 const ALLOW: Record<string, number> = {
   // `Resolve::dispatch` / `Load::dispatch` (`&mut self`) post the arena-owned
   // plugin request to the JS thread, which writes its `value` while
-  // `dispatch` is still returning; the arena, not the consumer, frees it.
-  // Converting them means `dispatch(this: *mut Self)` with the arena pointer
-  // the callers already hold; tracked separately.
+  // `dispatch` is still returning (the arena, not the consumer, frees it).
+  // Conversion: `dispatch(this: *mut Self)` with the pointer the callers
+  // already hold.
   "src/bundler/bundle_v2.rs": 2,
   // `DeferredBatchTask::schedule` (`&mut self`) posts a task embedded in its
   // `BundleV2`, whose consumer reaches the surrounding `BundleV2` through it;
@@ -155,12 +183,14 @@ const ALLOW: Record<string, number> = {
   // holds for the whole pass, not this field's. #37709 reshapes `schedule` to
   // take the `BundleV2`; delete this entry when that lands.
   "src/bundler/DeferredBatchTask.rs": 1,
-  // `ThreadSafeFunction::maybe_queue_finalizer` posts to the loop it is
-  // running on, so the task runs after the method has returned.
-  // `schedule_dispatch` posts from addon threads and the JS thread starts
-  // writing the TSFN's atomics at once, but its callers (`call`,
-  // `release_locked`) hold `&mut self` across it too, so it cannot be
-  // converted on its own; tracked separately.
+  // `ThreadSafeFunction::maybe_queue_finalizer` is the same-thread case: it
+  // sets `closing` and posts `self_ptr` to its own loop, `on_dispatch` then
+  // CASes `dispatch_state` through the real pointer on its way out, and the
+  // drained task is what `destroy`s the TSFN, through the dead one.
+  // `schedule_dispatch` is the cross-thread case (addon threads post, the JS
+  // thread writes the atomics at once). Both are reached through `&mut self`
+  // callers (`dispatch_one`; `call` / `release_locked`) that have to be
+  // converted with them.
   "src/runtime/napi/napi_body.rs": 2,
 };
 
@@ -202,7 +232,12 @@ test("the patterns match the banned spellings and nothing else", () => {
     "bun_event_loop::ConcurrentTask::ConcurrentTask::create(\n    bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),\n);",
     "let self_ptr: *mut Self = self;\nif done {\n    return;\n}\nlet ct = ConcurrentTask::create_from(self_ptr);",
     "let self_ptr: *mut Self = self;\nloop_.enqueue_task(Task::init(self_ptr));",
-    // Other spellings of the pointer.
+    // The intrusive form.
+    "let ct = self.concurrent_task.from(std::ptr::from_mut(self), AutoDeinit::ManualDeinit);",
+    "let self_ptr: *mut Self = self;\nlet ct = self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit);",
+    "at.from(self, Self::run_from_main_thread_mini)",
+    // Other spellings of the pointer; a same-loop post counts too (see the
+    // header).
     "loop_.enqueue_task(Task::init(self));",
     "let ct = ConcurrentTask::create_from(self);",
     "ConcurrentTask::from_callback(self, Self::resume);",
@@ -213,6 +248,8 @@ test("the patterns match the banned spellings and nothing else", () => {
     "Task::init(&raw mut *self)",
     "Task::init(core::ptr::addr_of_mut!(*self))",
     "jsc::ConcurrentTask::create_from::<Self>(std::ptr::from_mut(self))",
+    "let task = ConcurrentTaskItem::create_from(std::ptr::from_mut(self));",
+    "bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(self, on_done)",
     "let p = self as *mut Self;\nlet ct = ConcurrentTask::create_from(p);",
     "let p: *mut Self = std::ptr::from_mut(self);\nlet ct = bun_jsc::ConcurrentTask::create_from(p);",
     "let p = core::ptr::from_ref(self).cast_mut();\nlet ct = ConcurrentTask::create_from(p);",
@@ -224,6 +261,11 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let ct = ConcurrentTask::create(Task::init(this));",
     "ConcurrentTask::create_from(task.as_ptr())",
     "ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream)",
+    "(*this).concurrent_task.from(this, AutoDeinit::ManualDeinit)",
+    "EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),",
+    // `From::from` and the like are path calls, not the intrusive method.
+    "let s = String::from(self);",
+    "let v = Vec::from(self.as_slice());",
     // Something the receiver owns or points at, or a helper's pointer, is
     // out of scope (see the header).
     "ConcurrentTask::create(Task::init(self.as_ctx_ptr()))",
@@ -231,8 +273,10 @@ test("the patterns match the banned spellings and nothing else", () => {
     "Task::init(&raw mut *self.inner)",
     "Task::init(self.task)",
     "ConcurrentTask::from_callback(std::ptr::from_mut(load), on_load_from_js_loop_raw)",
-    // A constructor whose name merely ends in `Task`, and a method call.
+    // A constructor whose name merely ends in `Task`, a `create_from` that is
+    // not a task's, and a method call.
     "NapiFinalizerTask::init(self).schedule();",
+    "let headers = FetchHeaders::create_from(self);",
     "state.create_from(index, from, into);",
     // Producing the pointer is fine when it is not what gets posted.
     "let this = std::ptr::from_mut::<Self>(self);\nregister(this);",

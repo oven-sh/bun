@@ -4310,13 +4310,20 @@ async function openHttp1Connection(port) {
   const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
   socket.setEncoding("utf8");
   let received = "";
-  let onData = () => {};
+  let lastError;
+  // Resolves whatever waitUntil() is currently waiting on; data and close both wake it.
+  let wake = () => {};
   socket.on("data", chunk => {
     received += chunk;
-    onData();
+    wake();
   });
-  socket.on("error", () => {});
-  const closed = new Promise(resolve => socket.once("close", resolve));
+  socket.on("error", error => (lastError = error));
+  const closed = new Promise(resolve =>
+    socket.once("close", () => {
+      resolve();
+      wake();
+    }),
+  );
   await new Promise((resolve, reject) => {
     socket.once("secureConnect", resolve);
     socket.once("error", reject);
@@ -4332,9 +4339,14 @@ async function openHttp1Connection(port) {
     },
     async waitUntil(predicate) {
       while (!predicate(received)) {
-        await new Promise(resolve => (onData = resolve));
+        if (socket.destroyed) {
+          throw new Error(
+            `connection closed while waiting${lastError ? ` (${lastError.code || lastError.message})` : ""}; received: ${JSON.stringify(received)}`,
+          );
+        }
+        await new Promise(resolve => (wake = resolve));
       }
-      onData = () => {};
+      wake = () => {};
     },
     waitForResponse() {
       const before = responsesReceived();

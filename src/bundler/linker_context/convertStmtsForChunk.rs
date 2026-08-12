@@ -67,10 +67,6 @@ pub(crate) fn convert_stmts_for_chunk(
     // one must have the "__esModule" marker. This is done because an ES module
     // importing itself should not see the "__esModule" marker but a CommonJS module
     // importing us should see the "__esModule" marker.
-    //
-    // This is about the file being converted, not the chunk it lands in: a
-    // non-entry file bundled into the entry chunk must not leak its re-exports
-    // onto the entry's "module.exports".
     let mut module_exports_for_export: Option<Expr> = None;
     if output_format == Format::Cjs && is_entry_point {
         module_exports_for_export = Some(Expr::allocate(
@@ -174,12 +170,8 @@ pub(crate) fn convert_stmts_for_chunk(
                         {
                             let is_bun_builtin = record.tag == ImportRecordTag::Bun;
                             let re_exported_module: Expr = if is_bun_builtin {
-                                // The printer lowers an import of "bun" to a plain
-                                // `var ns = globalThis.Bun`, which unlike an import
-                                // statement is not hoisted above the "__reExport()"
-                                // call emitted below, so reference the module directly
-                                // (printed as `globalThis.Bun`) instead of going
-                                // through a namespace binding.
+                                // A "bun" import prints as a non-hoisted var, which would
+                                // land after the "__reExport()" call below.
                                 Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,

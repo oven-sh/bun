@@ -827,7 +827,6 @@ export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
-  exitCode: string | number | null = null;
   messages: any[] = [];
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
@@ -859,15 +858,16 @@ export class Client extends EventEmitter {
       },
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
+        let code: string | number;
         if (exitCode !== null) {
-          this.exitCode = exitCode;
+          code = exitCode;
         } else if (signalCode !== null) {
           console.log("THE SIGNAL CODE IS", signalCode);
-          this.exitCode = `${signalCode}`;
+          code = `${signalCode}`;
         } else {
-          this.exitCode = "unknown";
+          code = "unknown";
         }
-        this.emit("exit", this.exitCode, error);
+        this.emit("exit", code, error);
         this.exited = true;
         if (activeClient === this) {
           activeClient = null;
@@ -930,12 +930,18 @@ export class Client extends EventEmitter {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
     await this.#proc.exited;
-    if (this.exitCode !== null && this.exitCode !== "0") {
+    // `exited` settles before `onExit` runs, so when the client exits during
+    // dispose nothing `onExit` records is usable here yet; the subprocess
+    // itself already carries the status.
+    const { exitCode, signalCode } = this.#proc;
+    if (exitCode !== 0) {
       let code;
-      if (exitCodeMapStrings[this.exitCode]) {
-        code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
+      if (exitCode === null) {
+        code = ` with signal ${signalCode}`;
+      } else if (exitCodeMapStrings[exitCode]) {
+        code = ": " + JSON.stringify(exitCodeMapStrings[exitCode]);
       } else {
-        code = " with " + (typeof this.exitCode === "number" ? `code ${this.exitCode}` : `signal ${this.exitCode}`);
+        code = ` with code ${exitCode}`;
       }
       throw new Error(`Client exited${code}`);
     }

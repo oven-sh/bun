@@ -431,9 +431,7 @@ fn print_truncation_notice(
     Ok(())
 }
 
-/// The rendering is all unchanged context, so once it is longer than
-/// `truncate_threshold` only `chunk_context_lines` at each end are kept, the
-/// way `print_truncated_line` keeps `truncate_context` bytes at each end.
+/// Past `truncate_threshold` only `chunk_context_lines` at each end are kept.
 fn print_identical_rendering(
     rendering: &[u8],
     writer: &mut impl Write,

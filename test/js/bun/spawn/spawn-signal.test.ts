@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 test("spawn AbortSignal works after spawning", async () => {
   const controller = new AbortController();
@@ -136,7 +136,13 @@ test("spawnSync AbortSignal works as timeout", async () => {
 
 // The subprocess lets go of the signal when the child exits. The caller still
 // holds it, so its timer has to keep running.
-describe("AbortSignal.timeout() still fires after the child has exited", () => {
+describe.concurrent("AbortSignal.timeout() still fires after the child has exited", () => {
+  // The child must exit before the timer fires, so it skips booting a JS VM
+  // (`--version`) and slow builds get a wider window (the passing path waits
+  // it out, so it has to stay inside the per-test ceiling).
+  const timeoutMs = isDebug || isASAN ? 3000 : 1000;
+  const cmd = [bunExe(), "--version"];
+
   async function expectTimeoutAfterExit(signal: AbortSignal, exitCode: number | null) {
     // Proves nothing unless the child was gone before the timer fired.
     expect(exitCode).toBe(0);
@@ -147,24 +153,14 @@ describe("AbortSignal.timeout() still fires after the child has exited", () => {
   }
 
   test("Bun.spawn", async () => {
-    const signal = AbortSignal.timeout(1000);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "0"],
-      env: bunEnv,
-      stdio: ["ignore", "ignore", "ignore"],
-      signal,
-    });
+    const signal = AbortSignal.timeout(timeoutMs);
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdio: ["ignore", "ignore", "ignore"], signal });
     await expectTimeoutAfterExit(signal, await proc.exited);
   });
 
   test("Bun.spawnSync", async () => {
-    const signal = AbortSignal.timeout(1000);
-    const { exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", "0"],
-      env: bunEnv,
-      stdio: ["ignore", "ignore", "ignore"],
-      signal,
-    });
+    const signal = AbortSignal.timeout(timeoutMs);
+    const { exitCode } = Bun.spawnSync({ cmd, env: bunEnv, stdio: ["ignore", "ignore", "ignore"], signal });
     await expectTimeoutAfterExit(signal, exitCode);
   });
 });

@@ -761,8 +761,7 @@ impl ThreadPoolInner {
         }
     }
 
-    /// Starts the worker for the `spawned` slot the caller just CAS'd into
-    /// `sync`; on `false` the OS refused the thread and the slot is given back.
+    /// Fills the `spawned` slot the caller just CAS'd; on `false` the OS refused and the slot is given back.
     fn spawn_worker(self: &Arc<Self>) -> bool {
         let pool = Arc::clone(self);
         match std::thread::Builder::new()
@@ -951,9 +950,8 @@ impl ThreadPoolInner {
         }
     }
 
-    /// Un-spawn one thread, either because spawning it failed or because it is
-    /// exiting. The notify below may let the owner drop its `ThreadPool`;
-    /// `self` outlives that through the caller's `Arc`.
+    /// Un-spawn one thread (failed spawn or exit). The notify below may let the
+    /// owner drop its `ThreadPool`; `self` outlives that through the caller's `Arc`.
     fn unspawn(&self) {
         let one_spawned = {
             let mut s = Sync::zero();
@@ -1122,8 +1120,7 @@ impl Thread {
         self.idle_queue.push(&list);
     }
 
-    /// Thread entry point which runs a worker for the ThreadPool. `thread_pool`
-    /// is the worker's own `Arc`, owned by the thread's closure in `spawn_worker`.
+    /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: &Arc<ThreadPoolInner>) {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`

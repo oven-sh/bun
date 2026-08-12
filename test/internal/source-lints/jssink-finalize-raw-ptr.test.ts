@@ -5,8 +5,8 @@ import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // The JSSink finalize chain (`${Sink}__finalize` thunk in generate-jssink.ts ->
-// `JSSink::js_finalize` -> `JsSinkType::finalize`) must carry the sink as
-// `*mut`, never as a reference.
+// `JSSink::js_finalize` -> `JsSinkType::finalize` -> the inherent method that
+// performs the free) must carry the sink as `*mut`, never as a reference.
 //
 // `__finalize` is what a JS wrapper / controller cell calls when it gives up
 // its claim on the native sink, and for some sinks that claim is the
@@ -95,8 +95,10 @@ for (const abs of rustSources) {
   }
 }
 
-// The frames above the impls. Each entry is a file and the signature it must
-// contain; a rename here is a reason to update the entry, not to delete it.
+// The frames above the impls, and the inherent methods below them that perform
+// the free (`pub` distinguishes those from the trait impls in the same files,
+// which never carry a visibility). Each entry is a file and the signature it
+// must contain; a rename here is a reason to update the entry, not to delete it.
 const FRAMES: Array<{ file: string; signature: RegExp; what: string }> = [
   {
     file: "src/runtime/webcore/Sink.rs",
@@ -112,6 +114,22 @@ const FRAMES: Array<{ file: string; signature: RegExp; what: string }> = [
     file: "src/codegen/generate-jssink.ts",
     signature: /\bunsafe\s+extern\s+"C"\s+fn\s+\$\{name\}__finalize\s*\(\s*this\s*:\s*\*mut\s+\$\{name\}\s*\)/,
     what: "generated `${name}__finalize` thunk",
+  },
+  {
+    file: "src/runtime/webcore/ArrayBufferSink.rs",
+    signature: /\bpub(?:\([^)]*\))?\s+unsafe\s+fn\s+destroy\s*\(\s*this\s*:\s*\*mut\s+(?:Self|ArrayBufferSink)\s*\)/,
+    what: "ArrayBufferSink::destroy",
+  },
+  {
+    file: "src/runtime/webcore/FileSink.rs",
+    signature: /\bpub(?:\([^)]*\))?\s+unsafe\s+fn\s+finalize\s*\(\s*this\s*:\s*\*mut\s+(?:Self|FileSink)\s*\)/,
+    what: "FileSink::finalize",
+  },
+  {
+    file: "src/runtime/webcore/fetch/FetchRequestBodySink.rs",
+    signature:
+      /\bpub(?:\([^)]*\))?\s+unsafe\s+fn\s+finalize\s*\(\s*this\s*:\s*\*mut\s+(?:Self|FetchRequestBodySink)\s*\)/,
+    what: "FetchRequestBodySink::finalize",
   },
 ];
 
@@ -152,12 +170,21 @@ test("the impl pattern recognizes the shapes it claims to", () => {
     "impl JsSinkAbi for FileSink {",
   ].join("\n");
   expect([...headers.matchAll(IMPL_HEADER)].map(m => m[1])).toEqual(["FileSink", "HTTPServerWritable"]);
+
+  // The inherent-frame entries must see through a conforming trait impl in
+  // the same file, or they would pass whenever the impl does.
+  const fileSink = FRAMES.find(f => f.what === "FileSink::finalize")!.signature;
+  expect(fileSink.test("pub(crate) unsafe fn finalize(this: *mut FileSink) {")).toBe(true);
+  expect(fileSink.test("    unsafe fn finalize(this: *mut Self) {\n        unsafe { Self::finalize(this) }")).toBe(
+    false,
+  );
+  expect(fileSink.test("pub fn finalize(&mut self) {")).toBe(false);
 });
 
 test("every JsSinkType impl takes the sink to finalize as `*mut Self`", () => {
   expect(offenders).toEqual([]);
 });
 
-test("the thunk, JSSink::js_finalize and the trait declaration pass the sink through as `*mut`", () => {
+test("the thunk, js_finalize, the trait declaration and the freeing inherent methods all take `*mut`", () => {
   expect(missingFrames).toEqual([]);
 });

@@ -3225,18 +3225,19 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    PackageJson,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::PackageJson)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::PackageJson => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -4561,7 +4562,11 @@ impl VirtualMachine {
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    return Ok(resolved_path);
+                    return Ok(if mode == ResolveMode::PackageJson {
+                        Ok(bun_core::String::empty())
+                    } else {
+                        resolved_path
+                    });
                 }
             }
         }
@@ -4572,7 +4577,9 @@ impl VirtualMachine {
             Default::default(),
         ) {
             return Ok(Ok(
-                if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                if mode == ResolveMode::PackageJson {
+                    bun_core::String::empty()
+                } else if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
                 } else {
                     bun_core::String::init(hardcoded.path.as_bytes())
@@ -4582,7 +4589,11 @@ impl VirtualMachine {
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-            return Ok(Ok(specifier.clone()));
+            return Ok(Ok(if mode == ResolveMode::PackageJson {
+                bun_core::String::empty()
+            } else {
+                specifier.clone()
+            }));
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
@@ -4687,7 +4698,16 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        Ok(Ok(if mode == ResolveMode::PackageJson {
+            result
+                .result
+                .as_ref()
+                .and_then(bun_resolver::Result::package_json_path)
+                .map(bun_core::String::clone_utf8)
+                .unwrap_or_default()
+        } else {
+            bun_core::String::clone_utf8(result.path)
+        }))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {

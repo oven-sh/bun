@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
-import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import Module, { _nodeModulePaths, builtinModules, createRequire, findPackageJSON, isBuiltin, wrap } from "module";
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
@@ -23,6 +23,29 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("node:bacon")).toBe(false);
     expect(isBuiltin("node:test")).toBe(true);
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
+  });
+
+  test("findPackageJSON resolves an ESM package import", async () => {
+    using dir = tempDir("find-package-json", {
+      "entry.mjs": `import { findPackageJSON } from "node:module";
+console.log(findPackageJSON("pkg", import.meta.url));
+console.log(findPackageJSON(import.meta.resolve("pkg")));`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: "./index.js" }),
+      "node_modules/pkg/index.js": "export {};",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+      "<dir>/node_modules/pkg/package.json
+      <dir>/node_modules/pkg/package.json"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("module.globalPaths exists", () => {

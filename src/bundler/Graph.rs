@@ -274,8 +274,16 @@ impl<T> Default for OutstandingLink<T> {
         }
     }
 }
+/// A linked node is shared with the plugins' thread by field (see the docs on
+/// `api::JSBundler::Resolve` / `Load`): the list owns the link and nothing
+/// else, so it reaches the link through this raw projection and never forms a
+/// reference to the whole node.
 pub trait OutstandingNode: Sized {
-    fn link(&mut self) -> &mut OutstandingLink<Self>;
+    /// `&raw mut (*this).outstanding`.
+    ///
+    /// # Safety
+    /// `this` points at a live node.
+    unsafe fn link_raw(this: *mut Self) -> *mut OutstandingLink<Self>;
 }
 /// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
 pub struct OutstandingList<T: OutstandingNode> {
@@ -290,40 +298,43 @@ impl<T: OutstandingNode> Default for OutstandingList<T> {
 }
 impl<T: OutstandingNode> OutstandingList<T> {
     pub(crate) fn push(&mut self, node: *mut T) {
-        // SAFETY: `node` is arena-live and unlinked; bundle thread.
+        // SAFETY: `node` is arena-live and unlinked; the current head is
+        // linked ⇒ arena-live (and possibly being answered by the plugins'
+        // thread right now, hence only its link is touched); bundle thread.
         unsafe {
-            let l = (*node).link();
-            debug_assert!(!l.linked);
-            l.linked = true;
-            l.prev = core::ptr::null_mut();
-            l.next = self.head;
+            let l = T::link_raw(node);
+            debug_assert!(!(*l).linked);
+            (*l).linked = true;
+            (*l).prev = core::ptr::null_mut();
+            (*l).next = self.head;
             if !self.head.is_null() {
-                (*self.head).link().prev = node;
+                (*T::link_raw(self.head)).prev = node;
             }
         }
         self.head = node;
     }
     /// No-op if `node` is not linked (already answered / never dispatched).
-    pub(crate) fn unlink(&mut self, node: &mut T) {
-        let node_ptr: *mut T = node;
-        let l = node.link();
-        if !l.linked {
-            return;
-        }
-        l.linked = false;
-        let (prev, next) = (l.prev, l.next);
-        l.prev = core::ptr::null_mut();
-        l.next = core::ptr::null_mut();
-        // SAFETY: neighbours are linked ⇒ arena-live; bundle thread.
+    pub(crate) fn unlink(&mut self, node: *mut T) {
+        // SAFETY: `node` is arena-live; its neighbours are linked ⇒ arena-live
+        // (and still out with the plugins' thread, hence only their links are
+        // touched); bundle thread.
         unsafe {
+            let l = T::link_raw(node);
+            if !(*l).linked {
+                return;
+            }
+            (*l).linked = false;
+            let (prev, next) = ((*l).prev, (*l).next);
+            (*l).prev = core::ptr::null_mut();
+            (*l).next = core::ptr::null_mut();
             if prev.is_null() {
-                debug_assert!(core::ptr::eq(self.head, node_ptr));
+                debug_assert!(core::ptr::eq(self.head, node));
                 self.head = next;
             } else {
-                (*prev).link().next = next;
+                (*T::link_raw(prev)).next = next;
             }
             if !next.is_null() {
-                (*next).link().prev = prev;
+                (*T::link_raw(next)).prev = prev;
             }
         }
     }
@@ -332,8 +343,7 @@ impl<T: OutstandingNode> OutstandingList<T> {
         if head.is_null() {
             return None;
         }
-        // SAFETY: linked ⇒ arena-live.
-        self.unlink(unsafe { &mut *head });
+        self.unlink(head);
         Some(head)
     }
 }

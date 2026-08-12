@@ -1082,6 +1082,16 @@ pub mod bv2_impl {
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
+            ///
+            /// From `dispatch` until the answer reaches `BundleV2::on_resolve`,
+            /// the request is shared between two threads by field: the plugins'
+            /// thread reads `bv2` / `import_record` and writes `value` (and
+            /// `task`, to post the answer), while the bundle thread owns
+            /// `outstanding` and writes it whenever a neighbouring request is
+            /// pushed or unlinked. During that window both sides go through the
+            /// raw pointer field by field; a `&Resolve` / `&mut Resolve` would
+            /// claim the other side's fields too. (Under bake the two "threads"
+            /// are one loop; the code is shared, so it keeps the same shape.)
             pub struct Resolve {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
@@ -1143,25 +1153,28 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
                 }
-                pub fn run_on_js_thread(&mut self) {
-                    let kind = self.import_record.kind;
-                    // reshaped for borrowck — capture the erased self
-                    // pointer before borrowing fields immutably for the FFI call.
-                    let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
+                /// Plugins' thread. `this` itself is the context C++ hands back
+                /// to the `JSBundlerPlugin__*` answer thunks.
+                ///
+                /// # Safety
+                /// `this` is the request `dispatch` posted, not yet answered.
+                pub unsafe fn run_on_js_thread(this: *mut Self) {
+                    // SAFETY: fn contract; of the request only this thread's
+                    // fields are touched (type docs). `bv2` is the backref set
+                    // by `init`, and the plugin storage is disjoint from the
+                    // request, so the `&mut JSBundlerPlugin` does not alias
+                    // `record`.
+                    unsafe {
+                        let record = &(*this).import_record;
+                        let bv2 = &mut *(*this).bv2;
+                        bv2.plugins_mut().expect("plugins").match_on_resolve(
+                            &record.specifier,
+                            &record.namespace,
+                            &record.source_file,
+                            this.cast::<core::ffi::c_void>(),
+                            record.kind,
                         );
+                    }
                 }
             }
 
@@ -1189,6 +1202,15 @@ pub mod bv2_impl {
             }
 
             /// Task driving an onLoad plugin invocation for one source file.
+            ///
+            /// Shared by field while outstanding, exactly as [`Resolve`]: the
+            /// plugins' thread reads `bv2` / `path` / `namespace` /
+            /// `default_loader` / `parse_task` and writes `value`, `called_defer`
+            /// and `task`; the bundle thread owns `outstanding` and `deferred`
+            /// (the latter written by `on_notify_defer_mini` while the plugin's
+            /// callback is still suspended in `.defer()`). Until the answer
+            /// reaches `BundleV2::on_load`, neither side forms a `&Load` /
+            /// `&mut Load`.
             pub struct Load {
                 pub bv2: *mut BundleV2<'static>,
                 pub(crate) source_index: bun_ast::Index,
@@ -1197,8 +1219,6 @@ pub mod bv2_impl {
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
-                /// Faster path: skip the extra threadpool dispatch when the file is not found.
-                pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
                 /// `.defer()`ed and not yet drained: its scan-counter unit sits in
@@ -1225,7 +1245,6 @@ pub mod bv2_impl {
                     value: LoadValue::Pending,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
-                    was_file: false,
                     called_defer: false,
                     deferred: false,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
@@ -1278,26 +1297,30 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
-                pub fn run_on_js_thread(&mut self) {
-                    let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
-                    let default_loader = self.default_loader;
-                    // reshaped for borrowck — capture the erased self
-                    // pointer before borrowing fields immutably for the FFI call.
-                    let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.path` / `&self.namespace` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_load(
-                            &self.path,
-                            &self.namespace,
-                            self_ptr,
-                            default_loader,
+                /// Plugins' thread; see `Resolve::run_on_js_thread`.
+                ///
+                /// # Safety
+                /// `this` is the request `dispatch` posted, not yet answered.
+                pub unsafe fn run_on_js_thread(this: *mut Self) {
+                    // SAFETY: fn contract; of the request only this thread's
+                    // fields are touched (type docs), and the `ParseTask` behind
+                    // `parse_task` is not scheduled until the answer. `bv2` is
+                    // the backref set by `init`, and the plugin storage is
+                    // disjoint from the request, so the `&mut JSBundlerPlugin`
+                    // does not alias the `path` / `namespace` slices.
+                    unsafe {
+                        let parse_task = (*this).parse_task;
+                        let is_server_side = parse_task.known_target.bake_graph()
+                            != crate::bake_types::Graph::Client;
+                        let bv2 = &mut *(*this).bv2;
+                        bv2.plugins_mut().expect("plugins").match_on_load(
+                            &(*this).path,
+                            &(*this).namespace,
+                            this.cast::<core::ffi::c_void>(),
+                            (*this).default_loader,
                             is_server_side,
                         );
+                    }
                 }
             }
             impl bun_event_loop::Taskable for Load {
@@ -1306,13 +1329,16 @@ pub mod bv2_impl {
                 unsafe fn release_unrun(_: *mut Self) {}
             }
             impl crate::Graph::OutstandingNode for Load {
-                fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
-                    &mut self.outstanding
+                unsafe fn link_raw(this: *mut Self) -> *mut crate::Graph::OutstandingLink<Self> {
+                    // SAFETY: `this` is live (trait contract); a raw field
+                    // projection borrows nothing.
+                    unsafe { &raw mut (*this).outstanding }
                 }
             }
             impl crate::Graph::OutstandingNode for Resolve {
-                fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
-                    &mut self.outstanding
+                unsafe fn link_raw(this: *mut Self) -> *mut crate::Graph::OutstandingLink<Self> {
+                    // SAFETY: as for `Load`.
+                    unsafe { &raw mut (*this).outstanding }
                 }
             }
         }
@@ -4316,7 +4342,14 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+        /// Plugins' thread: `load.value` has been filled in; hand the request
+        /// back. Nothing touches `*load` after the post, and `load` (the pointer
+        /// the bundle thread already holds in `outstanding_loads`) is what is
+        /// posted, not a reborrow: see the `Load` docs.
+        ///
+        /// # Safety
+        /// `load` is an outstanding request of this pass, answered by nobody else.
+        pub unsafe fn on_load_async(&mut self, load: *mut jsc_api::JSBundler::Load) {
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
@@ -4324,7 +4357,7 @@ pub mod bv2_impl {
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
+                        load,
                         on_load_from_js_loop_raw,
                     );
                     let poster = self
@@ -4340,11 +4373,12 @@ pub mod bv2_impl {
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `load` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_load_mini` on the bundler thread.
+                    // SAFETY: `load` is arena-live until answered (fn contract)
+                    // and `task` is its intrusive node; the mini loop dispatches
+                    // `on_load_mini` on the bundler thread.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
-                            std::ptr::from_mut(load),
+                            load,
                             on_load_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Load, task),
                         );
@@ -4353,12 +4387,16 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+        /// Plugins' thread; as [`Self::on_load_async`], for `Resolve`.
+        ///
+        /// # Safety
+        /// `resolve` is an outstanding request of this pass, answered by nobody else.
+        pub unsafe fn on_resolve_async(&mut self, resolve: *mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
+                        resolve,
                         on_resolve_from_js_loop_raw,
                     );
                     let poster = self
@@ -4374,11 +4412,10 @@ pub mod bv2_impl {
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_resolve_mini` on the bundler thread.
+                    // SAFETY: as in `on_load_async`.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
-                            std::ptr::from_mut(resolve),
+                            resolve,
                             on_resolve_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
                         );
@@ -6944,8 +6981,18 @@ pub mod bv2_impl {
             self.decrement_scan_counter();
         }
 
-        pub fn on_notify_defer_mini(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            load.deferred = true;
+        /// Bundle thread. `load` is still out with the plugin (its onLoad
+        /// callback is awaiting `.defer()`), so only this thread's `deferred`
+        /// field is touched: see the `Load` docs.
+        ///
+        /// # Safety
+        /// `load` is an outstanding request of this pass.
+        pub unsafe fn on_notify_defer_mini(
+            load: *mut jsc_api::JSBundler::Load,
+            this: &mut BundleV2,
+        ) {
+            // SAFETY: fn contract; `deferred` belongs to this thread.
+            unsafe { (*load).deferred = true };
             this.on_notify_defer();
         }
 

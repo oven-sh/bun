@@ -222,16 +222,23 @@ pub(crate) fn run_task(
             });
         }
         task_tag::BundleV2PluginResolve => {
-            // SAFETY: tag identifies pointee — a live `Resolve` owned by the
-            // plugin dispatch chain.
-            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
-                .run_on_js_thread();
+            // SAFETY: tag identifies pointee — the `Resolve` its pass posted and
+            // is waiting on. Passed as the raw pointer: the bundle thread may
+            // be writing the request's list link meanwhile (see the `Resolve`
+            // docs), so no `&mut` to it is formed here.
+            unsafe {
+                bun_bundler::bundle_v2::api::JSBundler::Resolve::run_on_js_thread(cast_ptr!(
+                    bun_bundler::bundle_v2::api::JSBundler::Resolve
+                ))
+            };
         }
         task_tag::BundleV2PluginLoad => {
-            // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
-            // dispatch chain.
-            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
-                .run_on_js_thread();
+            // SAFETY: as `BundleV2PluginResolve`.
+            unsafe {
+                bun_bundler::bundle_v2::api::JSBundler::Load::run_on_js_thread(cast_ptr!(
+                    bun_bundler::bundle_v2::api::JSBundler::Load
+                ))
+            };
         }
         task_tag::JSBundleCompletionTask => {
             if let Err(err) =

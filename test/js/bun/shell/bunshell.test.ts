@@ -524,6 +524,37 @@ describe("bunshell", () => {
     TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
   });
 
+  // A command with no command name completes with the status of the last
+  // command substitution it performed (POSIX 2.9.1), wherever in the command
+  // line that substitution was (bash: `$(exit 3) $(exit 4); echo $?` prints 4).
+  describe("no command name, status of the last cmd subst", () => {
+    TestBuilder.command`$(exit 3) $(exit 4)`.exitCode(4).runAsTest("two substitutions");
+    TestBuilder.command`$(exit 4) $(exit 0)`.exitCode(0).runAsTest("last substitution succeeded");
+    TestBuilder.command`$(exit 3) $UNSET`.exitCode(3).runAsTest("substitution before an empty word");
+    TestBuilder.command`$UNSET $(exit 3)`.exitCode(3).runAsTest("substitution after an empty word");
+    TestBuilder.command`$(exit 3)$(exit 4)`.exitCode(4).runAsTest("two substitutions in one word");
+    TestBuilder.command`$(exit 4)$(exit 0)`.exitCode(0).runAsTest("last substitution in a word succeeded");
+    TestBuilder.command`$(exit 3)$UNSET`.exitCode(3).runAsTest("substitution joined to an empty expansion");
+    TestBuilder.command`$(exit 3)$(exit 4) $(exit 5)`.exitCode(5).runAsTest("last word wins over a compound word");
+    TestBuilder.command`$(exit 5) $(exit 3)$(exit 4)`.exitCode(4).runAsTest("last substitution of the last word wins");
+    TestBuilder.command`FOO=1 $(exit 3) $(exit 4)`.exitCode(4).runAsTest("with a prefix assignment");
+    TestBuilder.command`echo a | $(exit 3) $(exit 4)`.exitCode(4).runAsTest("as the last command of a pipeline");
+    TestBuilder.command`$(exit 3) $(exit 4) && echo hi`.exitCode(4).runAsTest("fails an && chain");
+    TestBuilder.command`$(exit 3) $(exit 4) || echo hi`.stdout("hi\n").runAsTest("takes the || branch");
+    TestBuilder.command`$(exit 3) $(exit 4) false`
+      .exitCode(1)
+      .runAsTest("ignored once a command name is left after expansion: builtin");
+
+    // Builtins overwrite the command's exit code unconditionally, so only a
+    // subprocess can show a substitution's status leaking into it; with `&>`
+    // nothing is piped back, so a leak would also stop the command from finishing.
+    TestBuilder.command`$(exit 3) $(exit 4) ${BUN} exit7.js &> out.txt`
+      .file("exit7.js", "console.log('ran'); process.exit(7);")
+      .fileEquals("out.txt", "ran\n")
+      .exitCode(7)
+      .runAsTest("ignored once a command name is left after expansion: external command");
+  });
+
   // When `$(...)` is the only word of a command and expands to a command
   // line, the exit code is that of the command it expanded to, not the
   // substitution's (bash: `$(echo ./exit7.sh); echo $?` prints 7).

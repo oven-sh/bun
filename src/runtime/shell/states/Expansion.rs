@@ -46,9 +46,6 @@ pub struct Expansion {
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
     pub(crate) has_quoted_empty: bool,
-    /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
-    /// so `$(false)` as argv0 fails.
-    pub(crate) out_exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -70,11 +67,8 @@ pub struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
     pub(crate) bounds: Vec<u32>,
-    /// Set when the atom is a sole `$(…)`
-    /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
-    /// command's exit code when that substitution was argv0 and argv is
-    /// otherwise empty.
-    pub(crate) out_exit_code: ExitCode,
+    /// Status of the last `$(…)` in this word, if it had any; feeds `Cmd::cmd_subst_exit_code`.
+    pub(crate) cmd_subst_exit_code: Option<ExitCode>,
     /// When `buf`/`bounds` are both
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
@@ -104,7 +98,6 @@ impl Expansion {
             child_script: None,
             cmd_subst_quoted: false,
             has_quoted_empty: false,
-            out_exit_code: 0,
         }))
     }
 
@@ -606,19 +599,10 @@ impl Expansion {
         }
         .clone();
 
-        // Propagate the exit code if the *whole* atom was a single `$(...)`
-        // (so `$(false)` as argv0 fails the command).
-        let sole_cmd_subst = matches!(
-            interp.as_expansion(this).node.get(),
-            ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
-        );
-
         let quoted = interp.as_expansion(this).cmd_subst_quoted;
         {
             let me = interp.as_expansion_mut(this);
-            if exit_code != 0 && sole_cmd_subst {
-                me.out_exit_code = exit_code;
-            }
+            me.out.cmd_subst_exit_code = Some(exit_code);
             if quoted {
                 let mut hi = stdout.len();
                 while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
@@ -732,7 +716,6 @@ impl Expansion {
     pub(crate) fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
-        out.out_exit_code = me.out_exit_code;
         out.has_quoted_empty = me.has_quoted_empty;
         out
     }

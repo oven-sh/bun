@@ -555,9 +555,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         }
                         /* After socket adoption, track the new socket; the old one becomes invalid */
-                        if(s && s->flags.adopted && s->prev) {
-                            s = s->prev;
-                        }
+                        s = us_internal_socket_follow_adopted(s);
 
                         /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
                          * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
@@ -583,9 +581,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
             /* After socket adoption, track the new socket; the old one becomes invalid */
-            if(s && s->flags.adopted && s->prev) {
-                s = s->prev;
-            }
+            s = us_internal_socket_follow_adopted(s);
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
@@ -601,9 +597,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 s = s->ssl ? us_internal_ssl_on_writable(s) : us_dispatch_writable(s);
                 /* After socket adoption, track the new socket; the old one becomes invalid */
-                if(s && s->flags.adopted && s->prev) {
-                    s = s->prev;
-                }
+                s = us_internal_socket_follow_adopted(s);
 
                 if (!s || us_socket_is_closed(s)) {
                     return;
@@ -724,9 +718,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
-                        if(s && s->flags.adopted && s->prev) {
-                            s = s->prev;
-                        }
+                        s = us_internal_socket_follow_adopted(s);
                         read_any = 1;
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
@@ -961,7 +953,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
                     } else {

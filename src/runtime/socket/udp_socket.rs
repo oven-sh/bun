@@ -313,20 +313,21 @@ extern "C" fn on_data(
 }
 
 pub struct ConnectConfig {
-    pub(crate) port: u16,
-    pub(crate) address: BunString,
+    port: u16,
+    address: BunString,
 }
 
 pub struct UDPSocketConfig {
     pub(crate) hostname: BunString,
-    pub(crate) connect: Option<ConnectConfig>,
+    connect: Option<ConnectConfig>,
     pub(crate) port: u16,
     pub(crate) flags: i32,
     /// Adopt this already-created (and usually bound) socket descriptor
     /// instead of creating a new one. Used by node:dgram for
     /// `socket.bind({ fd })` and cluster-shared sockets.
-    pub(crate) fd: Option<i32>,
+    fd: Option<i32>,
     pub(crate) binary_type: BinaryType,
+    pub(crate) shared_fd: bool,
 }
 
 impl Default for UDPSocketConfig {
@@ -338,6 +339,7 @@ impl Default for UDPSocketConfig {
             flags: 0,
             fd: None,
             binary_type: BinaryType::Buffer,
+            shared_fd: false,
         }
     }
 }
@@ -401,11 +403,16 @@ impl UDPSocketConfig {
             }
         };
 
+        let shared_fd = options
+            .fast_get(global_this, bun_jsc::BuiltinName::sharedFd)?
+            .is_some_and(|v| v.to_boolean());
+
         let mut config = Self {
             hostname,
             port,
             flags,
             fd,
+            shared_fd,
             ..Default::default()
         };
 
@@ -665,6 +672,7 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd,
+                config.shared_fd,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
@@ -683,6 +691,9 @@ impl UDPSocket {
             )
         };
         drop(hostname_z);
+        if created.is_null() && err == 0 && config.fd.is_some() {
+            err = libc::EINVAL;
+        }
         this.socket.set(if created.is_null() {
             None
         } else {
@@ -1731,6 +1742,17 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_fd(this: &Self, _: &JSGlobalObject) -> JSValue {
+        if this.closed.get() {
+            return JSValue::js_number(-1.0);
+        }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::js_number(-1.0);
+        };
+        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
+    }
+
+    #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_hostname(this: &Self, _: &JSGlobalObject) -> JsResult<JSValue> {
         this.config.get().hostname.to_js(this.global_this.get())
     }
@@ -1975,6 +1997,29 @@ impl UDPSocket {
         }
 
         Ok(JSValue::js_number(f64::from(value)))
+    }
+
+    /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
+    pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
+        if self.closed.get() {
+            return None;
+        }
+        let socket = self.socket.get()?;
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let raw = uws::udp::Socket::opaque_mut(socket).fd();
+        if raw < 0 {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            Some(bun_sys::Fd::from_system(
+                raw as usize as *mut core::ffi::c_void,
+            ))
+        }
+        #[cfg(not(windows))]
+        {
+            Some(bun_sys::Fd::from_native(raw))
+        }
     }
 
     /// Underlying socket descriptor as a number, or -1 once closed. Backs

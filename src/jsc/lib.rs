@@ -991,6 +991,10 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    /// Private name (`$internal` in builtins); user code cannot set it.
+    internal,
+    /// Private name (`$sharedFd` in builtins); user code cannot set it.
+    sharedFd,
 }
 
 #[allow(non_upper_case_globals)]

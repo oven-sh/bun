@@ -678,6 +678,22 @@ describe("dns.lookupService", () => {
     expect(hostname).toStrictEqual(expected[0]);
     expect(service).toStrictEqual(expected[1]);
   });
+
+  // https://github.com/oven-sh/bun/issues/37486
+  it("treats an IPv4-mapped IPv6 address like its embedded IPv4 address", async () => {
+    // getnameinfo for 127.0.0.1 may ENOTFOUND on Windows, so assert the
+    // mapped form yields the same outcome rather than a specific result.
+    const settle = p =>
+      p.then(
+        v => ({ ok: v }),
+        e => ({ err: e.code }),
+      );
+    const [mapped, v4] = await Promise.all([
+      settle(dns_promises.lookupService("::ffff:127.0.0.1", 53)),
+      settle(dns_promises.lookupService("127.0.0.1", 53)),
+    ]);
+    expect(mapped).toEqual(v4);
+  });
 });
 
 // Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
@@ -744,6 +760,27 @@ describe("hostnames containing NUL bytes", () => {
 
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+// Node treats a null option field the same as an absent one (its guards are
+// `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
+describe("dns.lookup null option fields are treated as unset", () => {
+  const fields = ["hints", "all", "verbatim", "order", "family"];
+
+  it.each(fields)("dns.lookup with {%s: null} resolves", async field => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup("localhost", { [field]: null }, (err, address, family) => {
+      if (err) reject(err);
+      else resolve({ address, family });
+    });
+    const { address } = await promise;
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+
+  it.each(fields)("dns.promises.lookup with {%s: null} resolves", async field => {
+    const { address } = await dns_promises.lookup("localhost", { [field]: null });
     expect(["127.0.0.1", "::1"]).toContain(address);
   });
 });

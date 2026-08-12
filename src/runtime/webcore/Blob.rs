@@ -99,7 +99,18 @@ pub enum ReadBytesResult {
 /// Handler trait for `read_bytes_to_handler` — the body only requires
 /// `on_read_bytes`.
 pub trait ReadBytesHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult);
+    /// Invoked exactly once, on the JS thread, with the `ctx` given to
+    /// `read_bytes_to_handler`; ownership of `*this` comes back to the handler
+    /// here, and a heap-allocated one reclaims itself (`heap::take(this)`).
+    /// That is why the receiver is a raw pointer, as in
+    /// `read_file::ReadFileCompletion::run`: freeing the allocation behind a
+    /// `&mut self` argument is UB under the aliasing model (the argument is
+    /// protected for the whole call), even if `self` is never touched again.
+    ///
+    /// # Safety
+    /// `this` is the `ctx` passed to `read_bytes_to_handler`, still live, and
+    /// the caller does not use it afterwards.
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -107,9 +118,7 @@ pub trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{
-    Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
-};
+pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -149,8 +158,10 @@ pub trait BlobExt {
     ) -> JsTerminatedResult<JSValue>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked (synchronously or via the async task).
+    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
+    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes
+    /// (synchronously or from the async completion), whatever this returns;
+    /// the caller must not use `ctx` afterwards.
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -512,9 +523,18 @@ impl BlobExt for Blob {
     /// callers that already special-case `shared_view()` can keep doing that and
     /// only call this when it's empty.
     ///
+    /// Every store kind hands `ctx` to exactly one `H::on_read_bytes` call:
+    /// in-memory stores synchronously below, file stores from the read's
+    /// `run`/`cancel` completion (exactly one of which fires), S3 from the
+    /// download callback (which `execute_simple_s3_request` also invokes
+    /// synchronously when it cannot start the request). An `Err` here is a
+    /// termination raised by a synchronous delivery, so the handler has
+    /// already been consumed in that case too.
+    ///
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked.
+    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
+    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes,
+    /// whatever this returns; the caller must not use `ctx` afterwards.
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -533,12 +553,12 @@ impl BlobExt for Blob {
                         }
                         read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
                     };
-                    // SAFETY: `c` is the `*mut H` passed by the caller and kept alive
-                    // across the async read by contract; exclusive borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *c }, result);
+                    // SAFETY: `c` is the `ctx` handed to `read_bytes_to_handler`,
+                    // and the read completion fires exactly once (`call` or
+                    // `cancel`), so this is its single delivery.
+                    unsafe { H::on_read_bytes(c, result) };
                 }
                 fn cancel(c: *mut H) {
-                    // The caller owns `H` and waits for exactly one `on_read_bytes`.
                     let err = jsc::SystemError {
                         code: BunString::static_("ECANCELED").into(),
                         message: BunString::static_(
@@ -549,7 +569,7 @@ impl BlobExt for Blob {
                         ..Default::default()
                     };
                     // SAFETY: as for `call`.
-                    H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)));
+                    unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) };
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -567,9 +587,10 @@ impl BlobExt for Blob {
                     self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
-                    // SAFETY: caller-owned ctx, kept alive by contract; exclusive
-                    // borrow scoped to the call.
-                    H::on_read_bytes(unsafe { &mut *ctx }, r);
+                    // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
+                    // the download callback (and so `done`) runs exactly once, and
+                    // the `Task` that held the pointer is gone.
+                    unsafe { H::on_read_bytes(ctx, r) };
                 }
                 fn cb(
                     result: crate::webcore::__s3_client::S3DownloadResult,
@@ -663,8 +684,9 @@ impl BlobExt for Blob {
         // In-memory or detached.
         let view = self.shared_view();
         let owned = view.to_vec();
-        // SAFETY: caller-owned ctx.
-        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
+        // SAFETY: `ctx` is this call's handler (fn contract) and this is its
+        // only delivery.
+        unsafe { H::on_read_bytes(ctx, ReadBytesResult::Ok(owned)) };
         Ok(())
     }
 
@@ -1324,24 +1346,7 @@ impl BlobExt for Blob {
                 }
                 if let Some(content_type) = options_object.get_truthy(global_this, "type")? {
                     // override the content type
-                    if !content_type.is_string() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.type",
-                            "string",
-                        ));
-                    }
-                    let content_type_str = content_type.to_slice(global_this)?;
-                    let slice = content_type_str.slice();
-                    if is_valid_blob_type(slice) {
-                        self.content_type_was_set.set(true);
-                        self.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
-                    }
+                    set_content_type_from_js(global_this, self, content_type)?;
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
                 return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
@@ -1721,24 +1726,7 @@ impl BlobExt for Blob {
                 let options = arg0;
                 if let Some(content_type) = options.get_truthy(global_this, "type")? {
                     // override the content type
-                    if !content_type.is_string() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.type",
-                            "string",
-                        ));
-                    }
-                    let content_type_str = content_type.to_slice(global_this)?;
-                    let slice = content_type_str.slice();
-                    if is_valid_blob_type(slice) {
-                        self.content_type_was_set.set(true);
-                        self.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
-                    }
+                    set_content_type_from_js(global_this, self, content_type)?;
                 }
 
                 let content_disposition_str: Option<ZigStringSlice> =
@@ -3281,20 +3269,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                jsc::JSType::ArrayBuffer
-                | jsc::JSType::Int8Array
-                | jsc::JSType::Uint8Array
-                | jsc::JSType::Uint8ClampedArray
-                | jsc::JSType::Int16Array
-                | jsc::JSType::Uint16Array
-                | jsc::JSType::Int32Array
-                | jsc::JSType::Uint32Array
-                | jsc::JSType::Float16Array
-                | jsc::JSType::Float32Array
-                | jsc::JSType::Float64Array
-                | jsc::JSType::BigInt64Array
-                | jsc::JSType::BigUint64Array
-                | jsc::JSType::DataView => {
+                t if t.is_array_buffer_like() => {
                     return Blob::try_create(
                         top_value.as_array_buffer(global).unwrap().byte_slice(),
                         global,
@@ -3411,7 +3386,7 @@ impl BlobExt for Blob {
                     // instead of cloned, which would double peak memory for
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
                     // treated as able to run user JS.
-                    let mut parts_can_run_js = iter.fast.is_none() || !stack.is_empty();
+                    let mut parts_can_run_js = !iter.is_fast() || !stack.is_empty();
                     if !parts_can_run_js {
                         let mut prescan = jsc::JSArrayIterator::init(current, global)?;
                         while let Some(item) = prescan.next()? {
@@ -3419,21 +3394,8 @@ impl BlobExt for Blob {
                                 continue;
                             }
                             match item.js_type_loose() {
-                                jsc::JSType::String
-                                | jsc::JSType::ArrayBuffer
-                                | jsc::JSType::Int8Array
-                                | jsc::JSType::Uint8Array
-                                | jsc::JSType::Uint8ClampedArray
-                                | jsc::JSType::Int16Array
-                                | jsc::JSType::Uint16Array
-                                | jsc::JSType::Int32Array
-                                | jsc::JSType::Uint32Array
-                                | jsc::JSType::Float16Array
-                                | jsc::JSType::Float32Array
-                                | jsc::JSType::Float64Array
-                                | jsc::JSType::BigInt64Array
-                                | jsc::JSType::BigUint64Array
-                                | jsc::JSType::DataView => {}
+                                jsc::JSType::String => {}
+                                t if t.is_array_buffer_like() => {}
                                 jsc::JSType::DOMWrapper
                                     if item.as_class_ref::<Blob>().is_some() => {}
                                 _ => {
@@ -3462,20 +3424,7 @@ impl BlobExt for Blob {
                                     joiner.push_cloned(sliced.slice());
                                     continue;
                                 }
-                                jsc::JSType::ArrayBuffer
-                                | jsc::JSType::Int8Array
-                                | jsc::JSType::Uint8Array
-                                | jsc::JSType::Uint8ClampedArray
-                                | jsc::JSType::Int16Array
-                                | jsc::JSType::Uint16Array
-                                | jsc::JSType::Int32Array
-                                | jsc::JSType::Uint32Array
-                                | jsc::JSType::Float16Array
-                                | jsc::JSType::Float32Array
-                                | jsc::JSType::Float64Array
-                                | jsc::JSType::BigInt64Array
-                                | jsc::JSType::BigUint64Array
-                                | jsc::JSType::DataView => {
+                                t if t.is_array_buffer_like() => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
@@ -3552,20 +3501,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                jsc::JSType::ArrayBuffer
-                | jsc::JSType::Int8Array
-                | jsc::JSType::Uint8Array
-                | jsc::JSType::Uint8ClampedArray
-                | jsc::JSType::Int16Array
-                | jsc::JSType::Uint16Array
-                | jsc::JSType::Int32Array
-                | jsc::JSType::Uint32Array
-                | jsc::JSType::Float16Array
-                | jsc::JSType::Float32Array
-                | jsc::JSType::Float64Array
-                | jsc::JSType::BigInt64Array
-                | jsc::JSType::BigUint64Array
-                | jsc::JSType::DataView => {
+                t if t.is_array_buffer_like() => {
                     let buf = current.as_array_buffer(global).unwrap();
                     // SAFETY: this arm is only reached when the typed array is the
                     // top-level value (the walk stack is empty), so no user JS runs
@@ -5314,6 +5250,29 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
+    }
+    Ok(())
+}
+
+/// Applies a write-path `options.type` override to `blob`. Throws if the
+/// value is not a string; an invalid blob type is silently ignored.
+fn set_content_type_from_js(
+    global_this: &JSGlobalObject,
+    blob: &Blob,
+    content_type: JSValue,
+) -> JsResult<()> {
+    if !content_type.is_string() {
+        return Err(global_this.throw_invalid_argument_type("write", "options.type", "string"));
+    }
+    let content_type_str = content_type.to_slice(global_this)?;
+    let slice = content_type_str.slice();
+    if is_valid_blob_type(slice) {
+        blob.content_type_was_set.set(true);
+        blob.content_type
+            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                Some(mime) => BlobContentType::from(mime),
+                None => BlobContentType::from_lowercased(slice),
+            });
     }
     Ok(())
 }
@@ -7148,3 +7107,85 @@ pub trait FileCloser: Sized {
         false
     }
 }
+
+/// Implements [`FileCloser`] for a task struct with the standard field set
+/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
+/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
+/// The type must also carry `bun_threading::intrusive_work_task!` and
+/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
+/// used by the two trampolines.
+macro_rules! impl_file_closer {
+    ($T:ident) => {
+        impl crate::webcore::blob::FileCloser for $T {
+            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
+            fn opened_fd(&self) -> ::bun_sys::Fd {
+                self.opened_fd
+            }
+            fn set_opened_fd(&mut self, fd: ::bun_sys::Fd) {
+                self.opened_fd = fd;
+            }
+            fn close_after_io(&self) -> bool {
+                self.close_after_io
+            }
+            fn state(&self) -> &::core::sync::atomic::AtomicU8 {
+                &self.state
+            }
+            fn io_request(&mut self) -> Option<&mut ::bun_io::Request> {
+                Some(&mut self.io_request)
+            }
+            fn io_poll(&mut self) -> &mut ::bun_io::Poll {
+                &mut self.io_poll
+            }
+            fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
+                &mut self.task
+            }
+            fn update(&mut self) {
+                $T::update(self)
+            }
+            #[cfg(windows)]
+            fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {
+                unreachable!()
+            }
+
+            fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
+                use ::bun_io::IntrusiveIoRequest as _;
+                // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
+                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
+                fn on_done(ctx: *mut ()) {
+                    // SAFETY: ctx is `self as *mut Self` set below.
+                    let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
+                    <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
+                }
+                // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
+                // live parent; the `fd` copy and the `io_poll` field borrow are the only
+                // borrows formed.
+                let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
+                ::bun_io::Action::Close(::bun_io::CloseAction {
+                    fd,
+                    poll,
+                    ctx: this.cast::<()>(),
+                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
+                    on_done,
+                })
+            }
+
+            // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+            // the trait method cannot be marked `unsafe fn`, so the lint is
+            // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+            // in `on_io_request_closed` and is guaranteed live.
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
+            fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
+                use ::bun_threading::IntrusiveWorkTask as _;
+                // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+                // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
+                // recover parent.
+                let this = unsafe { $T::from_task_ptr(task) };
+                // SAFETY: `this` is the live parent (see above); scoped access.
+                unsafe { (*this).close_after_io = false };
+                // SAFETY: as above; exclusive borrow scoped to the call.
+                $T::update(unsafe { &mut *this });
+            }
+        }
+    };
+}
+pub(crate) use impl_file_closer;

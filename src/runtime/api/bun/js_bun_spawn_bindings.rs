@@ -28,6 +28,7 @@ use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -1742,25 +1743,44 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their
     // start() ref and on_process_exit's later drain is refcount-balanced.
+    // Both calls go through the reader's own pointer because either may end
+    // the reader's life before returning (a failed start, or EOF inside
+    // read_all), at which point on_close_io has already replaced the slot, so
+    // the slot is re-read in between instead of reusing `pipe`.
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
-        // captured above) instead of the live `&mut subprocess`, which would
-        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
-        if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
+        // SAFETY: the slot holds a ref on a live reader and no borrow of it is
+        // held here; `subprocess_nn` is the heap-pinned Subprocess.
+        unsafe {
+            PipeReader::start(
+                pipe.as_ptr(),
+                subprocess_nn,
+                event_loop_nn,
+                !IS_SYNC && lazy,
+            )
+        };
+        if IS_SYNC || !lazy {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
+                // SAFETY: as above; the slot still holding `Pipe` means start()
+                // succeeded and the reader is live.
+                unsafe { PipeReader::read_all(pipe.as_ptr()) };
             }
         }
     }
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
-
-        if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
+        // SAFETY: see the stdout arm.
+        unsafe {
+            PipeReader::start(
+                pipe.as_ptr(),
+                subprocess_nn,
+                event_loop_nn,
+                !IS_SYNC && lazy,
+            )
+        };
+        if IS_SYNC || !lazy {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
+                // SAFETY: see the stdout arm.
+                unsafe { PipeReader::read_all(pipe.as_ptr()) };
             }
         }
     }

@@ -1978,8 +1978,7 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    // Headers/URLSearchParams/URL keep their entries in C++, invisible to the
-    // property walk below, so compare those first the way Bun__deepEquals does.
+    // The property walk below cannot see the entries of Headers/URLSearchParams/URL; compare those first.
     uint8_t subsetType = subsetObj->type();
     if ((subsetType == JSDOMWrapperType || subsetType == JSAsJSONType) && obj->type() == subsetType) {
         Vector<std::pair<JSValue, JSValue>, 16> stack;

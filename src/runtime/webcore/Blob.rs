@@ -246,6 +246,7 @@ pub trait BlobExt {
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
     fn get_name_string(&self) -> Option<BunString>;
+    fn get_name_utf8(&self) -> Option<ZigStringSlice>;
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn set_name(
         &self,
@@ -2054,6 +2055,16 @@ impl BlobExt for Blob {
         None
     }
 
+    /// The name `.name` reports, for consumers that derive something from it
+    /// (loader, `filename=`). `None` when there is none or it is empty.
+    fn get_name_utf8(&self) -> Option<ZigStringSlice> {
+        let name = self.get_name_string()?;
+        if name.is_empty() {
+            return None;
+        }
+        Some(name.to_utf8())
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
@@ -2087,8 +2098,8 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
-            let current_path = bun_resolver::fs::Path::init(filename);
+        if let Some(filename) = self.get_name_utf8() {
+            let current_path = bun_resolver::fs::Path::init(filename.slice());
             return Some(
                 current_path
                     .loader(&jsc_vm.transpiler.options.loaders)
@@ -4239,19 +4250,14 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
+/// blob.cpp `toJS`: `this` is the natively held FormData entry, which shares
+/// its store with the blob the user appended, so the entry's filename is set
+/// on `this` alone. Empty means no filename was given.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
-
-    // This is not 100% correct...
-    if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.is_empty() {
-                // Owned heap slice
-                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
-                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
-            }
-        }
+    if !path_str.is_empty() {
+        this.name.set(path_str.dupe_ref());
     }
 }
 
@@ -4260,12 +4266,12 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
+/// JSDOMFormData.cpp: the default entry filename when `append`/`set` is given
+/// none. Borrowed (`this` keeps it alive); the caller takes its own ref via
+/// `toWTFString` and never derefs it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    if let Some(filename) = this.get_file_name() {
-        return BunString::from_bytes(filename);
-    }
-    BunString::empty()
+    this.get_name_string().unwrap_or_else(BunString::empty)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5525,7 +5531,6 @@ pub(crate) fn jsdom_file_construct(
     callframe: &CallFrame,
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
-    let blob: Blob;
     let args = callframe.arguments();
 
     if args.len() < 2 {
@@ -5533,39 +5538,21 @@ pub(crate) fn jsdom_file_construct(
             "new File(bits, name) expects at least 2 arguments"
         )));
     }
-    {
-        use bun_jsc::StringJsc as _;
-        // +1 WTF ref; `OwnedString` releases it at scope exit.
-        // Every consumer below either
-        // copies bytes (`to_owned_slice`) or takes its own ref (`dupe_ref`).
-        let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
 
-        blob = Blob::get::<false, true>(global_this, args[0])?;
-        if let Some(store_) = blob.store.get() {
-            match store_.data_mut() {
-                store::Data::Bytes(bytes) => {
-                    // `get::<_, true>` on a single-Blob sequence returns
-                    // `dupe()` (a shared StoreRef), so this `Bytes` may already
-                    // carry an owned `stored_name` from the source blob; the
-                    // assignment drops (frees) the previous `Box<[u8]>`.
-                    bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
-                }
-                store::Data::S3(_) | store::Data::File(_) => {
-                    blob.name.set(name_value_str.dupe_ref());
-                }
-            }
-        } else if !name_value_str.is_empty() {
-            // not store but we have a name so we need a store
-            blob.store.set(Some(StoreRef::from(Store::new(Store {
-                data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    name_value_str.to_owned_slice().into_boxed_slice(),
-                )),
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                mime_type: bun_http_types::MimeType::NONE,
-                is_all_ascii: None,
-            }))));
-        }
+    // +1 WTF ref; `OwnedString` releases it if `get` throws, otherwise
+    // `into_inner` hands it to `blob.name`.
+    let mut name = OwnedString::new(BunString::from_js(args[1], global_this)?);
+    if name.is_utf16() {
+        // `name` is a USVString: the UTF-8 round trip turns lone surrogates
+        // (only possible in a 16-bit string) into U+FFFD.
+        let utf8 = name.to_utf8();
+        name = OwnedString::new(BunString::clone_utf8(utf8.slice()));
     }
+    let blob = Blob::get::<false, true>(global_this, args[0])?;
+    // A single-Blob `bits` shares the source's store (and `dupe()` copied its
+    // name), so the name goes on this Blob only: writing it into the store
+    // would rename every Blob sharing it.
+    blob.name.set(name.into_inner());
 
     let mut set_last_modified = false;
 
@@ -6345,9 +6332,9 @@ impl Any {
         }
     }
 
-    pub(crate) fn get_file_name(&self) -> Option<&[u8]> {
+    pub(crate) fn get_name_utf8(&self) -> Option<ZigStringSlice> {
         match self {
-            Any::Blob(b) => b.get_file_name(),
+            Any::Blob(b) => b.get_name_utf8(),
             Any::WTFStringImpl(_) | Any::InternalBlob(_) => None,
         }
     }

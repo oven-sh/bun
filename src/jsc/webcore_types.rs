@@ -138,7 +138,9 @@ pub struct Blob {
     pub ref_count: bun_ptr::RawRefCount,
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
-    /// Only used by `<input type="file">` / `File` (issue #10178).
+    /// Name given to this Blob in particular (`File` constructor, FormData
+    /// filename, `.name =`); `Dead` when none was, and the store's
+    /// [`Self::get_file_name`] applies.
     pub name: bun_core::OwnedStringCell,
 }
 
@@ -434,8 +436,10 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
+    /// `Blob.getFileName()` — the name the *store* carries: `Bytes.stored_name`,
+    /// the file path, or the S3 key. `None` for fd-backed or unnamed stores.
+    /// A name given to this Blob itself is in `name`; `BlobExt::get_name_string`
+    /// combines the two.
     pub fn get_file_name(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -611,7 +615,10 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Used by standalone module graph and the `File` constructor.
+        /// Set when the store is created (standalone module graph, structured
+        /// clone) and never afterwards: the store is shared by every Blob
+        /// viewing it, so a name given to one Blob (`new File([blob], name)`,
+        /// a FormData filename) lives in `Blob::name` instead.
         /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
     }
@@ -710,14 +717,6 @@ pub mod store {
                 cap,
                 allocator,
                 stored_name: Box::default(),
-            }
-        }
-
-        #[inline]
-        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
-            Bytes {
-                stored_name: name,
-                ..Default::default()
             }
         }
 

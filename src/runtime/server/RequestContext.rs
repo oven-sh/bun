@@ -3857,8 +3857,8 @@ where
         // 1. Bun.file("foo")
         // 2. The content-disposition header is not present
         if !has_content_disposition && content_type.category.autoset_filename() {
-            if let Some(filename) = blob.get_file_name() {
-                let basename = bun_paths::basename(filename);
+            if let Some(filename) = blob.get_name_utf8() {
+                let basename = bun_paths::basename(filename.slice());
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];

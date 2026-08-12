@@ -958,6 +958,75 @@ test("FormData.toJSON merges duplicate numeric field names into an array", async
   expect(exitCode).toBe(0);
 });
 
+describe("entry filenames belong to the entry, not to the byte store it shares with the appended blob", () => {
+  // A FormData entry holds a dupe of the appended blob that shares its byte
+  // store. Filenames used to be written into that store, so they showed up on
+  // the blob the caller appended (and on anything else sharing the store).
+  //
+  // `.name` is cached on first read, so the appended blob's name is read only
+  // after the entry has been converted back to JS.
+  it.each(["append", "set"] as const)("%s(name, blob, filename) leaves the appended Blob nameless", method => {
+    const blob = new Blob(["xyz"]);
+    const formData = new FormData();
+    formData[method]("file", blob, "entry.txt");
+    const entry = formData.get("file") as File;
+    expect({ entry: entry.name, blob: (blob as File).name }).toEqual({ entry: "entry.txt", blob: undefined });
+  });
+
+  // A zero-byte Blob has no byte store at all, so a filename written into the
+  // store was simply dropped.
+  it("an empty Blob appended with a filename gets that filename", () => {
+    const formData = new FormData();
+    formData.append("file", new Blob([]), "empty.txt");
+    const entry = formData.get("file") as File;
+    expect({ name: entry.name, size: entry.size }).toEqual({ name: "empty.txt", size: 0 });
+  });
+
+  it("a parsed zero-byte file part keeps its filename", async () => {
+    const response = new Response(
+      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="empty.txt"\r\n\r\n\r\n--boundary--\r\n',
+      { headers: { "content-type": "multipart/form-data; boundary=boundary" } },
+    );
+    const entry = (await response.formData()).get("file") as File;
+    expect({ name: entry.name, size: entry.size }).toEqual({ name: "empty.txt", size: 0 });
+  });
+
+  it("defaults the filename to the appended File's own name", async () => {
+    const source = new File(["xyz"], "source.txt");
+    const wrapped = new File([source], "wrapped.txt");
+    const formData = new FormData();
+    formData.append("source", source);
+    formData.append("wrapped", wrapped);
+    const body = await new Response(formData).text();
+    expect({
+      entries: [(formData.get("source") as File).name, (formData.get("wrapped") as File).name],
+      body: body.match(/filename="[^"]*"/g),
+    }).toEqual({
+      entries: ["source.txt", "wrapped.txt"],
+      body: ['filename="source.txt"', 'filename="wrapped.txt"'],
+    });
+  });
+
+  it("wrapping a parsed entry in new File() does not rename the entry", async () => {
+    const response = new Response(
+      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="parsed.txt"\r\n\r\nxyz\r\n--boundary--\r\n',
+      { headers: { "content-type": "multipart/form-data; boundary=boundary" } },
+    );
+    const formData = await response.formData();
+    const entry = formData.get("file") as File;
+    const wrapped = new File([entry], "wrapped.txt");
+    expect({
+      entry: entry.name,
+      entryAgain: (formData.get("file") as File).name,
+      wrapped: wrapped.name,
+    }).toEqual({
+      entry: "parsed.txt",
+      entryAgain: "parsed.txt",
+      wrapped: "wrapped.txt",
+    });
+  });
+});
+
 describe("USVString conversion of lone surrogates", () => {
   const loneHigh = "a\uD800b";
   const loneLow = "a\uDC00b";

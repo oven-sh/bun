@@ -351,19 +351,16 @@ describe("through export merge", () => {
             ["c." + fmt]: "export const value = 'c';",
           });
 
-          for (const file of ["main." + fmt, "a." + fmt]) {
+          for (const [file, expected_stderr] of [
+            // jsc's syntax error, from linking a while running main
+            ["main." + fmt, "SyntaxError: Cannot export a duplicate name 'value'.\n"],
+            // bun's syntax error, which points at the duplicate
+            ["a." + fmt, `error: Multiple exports with the same name "value"\n    at <dir>/a.${fmt}:1:`],
+          ]) {
             test.concurrent(file, async () => {
               const result = await run([bunExe(), file], dir);
 
-              expect(result.stderr.trim()).toInclude(
-                file === "a." + fmt
-                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
-                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
-              );
-
-              if (file === "a." + fmt) {
-                expect(normalizeBunSnapshot(result.stderr, dir)).toContain(`\n    at <dir>/a.${fmt}:1:`);
-              }
+              expect(normalizeBunSnapshot(result.stderr, dir)).toContain(expected_stderr);
               expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "", exitCode: 1 });
             });
           }

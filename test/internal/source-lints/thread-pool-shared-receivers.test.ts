@@ -5,8 +5,8 @@ import path from "node:path";
 // A worker's `Thread` in src/threading/ThreadPool.rs is published to the other
 // workers (and to the bundler, via `Worker.thread`) the moment it registers,
 // and they steal from it and push into it through that pointer for as long as
-// it runs; see the note on `struct Thread`. A `&mut self` method on it, or on
-// anything it leads to (`Event`, `node::Queue`, `node::Buffer`), is a protected
+// it runs. A `&mut self` method on it, or on anything it leads to (`Event`,
+// `node::Queue`, `node::Buffer`), is a protected
 // `&mut` over the whole struct for the duration of the call, which a stealer's
 // CAS landing anywhere in it makes UB under Tree Borrows (under Stacked Borrows
 // even its loads do), whether or not the method touches that field.

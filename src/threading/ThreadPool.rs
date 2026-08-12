@@ -1033,11 +1033,7 @@ enum WaitError {
 // the compiler is free to reorder fields (the 4-byte `Event` invites it),
 // which profiled ~43% hotter on the steal traversal.
 //
-// From `register` until the worker exits, other threads steal from this struct
-// and push into `idle_queue` through the published pointer, so nothing (the
-// owning worker included) may hold a `&mut Thread`: every method takes `&self`
-// and owner-private state is a `Cell`
-// (test/internal/source-lints/thread-pool-shared-receivers.test.ts).
+// Stolen from by other workers once registered, so every method takes `&self`.
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,

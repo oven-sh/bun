@@ -646,10 +646,8 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
-// Reads one array index for the deep-equality walk; the empty JSValue means a hole.
-// Getters run, as they do for named properties. jest only sees own enumerable
-// indexes (for..in), node's deepStrictEqual sees every own index (hasOwnProperty +
-// a[i]), so a non-enumerable index is a hole unless the node entry point is asking.
+// The empty JSValue means a hole. jest only sees enumerable indexes; node's
+// deepStrictEqual reads every own index with a[i].
 template<bool includeNonEnumerable>
 static JSValue getOwnIndexForDeepEquals(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, uint64_t i)
 {

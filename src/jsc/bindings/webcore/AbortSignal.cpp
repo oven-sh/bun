@@ -71,12 +71,9 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     // The JS wrapper is the sole owner; isReachableFromOpaqueRoots keeps it
     // alive while an abort listener or an AbortSignal.any() dependent observes
     // the timeout. With no observer, collecting the wrapper destroys the
-    // signal and ~AbortSignal() cancels and frees the timer.
-    //
-    // Those are the only two things that stop the timer (see markAborted() and
-    // ~AbortSignal()). Losing every observer must not: a signal JS still holds
-    // has to read as aborted once its deadline passes, whether or not anything
-    // was listening when it did.
+    // signal and ~AbortSignal() cancels and frees the timer. Nothing else may
+    // cancel it: whoever still holds the signal (JS, or a Request that hands it
+    // back out) must see it abort at its deadline, listeners or not.
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
     return signal;

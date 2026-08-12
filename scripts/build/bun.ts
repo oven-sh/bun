@@ -180,7 +180,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // ─── Step 1: codegen + rust ───
-  // Emitted before the deps: ninja dispatches equally-weighted ready edges in emission order, and cargo is the critical path.
+  // Emitted before the deps: ninja breaks scheduling ties by emission order, and cargo is the critical path (see the compile pool in compile.ts).
   const codegen = emitCodegen(n, cfg, sources);
   const depsByName = new Map<string, ResolvedDep>();
 

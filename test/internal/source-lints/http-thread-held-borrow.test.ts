@@ -22,11 +22,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   - `let thread = crate::http_thread();` in `on_start`, held across the
 //     whole lifetime of the thread (`process_events` never returns).
 //   - `let in_flight = &mut crate::http_thread().in_flight;` and
-//     `let hctx = &raw mut crate::http_thread().https_context;` -- borrows and
-//     raw pointers projected out of one borrow and then carried through code
-//     that takes the next one (`HTTPClient::get_ssl_ctx` did the same in
-//     expression position; it now uses `HTTPThread::default_context_ptr`,
-//     which is projected out of the static instead).
+//     `HTTPClient::get_ssl_ctx` returning `&raw mut http_thread().https_context`
+//     -- a borrow, or a raw pointer, projected out of one borrow and then
+//     carried through code that takes the next one (`get_ssl_ctx` now returns
+//     `HTTPThread::default_context_ptr()`, projected out of the static instead).
 //
 // Replacements: a field read or a single method call on the temporary; a
 // `&mut self` method on `HTTPThread` for anything touching more than one field

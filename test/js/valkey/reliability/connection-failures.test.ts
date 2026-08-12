@@ -396,7 +396,7 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
         for (const args of readCommands(state)) {
           const name = (args[0] ?? "").toUpperCase();
           if (name === "HELLO") {
-            socket.write("+OK\r\n");
+            socket.write("%1\r\n+proto\r\n:3\r\n");
             if (connection === 2) {
               secondHello.resolve();
             }

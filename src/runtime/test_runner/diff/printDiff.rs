@@ -61,20 +61,16 @@ pub(crate) fn print_diff_main(
     // The values compared unequal but render to the same text (distinct
     // symbols, a hole vs an explicit undefined, ...), so a diff would be empty.
     if received_slice == expected_slice {
-        match config.enable_ansi_colors {
-            true => write!(
-                writer,
-                "Expected: {GREEN}{}{RESET}\nReceived: serializes to the same string",
-                BStr::new(expected_slice),
-                GREEN = colors::GREEN,
-                RESET = colors::RESET,
-            )?,
-            false => write!(
-                writer,
-                "Expected: {}\nReceived: serializes to the same string",
-                BStr::new(expected_slice)
-            )?,
+        print_line_prefix(writer, config, prefix_styles::SINGLE_LINE_REMOVED)?;
+        for (i, line) in strings::split(expected_slice, b"\n").enumerate() {
+            if i > 0 {
+                writer.write_str("\n")?;
+            }
+            print_truncated_line(line, writer, config, styles::REMOVED_LINE)?;
         }
+        writer.write_str("\n")?;
+        print_line_prefix(writer, config, prefix_styles::SINGLE_LINE_INSERTED)?;
+        writer.write_str("serializes to the same string")?;
         return Ok(());
     }
 

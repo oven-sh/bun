@@ -802,13 +802,27 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) serializes to the same string - toHaveProperty
+    380 |   expect({ id: Symbol("a") }).toHaveProperty("id", Symbol("a"));
+    381 | });
+    382 | 
+    383 | test("serializes to the same string - long line is truncated", () => {
+    384 |   const description = Buffer.alloc(3000, "a").toString();
+    385 |   expect(Symbol(description)).toEqual(Symbol(description));
+                                        ^
+    error: expect(received).toEqual(expected)
+
+    Expected: Symbol(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (2808 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - long line is truncated
 
      0 pass
      2 skip
      1 todo
-     21 fail
-     21 expect() calls
-    Ran 24 tests across 1 file.
+     22 fail
+     22 expect() calls
+    Ran 25 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
@@ -960,17 +974,17 @@ test("color", async () => {
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    Expected: \x1B[32mSymbol(a)\x1B[0m
-    Received: serializes to the same string
+    Expected: \x1B[0m\x1B[32mSymbol(a)\x1B[0m
+    Received: \x1B[0mserializes to the same string
 
     \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoStrictEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
-    Expected: \x1B[32m[
-      1,
-      undefined,
-      3,
-    ]\x1B[0m
-    Received: serializes to the same string
+    Expected: \x1B[0m\x1B[32m[\x1B[0m
+    \x1B[32m  1,\x1B[0m
+    \x1B[32m  undefined,\x1B[0m
+    \x1B[32m  3,\x1B[0m
+    \x1B[32m]\x1B[0m
+    Received: \x1B[0mserializes to the same string
 
     "
   `);

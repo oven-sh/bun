@@ -379,3 +379,8 @@ test("serializes to the same string - toHaveBeenCalledWith", () => {
 test("serializes to the same string - toHaveProperty", () => {
   expect({ id: Symbol("a") }).toHaveProperty("id", Symbol("a"));
 });
+
+test("serializes to the same string - long line is truncated", () => {
+  const description = Buffer.alloc(3000, "a").toString();
+  expect(Symbol(description)).toEqual(Symbol(description));
+});

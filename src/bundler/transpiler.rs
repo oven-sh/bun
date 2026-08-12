@@ -86,15 +86,14 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        // The loader is chosen from the path's extension, so judge
-        // "/a/b.ts?v=1.2" by ".ts", not ".2" (`normalizeSpecifier` splits the
-        // query off at the first '?' later). Also check the full specifier so
-        // paths that legitimately contain '?' keep passing this pre-filter.
+        // Judge "/a/b.ts?v=1.2" by ".ts", not ".2": the loader path splits
+        // the query off at the first '?'.
         if let Some(query_start) = bun_core::strings::index_of_char_usize(specifier, b'?') {
             if Self::starts_with_letter_after_last_dot(&specifier[..query_start as usize]) {
                 return true;
             }
         }
+        // Fallback for paths containing a literal '?'.
         if Self::starts_with_letter_after_last_dot(specifier) {
             return true;
         }
@@ -107,9 +106,7 @@ impl PluginRunner {
             return false;
         };
         let ext = &specifier[last_dot + 1..];
-        // '.' followed by either a letter or a non-ascii character
-        // maybe there are non-ascii file extensions?
-        // we mostly want to cheaply rule out "../" and ".." and "./"
+        // A letter or non-ascii byte; rules out "../", "..", and "./".
         !ext.is_empty()
             && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
     }

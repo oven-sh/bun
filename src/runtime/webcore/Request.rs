@@ -909,27 +909,30 @@ impl Request {
     /// Eagerly sets `request.url` from a request line: `{scheme}://{Host}{path}` when the
     /// client's Host can form a URL authority, otherwise the bare target. This is the same
     /// policy `ensure_url` applies lazily for HTTP/1 (Host byte-set check, absolute-form
-    /// target reduced to its path, WHATWG canonicalization), for transports that must
-    /// populate the URL before the underlying request goes away.
+    /// target reduced to its path, WHATWG canonicalization, bare path if the parser still
+    /// rejects the authority), for transports that must populate the URL before the
+    /// underlying request goes away.
     pub(crate) fn set_url_from_target(&self, host: Option<&[u8]>, target: &[u8], https: bool) {
         let path = Self::request_target_path(target);
-        let host = host.filter(|h| Self::is_valid_host_header(h));
-        let raw = match host {
-            Some(host) if !path.is_empty() && path[0] == b'/' => {
-                let protocol: &[u8] = if https { b"https://" } else { b"http://" };
-                let mut url = Vec::with_capacity(protocol.len() + host.len() + path.len());
-                url.extend_from_slice(protocol);
-                url.extend_from_slice(host);
-                url.extend_from_slice(&path);
-                BunString::clone_utf8(&url)
+        if let Some(host) = host.filter(|h| Self::is_valid_host_header(h))
+            && !path.is_empty()
+            && path[0] == b'/'
+        {
+            let protocol: &[u8] = if https { b"https://" } else { b"http://" };
+            let mut url = Vec::with_capacity(protocol.len() + host.len() + path.len());
+            url.extend_from_slice(protocol);
+            url.extend_from_slice(host);
+            url.extend_from_slice(&path);
+            let raw = BunString::clone_utf8(&url);
+            let href = bun_url::href_from_string(&raw);
+            raw.deref();
+            if !href.is_empty() {
+                self.url.set(href);
+                return;
             }
-            _ => BunString::clone_utf8(&path),
-        };
-        self.url.set(raw);
-        let href = bun_url::href_from_string(&self.url.get());
-        if !href.is_empty() {
-            self.url.set(href);
+            // `example.com:abc`, `exa%zzmple.com`: inside the byte set but not an authority.
         }
+        self.url.set(BunString::clone_utf8(&path));
     }
 
     pub(crate) fn ensure_url(&self) -> Result<(), AllocError> {
@@ -979,8 +982,9 @@ impl Request {
                                 self.url.set(href);
                             }
                         } else {
-                            // TODO: what is the right thing to do for invalid URLS?
-                            self.url.set(BunString::clone_utf8(url));
+                            // In the byte set but still not an authority (`host:abc`, bad
+                            // percent-encoding): same as no usable Host, keep the path.
+                            self.url.set(BunString::clone_utf8(&req_url));
                         }
 
                         return Ok(());
@@ -1007,9 +1011,10 @@ impl Request {
                     }
 
                     let href = bun_url::href_from_string(&self.url.get());
-                    // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.set(href);
+                    } else {
+                        self.url.set(BunString::clone_utf8(&req_url));
                     }
 
                     return Ok(());

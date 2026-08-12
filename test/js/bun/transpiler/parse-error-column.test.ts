@@ -200,6 +200,18 @@ test.concurrent("CLI caret counts the left-trimmed prefix in columns, not bytes"
   expect(excerpts).toEqual([{ excerpt: "1 | " + fill(40, "\u00E9") + "]" + fill(80, "\u00E9"), caret: 4 + 20 }]);
 });
 
+test.concurrent("CLI caret counts a left-trimmed astral prefix in UTF-16 units, like the column", async () => {
+  // U+10400 (a valid identifier character) is 4 UTF-8 bytes and 2 UTF-16
+  // units, and columns count UTF-16 units. 30 of them put `]` at byte 120 /
+  // column 61; the window keeps the 10 characters (20 units) before it, so
+  // the caret belongs 20 units in (10 if the trimmed width were counted in
+  // characters, 60 if it were not subtracted at all).
+  const { excerpts } = await printedExcerpts(["build", "long.js"], {
+    "long.js": fill(120, "\u{10400}") + "]" + fill(100, "b"),
+  });
+  expect(excerpts).toEqual([{ excerpt: "1 | " + fill(40, "\u{10400}") + "]" + fill(79, "b"), caret: 4 + 20 }]);
+});
+
 test.concurrent("CLI caret is aligned for both the error and its note on a long line", async () => {
   // The redeclaration at byte 176 is left-trimmed; the note pointing at the
   // original declaration (byte 6) is windowed without a left trim.

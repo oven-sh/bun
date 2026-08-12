@@ -1,5 +1,5 @@
 use bun_collections::ByteVecExt;
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, ScopedRef};
 use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
@@ -253,7 +253,9 @@ impl FetchRequestBodySink {
         if let Some(task) = task {
             // Balances the `ref_()` taken in `start_request_stream` when the
             // assign_to_stream-result handler never ran to release it.
-            FetchTasklet::deref(task.as_ptr());
+            // SAFETY: that handler clears `task` before releasing, so `task`
+            // being `Some` means the ref is still held and the tasklet live.
+            drop(unsafe { ScopedRef::<FetchTasklet>::adopt(task.as_ptr()) });
         }
     }
 

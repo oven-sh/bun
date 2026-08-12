@@ -9,6 +9,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   FetchTasklet::deref(std::ptr::from_mut(self));
 //   T::deref(std::ptr::from_ref(this).cast_mut());
 //   Self::deref_nn(NonNull::from(self));
+//   drop(ScopedRef::adopt(std::ptr::from_mut(self)));
 //   let p = std::ptr::from_mut(self); ... Self::deref(p);
 //
 // is banned. A release may be the object's last one, and then the destructor
@@ -24,16 +25,19 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // The object was allocated as a raw pointer and every caller of these
 // functions has it (a task arm's `task.ptr`, a callback's ctx, a `BackRef`'s
-// `as_ptr()`), so the fix is structural: the function that ends in a release
-// takes `this: *mut Self`, does its `&mut` work through a call-scoped reborrow
-// (`Self::from_raw_mut(this).body()`), and releases through `this` once that
-// borrow is over. See `on_progress_update` / `write_end_request` in
-// src/runtime/webcore/fetch/FetchTasklet.rs. When the reference is a local
-// reborrow rather than a parameter the release is not UB, but the raw pointer
-// it was made from is in scope; release through that instead.
+// `as_ptr()`), so the fix is structural: the function that owns the ref takes
+// `this: *mut Self`, adopts the ref into a `bun_ptr::ScopedRef` before any
+// reference to `*this` exists, and does its `&mut` work through a call-scoped
+// reborrow (`Self::from_raw_mut(this).body()`); the guard releases when it
+// drops, after that borrow is gone. Once every release of a type is a guard,
+// the type needs no raw release function at all, and a `&mut self` method has
+// nothing left to misuse (src/runtime/webcore/fetch/FetchTasklet.rs). When the
+// reference is a local reborrow rather than a parameter the release is not UB,
+// but the raw pointer it was made from is in scope; adopt that instead.
 //
-// This lint only knows the `deref` family of release names; a release spelled
-// `unref`/`release` is out of its reach. Siblings:
+// This lint knows the `deref` family of release names and `ScopedRef::adopt`
+// (`ScopedRef::new` takes its own ref and is balanced, so it is not a release);
+// a release spelled `unref`/`release` is out of its reach. Siblings:
 // fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
@@ -53,8 +57,9 @@ const tracked: Set<string> | null = (() => {
 })();
 
 // `deref(`, `deref_from_thread(`, `deref_nn(`, `deref_with_context(`,
-// `rc_deref(`, however qualified. `\b` keeps `some_other_deref(` out.
-const RELEASE = String.raw`\b(?:rc_)?deref(?:_from_thread|_nn|_with_context)?\(`;
+// `rc_deref(`, however qualified (`\b` keeps `some_other_deref(` out), and
+// `ScopedRef::adopt(` / `ScopedRef::<T>::adopt(`.
+const RELEASE = String.raw`(?:\b(?:rc_)?deref(?:_from_thread|_nn|_with_context)?|\bScopedRef(?:::<[^>]*>)?::adopt)\(`;
 
 // A pointer spelled from a reference. `ptr::from_mut` / `ptr::from_ref` only
 // accept references, so any argument counts; the remaining spellings are
@@ -174,12 +179,18 @@ test("the patterns match the banned spellings and nothing else", () => {
     "Self::deref_nn(NonNull::from(self));",
     "Self::deref_from_thread(self as *mut Self);",
     "unsafe { T::rc_deref(&raw mut *self) };",
+    "drop(unsafe { ScopedRef::adopt(std::ptr::from_mut(self)) });",
+    "let _ref = unsafe { ScopedRef::<Self>::adopt(\n    std::ptr::from_mut::<Self>(self),\n) };",
     "let this_ptr = std::ptr::from_mut(self);\nif done {\n    FetchTasklet::deref(this_ptr);\n    return;\n}",
     "let this: *mut Self = self as *mut Self;\nSelf::deref(this);",
+    "let this = std::ptr::from_mut(self);\nlet _guard = unsafe { ScopedRef::adopt(this) };",
   ];
   const allowed = [
-    "FetchTasklet::deref(this);",
-    "FetchTasklet::deref(task.as_ptr());",
+    "FetchTasklet::deref_from_thread(task);",
+    "let _js_ref = is_done.then(|| unsafe { ScopedRef::adopt(this) });",
+    "drop(unsafe { ScopedRef::<FetchTasklet>::adopt(task.as_ptr()) });",
+    // `new` takes a ref of its own and releases that one: balanced.
+    "let _guard = unsafe { ScopedRef::new(std::ptr::from_mut::<FileSink>(self)) };",
     "unsafe { ThreadSafeRefCount::<Self>::deref(this) };",
     "let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);\nSelf::write_end_request(self_ptr, None);",
     // The binding is released, but in the next function, where it is a

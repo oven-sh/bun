@@ -1508,8 +1508,9 @@ pub fn shutdown_for_exit() -> bool {
     // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
     // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
     // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
-    // materialised — `process_events(&mut self)` is live on the HTTP thread,
-    // so a `&mut` here would alias. Same shape as `schedule()` above.
+    // materialised — the HTTP thread is forming `&mut HttpThread`s through
+    // `http_thread()` the whole time (`process_events`), so a `&mut` here
+    // would alias them. Same shape as `schedule()` above.
     let thread = unsafe {
         bun_ptr::ParentRef::<HttpThread>::from_raw(
             (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),

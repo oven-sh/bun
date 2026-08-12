@@ -530,10 +530,12 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     try {
       promiseOrModule = enqueueModuleLoad(dep, false, parent);
     } catch (e) {
-      // A dependency that refused to be loaded synchronously did not fail to
-      // evaluate: `parent` still loads fine through `import()`, so it only
-      // goes back to needing a load instead of recording a failure.
-      if (e instanceof AsyncImportError) {
+      // An AsyncImportError normally means the dependency refused to be loaded
+      // synchronously, not that anything failed to evaluate: `parent` still
+      // loads through `import()`, so it only goes back to needing a load. Not
+      // so when it is the dependency's recorded failure (its body called
+      // `require()` on an async module): that dependency did fail.
+      if (e instanceof AsyncImportError && registry.get(dep)?.state !== State.Error) {
         parent.state = State.Stale;
         throw e;
       }

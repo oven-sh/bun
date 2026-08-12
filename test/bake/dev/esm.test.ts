@@ -633,6 +633,18 @@ devTest("a module that failed to load fails the same way when it is loaded again
       await 1;
       throw new Error("i-dep rejected");
     `,
+    "j.ts": `
+      import "./j-mid";
+      export const value = "unreachable";
+    `,
+    "j-mid.ts": `
+      require("./j-async");
+      export const value = "unreachable";
+    `,
+    "j-async.ts": `
+      await 1;
+      export const value = "unreachable";
+    `,
     "routes/index.ts": `
       // A synchronous throw and a rejection produce the same result, so this
       // does not depend on which of the two import() reports a failure with.
@@ -683,12 +695,20 @@ devTest("a module that failed to load fails the same way when it is loaded again
           await attempt(() => import("../i")),
           await attempt(() => import("../i")),
         ];
+        results.requireWithDepThatFailedToRequire = [
+          await attempt(() => require("../j")),
+          await attempt(() => require("../j")),
+          await attempt(() => import("../j")),
+        ];
         return Response.json(results);
       }
     `,
   },
   async test(dev) {
     const cannotRequireG = `threw: Cannot require "g.ts" because "g-dep.ts" uses top-level await, but 'require' is a synchronous operation.`;
+    const cannotRequireJ = expect.stringMatching(
+      /^threw: Cannot require "(j|j-async)\.ts" because "j-async\.ts" uses top-level await, but 'require' is a synchronous operation\.$/,
+    );
     expect(await dev.fetch("/").json()).toEqual({
       // A static dependency throws while the module is being loaded.
       importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
@@ -708,6 +728,11 @@ devTest("a module that failed to load fails the same way when it is loaded again
       // These two paths already recorded the failure; the ones above now match them.
       importThrowingModule: ["threw: h threw", "threw: h threw"],
       importWithRejectingDep: ["threw: i-dep rejected", "threw: i-dep rejected"],
+      // Here the dependency's body itself called require() on an async module,
+      // so the same kind of error is a real evaluation failure this time and
+      // import() must fail as well. (require() rewrites the message of the
+      // error it rethrows, hence the loose match on the module it names.)
+      requireWithDepThatFailedToRequire: [cannotRequireJ, cannotRequireJ, cannotRequireJ],
     });
   },
 });

@@ -276,11 +276,18 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
           expect(ns.ReadStream).toBe("mocked");
           expect(kinds()).toEqual(${JSON.stringify(kinds("WriteStream"))});
         });
+
+        test("mock.restore() materializes the binding it restores, and only then", () => {
+          mock.restore();
+          expect(kinds()).toEqual(${JSON.stringify(kinds("WriteStream", "ReadStream"))});
+          expect(ns.ReadStream).toBe(fs.ReadStream);
+          expect(typeof ns.ReadStream).toBe("function");
+        });
       `,
     },
     ["test", "lazy.test.ts"],
   );
-  expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 3 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });
@@ -413,13 +420,19 @@ test.concurrent('"bun": mock.module replaces a binding without constructing the 
           expect(reexported.Glob).toBe(Bun.Glob);
           // The mock went into the module binding; Bun.SQL itself was neither read nor replaced.
           expect(constructed()).toEqual(["Glob"]);
+        });
+
+        test("mock.restore() binds the real Bun.SQL through the re-export", () => {
+          mock.restore();
+          expect(constructed()).toEqual(["Glob", "SQL"]);
+          expect(reexported.SQL).toBe(Bun.SQL);
           expect(typeof Bun.SQL).toBe("function");
         });
       `,
     },
     ["test", "lazy.test.ts"],
   );
-  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 2 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });

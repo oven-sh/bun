@@ -15,9 +15,11 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/JavaScript.h>
@@ -424,6 +426,8 @@ public:
     // Snapshot of pre-mock values so mock.restore() can reverse in-place patches.
     WriteBarrier<JSObject> esmNamespace;
     WriteBarrier<JSObject> esmOriginalExports;
+    // Exports that were still unmaterialized lazy builtin bindings: name -> object to read them from on restore.
+    WriteBarrier<JSObject> esmLazyOriginals;
     WriteBarrier<JSObject> cjsModule;
     WriteBarrier<Unknown> cjsOriginalExports;
     // virtualModules entry this mock overwrote (Bun.plugin or preload mock); reinstated on restore.
@@ -520,6 +524,35 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     this->callbackFunctionOrCachedResult.set(vm, this, object);
 
     return object;
+}
+
+struct ExportBinding {
+    JSC::AbstractModuleRecord* record = nullptr;
+    // Empty for a lazy builtin export nothing has materialized yet (see SyntheticModuleRecord::materializeLazyExport).
+    JSC::JSValue value;
+};
+
+// Reads the slot an export currently binds to. Unlike namespace->get(), this never runs a lazy export's getter.
+static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, const JSC::Identifier& exportName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto resolution = record->resolveExport(globalObject, exportName);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved)
+        return std::nullopt;
+    auto* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
+    if (!environment)
+        return std::nullopt;
+    JSC::SymbolTable& symbolTable = *environment->symbolTable();
+    JSC::ConcurrentJSLocker locker(symbolTable.m_lock);
+    auto iter = symbolTable.find(locker, resolution.localName.impl());
+    if (iter == symbolTable.end(locker))
+        return std::nullopt;
+    JSC::ScopeOffset offset = iter->value.scopeOffset();
+    if (!environment->isValidScopeOffset(offset))
+        return std::nullopt;
+    return ExportBinding { resolution.moduleRecord, environment->variableAt(offset).get() };
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
@@ -631,6 +664,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->esmNamespace.set(vm, mock, priorMock->esmNamespace.get());
                 if (priorMock->esmOriginalExports)
                     mock->esmOriginalExports.set(vm, mock, priorMock->esmOriginalExports.get());
+                if (priorMock->esmLazyOriginals)
+                    mock->esmLazyOriginals.set(vm, mock, priorMock->esmLazyOriginals.get());
                 if (priorMock->cjsModule)
                     mock->cjsModule.set(vm, mock, priorMock->cjsModule.get());
                 if (priorMock->cjsOriginalExports)
@@ -712,16 +747,37 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             }
                         }
 
-                        auto snapshotBeforeOverride = [&](const PropertyName& name) -> void {
+                        // Exceptions propagate to `scope`; callers check it right after.
+                        auto snapshotBeforeOverride = [&](const JSC::Identifier& name) -> void {
                             if (!esmOriginals || esmOriginals->getDirect(vm, name))
                                 return;
-                            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                            JSValue original = moduleNamespaceObject->get(globalObject, name);
-                            if (topExceptionScope.exception()) [[unlikely]] {
-                                (void)topExceptionScope.tryClearException();
+                            if (JSObject* lazy = mock->esmLazyOriginals.get(); lazy && lazy->getDirect(vm, name))
+                                return;
+                            auto binding = readExportBinding(globalObject, moduleNamespaceObject->moduleRecord(), name);
+                            if (scope.exception() || !binding) [[unlikely]]
+                                return;
+                            if (binding->value) {
+                                esmOriginals->putDirect(vm, name, Bun::unwrapSpyOriginal(binding->value));
                                 return;
                             }
-                            esmOriginals->putDirect(vm, name, Bun::unwrapSpyOriginal(original));
+                            // Unmaterialized lazy export: restore reads it off the record's default export (its source object) later.
+                            auto source = readExportBinding(globalObject, binding->record, vm.propertyNames->defaultKeyword);
+                            if (scope.exception()) [[unlikely]]
+                                return;
+                            JSObject* sourceObject = source && source->value ? source->value.getObject() : nullptr;
+                            if (!sourceObject) {
+                                JSValue original = moduleNamespaceObject->get(globalObject, name);
+                                if (scope.exception()) [[unlikely]]
+                                    return;
+                                esmOriginals->putDirect(vm, name, Bun::unwrapSpyOriginal(original));
+                                return;
+                            }
+                            JSObject* lazy = mock->esmLazyOriginals.get();
+                            if (!lazy) {
+                                lazy = constructEmptyObject(globalObject);
+                                mock->esmLazyOriginals.set(vm, mock, lazy);
+                            }
+                            lazy->putDirect(vm, name, sourceObject);
                         };
 
                         if (object) {
@@ -738,6 +794,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     value = jsUndefined();
                                 }
                                 snapshotBeforeOverride(name);
+                                RETURN_IF_EXCEPTION(scope, {});
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
@@ -745,6 +802,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         } else {
                             // if it's not an object, I guess we just set the default export?
                             snapshotBeforeOverride(vm.propertyNames->defaultKeyword);
+                            RETURN_IF_EXCEPTION(scope, {});
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
                             RETURN_IF_EXCEPTION(scope, {});
                         }
@@ -805,12 +863,34 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->callbackFunctionOrCachedResult);
     visitor.append(mock->esmNamespace);
     visitor.append(mock->esmOriginalExports);
+    visitor.append(mock->esmLazyOriginals);
     visitor.append(mock->cjsModule);
     visitor.append(mock->cjsOriginalExports);
     visitor.append(mock->priorVirtualModuleEntry);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
+
+// Writes each snapshotted export back. A lazy snapshot stores the object to read the export from instead of the value.
+static void replayExports(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* ns, JSObject* snapshot, bool snapshotHoldsSources)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    JSObject::getOwnPropertyNames(snapshot, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (auto& name : names) {
+        JSValue value = snapshot->getDirect(vm, name);
+        if (!value)
+            continue;
+        if (snapshotHoldsSources) {
+            value = asObject(value)->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        ns->overrideExportValue(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
 
 void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 {
@@ -832,18 +912,12 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         auto* ns = moduleMock->mustEvictEsm ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
         if (ns) {
             if (auto* originals = moduleMock->esmOriginalExports.get()) {
-                JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                JSObject::getOwnPropertyNames(originals, globalObject, names, DontEnumPropertiesMode::Exclude);
+                replayExports(globalObject, ns, originals, false);
                 if (scope.exception()) [[unlikely]]
                     break;
-                for (auto& name : names) {
-                    JSValue originalValue = originals->getDirect(vm, name);
-                    if (!originalValue)
-                        continue;
-                    ns->overrideExportValue(globalObject, name, originalValue);
-                    if (scope.exception()) [[unlikely]]
-                        break;
-                }
+            }
+            if (auto* lazyOriginals = moduleMock->esmLazyOriginals.get()) {
+                replayExports(globalObject, ns, lazyOriginals, true);
                 if (scope.exception()) [[unlikely]]
                     break;
             }

@@ -308,20 +308,16 @@ impl StatWatcherScheduler {
         }
     }
 
-    /// JS thread, from the event-loop timer: hand the queued watchers to the
-    /// pool for one round of stats. The pool may be running `work_pool_callback`
-    /// on this scheduler before this returns, so it takes the pointer the timer
-    /// dispatch recovered rather than a `&mut self` that would stay live (and
-    /// protected) across the hand-off; `event_loop_timer` is only ever touched
-    /// on this thread and everything else is atomic.
+    /// JS thread, from the event-loop timer. Takes the pointer, not `&mut self`:
+    /// the pool shares the scheduler from the `schedule` onwards, before this
+    /// returns.
     ///
     /// # Safety
-    /// `this` is the live scheduler whose `event_loop_timer` fired (`RareData`
-    /// holds a ref on it until `shutdown_for_exit`, which disarms the timer).
+    /// `this` is the live scheduler whose `event_loop_timer` fired.
     pub(crate) unsafe fn timer_callback(this: *mut Self) {
-        // SAFETY: fn contract; the timer state is this thread's to write. Here
-        // and below, every access ends at its own statement, so no reference
-        // into the scheduler is live once the pool has the task.
+        // SAFETY: fn contract; `event_loop_timer` is JS-thread-only and the rest
+        // is atomic. Here and below, no reference into `*this` outlives its
+        // statement.
         let cleared_or_shutting_down = unsafe {
             let timer = &raw mut (*this).event_loop_timer;
             let has_been_cleared = (*timer).state == EventLoopTimerState::CANCELLED
@@ -353,10 +349,10 @@ impl StatWatcherScheduler {
         // that landed after its `pop_batch()`, which would otherwise leave a
         // live watcher with the timer disarmed. `.max(5)` matches the clamp
         // applied to every watcher interval in `StatWatcher::init`.
-        // SAFETY: fn contract; both fields are atomics.
+        // SAFETY: fn contract.
         let already_in_flight = unsafe { (*this).work_pool_in_flight.swap(true, Ordering::AcqRel) };
         if already_in_flight {
-            // SAFETY: as above.
+            // SAFETY: fn contract.
             let interval = unsafe { (*this).get_interval() };
             Self::set_timer(this, interval.max(5));
             return;
@@ -369,9 +365,7 @@ impl StatWatcherScheduler {
         Self::ref_(this);
         // The task is a field of this per-VM scheduler: counted, so the VM
         // waits for it (see `VmHandle::embedded_work_scheduled`).
-        // SAFETY: fn contract. The hand-off is the last thing this function does
-        // with the scheduler, and the task pointer is projected from `this`
-        // itself, as `work_pool_callback`'s `from_field_ptr!` requires.
+        // SAFETY: fn contract.
         unsafe {
             (*this).loop_handle.embedded_work_scheduled();
             WorkPool::schedule(&raw mut (*this).task);

@@ -1605,11 +1605,8 @@ mod _async_tasks {
             // the JS heap: counted, so the VM waits for it (embedded work).
             task.poster.embedded_work_scheduled();
 
-            // The task is projected from the box's own pointer, not from a
-            // `&mut` into it, so what the pool hands back to `from_task_ptr`
-            // covers the whole allocation (the `schedule_owned` shape).
             let raw = bun_core::heap::into_raw(task);
-            // SAFETY: `raw` is the live box just released above.
+            // SAFETY: `raw` is the box just released; the pool owns it from here.
             WorkPool::schedule(unsafe { &raw mut (*raw).task });
             raw
         }

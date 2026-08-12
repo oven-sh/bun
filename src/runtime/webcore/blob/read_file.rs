@@ -389,19 +389,14 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    /// io thread: the fd the read is waiting on became readable. Hands the
-    /// read back to the pool, which may be running it again before this
-    /// returns, so this takes the pointer the io thread holds rather than a
-    /// `&mut self` that would stay live (and protected) across the hand-off.
+    /// io thread. Takes the pointer, not `&mut self`: the pool owns the read
+    /// again from the `schedule` onwards, before this returns.
     ///
     /// # Safety
-    /// `this` is the live `ReadFile` whose `io_poll` fired; nothing on this
-    /// thread touches it after the call.
+    /// `this` is the live `ReadFile` whose `io_poll` fired.
     pub(crate) unsafe fn on_ready(this: *mut Self) {
         bloblog!("ReadFile.onReady");
-        // SAFETY: fn contract. Every access ends at its statement, so no
-        // reference into the read is live when the pool gets it, and the task
-        // pointer is projected from `this` itself, as `from_task_ptr` requires.
+        // SAFETY: fn contract; no reference into `*this` outlives its statement.
         unsafe {
             (*this).task = WorkPoolTask {
                 node: Default::default(),
@@ -420,15 +415,13 @@ impl ReadFile {
         }
     }
 
-    /// io thread: registering or polling the fd failed. Records the error and
-    /// hands the read back to the pool to finish; same hand-off as
-    /// [`on_ready`](Self::on_ready).
+    /// io thread; same hand-off as [`on_ready`](Self::on_ready).
     ///
     /// # Safety
     /// As for [`on_ready`](Self::on_ready).
     pub(crate) unsafe fn on_io_error(this: *mut Self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        // SAFETY: see `on_ready`.
+        // SAFETY: as in `on_ready`.
         unsafe {
             (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
             (*this).system_error = Some(err.to_system_error().into());
@@ -451,8 +444,7 @@ impl ReadFile {
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
     #[cfg(not(windows))]
     fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
-        // SAFETY: `ctx` is the `*mut ReadFile` registered in `on_request_readable`
-        // below; the io thread does not touch it after the action's error hook.
+        // SAFETY: `ctx` is the `*mut ReadFile` registered in `on_request_readable` below.
         unsafe { Self::on_io_error(ctx.cast::<ReadFile>(), err) }
     }
 

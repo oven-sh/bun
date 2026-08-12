@@ -780,9 +780,7 @@ use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. The owner is recovered from the embedded `io_poll` field and
-/// stays a raw pointer: the handlers hand it to the work pool, which may be
-/// running it before they return, so no reference to it may be live here.
+/// `bun_io`. The owner is recovered from the embedded `io_poll` field.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
@@ -790,11 +788,11 @@ use crate::webcore::blob::write_file::WriteFile;
 unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
         bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract; the owner is not touched after the call.
+            // SAFETY: per fn contract.
             unsafe { ReadFile::on_ready(bun_core::from_field_ptr!(ReadFile, io_poll, poll)) };
         }
         bun_io::PollableTag::WriteFile => {
-            // SAFETY: as above.
+            // SAFETY: per fn contract.
             unsafe { WriteFile::on_ready(bun_core::from_field_ptr!(WriteFile, io_poll, poll)) };
         }
         bun_io::PollableTag::Empty => {
@@ -805,8 +803,7 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
 }
 
 /// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
-/// `bun_io`. Same hand-off as [`__bun_io_pollable_on_ready`]: the owner stays
-/// a raw pointer.
+/// `bun_io`.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
@@ -818,7 +815,7 @@ unsafe fn __bun_io_pollable_on_io_error(
 ) {
     match tag {
         bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract; the owner is not touched after the call.
+            // SAFETY: per fn contract.
             unsafe {
                 ReadFile::on_io_error(bun_core::from_field_ptr!(ReadFile, io_poll, poll), err)
             };
@@ -826,8 +823,6 @@ unsafe fn __bun_io_pollable_on_io_error(
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
             let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            // `WriteFile::on_io_error` is shaped as the io action's error hook
-            // (`fn(*mut (), ..)`), so it takes the erased pointer.
             WriteFile::on_io_error(this.cast(), err);
         }
         bun_io::PollableTag::Empty => {

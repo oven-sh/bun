@@ -7042,11 +7042,9 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
-    /// The io thread's half of a deferred close (see `do_close`): close the fd,
-    /// then hand the task back to the pool to finish. Both steps touch fields
-    /// by name (`offset_of!` cannot name fields on a trait `Self`), so the
-    /// whole round trip is supplied per impl by [`impl_file_closer!`], with
-    /// no default body here.
+    /// The deferred close started by `do_close`, including its hand-back to the
+    /// pool. Supplied per impl by [`impl_file_closer!`]: `offset_of!` cannot
+    /// name fields on a trait `Self`.
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
@@ -7125,18 +7123,12 @@ macro_rules! impl_file_closer {
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
                 use ::bun_io::IntrusiveIoRequest as _;
 
-                // io thread: the fd is closed. Hands the job back to the pool,
-                // which may be running `on_close_io_request` before this
-                // returns, so the job stays a raw pointer throughout: no
-                // reference into it is live at the hand-off, and the work-pool
-                // task is projected from the job's own pointer, as
-                // `from_task_ptr` requires.
+                // io thread: the fd is closed. Stays a raw pointer, as the pool
+                // owns the job again from the `schedule` onwards.
                 fn on_done(ctx: *mut ()) {
                     let this = ctx.cast::<$T>();
-                    // SAFETY: `ctx` is the `*mut $T` registered as the close
-                    // action's ctx below, live until the pool task scheduled
-                    // here finishes; the io thread does not touch it after this
-                    // call, and each access ends at its own statement.
+                    // SAFETY: `ctx` is the live `*mut $T` registered below; no
+                    // reference into `*this` outlives its statement.
                     unsafe {
                         (*this)
                             .io_poll
@@ -7153,9 +7145,8 @@ macro_rules! impl_file_closer {
                 // Pool thread: finish the job now that its fd is closed.
                 fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
                     use ::bun_threading::IntrusiveWorkTask as _;
-                    // SAFETY: only reached via `WorkPoolTask::callback` with the
-                    // `task` field `on_done` projected from the live parent's own
-                    // pointer; recover parent.
+                    // SAFETY: `task` is the field `on_done` scheduled, projected
+                    // from the live parent's pointer; recover parent.
                     let this = unsafe { $T::from_task_ptr(task) };
                     // SAFETY: `this` is the live parent (see above); scoped access.
                     unsafe { (*this).close_after_io = false };

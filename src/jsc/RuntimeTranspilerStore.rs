@@ -589,19 +589,13 @@ impl TranspilerJob {
         )
     }
 
-    /// JS thread: hand a freshly initialised job to the pool, which may be
-    /// running it before this returns. Takes the slot pointer `transpile`
-    /// holds rather than a `&mut self` that would stay live (and protected)
-    /// across the hand-off.
+    /// JS thread. Takes the pointer, not `&mut self`: the pool owns the job
+    /// from the `schedule` onwards, before this returns.
     ///
     /// # Safety
-    /// `this` is a fully initialised job in this VM's store that nothing else
-    /// is using yet.
+    /// `this` is a fully initialised job that has not been scheduled yet.
     unsafe fn schedule(this: *mut Self) {
-        // SAFETY: fn contract. Both accesses end at their statement, so no
-        // reference into the slot is live once the pool has the task, and the
-        // task pointer is projected from `this` itself, as `from_field_ptr!`
-        // in `run_from_worker_thread` requires.
+        // SAFETY: fn contract; no reference into `*this` outlives its statement.
         unsafe {
             // Note: the KeepAlive takes an
             // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by

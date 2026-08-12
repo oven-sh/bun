@@ -4320,14 +4320,20 @@ async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
     { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
     () => socket.write(requestHead),
   );
-  const chunks = [];
-  socket.on("error", reject);
-  socket.on("data", chunk => chunks.push(chunk));
-  socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
-  const raw = await promise;
-  await serverClosed.promise;
-  expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
-  return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  try {
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    await serverClosed.promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  } finally {
+    socket.destroy();
+    // Only reached while still listening when the request never made it to the handler.
+    if (server.listening) server.close();
+  }
 }
 
 it("http2 allowHTTP1 fallback delivers the body when the handler closes the server right after res.end()", async () => {
@@ -4366,18 +4372,23 @@ it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose res
     { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
     () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
   );
-  const chunks = [];
-  socket.on("error", reject);
-  socket.on("data", chunk => {
-    chunks.push(chunk);
-    if (Buffer.concat(chunks).toString().endsWith("\r\n\r\nBODY")) resolve();
-  });
-  const closed = new Promise(resolveClosed => socket.on("close", resolveClosed));
-  await promise;
-  // Nothing is left to flush, so close() tears the idle connection down synchronously, like Node.
-  const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));
-  expect(serverSocket.destroyed).toBe(true);
-  await Promise.all([serverClosed, closed]);
+  try {
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (Buffer.concat(chunks).toString().endsWith("\r\n\r\nBODY")) resolve();
+    });
+    const closed = new Promise(resolveClosed => socket.on("close", resolveClosed));
+    await promise;
+    // Nothing is left to flush, so close() tears the idle connection down synchronously, like Node.
+    const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));
+    expect(serverSocket.destroyed).toBe(true);
+    await Promise.all([serverClosed, closed]);
+  } finally {
+    socket.destroy();
+    if (server.listening) server.close();
+  }
 });
 
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy

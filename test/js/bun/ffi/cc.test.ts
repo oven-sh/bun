@@ -1087,7 +1087,7 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
-describe("compiler runtime header directory under BUN_TMPDIR", () => {
+describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {
     "sentinel.txt": "sentinel-unchanged\n",

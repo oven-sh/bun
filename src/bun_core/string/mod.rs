@@ -1707,8 +1707,6 @@ pub enum ZigStringSlice {
     Owned(Vec<u8>),
     /// Backed by a WTFStringImpl ref; Drop derefs it. Stored as raw ptr to
     /// avoid wtf-module cycle; `wtf::to_latin1_slice` constructs this.
-    /// `*const` because Drop only calls `deref()` on it; the refcount itself
-    /// is interior-mutable.
     WTF {
         string_impl: *const wtf::WTFStringImplStruct,
         bytes: RawSlice<u8>,

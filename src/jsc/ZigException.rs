@@ -79,9 +79,6 @@ impl ZigException {
         }
     }
 
-    // There is intentionally no `from_exception` here: the only producer is
-    // `JSC__JSValue__toZigException`, which writes through an out-param.
-
     pub(crate) fn add_to_error_list(
         &mut self,
         error_list: &mut Vec<exception_list::JsException>,

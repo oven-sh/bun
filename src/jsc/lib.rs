@@ -7,10 +7,9 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, the `Blob::Store` array
-//! buffer deallocator) have been moved up into `bun_runtime`, and the few that
-//! only need an opaque borrow (e.g. `DOMFormData::for_each`) are generic over
-//! the caller's `Blob`.
+//! constructed those types (e.g. `output_file_jsc`) have been moved up into
+//! `bun_runtime`, and the few that only need an opaque borrow (e.g.
+//! `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
 #![allow(deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]

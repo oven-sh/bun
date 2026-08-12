@@ -5980,8 +5980,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     }
 }
 
-/// `ConsoleObject.cpp` forwards `console.timeStamp()` here; Bun leaves it
-/// unimplemented.
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeStamp(

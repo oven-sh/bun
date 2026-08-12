@@ -964,10 +964,6 @@ impl MarkedArrayBuffer {
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
-// LAYERING: the deallocator for `Blob::Store`-backed buffers lives next to
-// `Store` in `bun_runtime::webcore::Blob` — `bun_jsc` cannot name that type
-// without a dep cycle.
-
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions
 // ──────────────────────────────────────────────────────────────────────────

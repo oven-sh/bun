@@ -452,8 +452,6 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
     }
 
-    /// Known `GetLastError()` codes map to POSIX names; unmapped codes are
-    /// `None`.
     #[cfg(windows)]
     #[test]
     fn win32_errno_names() {

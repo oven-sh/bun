@@ -1600,15 +1600,13 @@ impl Poll {
         self.flags.remove(Flags::Registered);
     }
 
-    /// Applied on the spot rather than with the next batch: the caller hands
-    /// the owner to another thread as soon as this returns.
+    /// Not batched into the next `kevent()`: the caller hands the owner off right after this.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn unregister_kqueue(&mut self, watcher_fd: Fd, fd: Fd) {
         let mut change: KEvent = bun_core::ffi::zeroed();
         Poll::apply_kqueue(ApplyAction::Cancel, self, fd, &mut change);
-        // With nevents = 0 the call returns as soon as the change is applied.
-        // It fails with ENOENT once the one-shot registration has fired and
-        // with EBADF once the fd is closed; either way nothing is left to remove.
+        // nevents = 0: apply only. ENOENT (one-shot already fired) and EBADF
+        // (fd already closed) are the usual outcomes; nothing to do for either.
         let _ = kevent_call(
             watcher_fd.native(),
             &raw const change,

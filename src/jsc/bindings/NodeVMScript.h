@@ -4,6 +4,11 @@
 
 #include "../vm/SigintReceiver.h"
 
+namespace JSC {
+class SourceCodeKey;
+class UnlinkedProgramCodeBlock;
+}
+
 namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
@@ -38,11 +43,43 @@ private:
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptConstructor, JSC::InternalFunction);
 
+class NodeVMScript;
+
+// The SourceProvider behind a vm.Script. JSC's CodeCache consults it before parsing the
+// script's source and hands it what it parses (SourceProvider::pinnedUnlinkedCode /
+// pinUnlinkedCode), so every runInContext / runInThisContext of one Script links the same
+// UnlinkedProgramCodeBlock, however many contexts it runs in and whatever else has gone
+// through the CodeCache since. The Script cell owns that code block (it is what keeps it
+// alive); the provider only knows which Script to ask. The provider can outlive the Script
+// through the executables and stack traces earlier runs created, so the Script unlinks
+// itself when it is destroyed.
+class NodeVMScriptSourceProvider final : public JSC::StringSourceProvider {
+public:
+    static Ref<NodeVMScriptSourceProvider> create(const WTF::String& source, const JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const TextPosition& startPosition)
+    {
+        return adoptRef(*new NodeVMScriptSourceProvider(source, sourceOrigin, WTF::move(sourceURL), startPosition));
+    }
+
+    void setScript(NodeVMScript* script) { m_script = script; }
+
+    JSC::JSCell* pinnedUnlinkedCode(const JSC::SourceCodeKey&) const final;
+    void pinUnlinkedCode(const JSC::SourceCodeKey&, JSC::JSCell*) const final;
+
+private:
+    NodeVMScriptSourceProvider(const WTF::String& source, const JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const TextPosition& startPosition)
+        : JSC::StringSourceProvider(source, sourceOrigin, JSC::SourceTaintedOrigin::Untainted, WTF::move(sourceURL), startPosition, JSC::SourceProviderSourceType::Program)
+    {
+    }
+
+    NodeVMScript* m_script = nullptr;
+};
+
 class NodeVMScript final : public JSC::JSDestructibleObject, public SigintReceiver {
 public:
     using Base = JSC::JSDestructibleObject;
 
     static NodeVMScript* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options);
+    ~NodeVMScript();
 
     DECLARE_EXPORT_INFO;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -66,8 +103,17 @@ public:
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
     JSC::ProgramExecutable* createExecutable();
+    // Parses the source once and pins the result; false (with `error` filled in) on a syntax error.
+    bool compile(JSC::JSGlobalObject*, JSC::ParserError& error);
     void cacheBytecode();
     JSC::JSUint8Array* getBytecodeBuffer();
+
+    // The hash is SourceCodeKey::hash(): the source plus the parse flags (code type, strictness,
+    // code generation mode) the block was produced under. A lookup under different flags is a
+    // miss, and the block JSC then produces replaces the pinned one.
+    JSC::UnlinkedProgramCodeBlock* pinnedUnlinkedCode(unsigned keyHash) const { return m_pinnedKeyHash == keyHash ? m_pinnedUnlinkedCode.get() : nullptr; }
+    void pinUnlinkedCode(unsigned keyHash, JSC::UnlinkedProgramCodeBlock*);
+    bool hasPinnedUnlinkedCode() const { return !!m_pinnedUnlinkedCode; }
 
     const JSC::SourceCode& source() const { return m_source; }
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
@@ -86,6 +132,8 @@ private:
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
     JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
+    JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_pinnedUnlinkedCode;
+    unsigned m_pinnedKeyHash = 0;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
     bool m_sourceMapURLParsed = false;

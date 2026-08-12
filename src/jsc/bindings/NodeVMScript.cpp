@@ -3,6 +3,7 @@
 
 #include "ErrorCode.h"
 
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
@@ -131,39 +132,21 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
-    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
+    TextPosition startPosition(options.lineOffset, options.columnOffset);
+    Ref provider = NodeVMScriptSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), String(options.filename), startPosition);
+    SourceCode source(provider.copyRef(), startPosition.m_line.oneBasedInt(), startPosition.m_column.oneBasedInt());
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that. This is a
-    // double-parse (checkSyntax discards its AST and runInThisContext reparses
-    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
-    JSC::ParserError parseError;
-    if (!JSC::checkSyntax(vm, source, parseError)) {
-        auto exception = parseError.toErrorObject(globalObject, source, -1);
-        // Building the error materializes its stack, running a user
-        // Error.prepareStackTrace that may throw; Node throws the SyntaxError
-        // anyway. tryClearException leaves a termination for the check below.
-        if (exception)
-            (void)scope.tryClearException();
-        RETURN_IF_EXCEPTION(scope, {});
-        // Node always attaches the arrow header to compile-time SyntaxErrors
-        // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-        // An absent filename becomes evalmachine.<anonymous>; an explicitly
-        // provided one — including "" — is used verbatim.
-        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
-        throwException(globalObject, scope, exception);
-        return {};
-    }
-
     const bool produceCachedData = options.produceCachedData;
-    auto filename = options.filename;
+    const bool filenameProvided = options.filenameProvided;
+    const OrdinalNumber lineOffset = options.lineOffset;
+    String filename = options.filename;
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
+    provider->setScript(script);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -194,17 +177,76 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             if (compilationResult != JSC::CompilationResult::CompilationFailed) {
                 executable->installCode(codeBlock);
                 script->cachedDataRejected(TriState::False);
+                // Accepted cached data is what the runs link, so the source is never parsed.
+                provider->pinUnlinkedCode(key, unlinkedBlock);
             } else {
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (produceCachedData) {
+    }
+
+    if (!script->hasPinnedUnlinkedCode()) {
+        // Node's vm.Script throws SyntaxError at construction; the REPL's
+        // recoverable-error flow (and user code) relies on that. The same parse
+        // is pinned for every later run, see NodeVMScriptSourceProvider.
+        JSC::ParserError parseError;
+        if (!script->compile(globalObject, parseError)) {
+            auto exception = parseError.toErrorObject(globalObject, script->source(), -1);
+            // Building the error materializes its stack, running a user
+            // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+            // anyway. tryClearException leaves a termination for the check below.
+            if (exception)
+                (void)scope.tryClearException();
+            RETURN_IF_EXCEPTION(scope, {});
+            // Node always attaches the arrow header to compile-time SyntaxErrors
+            // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+            // An absent filename becomes evalmachine.<anonymous>; an explicitly
+            // provided one — including "" — is used verbatim.
+            String url = filenameProvided ? filename : "evalmachine.<anonymous>"_s;
+            decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, lineOffset);
+            throwException(globalObject, scope, exception);
+            return {};
+        }
+    }
+
+    if (cachedData.isEmpty() && produceCachedData) {
         script->cacheBytecode();
         // TODO(@heimskr): is there ever a case where bytecode production fails?
         script->cachedDataProduced(true);
     }
 
     return JSValue::encode(script);
+}
+
+JSC::JSCell* NodeVMScriptSourceProvider::pinnedUnlinkedCode(const JSC::SourceCodeKey& key) const
+{
+    return m_script ? m_script->pinnedUnlinkedCode(key.hash()) : nullptr;
+}
+
+void NodeVMScriptSourceProvider::pinUnlinkedCode(const JSC::SourceCodeKey& key, JSC::JSCell* unlinkedCode) const
+{
+    if (m_script)
+        m_script->pinUnlinkedCode(key.hash(), uncheckedDowncast<JSC::UnlinkedProgramCodeBlock>(unlinkedCode));
+}
+
+NodeVMScript::~NodeVMScript()
+{
+    static_cast<NodeVMScriptSourceProvider*>(m_source.provider())->setScript(nullptr);
+}
+
+void NodeVMScript::pinUnlinkedCode(unsigned keyHash, JSC::UnlinkedProgramCodeBlock* unlinkedCode)
+{
+    m_pinnedKeyHash = keyHash;
+    m_pinnedUnlinkedCode.set(vm(), this, unlinkedCode);
+}
+
+bool NodeVMScript::compile(JSGlobalObject* globalObject, JSC::ParserError& error)
+{
+    VM& vm = JSC::getVM(globalObject);
+    JSC::ProgramExecutable* executable = m_cachedExecutable ? m_cachedExecutable.get() : createExecutable();
+    // A successful parse reaches NodeVMScriptSourceProvider::pinUnlinkedCode from inside the CodeCache.
+    vm.codeCache()->getUnlinkedProgramCodeBlock(vm, executable, m_source, globalObject->defaultCodeGenerationMode(), error);
+    return !error.isValid();
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -268,6 +310,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
+    visitor.append(thisObject->m_pinnedUnlinkedCode);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)

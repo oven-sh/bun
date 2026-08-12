@@ -892,6 +892,93 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+describe.concurrent("Script compiles its source once for every context it runs in", () => {
+  // Runs one Script in several fresh contexts, keeping everything each run produced alive, and
+  // reports how many UnlinkedProgramCodeBlock cells (one per parse of a program) appeared between
+  // the first run and the last. A Script that pins its parse adds none; a Script that goes back
+  // to JSC's CodeCache adds one per context as soon as the cache does not hold the entry, which
+  // BUN_JSC_useCodeCache=0 forces for every run.
+  const fixture = String.raw`
+    const { Script, createContext } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    const runs = 6;
+    let body = "";
+    for (let i = 0; i < 50; i++) body += "function f" + i + "(a) { return a + " + i + "; }\n";
+    const source = "(function (exports) {\n" + body + "exports.sum = f0(1) + f49(1);\n})";
+    const programBlocks = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    };
+    const options = process.env.VM_FIXTURE_CACHED_DATA ? { cachedData: new Script(source).createCachedData() } : {};
+    const script = new Script(source, options);
+    const keep = [];
+    let afterFirstRun = 0;
+    for (let i = 0; i < runs; i++) {
+      const wrapper = script.runInContext(createContext({}));
+      const exports = {};
+      wrapper(exports);
+      if (exports.sum !== 51) throw new Error("run " + i + " computed " + exports.sum);
+      keep.push(wrapper, exports);
+      if (i === 0) afterFirstRun = programBlocks();
+    }
+    console.log(JSON.stringify({
+      programBlocksAddedByLaterRuns: programBlocks() - afterFirstRun,
+      cachedDataRejected: script.cachedDataRejected,
+      cachedDataStillProducible: script.createCachedData().length > 0,
+    }));
+  `;
+
+  async function runFixture(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("with the CodeCache", async () => {
+    expect(await runFixture({})).toEqual({
+      programBlocksAddedByLaterRuns: 0,
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("without the CodeCache", async () => {
+    expect(await runFixture({ BUN_JSC_useCodeCache: "0" })).toEqual({
+      programBlocksAddedByLaterRuns: 0,
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("from accepted cachedData, without the CodeCache", async () => {
+    expect(await runFixture({ BUN_JSC_useCodeCache: "0", VM_FIXTURE_CACHED_DATA: "1" })).toEqual({
+      programBlocksAddedByLaterRuns: 0,
+      cachedDataRejected: false,
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("each context still gets its own global declarations", () => {
+    const script = new Script(
+      "var counter = (typeof counter === 'number' ? counter : 0) + 1; function id() { return tag; } counter;",
+    );
+    const first = createContext({ tag: "first" });
+    const second = createContext({ tag: "second" });
+    expect(script.runInContext(first)).toBe(1);
+    expect(script.runInContext(second)).toBe(1);
+    expect(script.runInContext(first)).toBe(2);
+    expect(runInContext("id()", first)).toBe("first");
+    expect(runInContext("id()", second)).toBe("second");
+    expect(first.counter).toBe(2);
+    expect(second.counter).toBe(1);
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

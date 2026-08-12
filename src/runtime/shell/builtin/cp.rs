@@ -581,6 +581,45 @@ impl ShellCpTask {
         }
     }
 
+    /// Whether `tgt`, the directory the copy of the directory `src` would be
+    /// written to, is `src` itself or lies somewhere below it. Copying there
+    /// would make the walk descend into the directories it is creating, so it
+    /// is refused up front like coreutils does.
+    ///
+    /// Compared by identity rather than by path so that a `tgt` reached
+    /// through a symlink to `src` (or to one of its parents) is caught too;
+    /// `tgt` and its nearest ancestors may not exist yet, those are skipped.
+    fn dir_copy_relation(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> resolve_path::ParentEqual {
+        use resolve_path::ParentEqual;
+
+        // lstat: on Windows `src` may be a directory symlink, which the copy
+        // treats as a file rather than descending into its target.
+        let Ok(src_stat) = bun_sys::lstat(src) else {
+            return ParentEqual::Unrelated;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut len = tgt.len();
+        buf[..len].copy_from_slice(tgt.as_bytes());
+        let mut relation = ParentEqual::Equal;
+        loop {
+            buf[len] = 0;
+            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::from_buf(&buf[..], len)) {
+                // An inode number of 0 means the filesystem reports no identity.
+                if stat.st_ino != 0
+                    && stat.st_ino == src_stat.st_ino
+                    && stat.st_dev == src_stat.st_dev
+                {
+                    return relation;
+                }
+            }
+            let Some(parent) = bun_paths::dirname(&buf[..len]) else {
+                return ParentEqual::Unrelated;
+            };
+            len = parent.len();
+            relation = ParentEqual::Parent;
+        }
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -651,6 +690,9 @@ impl ShellCpTask {
         };
 
         let mut _copying_many = false;
+        // Set when `tgt` gains the source's basename below (`cp -R src
+        // existing_dir`), so errors can name the path the copy would land on.
+        let mut appended_basename: Option<&[u8]> = None;
 
         // The following logic is based on the POSIX spec.
         if !src_is_dir && !tgt_is_dir && self.operands == 2 {
@@ -663,6 +705,7 @@ impl ShellCpTask {
                     buf3.as_mut_slice(),
                     &[tgt.as_bytes(), basename],
                 );
+                appended_basename = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -695,6 +738,28 @@ impl ShellCpTask {
                 &[tgt.as_bytes(), basename],
             );
             _copying_many = true;
+        }
+
+        if src_is_dir {
+            let relation = Self::dir_copy_relation(src, tgt);
+            if relation != resolve_path::ParentEqual::Unrelated {
+                let mut display_buf = bun_paths::path_buffer_pool::get();
+                let shown_tgt: &[u8] = match appended_basename {
+                    Some(basename) => resolve_path::join_string_buf::<platform::Auto>(
+                        &mut display_buf[..],
+                        &[self.tgt.as_slice(), basename],
+                    ),
+                    None => &self.tgt,
+                };
+                let (src_shown, tgt_shown) =
+                    (bstr::BStr::new(&self.src), bstr::BStr::new(shown_tgt));
+                let msg = if relation == resolve_path::ParentEqual::Equal {
+                    format!("{src_shown} and {tgt_shown} are identical (not copied)")
+                } else {
+                    format!("cannot copy directory {src_shown} into itself {tgt_shown}")
+                };
+                return Some(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
+            }
         }
 
         self.src_absolute = Some(src.as_bytes().to_vec());

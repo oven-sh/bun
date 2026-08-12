@@ -599,6 +599,8 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 
 That means `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
 
+The exception is structured cloning. An `S3File` is bound to the credentials and options of the client that created it, so `structuredClone()` and `postMessage()` throw a `DataCloneError` instead of cloning it. To use a file from a worker, send the key and call `file()` on a client in the worker.
+
 ### Partial reads with `slice`
 
 To read a partial range of a file, use the `slice` method.

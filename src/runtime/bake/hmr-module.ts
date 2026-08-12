@@ -725,11 +725,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Dispose of every module that is about to be evaluated again: the replaced
-  // modules (also when an importer accepts them) and the boundaries they
-  // bubbled up to. Modules are only marked stale by the reload loop below:
-  // marking one stale here would let the reload of an importer that precedes
-  // it in `toReload` evaluate it, and its own reload evaluate it again.
+  // Every module that is about to be evaluated again is disposed of first.
+  // Only the reload loop below marks modules stale.
   const disposePromises: Promise<void>[] = [];
   for (const mod of toReload) {
     const { onDispose } = mod;

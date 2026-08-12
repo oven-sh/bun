@@ -75,12 +75,30 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
     });
   }
 
+  // When a FIFO end gets closed is what these tests are about, so each one is
+  // closed explicitly at the right moment; `using` only covers the failure paths.
+  function openFd(file: string, flags: number | string) {
+    let fd = openSync(file, flags);
+    return {
+      get fd() {
+        return fd;
+      },
+      close() {
+        if (fd !== -1) closeSync(fd);
+        fd = -1;
+      },
+      [Symbol.dispose]() {
+        this.close();
+      },
+    };
+  }
+
   // The child must already have the FIFO open for reading before a writer can
   // connect to it: a non-blocking open for writing fails with ENXIO until then.
-  async function openWriterOnceChildIsReading(fifo: string, child: Bun.Subprocess): Promise<number> {
+  async function openWriterOnceChildIsReading(fifo: string, child: Bun.Subprocess) {
     while (true) {
       try {
-        return openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+        return openFd(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
       } catch (err: any) {
         if (err.code !== "ENXIO") throw err;
       }
@@ -99,42 +117,32 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
     // The write end can only be opened, and written to without EPIPE, while
     // some reader has the FIFO open; `holder` is that reader until the child
     // has opened its own. It never reads, so every byte goes to the child.
-    let holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-    const closeHolder = () => {
-      if (holder !== -1) closeSync(holder);
-      holder = -1;
-    };
-    let writer = openSync(fifo, "w");
-    try {
-      await using proc = readFifoInChild(
-        `const bytes = await Bun.file(process.env.FIFO).bytes(); process.stdout.write(bytes.length + " " + Bun.hash(bytes));`,
-        fifo,
-      );
-      const stderr = proc.stderr.text();
-      // The write end is blocking, so this write only completes as the child
-      // drains the pipe, and closing it afterwards is what ends the child's
-      // read. The child cannot exit before that unless it failed; dropping
-      // `holder` then leaves the pipe without readers, so the blocked write
-      // fails with EPIPE instead of waiting forever.
-      const childDied = proc.exited.then(async exitCode => {
-        closeHolder();
-        throw new Error(`child exited with ${exitCode} before the payload was written: ${await stderr}`);
-      });
-      const written = await Promise.race([Bun.write(Bun.file(writer), payload), childDied]);
-      closeSync(writer);
-      writer = -1;
-      const [stdout, stderrText, exitCode] = await Promise.all([proc.stdout.text(), stderr, proc.exited]);
+    using holder = openFd(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    using writer = openFd(fifo, "w");
+    await using proc = readFifoInChild(
+      `const bytes = await Bun.file(process.env.FIFO).bytes(); process.stdout.write(bytes.length + " " + Bun.hash(bytes));`,
+      fifo,
+    );
+    const stderr = proc.stderr.text();
+    // The write end is blocking, so this write only completes as the child
+    // drains the pipe, and closing it afterwards is what ends the child's
+    // read. The child cannot exit before that unless it failed; dropping
+    // `holder` then leaves the pipe without readers, so the blocked write
+    // fails with EPIPE instead of waiting forever.
+    const childDied = proc.exited.then(async exitCode => {
+      holder.close();
+      throw new Error(`child exited with ${exitCode} before the payload was written: ${await stderr}`);
+    });
+    const written = await Promise.race([Bun.write(Bun.file(writer.fd), payload), childDied]);
+    writer.close();
+    const [stdout, stderrText, exitCode] = await Promise.all([proc.stdout.text(), stderr, proc.exited]);
 
-      expect({ written, stdout, stderr: stderrText }).toEqual({
-        written: payload.length,
-        stdout: `${payload.length} ${Bun.hash(payload)}`,
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    } finally {
-      if (writer !== -1) closeSync(writer);
-      closeHolder();
-    }
+    expect({ written, stdout, stderr: stderrText }).toEqual({
+      written: payload.length,
+      stdout: `${payload.length} ${Bun.hash(payload)}`,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent("text() waits for a writer that connects after the read started", async () => {
@@ -143,9 +151,9 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
     mkfifo(fifo);
 
     await using proc = readFifoInChild(`process.stdout.write(await Bun.file(process.env.FIFO).text());`, fifo);
-    const writer = await openWriterOnceChildIsReading(fifo, proc);
-    writeSync(writer, "written after the reader opened\n");
-    closeSync(writer);
+    using writer = await openWriterOnceChildIsReading(fifo, proc);
+    writeSync(writer.fd, "written after the reader opened\n");
+    writer.close();
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: "written after the reader opened\n", stderr: "" });
@@ -161,7 +169,8 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
       `const text = await Bun.file(process.env.FIFO).text(); process.stdout.write(JSON.stringify(text));`,
       fifo,
     );
-    closeSync(await openWriterOnceChildIsReading(fifo, proc));
+    using writer = await openWriterOnceChildIsReading(fifo, proc);
+    writer.close();
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: '""', stderr: "" });
@@ -175,13 +184,17 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
 
     // Same dance as above: a reader has to exist before the write end can be
     // opened; here that reader becomes the child's stdin.
-    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-    const writer = openSync(fifo, "w");
-    await using proc = readFifoInChild(`process.stdout.write(JSON.stringify(await Bun.stdin.text()));`, fifo, readEnd);
+    using readEnd = openFd(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    using writer = openFd(fifo, "w");
+    await using proc = readFifoInChild(
+      `process.stdout.write(JSON.stringify(await Bun.stdin.text()));`,
+      fifo,
+      readEnd.fd,
+    );
     // The child has its own descriptor for the read end now.
-    closeSync(readEnd);
-    writeSync(writer, "stdin is a named pipe\n");
-    closeSync(writer);
+    readEnd.close();
+    writeSync(writer.fd, "stdin is a named pipe\n");
+    writer.close();
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify("stdin is a named pipe\n"), stderr: "" });

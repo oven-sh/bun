@@ -1711,11 +1711,8 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        // The `_DARWIN_UNLIMITED_SELECT` variant of select(2) (same
-        // `$DARWIN_EXTSN` scheme as `realpath` in `posix_impl`). libsyscall
-        // maps it straight onto the syscall, so there is no FD_SETSIZE check
-        // and each set is a bitmap of ceil(nfds / 32) 32-bit words rather
-        // than a `libc::fd_set`; hence the word pointers.
+        // `_DARWIN_UNLIMITED_SELECT` select(2): the bare syscall, so no
+        // FD_SETSIZE check, and a set is just ceil(nfds / 32) 32-bit words.
         #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
         pub(crate) fn select(
             nfds: c_int,
@@ -7623,21 +7620,15 @@ pub fn kevent(
     }
 }
 
-/// Blocks the calling thread in `select(2)` until `fd` is readable, where
-/// readable includes EOF. Retries on EINTR.
+/// Blocks in `select(2)` until `fd` is readable or at EOF; retries on EINTR.
 ///
-/// This is how a named pipe (a FIFO opened by path, or one inherited as
-/// stdin) has to be waited on under macOS. XNU attaches kqueue `EVFILT_READ`
-/// filters for a FIFO to its vnode, and that filter only fires while bytes are
-/// buffered (`vnode_readable_data_count`); the last writer closing posts
-/// nothing to the vnode, so a kqueue registration never wakes a reader up for
-/// EOF, and neither does `poll(2)`, which XNU implements on top of kqueue.
-/// `select(2)` instead goes through `fifo_select` to the FIFO's underlying
-/// socket, whose readability includes the `SS_CANTRCVMORE` state that the last
-/// writer's close sets (and that a writer which has not connected yet leaves
-/// clear, so a FIFO that is still waiting for its first writer blocks here
-/// rather than reading as empty). `pipe(2)` pipes are not affected: their own
-/// kqueue filter reports `EV_EOF`.
+/// For named pipes. XNU hooks a FIFO's `EVFILT_READ` (and `poll(2)`, which it
+/// implements with kqueue) to the vnode, where it only fires while bytes are
+/// buffered, and `fifo_close` posts nothing, so neither ever reports the last
+/// writer closing. `select(2)` goes through `fifo_select` to the FIFO's socket,
+/// whose readability includes `SS_CANTRCVMORE`: set by that close, clear while
+/// no writer has connected yet. `pipe(2)` pipes have their own filter with
+/// `EV_EOF` and do not need this.
 #[cfg(target_os = "macos")]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     debug_assert!(fd.is_valid());

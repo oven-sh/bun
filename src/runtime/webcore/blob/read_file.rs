@@ -285,9 +285,7 @@ pub struct ReadFile {
     pub(crate) io_request: io::Request,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
-    /// A FIFO vnode as opposed to a `pipe(2)` pipe. kqueue never reports EOF
-    /// for these, so their waits happen in `block_until_readable` instead of
-    /// going through the io thread; see `bun_sys::block_until_readable`.
+    /// FIFO vnode (not a `pipe(2)` pipe); see `bun_sys::block_until_readable`.
     #[cfg(target_os = "macos")]
     pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
@@ -472,9 +470,8 @@ impl ReadFile {
         }
     }
 
-    /// The named-pipe counterpart of `wait_for_readable`: waits right here on
-    /// the pool thread, like `fs.readFile` does for every FIFO. Returns `false`
-    /// when the wait itself failed, with the error recorded for `then()`.
+    /// `wait_for_readable` for named pipes: waits on this (pool) thread.
+    /// Returns `false` if the wait failed, with the error recorded for `then()`.
     #[cfg(target_os = "macos")]
     fn block_until_readable(&mut self) -> bool {
         bloblog!("ReadFile.blockUntilReadable");
@@ -707,9 +704,7 @@ impl ReadFile {
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
         #[cfg(target_os = "macos")]
         {
-            // `pipe(2)` pipes are S_IFIFO too; XNU's pipe_stat leaves their
-            // st_dev 0, whereas a FIFO on a filesystem carries its volume's
-            // device number.
+            // pipe(2) pipes are S_IFIFO with st_dev == 0 (XNU pipe_stat).
             self.is_named_pipe = bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0;
         }
         self.total_size =
@@ -786,8 +781,7 @@ impl ReadFile {
         if self.could_block {
             #[cfg(target_os = "macos")]
             if self.is_named_pipe {
-                // Waiting before the first read is also what keeps a FIFO
-                // whose writer has not connected yet from reading as empty.
+                // Before the first read too: with no writer yet, read() says EOF.
                 if self.block_until_readable() {
                     self.do_read_loop();
                 } else {

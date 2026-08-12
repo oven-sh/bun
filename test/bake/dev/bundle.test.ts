@@ -1,6 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+import type { Bake } from "bun";
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework, type Dev } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -414,45 +415,63 @@ function decodeErrorsPacket(data: Uint8Array) {
   }
   return { removed, added: decodeSerializedFailures(data.subarray(5 + removedCount * 4)) };
 }
+/**
+ * Subscribes the harness socket to the errors topic and records every errors
+ * packet. Each `dev.write` resolves only after a later message on this socket,
+ * so by then the packets of that rebuild have been recorded.
+ */
+function recordErrorsPackets(dev: Dev) {
+  const packets: ReturnType<typeof decodeErrorsPacket>[] = [];
+  dev.on("hmr", (data: Uint8Array) => {
+    if (data[0] === "e".charCodeAt(0)) packets.push(decodeErrorsPacket(data));
+  });
+  dev.socket!.send("sre");
+  return packets;
+}
+// separateSSRGraph makes a "use client" file's own bundling failures belong to
+// the client graph's node, which is the node deleted when the file is demoted.
+const separateSSRGraphFramework: Bake.Framework = {
+  ...minimalFramework,
+  serverComponents: {
+    ...minimalFramework.serverComponents!,
+    separateSSRGraph: true,
+  },
+};
+// The route sees a client reference object while Comp.ts is a client
+// component boundary and the exported string once it is demoted.
+const demotionFiles = {
+  "routes/index.ts": `
+    import * as Comp from '../components/Comp';
+    export default function (req, meta) {
+      return new Response('marker: ' + typeof Comp.marker);
+    }
+  `,
+  "components/Comp.ts": `
+    "use client";
+    export const marker = "initial";
+  `,
+};
+devTest("removing 'use client' from a working component", {
+  framework: separateSSRGraphFramework,
+  files: demotionFiles,
+  async test(dev) {
+    const errorPackets = recordErrorsPackets(dev);
+    await dev.fetch("/").equals("marker: object");
+    await dev.write("components/Comp.ts", `export const marker = "plain";`);
+    await dev.fetch("/").equals("marker: string");
+    expect(errorPackets).toEqual([]);
+  },
+});
 // When a client component boundary is demoted, the server graph deletes the
 // client graph's node for it (disconnectAndDeleteFile). If that node was
 // failing, its failure used to stay behind in dev.bundling_failures: error
 // overlays were never told to drop it and every later "Build Failed" page
 // listed it again.
 devTest("removing 'use client' from a failing component retracts its bundling failure", {
-  // separateSSRGraph is required for the failure to be owned by the client
-  // graph's node, which is the node that gets deleted on demotion.
-  framework: {
-    ...minimalFramework,
-    serverComponents: {
-      ...minimalFramework.serverComponents!,
-      separateSSRGraph: true,
-    },
-  },
-  files: {
-    "routes/index.ts": `
-      import * as Comp from '../components/Comp';
-      export default function (req, meta) {
-        return new Response('marker: ' + typeof Comp.marker);
-      }
-    `,
-    "components/Comp.ts": `
-      "use client";
-      export const marker = "initial";
-    `,
-  },
+  framework: separateSSRGraphFramework,
+  files: demotionFiles,
   async test(dev) {
-    const errorPackets: ReturnType<typeof decodeErrorsPacket>[] = [];
-    dev.on("hmr", (data: Uint8Array) => {
-      if (data[0] === "e".charCodeAt(0)) errorPackets.push(decodeErrorsPacket(data));
-    });
-    // Subscribe the harness socket to the errors topic as well. Every
-    // `dev.write` below resolves only after a later message on this socket,
-    // so by then any errors packet from that rebuild has been recorded.
-    dev.socket!.send("sre");
-
-    // Comp.ts is bundled as a client component boundary: the route sees a
-    // client reference object instead of the string.
+    const errorPackets = recordErrorsPackets(dev);
     await dev.fetch("/").equals("marker: object");
     expect(errorPackets).toEqual([]);
 
@@ -512,6 +531,68 @@ devTest("removing 'use client' from a failing component retracts its bundling fa
         messages: ['Could not resolve: "./does-not-exist"'],
       },
     ]);
+  },
+});
+// Same demotion as above, observed from a browser sitting on the "Build
+// Failed" page: the retraction is what lets it drop the error and reload.
+devTest("removing 'use client' from a failing component clears the error overlay", {
+  framework: {
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./framework/server.ts",
+        clientEntryPoint: "./framework/client.ts",
+      },
+    ],
+    serverComponents: {
+      separateSSRGraph: true,
+      serverRuntimeImportSource: "./framework/server.ts",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  },
+  files: {
+    "framework/server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><body>" + meta.pageModule.default() + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "framework/client.ts": `
+      console.log("marker: " + document.body.textContent);
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default () => typeof Comp.marker;
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<body>object<");
+    await dev.write(
+      "components/Comp.ts",
+      `
+        "use client";
+        import './missing';
+        export const marker = "initial";
+      `,
+      { errors: null },
+    );
+    await using c = await dev.client("/", {
+      errors: ['components/Comp.ts:2:8: error: Could not resolve: "./missing"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("components/Comp.ts", `export const marker = "plain";`);
+    });
+    await c.expectMessage("marker: string");
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {

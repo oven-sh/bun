@@ -184,11 +184,13 @@ impl AtomicSync {
 /// [`ThreadPoolInner`], behind an `Arc` every worker holds too, so a `&mut`
 /// over this struct (its `Drop`, a `&mut self` method of a struct embedding
 /// it by value) is fine while the workers run; with that state inline, both
-/// aliasing models reject it. Enforced by
-/// test/internal/source-lints/thread-pool-drop-holds-only-pointers.test.ts.
+/// aliasing models reject it (test/internal/source-lints/thread-pool-handle.test.ts).
 pub struct ThreadPool {
     inner: Arc<ThreadPoolInner>,
 }
+
+const _: () =
+    assert!(core::mem::size_of::<ThreadPool>() == core::mem::size_of::<Arc<ThreadPoolInner>>());
 
 /// Only ever reached through `&ThreadPoolInner`. A worker's own `Arc` keeps it
 /// alive through the worker's last access in [`ThreadPoolInner::unspawn`],

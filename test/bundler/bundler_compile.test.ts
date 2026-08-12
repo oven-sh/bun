@@ -382,6 +382,24 @@ describe("bundler", () => {
       stdout: "no await printed",
     },
     {
+      // Same cross-check, for awaits that are printed but all sit inside a
+      // function body of some shape: the record must still say no top-level
+      // await.
+      name: "AwaitOnlyInsideFunctions",
+      files: {
+        "/entry.ts": `
+          const arrow = async () => { await null; return "arrow"; };
+          const expr = async function () { await null; return (async x => await x)("expression"); };
+          async function decl() { await null; return "declaration"; }
+          const obj = { async method() { await null; return "method"; } };
+          class K { async method() { await null; return "class method"; } }
+          console.log("sync module");
+          Promise.all([arrow(), expr(), decl(), obj.method(), new K().method()]).then(r => console.log(r.join(", ")));
+        `,
+      },
+      stdout: "sync module\narrow, expression, declaration, method, class method",
+    },
+    {
       // The other spellings of a top-level await. Each lives in its own
       // dynamically imported module, so each gets its own record: a module
       // whose record misses its await is abandoned at that await and its

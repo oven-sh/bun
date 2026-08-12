@@ -1117,8 +1117,7 @@ impl IoRequestLoop {
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
                             Poll::apply_kqueue(
-                                ApplyAction::Readable,
-                                readable.tag,
+                                ApplyAction::Readable(readable.tag),
                                 readable.poll,
                                 readable.fd,
                                 add_one(&mut events_list),
@@ -1126,8 +1125,7 @@ impl IoRequestLoop {
                         }
                         Action::Writable(writable) => {
                             Poll::apply_kqueue(
-                                ApplyAction::Writable,
-                                writable.tag,
+                                ApplyAction::Writable(writable.tag),
                                 writable.poll,
                                 writable.fd,
                                 add_one(&mut events_list),
@@ -1139,12 +1137,15 @@ impl IoRequestLoop {
                             {
                                 Poll::apply_kqueue(
                                     ApplyAction::Cancel,
-                                    close.tag,
                                     close.poll,
                                     close.fd,
                                     add_one(&mut events_list),
                                 );
                             }
+                            // From here on another thread may finish and free
+                            // the owner, before the kevent() below has even
+                            // submitted the cancel; safe only because the cancel
+                            // addresses nobody (see `ApplyAction::Cancel`).
                             (close.on_done)(close.ctx);
                         }
                     }
@@ -1158,10 +1159,10 @@ impl IoRequestLoop {
                 self.pollfd().native(),
                 events_list.as_ptr(),
                 c_int::try_from(change_count).expect("int cast"),
-                // The same array may be used for the changelist and eventlist.
+                // The same array may be used for the changelist and eventlist;
+                // a rejected change comes back through it as an EV_ERROR entry
+                // (see `on_update_kqueue`) instead of failing the call.
                 events_list.as_mut_ptr(),
-                // we set 0 here so that if we get an error on
-                // registration, it becomes errno
                 c_int::try_from(capacity).expect("int cast"),
                 core::ptr::null(),
             );
@@ -1353,11 +1354,12 @@ pub struct FileAction<'a> {
     pub on_error: fn(*mut (), &sys::Error),
 }
 
+/// No [`PollableTag`], unlike [`FileAction`]: `on_done` hands the owner to
+/// another thread, so nothing a close submits may dispatch back into it.
 pub struct CloseAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
-    pub tag: PollableTag,
     pub on_done: fn(*mut ()),
 }
 
@@ -1496,8 +1498,15 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ApplyAction {
-    Readable,
-    Writable,
+    /// One-shot `EV_ADD`; its event, or the `EV_ERROR` entry if the add is
+    /// rejected, dispatches to the owner the tag names.
+    Readable(PollableTag),
+    Writable(PollableTag),
+    /// `EV_DELETE` of whatever the poll still has armed, submitted with
+    /// `udata = 0` so that `on_update_kqueue` drops its reply like the waker's.
+    /// The reply is the rule, not the exception (the one-shot knote is usually
+    /// gone already: ENOENT; or the owner closed the fd first: EBADF), and by
+    /// the time it arrives `tick_kqueue` has handed the owner to another thread.
     Cancel,
 }
 
@@ -1506,7 +1515,6 @@ impl Poll {
     #[inline]
     pub(crate) fn apply_kqueue(
         action: ApplyAction,
-        tag: PollableTag,
         poll: &mut Poll,
         fd: Fd,
         kqueue_event: &mut KEvent,
@@ -1514,23 +1522,31 @@ impl Poll {
         log!(
             "register({}, {})",
             match action {
-                ApplyAction::Readable => "readable",
-                ApplyAction::Writable => "writable",
+                ApplyAction::Readable(_) => "readable",
+                ApplyAction::Writable(_) => "writable",
                 ApplyAction::Cancel => "cancel",
             },
             fd
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
-        let (filter, flags_): (i16, u16) = match action {
-            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
-            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
+        let poll_ptr = std::ptr::from_mut::<Poll>(poll);
+        let (filter, flags_, udata): (i16, u16, usize) = match action {
+            ApplyAction::Readable(tag) => (
+                libc::EVFILT_READ,
+                libc::EV_ADD | one_shot_flag,
+                Pollable::init(tag, poll_ptr).ptr() as usize,
+            ),
+            ApplyAction::Writable(tag) => (
+                libc::EVFILT_WRITE,
+                libc::EV_ADD | one_shot_flag,
+                Pollable::init(tag, poll_ptr).ptr() as usize,
+            ),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE)
+                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
                 } else if poll.flags.contains(Flags::PollWritable) {
-                    (libc::EVFILT_WRITE, libc::EV_DELETE)
+                    (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
                 } else {
                     unreachable!()
                 }
@@ -1561,10 +1577,10 @@ impl Poll {
         }
 
         match action {
-            ApplyAction::Readable => {
+            ApplyAction::Readable(_) => {
                 poll.flags.insert(Flags::PollReadable);
             }
-            ApplyAction::Writable => {
+            ApplyAction::Writable(_) => {
                 poll.flags.insert(Flags::PollWritable);
             }
             ApplyAction::Cancel => {
@@ -1611,8 +1627,9 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
-        // only to unblock kevent() so the pending queue drains.
+        // udata=0 → tag=.empty is both the waker (registered only to unblock
+        // kevent() so the pending queue drains) and the EV_ERROR reply to an
+        // `ApplyAction::Cancel`, whose owner may already be gone.
         if tag == PollableTag::Empty {
             return;
         }
@@ -1620,7 +1637,11 @@ impl Poll {
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
-        if event.flags == libc::EV_ERROR {
+        //
+        // A rejected change comes back with EV_ERROR set in `flags`; xnu ORs it
+        // into the bits we submitted (EV_ADD|EV_ONESHOT|EV_ERROR) while FreeBSD
+        // replaces them, so test the bit rather than the whole word.
+        if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.

@@ -7031,8 +7031,6 @@ pub trait FileOpener: Sized {
 
 // TODO: move to bun_sys?
 pub trait FileCloser: Sized {
-    const IO_TAG: bun_io::Tag;
-
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
@@ -7109,15 +7107,13 @@ pub trait FileCloser: Sized {
 }
 
 /// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
-/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
-/// The type must also carry `bun_threading::intrusive_work_task!` and
-/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
-/// used by the two trampolines.
+/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`)
+/// and an inherent `update()`. The type must also carry
+/// `bun_threading::intrusive_work_task!` and `bun_io::intrusive_io_request!`,
+/// which provide the parent-pointer recovery used by the two trampolines.
 macro_rules! impl_file_closer {
     ($T:ident) => {
         impl crate::webcore::blob::FileCloser for $T {
-            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
             fn opened_fd(&self) -> ::bun_sys::Fd {
                 self.opened_fd
             }
@@ -7164,7 +7160,6 @@ macro_rules! impl_file_closer {
                     fd,
                     poll,
                     ctx: this.cast::<()>(),
-                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
                     on_done,
                 })
             }

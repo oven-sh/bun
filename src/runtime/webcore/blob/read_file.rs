@@ -960,7 +960,6 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }

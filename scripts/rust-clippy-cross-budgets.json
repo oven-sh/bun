@@ -1,0 +1,39 @@
+{
+  "x86_64-pc-windows-msvc": {
+    "bun_bundler": 5,
+    "bun_bunfig": 1,
+    "bun_cares_sys": 2,
+    "bun_crash_handler": 9,
+    "bun_install": 93,
+    "bun_io": 30,
+    "bun_jsc": 5,
+    "bun_libuv_sys": 85,
+    "bun_md": 1,
+    "bun_patch": 4,
+    "bun_paths": 5,
+    "bun_resolver": 6,
+    "bun_router": 1,
+    "bun_runtime": 276,
+    "bun_spawn": 21,
+    "bun_spawn_sys": 5,
+    "bun_standalone_graph": 2,
+    "bun_sys": 130,
+    "bun_threading": 5,
+    "bun_uws_sys": 4,
+    "bun_watcher": 14,
+    "bun_which": 1
+  },
+  "x86_64-unknown-freebsd": {
+    "bun_crash_handler": 1,
+    "bun_glob": 1,
+    "bun_http": 1,
+    "bun_runtime": 9,
+    "bun_sys": 9,
+    "bun_threading": 1
+  },
+  "x86_64-unknown-linux-musl": {
+    "bun_crash_handler": 1
+  },
+  "aarch64-unknown-linux-gnu": {},
+  "aarch64-apple-darwin": {}
+}

@@ -1,10 +1,9 @@
-// The CI Clippy job lints the host target only, so code behind `#[cfg(windows)]`
-// / `#[cfg(target_os = "freebsd")]` can fail clippy without anything noticing
-// until someone runs `cargo clippy` on that OS. scripts/rust-clippy-cross.ts
-// lints those targets from any host; this pins bun_core on each of them.
-// bun_core is the root of the crate graph, so when it fails, `cargo clippy`
-// reports nothing about any other crate on that target (the full per-target
-// crate list is CI's job: `bun run rust:clippy-cross`, ~1 min per target).
+// The CI Clippy job lints the host target, and scripts/rust-clippy-cross.ts
+// lints the targets in scripts/rust-clippy-cross-budgets.json, where every
+// crate has a budget of remaining hits. This pins the one crate that is not
+// allowed any on any of those targets: bun_core is the root of the crate
+// graph, so a hit in its cfg-gated code is what used to make `cargo clippy`
+// on a Windows host fail before reporting anything about any other crate.
 //
 // Skipped where the workspace is not resolvable (test-only CI lanes run a
 // prebuilt binary and have neither vendor/lolhtml nor the configure output;
@@ -13,9 +12,11 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { CROSS_CLIPPY_TARGETS } from "../../scripts/rust-clippy-cross.ts";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const budgets: Record<string, unknown> = await Bun.file(
+  path.join(repoRoot, "scripts", "rust-clippy-cross-budgets.json"),
+).json();
 const cargo = Bun.which("cargo");
 const rustup = Bun.which("rustup");
 const codegenDir = process.env.BUN_CODEGEN_DIR ?? path.join(repoRoot, "build", "debug", "codegen");
@@ -39,7 +40,13 @@ const installedTargets = new Set(
     : [],
 );
 
-for (const triple of Object.keys(CROSS_CLIPPY_TARGETS)) {
+// Own target dir: with `--no-deps`, cargo reuses a bun_core that some earlier
+// `cargo clippy -p <dependent>` compiled as an unlinted dependency, and would
+// report it clean here without looking at it. Nothing else builds into this
+// directory, so bun_core is always linted when it is (re)built here.
+const targetDir = path.join(process.env.CARGO_TARGET_DIR ?? path.join(repoRoot, "target"), "rust-clippy-cross-test");
+
+for (const triple of Object.keys(budgets)) {
   test.skipIf(!installedTargets.has(triple))(
     `bun_core is clippy-clean for ${triple}`,
     async () => {
@@ -56,11 +63,12 @@ for (const triple of Object.keys(CROSS_CLIPPY_TARGETS)) {
           "--message-format=short",
         ],
         cwd: repoRoot,
-        env: { ...process.env, CARGO_TERM_COLOR: "never" },
+        env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_TERM_COLOR: "never" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
       // `--message-format=short` prints one `file:line:col: level: message` line per diagnostic.
       const diagnostics = stderr.split(/\r?\n/).filter(line => /^\S+\.rs:\d+:\d+: (error|warning)/.test(line));
       if (exitCode !== 0 && diagnostics.length === 0) {
@@ -70,12 +78,11 @@ for (const triple of Object.keys(CROSS_CLIPPY_TARGETS)) {
       expect(diagnostics).toEqual([]);
       expect(exitCode).toBe(0);
     },
-    // Fully cached this is ~150ms per target, but any change to bun_core or to
-    // build_options.rs (its SHA constant changes with every commit) re-lints
-    // the crate (~3s), and a cold target dir first checks its ~40 dependencies
-    // for the triple (~10s): past the default per-test timeout. Serial on
-    // purpose: concurrent cargo invocations just block on each other's
-    // build-directory lock.
+    // The first run per triple checks bun_core's ~40 dependencies into the
+    // private target dir (~10s) and any later run re-lints bun_core after a
+    // change to it or to build_options.rs (its SHA constant changes with every
+    // commit; ~3s): past the default per-test timeout. Serial on purpose:
+    // concurrent cargo invocations just block on the target dir's lock.
     120_000,
   );
 }

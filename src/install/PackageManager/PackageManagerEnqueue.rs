@@ -1938,6 +1938,28 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
+/// Is this dependency a direct target of the current `bun update` invocation?
+fn should_update_dependency(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+) -> bool {
+    if !this.to_update {
+        return false;
+    }
+    let this_ptr: *mut PackageManager = this;
+    // SAFETY: `is_root_dependency` only touches `manager.{root_package_id,workspace_name_hash}`.
+    (dependency.version.tag == dependency::version::Tag::Catalog
+        || unsafe { &*(*this_ptr).lockfile }
+            .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
+        && (this.update_requests.is_empty()
+            || this.updating_packages.contains(
+                dependency
+                    .name
+                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
+            ))
+}
+
 fn get_or_put_resolved_package_with_find_result(
     this: &mut PackageManager,
     name_hash: PackageNameHash,
@@ -1951,24 +1973,7 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = {
-        let this_ptr: *mut PackageManager = this;
-        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-        // `manager.workspace_package_json_cache` only — disjoint from
-        // `manager.lockfile`.
-        this.to_update
-            // Update direct deps of the current workspace; catalogs are root-scoped.
-            && (dependency.version.tag == dependency::version::Tag::Catalog
-                || unsafe { &*(*this_ptr).lockfile }
-                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            && (this.update_requests.is_empty()
-                || this.updating_packages.contains(
-                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-                ))
-    };
+    let should_update = should_update_dependency(this, dependency, dependency_id);
 
     // Was this package already allocated? Let's reuse the existing one.
     //
@@ -2152,7 +2157,10 @@ fn get_or_put_resolved_package(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if install_peer && behavior.is_peer() {
+    if install_peer
+        && behavior.is_peer()
+        && !should_update_dependency(this, dependency, dependency_id)
+    {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {

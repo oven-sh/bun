@@ -86,7 +86,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
 /// materializes a `&mut PackageManager` covering the whole struct — only the
 /// disjoint `cache_directory`, `cache_directory_id`, `cache_directory_path`,
-/// `options.enable`, and `env` fields are projected, so an outstanding `&mut manifests` derived
+/// `options.enable`, `options.log_level`, and `env` fields are projected, so an outstanding `&mut manifests` derived
 /// from the same provenance root stays valid under Stacked Borrows.
 ///
 /// # Safety
@@ -105,8 +105,8 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     let fd = d.fd();
     let (id, id_err) = read_or_create_cache_directory_id(&d);
     if let Some(err) = id_err {
-        // SAFETY: as above; `options` and `cache_directory_path` are covered by
-        // the caller contract and only read here.
+        // SAFETY: as above; `options.log_level` and `cache_directory_path` are
+        // covered by the caller contract and only read here.
         let (log_level, cache_directory_path) = unsafe {
             (
                 (*this).options.log_level,
@@ -115,7 +115,7 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
         };
         if log_level != LogLevel::Silent {
             bun_core::pretty_errorln!(
-                "<r><yellow>warn<r>: {} saving {}{}.id; packages fetched by this install will not be reused from the cache",
+                "<r><yellow>warn<r>: {} accessing {}{}.id; packages fetched by this install will not be reused from the cache",
                 bun_fmt::s(err.name()),
                 bun_fmt::s(cache_directory_path),
                 bun_fmt::s(path::SEP_STR.as_bytes()),

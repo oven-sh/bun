@@ -533,7 +533,9 @@ mod platform {
 mod platform {
     use core::ffi::{CStr, c_uint, c_void};
 
-    use bun_sys::windows::clipboard::{self as win32, CF_UNICODETEXT, OpenedClipboard, OwnedGlobal};
+    use bun_sys::windows::clipboard::{
+        self as win32, CF_UNICODETEXT, OpenedClipboard, OwnedGlobal,
+    };
 
     use super::{Mime, Unavailable};
 

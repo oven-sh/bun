@@ -1601,6 +1601,7 @@ pub mod js_bundler {
         // sound and discharges the deref obligation at the type level.
         safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> &JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
+        safe fn JSBundlerPlugin__drainDeferred(plugin: &Plugin);
         safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         safe fn JSBundlerPlugin__runSetupFunction(
             plugin: &Plugin,
@@ -1637,6 +1638,10 @@ pub mod js_bundler {
         fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
+        /// Resolve every `.defer()` promise handed out so far: the scan has
+        /// drained (`DeferredBatchTask`), or the build is complete and these
+        /// were never awaited. JS thread.
+        fn drain_deferred(&self);
         fn add_plugin(
             &mut self,
             object: JSValue,
@@ -1710,6 +1715,16 @@ pub mod js_bundler {
 
         fn append_defer_promise(&mut self) -> JSValue {
             JSBundlerPlugin__appendDeferPromise(self)
+        }
+
+        fn drain_deferred(&self) {
+            jsc::mark_binding();
+            // The C++ side leaves a THROW_SCOPE to be checked here; resolving with
+            // `undefined` can only leave a termination pending, which the caller's
+            // next check picks up.
+            let _ = bun_jsc::call_check_slow(self.global_object(), || {
+                JSBundlerPlugin__drainDeferred(self)
+            });
         }
 
         fn add_plugin(

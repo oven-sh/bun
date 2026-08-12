@@ -478,13 +478,9 @@ pub(crate) fn run_task(
             ))?;
         }
         task_tag::BundleV2DeferredBatchTask => {
-            // `bun_bundler` is JSC-free so the exception-scope check is hoisted
-            // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
-            // THROW_SCOPE is left unchecked and trips JSC exception validation
-            // at the next `drainMicrotasks` scope.
-            let _ = bun_jsc::call_check_slow(global, || {
-                cast!(BundleV2DeferredBatchTask).run_on_js_thread();
-            });
+            // SAFETY: `DeferredBatchTask::schedule` boxed it; the arm consumes the box.
+            let batch = unsafe { bun_core::heap::take(cast_ptr!(BundleV2DeferredBatchTask)) };
+            crate::api::JSBundler::PluginJscExt::drain_deferred(batch.plugins());
         }
         // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::FlushPendingFileSinkTask => unsafe {

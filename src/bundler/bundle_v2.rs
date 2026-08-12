@@ -30,7 +30,6 @@ pub use bv2_impl::{
     OnDependenciesAnalyze, singleton,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports::RequestedExports;
@@ -118,8 +117,6 @@ pub struct BundleV2<'a> {
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
-    pub(crate) drain_defer_task: DeferredBatchTask,
-
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
     /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
@@ -206,7 +203,8 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    /// `*mut` (`match_on_load` / `match_on_resolve`). The pointee is disjoint
+    /// from `self` storage.
     #[inline]
     pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
@@ -737,8 +735,6 @@ pub mod bv2_impl {
                     context: *mut core::ffi::c_void,
                     kind: u8,
                 );
-                #[link_name = "JSBundlerPlugin__drainDeferred"]
-                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
@@ -760,15 +756,6 @@ pub mod bv2_impl {
                 ) -> i32;
             }
             impl Plugin {
-                /// `Plugin.drainDeferred` — resolve every onLoad
-                /// `.defer()` promise. The
-                /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
-                /// ignores failures, so the void FFI call is the observable
-                /// behaviour at this tier.
-                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
-                    JSBundlerPlugin__drainDeferred(self, rejected)
-                }
-
                 #[inline]
                 pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
@@ -1324,7 +1311,6 @@ pub mod bv2_impl {
     use bun_sourcemap as SourceMap;
 
     use crate::AstBuilder::AstBuilder;
-    use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
@@ -1423,13 +1409,11 @@ pub mod bv2_impl {
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
         /// concrete struct lives in `bun_runtime` (its fields name `Config`/
-        /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
-        /// from it (whether the result is an error, and the concurrent-task
+        /// `Plugin`/`HTMLBundle::Route`). The bundler needs exactly two things
+        /// from it (whether its VM is shutting down, and the concurrent-task
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
         pub struct CompletionDispatch {
-            /// Whether the completion result is an error.
-            pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// Whether the VM that owns the plugins is shutting down: stop
             /// waiting for their answers and fail the build (any thread).
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
@@ -1450,18 +1434,13 @@ pub mod bv2_impl {
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
+        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
         // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
         // sharing across threads is not justified. The handle only needs to *move*
         // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
         // becomes necessary, split out an enqueue-only wrapper and make only that
         // type `Sync`.
         impl CompletionHandle {
-            #[inline]
-            pub(crate) fn result_is_err(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.result_is_err)(self.owner) }
-            }
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
@@ -1528,15 +1507,19 @@ pub mod bv2_impl {
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
+        ///
+        /// Returns `false` when the plugins' VM is already gone: the
+        /// `ConcurrentTask` has been freed, and whatever it pointed at is
+        /// still the caller's.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
             task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-        ) {
+        ) -> bool {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
                 // From Bun.build — the completion posts it to its VM (`loop_handle.post_task` via the vtable).
                 completion.enqueue_task_concurrent(task);
-                return;
+                return true;
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
@@ -1545,11 +1528,15 @@ pub mod bv2_impl {
                 .js_poster
                 .as_ref()
                 .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
-                // The JS VM running the plugins was torn down mid-bundle; the
-                // plugin hop will never run. Free the task if it is heap-owned.
-                // SAFETY: refused ⇒ still ours.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
+            match poster.post(task) {
+                bun_event_loop::Posted::Queued => true,
+                bun_event_loop::Posted::Refused(task) => {
+                    // SAFETY: refused ⇒ still ours.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task)
+                    };
+                    false
+                }
             }
         }
 
@@ -2852,7 +2839,6 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),

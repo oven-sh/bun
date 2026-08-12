@@ -5,6 +5,7 @@ use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
+use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
@@ -244,8 +245,7 @@ impl<'a> Graph<'a> {
                 }
             }
 
-            transpiler.drain_defer_task.init();
-            transpiler.drain_defer_task.schedule();
+            DeferredBatchTask::schedule(transpiler);
 
             return true;
         }

@@ -662,58 +662,115 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
 // when the parse scheduled by the answer completed) and, on the Bun.build thread,
 // to queue both notifications on the same intrusive node, so a build died with
 // `panic: int cast: TryFromIntError(NegOverflow)` in `BundleV2::on_parse_task_complete`
-// or never finished. The builds run in a subprocess because that takes the whole
-// process down.
+// or never finished; whether the promise ever settled depended on the same timing.
+// The builds run in a subprocess because the failures take the whole process down.
 describe("defer() that is not awaited", () => {
-  test.concurrent("before answering: builds with the plugin's contents instead of crashing or hanging", async () => {
-    const moduleNames = Array.from({ length: 24 }, (_, i) => `m${i}`);
-    using dir = tempDir(
-      "defer-no-await",
-      Object.fromEntries([
-        ...moduleNames.map(name => [`${name}.ts`, `throw new Error("disk contents of ${name} were bundled");`]),
-        ["entry.ts", `throw new Error("disk contents of entry were bundled");`],
-        [
-          "build.ts",
-          /* ts */ `
-            const moduleNames = ${JSON.stringify(moduleNames)};
-            const entryContents = moduleNames.map(name => 'import "./' + name + '";').join("\\n");
-            for (let build = 0; build < 4; build++) {
-              const result = await Bun.build({
-                entrypoints: [import.meta.dir + "/entry.ts"],
-                format: "iife",
-                plugins: [
-                  {
-                    name: "defer-without-await",
-                    setup(build) {
-                      build.onLoad({ filter: /\\.ts$/ }, args => {
-                        void args.defer();
-                        const base = args.path.replaceAll("\\\\", "/").split("/").pop().slice(0, -".ts".length);
-                        return {
-                          loader: "ts",
-                          contents: base === "entry" ? entryContents : 'globalThis.loaded.push("' + base + '");',
-                        };
-                      });
+  test.concurrent(
+    "before answering: builds with the plugin's contents and settles the promise when the build completes",
+    async () => {
+      const moduleNames = Array.from({ length: 24 }, (_, i) => `m${i}`);
+      using dir = tempDir(
+        "defer-no-await",
+        Object.fromEntries([
+          ...moduleNames.map(name => [`${name}.ts`, `throw new Error("disk contents of ${name} were bundled");`]),
+          ["entry.ts", `throw new Error("disk contents of entry were bundled");`],
+          [
+            "build.ts",
+            /* ts */ `
+              const moduleNames = ${JSON.stringify(moduleNames)};
+              const entryContents = moduleNames.map(name => 'import "./' + name + '";').join("\\n");
+              for (let build = 0; build < 4; build++) {
+                let issued = 0;
+                let settled = 0;
+                const result = await Bun.build({
+                  entrypoints: [import.meta.dir + "/entry.ts"],
+                  format: "iife",
+                  plugins: [
+                    {
+                      name: "defer-without-await",
+                      setup(build) {
+                        build.onLoad({ filter: /\\.ts$/ }, args => {
+                          issued++;
+                          args.defer().then(() => settled++);
+                          const base = args.path.replaceAll("\\\\", "/").split("/").pop().slice(0, -".ts".length);
+                          return {
+                            loader: "ts",
+                            contents: base === "entry" ? entryContents : 'globalThis.loaded.push("' + base + '");',
+                          };
+                        });
+                      },
                     },
-                  },
-                ],
-              });
-              if (!result.success) {
-                console.log("build " + build + " failed:", result.logs.map(String));
-                process.exit(1);
+                  ],
+                });
+                if (!result.success) {
+                  console.log("build " + build + " failed:", result.logs.map(String));
+                  process.exit(1);
+                }
+                // The leftover promises are resolved before the build's own promise is.
+                if (issued !== moduleNames.length + 1 || settled !== issued) {
+                  console.log("build " + build + ": " + settled + " of " + issued + " defer() promises settled");
+                  process.exit(1);
+                }
+                globalThis.loaded = [];
+                new Function(await result.outputs[0].text())();
+                const loaded = globalThis.loaded;
+                if (loaded.length !== moduleNames.length || moduleNames.some((name, i) => loaded[i] !== name)) {
+                  console.log("build " + build + " bundled the wrong modules:", loaded);
+                  process.exit(1);
+                }
               }
-              globalThis.loaded = [];
-              new Function(await result.outputs[0].text())();
-              const loaded = globalThis.loaded;
-              if (loaded.length !== moduleNames.length || moduleNames.some((name, i) => loaded[i] !== name)) {
-                console.log("build " + build + " bundled the wrong modules:", loaded);
-                process.exit(1);
-              }
-            }
-            console.log("ok");
-          `,
-        ],
-      ]),
-    );
+              console.log("ok");
+            `,
+          ],
+        ]),
+      );
+
+      expect(await bunRun(path.join(String(dir), "build.ts"))).toSpawn("ok");
+    },
+  );
+
+  // With a gap between defer() and the answer, the bundle thread sees the scan
+  // reach zero, schedules the task that resolves the promise, and then gets the
+  // answer and finishes the build while that task is still queued behind a busy
+  // JS thread. The task used to live inside the build's BundleV2 (ASAN:
+  // heap-use-after-free in DeferredBatchTask::run_on_js_thread); it must not
+  // touch the build at all.
+  test.concurrent("before answering: a drain scheduled before the answer outlives the build safely", async () => {
+    using dir = tempDir("defer-drain-outlives-build", {
+      "entry.ts": `throw new Error("disk contents of entry were bundled");`,
+      "build.ts": /* ts */ `
+        // Spinning (not sleeping) keeps this thread busy; there is no event the
+        // bundle thread could signal, it is the bundle thread we are racing.
+        const spin = (ms: number) => {
+          const end = performance.now() + ms;
+          while (performance.now() < end) {}
+        };
+        for (let build = 0; build < 2; build++) {
+          let settled = false;
+          const result = await Bun.build({
+            entrypoints: [import.meta.dir + "/entry.ts"],
+            plugins: [
+              {
+                name: "defer-then-busy",
+                setup(build) {
+                  build.onLoad({ filter: /entry\\.ts$/ }, args => {
+                    args.defer().then(() => (settled = true));
+                    spin(20); // let the bundle thread take the defer() notification first
+                    queueMicrotask(() => spin(250)); // runs right after the answer is posted
+                    return { contents: "export const x = 1;", loader: "ts" };
+                  });
+                },
+              },
+            ],
+          });
+          if (!result.success || !settled) {
+            console.log("build " + build + ": success=" + result.success + " settled=" + settled);
+            process.exit(1);
+          }
+        }
+        console.log("ok");
+      `,
+    });
 
     expect(await bunRun(path.join(String(dir), "build.ts"))).toSpawn("ok");
   });
@@ -721,7 +778,9 @@ describe("defer() that is not awaited", () => {
   // Here the load's pending unit already belongs to the parse its answer scheduled.
   // Parking it anyway made the scan look finished early, which resolved the
   // `defer()` promises of loads that were genuinely waiting before the answer's
-  // own imports had been loaded.
+  // own imports had been loaded. Calling defer() this late is a misuse that the
+  // JS side may reject outright (hence the try/catch); whatever still reaches the
+  // bundler must not count against the scan.
   test.concurrent("after answering: does not resolve other loads' defer() early", async () => {
     using dir = tempDir("defer-after-answer", {
       "entry.ts": `import "./x"; import "./y";`,
@@ -747,7 +806,11 @@ describe("defer() that is not awaited", () => {
                   // y answers synchronously (so onLoadAsync runs before the microtask),
                   // then calls defer() once its answer is already on its way.
                   build.onLoad({ filter: /[\\\\/]y\\.ts$/ }, ({ defer }) => {
-                    queueMicrotask(() => void defer());
+                    queueMicrotask(() => {
+                      try {
+                        void defer();
+                      } catch {}
+                    });
                     events.push("y:load");
                     return { contents: 'import "./z";', loader: "ts" };
                   });

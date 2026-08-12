@@ -634,6 +634,11 @@ impl JSBundleCompletionTask {
             return Ok(());
         }
 
+        // `.defer()` promises whose onLoad answered without awaiting them.
+        if let Some(plugin) = this.plugins_mut() {
+            plugin.drain_deferred();
+        }
+
         if let Some(html_build_task) = this.html_build_task {
             this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
@@ -855,7 +860,6 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     is_cancelled: |c| {
         from_completion_handle(c)
             .cancelled

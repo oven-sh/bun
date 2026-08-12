@@ -29,6 +29,7 @@ use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext
 use bun_watcher::WatchItemColumns as _;
 use bun_wyhash::{Wyhash, hash};
 
+use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use crate::api::server::StaticRoute;
 use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
@@ -3732,6 +3733,12 @@ impl<'a> HotUpdateContext<'a> {
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
+    // `.defer()` promises whose onLoad answered without awaiting them.
+    if let Some(plugin) = dev.bundler_options.plugin {
+        // SAFETY: the handle this bundle ran with; the dev server owns it and
+        // keeps it for its own lifetime.
+        unsafe { plugin.as_ref() }.drain_deferred();
+    }
     bv2.deinit_without_freeing_arena();
     if let Some(cb) = &mut dev.current_bundle {
         cb.promise.deinit_idempotently();

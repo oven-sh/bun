@@ -432,11 +432,10 @@ impl Debugger {
         jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Without a loader of its own, `Transpiler::init` hands this VM the
-            // process-wide `dot_env` instance, i.e. the parent VM's loader, and
-            // `configure_defines()` below would load env files into a map the
-            // parent thread is concurrently using (#22206). Never freed: this VM
-            // lives until the process exits (`start` never returns).
+            // Without a loader of its own, `Transpiler::init` would hand this VM
+            // the process-wide `dot_env` instance, i.e. the parent VM's loader,
+            // which the parent thread is using concurrently (#22206). Never
+            // freed: this VM lives until the process exits (`start` never returns).
             env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init())),
             is_main_thread: false,
             ..Default::default()
@@ -446,8 +445,10 @@ impl Debugger {
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
 
-        // Whatever this loader finds was already reported by the parent VM's.
-        vm.transpiler.env_mut().quiet = true;
+        // The inspected program's .env files are not this VM's to read; all it
+        // needs from its environment is `BUN_INSPECT_NOTIFY`, which tooling puts
+        // in the process environment.
+        vm.transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::Disable;
         vm.transpiler
             .configure_defines()
             .unwrap_or_else(|_| panic!("Failed to configure defines"));

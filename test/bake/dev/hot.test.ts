@@ -1,5 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
+import { runWithErrorPromise } from "harness";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
@@ -646,7 +647,11 @@ devTest("dev.client rejects when the page has a build error the test did not exp
     "index.ts": `import "./missing";`,
   },
   async test(dev) {
-    await expect(dev.client("/")).rejects.toThrow("index.ts:1:8: error: Could not resolve");
+    // runWithErrorPromise rather than expect().rejects: on Windows that matcher
+    // does not deliver the client's IPC messages while it waits, so anything
+    // the harness resolves from an IPC message hangs inside it.
+    const error = await runWithErrorPromise(() => dev.client("/"));
+    expect(error?.message).toContain("index.ts:1:8: error: Could not resolve");
   },
 });
 
@@ -662,9 +667,8 @@ devTest("dev.write rejects on an unexpected build error and resolves once the fi
     await using c = await dev.client("/");
     expect(await c.js`globalThis.marker`).toBe("initial");
 
-    await expect(dev.write("index.ts", `import "./missing";`)).rejects.toThrow(
-      "index.ts:1:8: error: Could not resolve",
-    );
+    const error = await runWithErrorPromise(() => dev.write("index.ts", `import "./missing";`));
+    expect(error?.message).toContain("index.ts:1:8: error: Could not resolve");
 
     // The build that fixes the error sends an errors frame (hiding the overlay)
     // followed by the hot update. dev.write must resolve on the update, after

@@ -1149,7 +1149,7 @@ impl<'a> CopyFileWindows<'a> {
         let rc = unsafe {
             libuv::uv_fs_read(
                 loop_,
-                &mut self.io_request,
+                &raw mut self.io_request,
                 source_fd.uv(),
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
@@ -1251,7 +1251,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     let rc2 = unsafe {
         libuv::uv_fs_write(
             event_loop.uv_loop(),
-            &mut this.io_request,
+            &raw mut this.io_request,
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
@@ -1316,7 +1316,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         let rc2 = unsafe {
             libuv::uv_fs_write(
                 this.event_loop.uv_loop(),
-                &mut this.io_request,
+                &raw mut this.io_request,
                 destination_fd.uv(),
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
                 1,
@@ -1610,7 +1610,7 @@ impl<'a> CopyFileWindows<'a> {
         let rc = unsafe {
             libuv::uv_fs_copyfile(
                 loop_,
-                &mut self.io_request,
+                &raw mut self.io_request,
                 old_path.as_ptr(),
                 new_path.as_ptr(),
                 0,
@@ -1646,7 +1646,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+            jsc::event_loop::EventLoop::enter_scope(std::ptr::from_ref(self.event_loop).cast_mut())
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
@@ -1695,7 +1695,7 @@ impl<'a> CopyFileWindows<'a> {
                 let rc = unsafe {
                     libuv::uv_fs_chmod(
                         loop_,
-                        &mut self.io_request,
+                        &raw mut self.io_request,
                         path_ptr,
                         i32::try_from(mode).expect("int cast"),
                         Some(on_chmod),
@@ -1732,7 +1732,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+            jsc::event_loop::EventLoop::enter_scope(std::ptr::from_ref(self.event_loop).cast_mut())
         };
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
@@ -1789,9 +1789,11 @@ impl<'a> CopyFileWindows<'a> {
             // BORROW: not owned — `destination_file_store` (and thus its path) is held in
             // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
             // on `self` before any `destroy`).
-            bun_paths::dirname(path_slice)
-                // this shouldn't happen
-                .unwrap_or(path_slice) as *const [u8]
+            std::ptr::from_ref::<[u8]>(
+                bun_paths::dirname(path_slice)
+                    // this shouldn't happen
+                    .unwrap_or(path_slice),
+            )
         };
 
         self.event_loop.ref_keep_alive();
@@ -1915,10 +1917,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     // by `mkdirp` above; sole owner on this concurrent path.
     let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
     debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
-    };
+    this.err = err_.err();
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to

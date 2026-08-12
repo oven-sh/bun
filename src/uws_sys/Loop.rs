@@ -398,7 +398,7 @@ impl WindowsLoop {
 
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+        unsafe { c::uws_get_loop_with_native(uv::Loop::get().cast::<c_void>()) }
     }
 
     pub fn iteration_number(&self) -> u64 {

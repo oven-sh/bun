@@ -1461,18 +1461,13 @@ impl Default for WindowsSpawnResult {
 }
 
 #[cfg(windows)]
+#[derive(Default)]
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
+    #[default]
     Unavailable,
     Buffer(Box<uv::Pipe>),
     BufferFd(Fd),
-}
-
-#[cfg(windows)]
-impl Default for WindowsStdioResult {
-    fn default() -> Self {
-        Self::Unavailable
-    }
 }
 
 #[cfg(windows)]
@@ -1920,7 +1915,7 @@ mod spawn_process_body {
                         let rc = unsafe {
                             uv::uv_fs_open(
                                 loop_,
-                                &mut req,
+                                &raw mut req,
                                 path_z.as_ptr(),
                                 flag | uv::O::CREAT,
                                 0o644,
@@ -1963,7 +1958,7 @@ mod spawn_process_body {
                     // checked uv→errno translator (raw codes are sparse on Windows;
                     // an unchecked `E::from_raw` would be UB for unmapped values).
                     if let Some(err) = bun_sys::Error::from_uv_rc(
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
+                        unsafe { uv::uv_pipe(&raw mut dup_fds, 0, 0) },
                         bun_sys::Tag::pipe,
                     ) {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2003,7 +1998,7 @@ mod spawn_process_body {
                     let rc = unsafe {
                         uv::uv_fs_open(
                             loop_,
-                            &mut req,
+                            &raw mut req,
                             path_z.as_ptr(),
                             flag | uv::O::CREAT,
                             0o644,
@@ -2101,7 +2096,7 @@ mod spawn_process_body {
                 unreachable!()
             };
             uv_proc
-                .spawn(loop_, &mut uv_process_options)
+                .spawn(loop_, &raw const uv_process_options)
                 .to_error(bun_sys::Tag::uv_spawn)
         };
         if let Some(err) = spawn_err {
@@ -2339,7 +2334,7 @@ mod spawn_process_body {
                     argv0: self.argv0,
                     new_process_group,
                     #[cfg(windows)]
-                    windows: self.windows.clone(),
+                    windows: self.windows,
                     #[cfg(not(windows))]
                     windows: (),
                     ..Default::default()
@@ -2423,7 +2418,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    unsafe { &mut *(*req).data.cast::<SyncWindowsPipeReader>() };
                 let buf = Self::on_alloc(this, suggested_size);
                 // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
                 // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
@@ -2445,7 +2440,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    unsafe { &mut *(*req).data.cast::<SyncWindowsPipeReader>() };
                 let nreads = nreads.int();
                 if nreads == 0 {
                     return;

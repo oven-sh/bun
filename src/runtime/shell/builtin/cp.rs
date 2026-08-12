@@ -228,11 +228,11 @@ impl Cp {
                     let ignorable = tref
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        .is_some_and(|p| eb.absolute_targets.contains(p))
                         || tref
                             .src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                            .is_some_and(|p| eb.absolute_srcs.contains(p));
                     Some((t, ignorable))
                 } else {
                     None
@@ -282,9 +282,9 @@ impl Cp {
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
                                 && task.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)))
+                                    .is_some_and(|p| sys.path.eql_utf8(p)))
                             || task.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)));
+                                    .is_some_and(|p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);

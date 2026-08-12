@@ -1353,7 +1353,7 @@ fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
         {
             // ('a' <= letter and letter <= 'z') or ('A' <= letter and letter <= 'Z')
             if let Some(l) = input[0].to_ascii() {
-                if (b'a'..=b'z').contains(&l) || (b'A'..=b'Z').contains(&l) {
+                if l.is_ascii_lowercase() || l.is_ascii_uppercase() {
                     // C:\
                     return Some(3);
                 }

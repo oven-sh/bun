@@ -2037,7 +2037,10 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
     let mut err: c_int = 0;
     // SAFETY: `info` is a live buffer of export_size() bytes holding the
     let sock = unsafe {
-        bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast::<c_void>(), &mut err)
+        bun_uws::socket_transfer::bsd_socket_import(
+            info.as_mut_ptr().cast::<c_void>(),
+            &raw mut err,
+        )
     };
     if sock == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);

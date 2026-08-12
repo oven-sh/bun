@@ -2153,7 +2153,7 @@ impl PosixToWinNormalizer {
                     // anyway, so fail safe to the un-joined input (which the
                     // consuming lookup treats as nonexistent) instead of
                     // writing past the buffer.
-                    if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
+                    if source_root.len() + maybe_posix_path.len() > buf.len() {
                         return maybe_posix_path;
                     }
                     buf[0..source_root.len()].copy_from_slice(source_root);
@@ -2242,7 +2242,7 @@ impl PosixToWinNormalizer {
                     // bare share root with no trailing separator. Such a
                     // combination can't exist on NT anyway, so error out
                     // instead of writing past a buffer.
-                    if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
+                    if sr_len + maybe_posix_path.len() > buf.len() {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]

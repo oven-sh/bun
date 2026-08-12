@@ -472,7 +472,11 @@ pub fn is_app_container() -> bool {
         // SAFETY: GetCurrentProcess() is the pseudo-handle; TOKEN_QUERY
         // suffices for GetTokenInformation(TokenIsAppContainer).
         if unsafe {
-            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
+            win32::OpenProcessToken(
+                win32::GetCurrentProcess(),
+                win32::TOKEN_QUERY,
+                &raw mut token,
+            )
         } == 0
         {
             return false;
@@ -486,7 +490,7 @@ pub fn is_app_container() -> bool {
                 win32::TOKEN_IS_APP_CONTAINER,
                 (&raw mut is_ac).cast(),
                 size_of::<win32::DWORD>() as win32::DWORD,
-                &mut ret_len,
+                &raw mut ret_len,
             )
         };
         // SAFETY: `token` is a real handle (not the pseudo-handle); close it.
@@ -676,7 +680,7 @@ pub fn user_unique_id() -> u32 {
     let mut buf: [u16; 257] = [0; 257];
     let mut size: u32 = buf.len() as u32;
     // SAFETY: buf and size are valid
-    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 {
+    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &raw mut size) } == 0 {
         #[cfg(debug_assertions)]
         {
             let err = GetLastError();
@@ -1000,7 +1004,7 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
             // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
             // the module" — typed as LPCWSTR but really an opaque pointer.
             addr as *mut c_void,
-            &mut module,
+            &raw mut module,
         )
     };
     // If the function succeeds, the return value is nonzero.
@@ -1036,18 +1040,10 @@ pub use bun_windows_sys::externs::GetConsoleOutputCP;
 pub use bun_windows_sys::externs::SetConsoleCP;
 pub use bun_windows_sys::externs::SetStdHandle;
 
+#[derive(Default)]
 pub struct DeleteFileOptions {
     pub(crate) dir: Option<HANDLE>,
     pub(crate) remove_dir: bool,
-}
-
-impl Default for DeleteFileOptions {
-    fn default() -> Self {
-        Self {
-            dir: None,
-            remove_dir: false,
-        }
-    }
 }
 
 const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
@@ -1092,7 +1088,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             options.dir.unwrap_or(ptr::null_mut())
         },
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        ObjectName: &mut nt_name,
+        ObjectName: &raw mut nt_name,
         SecurityDescriptor: ptr::null_mut(),
         SecurityQualityOfService: ptr::null_mut(),
     };
@@ -1101,10 +1097,10 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     // SAFETY: all out-params are valid
     let mut rc = unsafe {
         ntdll::NtCreateFile(
-            &mut tmp_handle,
+            &raw mut tmp_handle,
             windows::SYNCHRONIZE | windows::DELETE,
-            &mut attr,
-            &mut io,
+            &raw mut attr,
+            &raw mut io,
             ptr::null_mut(),
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -1153,7 +1149,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     rc = unsafe {
         ntdll::NtSetInformationFile(
             tmp_handle,
-            &mut io,
+            &raw mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
             windows::FileInformationClass::FileDispositionInformationEx,
@@ -1182,7 +1178,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         rc = unsafe {
             ntdll::NtSetInformationFile(
                 tmp_handle,
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
                 size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
                 windows::FileInformationClass::FileDispositionInformation,
@@ -1397,23 +1393,23 @@ pub mod rescle {
         if let Some(v) = version {
             // Empty version string is invalid
             if v.is_empty() {
-                return Err(RescleError::InvalidVersionFormat.into());
+                return Err(RescleError::InvalidVersionFormat);
             }
 
             // Basic validation: check format and ranges
             let mut parts_count: u32 = 0;
             for part in bun_core::strings::tokenize(v, b".") {
                 if parts_count >= 4 {
-                    return Err(RescleError::InvalidVersionFormat.into());
+                    return Err(RescleError::InvalidVersionFormat);
                 }
                 let Ok(_num) = bun_core::fmt::parse_int::<u16>(part, 10) else {
-                    return Err(RescleError::InvalidVersionFormat.into());
+                    return Err(RescleError::InvalidVersionFormat);
                 };
                 // u16 already ensures value is 0-65535
                 parts_count += 1;
             }
             if parts_count == 0 {
-                return Err(RescleError::InvalidVersionFormat.into());
+                return Err(RescleError::InvalidVersionFormat);
             }
         }
 
@@ -1463,19 +1459,19 @@ pub mod rescle {
         };
         match status {
             0 => Ok(()),
-            -1 => Err(RescleError::FailedToLoadExecutable.into()),
-            -2 => Err(RescleError::FailedToSetIcon.into()),
-            -3 => Err(RescleError::FailedToSetProductName.into()),
-            -4 => Err(RescleError::FailedToSetCompanyName.into()),
-            -5 => Err(RescleError::FailedToSetDescription.into()),
-            -6 => Err(RescleError::FailedToSetCopyright.into()),
-            -7 => Err(RescleError::FailedToSetFileVersion.into()),
-            -8 => Err(RescleError::FailedToSetProductVersion.into()),
-            -9 => Err(RescleError::FailedToSetFileVersionString.into()),
-            -10 => Err(RescleError::FailedToSetProductVersionString.into()),
-            -11 => Err(RescleError::InvalidVersionFormat.into()),
-            -12 => Err(RescleError::FailedToCommit.into()),
-            _ => Err(RescleError::WindowsMetadataEditError.into()),
+            -1 => Err(RescleError::FailedToLoadExecutable),
+            -2 => Err(RescleError::FailedToSetIcon),
+            -3 => Err(RescleError::FailedToSetProductName),
+            -4 => Err(RescleError::FailedToSetCompanyName),
+            -5 => Err(RescleError::FailedToSetDescription),
+            -6 => Err(RescleError::FailedToSetCopyright),
+            -7 => Err(RescleError::FailedToSetFileVersion),
+            -8 => Err(RescleError::FailedToSetProductVersion),
+            -9 => Err(RescleError::FailedToSetFileVersionString),
+            -10 => Err(RescleError::FailedToSetProductVersionString),
+            -11 => Err(RescleError::InvalidVersionFormat),
+            -12 => Err(RescleError::FailedToCommit),
+            _ => Err(RescleError::WindowsMetadataEditError),
         }
     }
 }
@@ -1694,12 +1690,14 @@ pub(crate) fn spawn_watcher_child(
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
     unsafe {
-        let _ = externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut attr_size);
+        let _ =
+            externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut attr_size);
     }
     let mut p: Vec<u8> = vec![0u8; attr_size];
     // SAFETY: p has attr_size bytes
-    if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
-        == 0
+    if unsafe {
+        externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &raw mut attr_size)
+    } == 0
     {
         return Err(bun_errno::SystemErrno::EIO);
     }
@@ -1935,7 +1933,7 @@ pub fn move_opened_file_at(
     let rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.native(),
-            &mut io_status_block,
+            &raw mut io_status_block,
             rename_info.cast::<c_void>(),
             u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
             win32::FileInformationClass::FileRenameInformationEx,
@@ -1978,39 +1976,31 @@ pub(crate) fn rename_at_w(
     new_path_w: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
-    let src_fd = 'brk: {
-        match bun_sys::open_file_at_windows(
+    let src_fd = match bun_sys::open_file_at_windows(
+        old_dir_fd,
+        old_path_w,
+        bun_sys::NtCreateFileOptions {
+            access_mask: win32::SYNCHRONIZE
+                | win32::GENERIC_WRITE
+                | win32::DELETE
+                | win32::FILE_TRAVERSE,
+            disposition: win32::FILE_OPEN,
+            options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
+            ..Default::default()
+        },
+    ) {
+        bun_sys::Result::Ok(fd) => fd,
+        // retry, wtihout FILE_TRAVERSE flag
+        bun_sys::Result::Err(_) => bun_sys::open_file_at_windows(
             old_dir_fd,
             old_path_w,
             bun_sys::NtCreateFileOptions {
-                access_mask: win32::SYNCHRONIZE
-                    | win32::GENERIC_WRITE
-                    | win32::DELETE
-                    | win32::FILE_TRAVERSE,
+                access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
                 disposition: win32::FILE_OPEN,
                 options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
                 ..Default::default()
             },
-        ) {
-            bun_sys::Result::Err(_) => {
-                // retry, wtihout FILE_TRAVERSE flag
-                match bun_sys::open_file_at_windows(
-                    old_dir_fd,
-                    old_path_w,
-                    bun_sys::NtCreateFileOptions {
-                        access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
-                        disposition: win32::FILE_OPEN,
-                        options: win32::FILE_SYNCHRONOUS_IO_NONALERT
-                            | win32::FILE_OPEN_REPARSE_POINT,
-                        ..Default::default()
-                    },
-                ) {
-                    bun_sys::Result::Err(err2) => return bun_sys::Result::Err(err2),
-                    bun_sys::Result::Ok(fd) => break 'brk fd,
-                }
-            }
-            bun_sys::Result::Ok(fd) => break 'brk fd,
-        }
+        )?,
     };
     let _close = bun_sys::CloseOnDrop::new(src_fd);
 

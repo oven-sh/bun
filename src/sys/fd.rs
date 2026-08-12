@@ -152,22 +152,18 @@ impl FdExt for Fd {
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
                         // stack for the duration of the call.
                         let rc = unsafe {
-                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
+                            uv::uv_fs_close(uv::Loop::get(), &raw mut req, file_number, None)
                         };
                         // fs_t has no Drop impl, so cleanup
                         // must be explicit (uv_fs_req_cleanup).
                         req.deinit();
-                        if let Some(errno) = rc.errno() {
-                            Some(sys::Error {
-                                errno,
-                                syscall: sys::Tag::close,
-                                fd: self,
-                                from_libuv: true,
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        }
+                        rc.errno().map(|errno| sys::Error {
+                            errno,
+                            syscall: sys::Tag::close,
+                            fd: self,
+                            from_libuv: true,
+                            ..Default::default()
+                        })
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {

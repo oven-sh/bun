@@ -1144,7 +1144,7 @@ impl<'a> ReadFileUV<'a> {
         let rc = unsafe {
             libuv::uv_fs_fstat(
                 self.loop_,
-                &mut self.req,
+                &raw mut self.req,
                 opened_fd.uv(),
                 Some(Self::on_file_initial_stat),
             )
@@ -1330,7 +1330,7 @@ impl<'a> ReadFileUV<'a> {
             let res = unsafe {
                 libuv::uv_fs_read(
                     self.loop_,
-                    &mut self.req,
+                    &raw mut self.req,
                     self.opened_fd.uv(),
                     bufs.as_mut_ptr(),
                     bufs.len() as u32,

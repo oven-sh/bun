@@ -731,7 +731,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_open(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             path.as_ptr(),
                             flags,
                             mode,
@@ -751,7 +751,7 @@ mod _async_tasks {
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
-                        uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback))
+                        uv::uv_fs_close(loop_, &raw mut task.req, fd, Some(Self::uv_callback))
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
                     sys::syslog!("uv close({}) = scheduled", fd);
@@ -769,7 +769,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr(),
                             1,
@@ -792,7 +792,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr(),
                             1,
@@ -814,7 +814,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
@@ -840,7 +840,7 @@ mod _async_tasks {
                         // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                         unsafe {
                             core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
+                                (&raw mut task.result).cast::<Maybe<ret::Writev>>(),
                                 Ok(ret::Write { bytes_written: 0 }),
                             )
                         };
@@ -857,7 +857,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
@@ -886,7 +886,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_statfs(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             path.as_ptr(),
                             Some(Self::uv_callbackreq),
                         )
@@ -950,7 +950,7 @@ mod _async_tasks {
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             let global_object = self.global_object();
-            let success = matches!(result, Ok(_));
+            let success = result.is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();
             let result = match &mut result {
@@ -5010,10 +5010,7 @@ impl NodeFS {
             };
             let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
-            let stat_ = match Syscall::fstat(src_fd) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
+            let stat_ = Syscall::fstat(src_fd)?;
             if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
@@ -5026,10 +5023,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
-            let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
+            let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
             let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
 
             // Don't O_TRUNC at open: if src and dest resolve to the same
@@ -5454,7 +5448,7 @@ impl NodeFS {
             let rc = unsafe {
                 uv::uv_fs_futime(
                     uv::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.fd.uv(),
                     args.atime,
                     args.mtime,
@@ -5906,7 +5900,7 @@ impl NodeFS {
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     prefix_buf.as_ptr().cast(),
                     None,
                 )
@@ -7606,7 +7600,7 @@ impl NodeFS {
             let rc = unsafe {
                 uv::uv_fs_realpath(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     None,
                 )
@@ -8117,7 +8111,7 @@ impl NodeFS {
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,
@@ -8154,7 +8148,7 @@ impl NodeFS {
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,
@@ -8897,11 +8891,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd =
-                match Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
-                    Ok(fd) => fd,
-                    Err(e) => return Err(e),
-                };
+            let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
@@ -8942,9 +8932,9 @@ impl NodeFS {
                 let rc: isize = unsafe {
                     sys::freebsd::copy_file_range(
                         src_fd.native(),
-                        &mut off_in,
+                        &raw mut off_in,
                         dest_fd.native(),
-                        &mut off_out,
+                        &raw mut off_out,
                         want,
                         0,
                     )
@@ -9067,10 +9057,7 @@ impl NodeFS {
                 }
                 return Ok(());
             } else {
-                let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
-                    Err(err) => return Err(err),
-                    Ok(fd) => fd,
-                };
+                let handle = sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0)?;
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
                 let len = unsafe {

@@ -111,7 +111,7 @@ impl DirWatcher {
                 1,
                 filter,
                 ptr::null_mut(),
-                &mut self.overlapped,
+                &raw mut self.overlapped,
                 None,
             )
         } == 0
@@ -234,7 +234,7 @@ impl WindowsWatcher {
             Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
             RootDirectory: ptr::null_mut(),
             Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            ObjectName: &mut nt_name,
+            ObjectName: &raw mut nt_name,
             SecurityDescriptor: ptr::null_mut(),
             SecurityQualityOfService: ptr::null_mut(),
         };
@@ -243,10 +243,10 @@ impl WindowsWatcher {
         // SAFETY: all pointer params point to valid stack locals for the duration of the call.
         let rc = unsafe {
             w::ntdll::NtCreateFile(
-                &mut handle,
+                &raw mut handle,
                 w::FILE_LIST_DIRECTORY,
-                &mut attr,
-                &mut io,
+                &raw mut attr,
+                &raw mut io,
                 ptr::null_mut(),
                 0,
                 w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
@@ -313,9 +313,9 @@ impl WindowsWatcher {
             let rc = unsafe {
                 w::kernel32::GetQueuedCompletionStatus(
                     self.iocp,
-                    &mut nbytes,
-                    &mut key,
-                    &mut overlapped,
+                    &raw mut nbytes,
+                    &raw mut key,
+                    &raw mut overlapped,
                     timeout as w::DWORD,
                 )
             };
@@ -338,7 +338,7 @@ impl WindowsWatcher {
 
             if !overlapped.is_null() {
                 // ignore possible spurious events
-                if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
+                if overlapped != &raw mut self.watcher.overlapped {
                     continue;
                 }
                 if nbytes == 0 {
@@ -355,9 +355,7 @@ impl WindowsWatcher {
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
+                    self.watcher.prepare()?;
                     continue;
                 }
                 return Ok(Some(EventIterator {

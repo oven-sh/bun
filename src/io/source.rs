@@ -235,7 +235,7 @@ impl File {
         debug_assert!(file.state == FileState::Closing);
         file.fs.deinit();
         // SAFETY: file was allocated via Box::new in open_file(); reclaim and drop.
-        drop(unsafe { bun_core::heap::take(file as *mut File) });
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<File>(file)) });
     }
 }
 
@@ -404,7 +404,7 @@ impl Source {
     pub fn open_file(fd: Fd) -> Box<File> {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
         bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
-        let mut file: Box<File> = Box::new(File::default());
+        let mut file: Box<File> = Box::default();
         file.file = fd.uv();
         file
     }

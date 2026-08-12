@@ -278,7 +278,7 @@ pub(crate) mod lib_uv_backend {
                 port_z.as_ptr().cast::<c_char>(),
                 hints
                     .as_ref()
-                    .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
+                    .map_or(ptr::null(), |h| std::ptr::from_ref::<AddrInfo>(h).cast()),
             );
             if rc.int() < 0 {
                 // uv_getaddrinfo can fail synchronously before it queues any work
@@ -301,7 +301,7 @@ pub(crate) mod lib_uv_backend {
                 // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
                 let owned = *bun_core::heap::take(request);
                 let mut head = owned.head;
-                DNSLookup::process_get_addr_info_native(&mut head, rc.int(), ptr::null_mut());
+                DNSLookup::process_get_addr_info_native(&raw mut head, rc.int(), ptr::null_mut());
                 return Ok(promise);
             }
             promise
@@ -2663,8 +2663,8 @@ pub mod internal {
                     .map(|h| h.as_ptr().cast::<c_char>())
                     .unwrap_or(ptr::null()),
                 service,
-                &wsa_hints,
-                &mut addrinfo,
+                &raw const wsa_hints,
+                &raw mut addrinfo,
             );
             after_result(req, addrinfo.cast(), err);
         }
@@ -4853,7 +4853,11 @@ impl Resolver {
                 // SAFETY: `Loop::get()` is the live per-thread uws loop;
                 // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_init_socket(
+                        (*Loop::get()).uv_loop,
+                        &raw mut (*new_poll).poll,
+                        fd as _,
+                    )
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);
@@ -4867,7 +4871,7 @@ impl Resolver {
                 | (if writable { uv::UV_WRITABLE } else { 0 });
             // SAFETY: `poll` is the live entry just inserted/looked up above.
             if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
+                uv::uv_poll_start(&raw mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
             } < 0
             {
                 let _ = polls.swap_remove(&fd);

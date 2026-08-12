@@ -234,7 +234,7 @@ impl<'a> PatchFile<'a> {
                                 &mut buf[..],
                                 &[absfilepath.as_bytes(), filepath.as_bytes()],
                             );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
+                        let fd = match sys::open(joined_absfilepath, sys::O::RDWR, 0) {
                             sys::Result::Err(e) => return Some(e.without_path()),
                             sys::Result::Ok(f) => f,
                         };
@@ -269,14 +269,11 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         let r = sys::fstatat(patch_dir, &file_path);
         #[cfg(not(unix))]
         let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                    p.as_bytes(),
-                    file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
-            };
-            sys::stat(p)
+            let dir = state.patch_dir_abs_path(patch_dir)?;
+            sys::stat(paths::resolve_path::join_z::<paths::platform::Auto>(&[
+                dir.as_bytes(),
+                file_path.as_bytes(),
+            ]))
         };
         match r {
             sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),

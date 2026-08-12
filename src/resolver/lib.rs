@@ -634,7 +634,7 @@ pub mod fs {
                 if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
-                let mut new = self.clone();
+                let mut new = *self;
                 new.pretty = b"";
                 let mut new = new.dupe_alloc(alloc)?;
                 // The posix-normalized
@@ -1458,7 +1458,7 @@ pub mod fs {
 
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                if unsafe { w::GetFileInformationByHandle(handle, &raw mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {

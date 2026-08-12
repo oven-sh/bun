@@ -433,8 +433,8 @@ impl BunxCommand {
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
                             target_package_json_fd.native(),
-                            &mut io_status_block,
-                            (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
+                            &raw mut io_status_block,
+                            (&raw mut info).cast(),
                             u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
                                 .expect("int cast"),
                             win::FILE_INFORMATION_CLASS::FileBasicInformation,
@@ -1093,8 +1093,8 @@ impl BunxCommand {
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(
                                         fd.native(),
-                                        &mut io_status_block,
-                                        (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
+                                        &raw mut io_status_block,
+                                        (&raw mut info).cast(),
                                         u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
                                             .expect("int cast"),
                                         win::FILE_INFORMATION_CLASS::FileBasicInformation,
@@ -1383,7 +1383,7 @@ impl BunxCommand {
                         // `env_loader` is touched again.
                         // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
                         // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
+                        Some(unsafe { &mut *std::ptr::from_mut(env_loader) }),
                         None,
                     ),
                 ),

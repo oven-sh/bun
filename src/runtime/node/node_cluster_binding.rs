@@ -362,8 +362,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 host_owned.as_ptr().cast(),
                 if port >= 0 { port } else { 0 },
                 options,
-                &mut out_port,
-                &mut err,
+                &raw mut out_port,
+                &raw mut err,
             )
         };
         const WSAEADDRINUSE: core::ffi::c_int = 10048;
@@ -376,8 +376,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         v4.as_ptr().cast(),
                         if port >= 0 { port } else { 0 },
                         options,
-                        &mut out_port,
-                        &mut err2,
+                        &raw mut out_port,
+                        &raw mut err2,
                     )
                 };
                 if retry != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {

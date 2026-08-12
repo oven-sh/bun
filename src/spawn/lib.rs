@@ -100,7 +100,7 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
         on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, rusage),
     }
 }
 #[cfg(not(windows))]

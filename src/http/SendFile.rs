@@ -78,7 +78,7 @@ impl SendFile {
                     signed_offset,
                     adjusted_count as usize,
                     ptr::null_mut(),
-                    &mut sbytes,
+                    &raw mut sbytes,
                     0,
                 )
             });

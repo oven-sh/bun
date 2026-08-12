@@ -1459,7 +1459,7 @@ pub(crate) mod upgrade_js_bindings {
                 Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
                 RootDirectory: core::ptr::null_mut(),
                 Attributes: 0,
-                ObjectName: &mut nt_name,
+                ObjectName: &raw mut nt_name,
                 SecurityDescriptor: core::ptr::null_mut(),
                 SecurityQualityOfService: core::ptr::null_mut(),
             };
@@ -1476,10 +1476,10 @@ pub(crate) mod upgrade_js_bindings {
             // SAFETY: FFI call to NtCreateFile with valid pointers
             let rc = unsafe {
                 w::ntdll::NtCreateFile(
-                    &mut fd,
+                    &raw mut fd,
                     flags,
-                    &mut attr,
-                    &mut io,
+                    &raw mut attr,
+                    &raw mut io,
                     core::ptr::null_mut(),
                     0,
                     w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,

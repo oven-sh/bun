@@ -1677,10 +1677,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let source = match Source::open(loop_.cast(), fd) {
-            sys::Result::Err(err) => return sys::Result::Err(err),
-            sys::Result::Ok(source) => source,
-        };
+        let source = Source::open(loop_.cast(), fd)?;
         self.set_source(source);
         self.start_with_current_pipe()
     }
@@ -1859,7 +1856,7 @@ impl WindowsBufferedReader {
                 // The boxed `File` lives in its own heap allocation, so a
                 // `*mut File` snapshot is provenance-disjoint from `&mut self`.
                 let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                    Some(Source::File(f)) => f.as_mut() as *mut _,
+                    Some(Source::File(f)) => std::ptr::from_mut(f.as_mut()),
                     _ => core::ptr::null_mut(),
                 };
                 if !file_raw.is_null() {
@@ -1883,7 +1880,7 @@ impl WindowsBufferedReader {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
                     let this_ptr = core::ptr::from_mut(this).cast::<c_void>();
                     let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                        Some(Source::File(f)) => f.as_mut() as *mut _,
+                        Some(Source::File(f)) => std::ptr::from_mut(f.as_mut()),
                         _ => core::ptr::null_mut(),
                     };
                     if !file_raw.is_null() {
@@ -1913,9 +1910,9 @@ impl WindowsBufferedReader {
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
-                                    &mut (*file_raw).fs,
+                                    &raw mut (*file_raw).fs,
                                     (*file_raw).file,
-                                    &(*file_raw).iov,
+                                    &raw const (*file_raw).iov,
                                     1,
                                     offset,
                                     Some(Self::on_file_read),
@@ -1952,7 +1949,7 @@ impl WindowsBufferedReader {
         // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
         // out of `self.source`. The boxed `File` is its own heap allocation, so
         // a `*mut File` snapshot is provenance-disjoint from `&mut self`.
-        let self_ptr = self as *mut Self as *mut c_void;
+        let self_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read));
         };
@@ -1991,9 +1988,9 @@ impl WindowsBufferedReader {
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
-                        &mut (*file_raw).fs,
+                        &raw mut (*file_raw).fs,
                         (*file_raw).file,
-                        &(*file_raw).iov,
+                        &raw const (*file_raw).iov,
                         1,
                         offset,
                         Some(Self::on_file_read),

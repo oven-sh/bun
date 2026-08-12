@@ -136,7 +136,7 @@ mod windows_impl {
         let timeout_ptr: *const windows::LARGE_INTEGER = match timeout {
             Some(delay) => {
                 timeout_value = -windows::LARGE_INTEGER::try_from(delay / 100).unwrap();
-                &timeout_value
+                &raw const timeout_value
             }
             None => core::ptr::null(),
         };
@@ -146,7 +146,7 @@ mod windows_impl {
         let rc = unsafe {
             windows::ntdll::RtlWaitOnAddress(
                 ptr.as_ptr().cast::<c_void>(),
-                (&expect as *const u32).cast::<c_void>(),
+                (&raw const expect).cast::<c_void>(),
                 core::mem::size_of::<u32>(),
                 timeout_ptr,
             )
@@ -397,7 +397,7 @@ mod freebsd_impl {
             tm._timeout.tv_sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
             tm._timeout.tv_nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
             tm_size = core::mem::size_of::<libc::_umtx_time>();
-            tm_ptr = (&mut tm as *mut libc::_umtx_time).cast();
+            tm_ptr = (&raw mut tm).cast();
         }
 
         // SAFETY: ptr.as_ptr() is valid; tm_ptr is null or points at the stack

@@ -582,8 +582,8 @@ mod platform {
                             let len_bytes = u16::try_from(len * 2).expect("name_filter too long");
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
-                            filter_us.Buffer = ptr as *mut u16;
-                            &mut filter_us
+                            filter_us.Buffer = ptr.cast_mut();
+                            &raw mut filter_us
                         }
                         None => core::ptr::null_mut(),
                     };
@@ -596,7 +596,7 @@ mod platform {
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
-                            &mut io,
+                            &raw mut io,
                             self.buf.as_mut_ptr().cast(),
                             self.buf.len() as u32,
                             w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
@@ -659,24 +659,30 @@ mod platform {
                 // faulty VM/Sandboxing tools) — read fields via unaligned loads.
                 // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
                 // FileName lies within `buf` per the kernel contract.
-                let next_entry_offset =
-                    unsafe {
-                        core::ptr::read_unaligned(p.add(
+                let next_entry_offset = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(
                             entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
-                        ) as *const u32)
-                    };
+                        )
+                        .cast::<u32>(),
+                    )
+                };
                 // SAFETY: see above.
                 let file_name_length = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
-                            as *const u32,
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength),
+                        )
+                        .cast::<u32>(),
                     )
                 } as usize;
                 // SAFETY: see above.
                 let file_attributes = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
-                            as *const u32,
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes),
+                        )
+                        .cast::<u32>(),
                     )
                 };
 

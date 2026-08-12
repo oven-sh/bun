@@ -544,7 +544,7 @@ impl HardLinkWindowsInstallTask {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
                 *q.errored_task.lock() = None;
                 debug_assert_eq!(
-                    q.thread_pool as *const ThreadPool,
+                    core::ptr::from_ref::<ThreadPool>(q.thread_pool),
                     core::ptr::from_ref(&PackageManager::get().thread_pool),
                     "PackageManager singleton changed between install batches",
                 );

@@ -346,7 +346,7 @@ pub(crate) fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
-            &mut io,
+            &raw mut io,
             data.as_ptr(),
             u32::try_from(data.len()).expect("int cast"),
             core::ptr::null(),
@@ -530,7 +530,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
     let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
 
-    debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
+    debug_assert!((cmd_line_u16.as_ptr() as usize).is_multiple_of(2)); // alignment assumption
 
     if DBG {
         debug!(
@@ -629,7 +629,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
             RootDirectory: core::ptr::null_mut(),
             Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            ObjectName: &mut nt_name,
+            ObjectName: &raw mut nt_name,
             SecurityDescriptor: core::ptr::null_mut(),
             SecurityQualityOfService: core::ptr::null_mut(),
         };
@@ -646,10 +646,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
         let rc = unsafe {
             nt::NtCreateFile(
-                &mut metadata_handle,
+                &raw mut metadata_handle,
                 FILE_GENERIC_READ,
-                &mut attr,
-                &mut io,
+                &raw mut attr,
+                &raw mut io,
                 core::ptr::null_mut(),
                 w::FILE_ATTRIBUTE_NORMAL,
                 w::FILE_SHARE_WRITE | w::FILE_SHARE_READ | w::FILE_SHARE_DELETE,
@@ -715,7 +715,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     }
                     break 'find_args (
                         &cmd_line_u16[i - 1 /* " ".len */..],
-                        &cmd_line_u8[i * 2 - 2 * 1 /* " ".len */..],
+                        &cmd_line_u8[i * 2 - 2 /* " ".len */..],
                     );
                 }
                 i += 1;
@@ -852,7 +852,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
-            &mut io,
+            &raw mut io,
             read_ptr.cast::<c_void>(),
             u32::try_from(read_max_len).expect("int cast"),
             core::ptr::null(),
@@ -967,7 +967,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             let argument_start_ptr: *mut u8 =
-                read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
+                read_ptr.cast::<u8>().wrapping_sub(2 /* "\x00".len */);
             if (argument_start_ptr as usize) - (buf1_u8 as usize)
                 + user_arguments_u8.len()
                 + 2 /* "\x00".len */
@@ -1182,7 +1182,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     filename.as_ptr(),
-                    buf2_u8.add(shebang_arg_len_u8 as usize + 2 * 1 /* "\"".len */),
+                    buf2_u8.add(shebang_arg_len_u8 as usize + 2 /* "\"".len */),
                     length_of_filename_u8,
                 );
             }
@@ -1196,8 +1196,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     shebang_arg_len_u8, 1usize, /* "\"".len */ length_of_filename_u8
                 );
             }
-            let advance =
-                shebang_arg_len_u8 as usize + 2 * 1 /* "\"".len */ + length_of_filename_u8;
+            let advance = shebang_arg_len_u8 as usize + 2 /* "\"".len */ + length_of_filename_u8;
             let mut write_ptr: *mut u16 = buf2_u8.wrapping_add(advance).cast::<u16>();
             // The quote was already validated above, this is just a sanity check in debug mode
             if DBG {
@@ -1250,7 +1249,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         let dst = bun_ctx
             .out_buf()
             .expect("ReadWithoutLaunch requires BunCtx::out_buf() (would otherwise return a dangling stack pointer)");
-        debug_assert!(len + 1 <= BUF2_U16_LEN);
+        debug_assert!(len < BUF2_U16_LEN);
         // SAFETY: dst points to BUF2_U16_LEN u16s; src is valid for len+1 u16s.
         unsafe { core::ptr::copy(spawn_command_line, dst, len + 1) };
         return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(dst, len));
@@ -1376,11 +1375,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     if IS_STANDALONE {
                         core::ptr::null_mut()
                     } else {
-                        bun_ctx.environment().map_or(core::ptr::null(), |p| p) as *mut c_void
+                        bun_ctx.environment().unwrap_or(core::ptr::null()) as *mut c_void
                     },
                     core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
+                    &raw mut startup_info,
+                    &raw mut process,
                 )
             };
             if did_process_spawn == 0 {

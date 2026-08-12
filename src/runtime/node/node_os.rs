@@ -514,7 +514,7 @@ mod _impl {
         while i < ncpu {
             let off = i as usize * CPU_STATES;
             let times = CPUTimes {
-                user: u64::try_from(times_buf[off + 0].max(0)).expect("int cast") * mult,
+                user: u64::try_from(times_buf[off].max(0)).expect("int cast") * mult,
                 nice: u64::try_from(times_buf[off + 1].max(0)).expect("int cast") * mult,
                 sys: u64::try_from(times_buf[off + 2].max(0)).expect("int cast") * mult,
                 irq: u64::try_from(times_buf[off + 3].max(0)).expect("int cast") * mult,
@@ -633,7 +633,7 @@ mod _impl {
         let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
+        let err = unsafe { libuv::uv_cpu_info(&raw mut cpu_infos, &raw mut count) };
         if err != 0 {
             return Err(OsError::Any);
         }
@@ -707,7 +707,7 @@ mod _impl {
             let mut out = PathBuffer::uninit();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
+            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &raw mut size) }
                 .to_error(bun_sys::Tag::uv_os_homedir)
             {
                 return Err(global.throw_value(err.to_js(global)));
@@ -818,7 +818,7 @@ mod _impl {
 
             let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
+            if unsafe { windows::ws2_32::WSAStartup(0x202, &raw mut result) } == 0 {
                 // SAFETY: valid buffer
                 if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                     let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
@@ -1209,7 +1209,7 @@ mod _impl {
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
+        let err = unsafe { libuv::uv_interface_addresses(&raw mut ifaces, &raw mut count) };
         if err != 0 {
             let sys_err = SystemError {
                 message: BunString::static_("uv_interface_addresses failed").into(),
@@ -1404,7 +1404,7 @@ mod _impl {
             // SAFETY: zeroed POD
             let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = unsafe { libuv::uv_os_uname(&raw mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }
@@ -1528,7 +1528,7 @@ mod _impl {
         {
             let mut uptime_value: f64 = 0.0;
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
+            let err = unsafe { libuv::uv_uptime(&raw mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
                     message: BunString::static_("failed to get system uptime").into(),
@@ -1634,7 +1634,7 @@ mod _impl {
             // SAFETY: zeroed POD
             let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = unsafe { libuv::uv_os_uname(&raw mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }

@@ -265,7 +265,7 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     }
     let mut st = SystemTime::default();
     // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
-    unsafe { GetLocalTime(&mut st) };
+    unsafe { GetLocalTime(&raw mut st) };
     (
         i32::from(st.year),
         u32::from(st.month),

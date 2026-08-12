@@ -1216,7 +1216,7 @@ impl UpdateInteractiveCommand {
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
             let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
             // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &raw mut csbi) }
                 != windows::FALSE
             {
                 let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;

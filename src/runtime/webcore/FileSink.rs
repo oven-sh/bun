@@ -253,7 +253,7 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                         // (libuv handle subtyping), so the pointer cast is valid.
                         let rc = unsafe {
                             uv::uv_stream_set_blocking(
-                                (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
+                                (&raw mut **pipe).cast::<uv::uv_stream_t>(),
                                 1,
                             )
                         };

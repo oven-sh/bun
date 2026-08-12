@@ -436,7 +436,7 @@ impl Write for StderrWriter {
                     h,
                     bytes.as_ptr(),
                     bytes.len() as u32,
-                    &mut written,
+                    &raw mut written,
                     core::ptr::null_mut(),
                 );
             }
@@ -961,7 +961,7 @@ mod draft {
                                     let result = unsafe {
                                         bun_sys::windows::GetThreadDescription(
                                             bun_sys::windows::GetCurrentThread(),
-                                            &mut name,
+                                            &raw mut name,
                                         )
                                     };
                                     // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
@@ -1688,7 +1688,7 @@ mod draft {
                 // Publish to T0 storage (single source of truth — see note above
                 // `reset_on_posix`). `HANDLE` is `*mut c_void`; cast is identity.
                 bun_core::WINDOWS_SEGFAULT_HANDLE
-                    .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
+                    .store(handle.cast::<core::ffi::c_void>(), Ordering::Relaxed);
 
                 // Backstop for exceptions the VEH passed on: runs only after
                 // every frame-based (SEH) handler has declined, so an
@@ -2178,9 +2178,9 @@ mod draft {
                 {
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
-                    write!(
+                    writeln!(
                         writer,
-                        "Linux Kernel v{}.{}.{} | musl\n",
+                        "Linux Kernel v{}.{}.{} | musl",
                         kernel_version.major, kernel_version.minor, kernel_version.patch
                     )
                     .map_err(fmt_err)?;
@@ -2198,9 +2198,9 @@ mod draft {
                 }
                 #[cfg(target_os = "freebsd")]
                 {
-                    write!(
+                    writeln!(
                         writer,
-                        "FreeBSD Kernel v{}\n",
+                        "FreeBSD Kernel v{}",
                         bstr::BStr::new(platform.version)
                     )
                     .map_err(fmt_err)?;
@@ -2212,9 +2212,9 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    write!(
+                    writeln!(
                         writer,
-                        "Windows v{}\n",
+                        "Windows v{}",
                         bun_sys::windows::detect_runtime_version()
                     )
                     .map_err(fmt_err)?;
@@ -2877,8 +2877,8 @@ mod draft {
                     0,
                     core::ptr::null_mut(),
                     core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
+                    &raw mut startup_info,
+                    &raw mut process,
                 )
             };
 

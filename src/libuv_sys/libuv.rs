@@ -664,11 +664,11 @@ unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void)
 pub unsafe trait UvHandle: Sized {
     #[inline]
     fn as_handle(&self) -> *const uv_handle_t {
-        (self as *const Self).cast()
+        std::ptr::from_ref::<Self>(self).cast()
     }
     #[inline]
     fn as_handle_mut(&mut self) -> *mut uv_handle_t {
-        (self as *mut Self).cast()
+        std::ptr::from_mut::<Self>(self).cast()
     }
     #[inline]
     fn data(&self) -> *mut c_void {
@@ -771,7 +771,7 @@ pub unsafe trait UvHandle: Sized {
     fn fd(&self) -> uv_os_fd_t {
         let mut fd_: uv_os_fd_t = INVALID_HANDLE_VALUE;
         // SAFETY: handle prefix invariant; out-param is valid.
-        let _ = unsafe { uv_fileno(self.as_handle(), &mut fd_) };
+        let _ = unsafe { uv_fileno(self.as_handle(), &raw mut fd_) };
         fd_
     }
 }
@@ -798,12 +798,12 @@ unsafe impl UvHandle for uv_fs_poll_t {}
 pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn as_stream(&mut self) -> *mut uv_stream_t {
-        (self as *mut Self).cast()
+        std::ptr::from_mut::<Self>(self).cast()
     }
     #[inline]
     fn get_write_queue_size(&self) -> usize {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_stream_get_write_queue_size((self as *const Self).cast()) }
+        unsafe { uv_stream_get_write_queue_size(std::ptr::from_ref::<Self>(self).cast()) }
     }
     #[inline]
     fn read_start(&mut self, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode {
@@ -823,12 +823,12 @@ pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn is_readable(&self) -> bool {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_is_readable((self as *const Self).cast()) != 0 }
+        unsafe { uv_is_readable(std::ptr::from_ref::<Self>(self).cast()) != 0 }
     }
     #[inline]
     fn is_writable(&self) -> bool {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
+        unsafe { uv_is_writable(std::ptr::from_ref::<Self>(self).cast()) != 0 }
     }
     /// High-level wrapper
     /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
@@ -847,7 +847,7 @@ pub unsafe trait UvStream: UvHandle {
     fn read_start_ctx<T: StreamReader>(&mut self, context: *mut T) -> ReturnCode {
         // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
         // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
-        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
+        let h: &mut Handle = unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<Handle>() };
         h.data = context.cast();
 
         unsafe extern "C" fn uv_allocb<T: StreamReader>(
@@ -926,12 +926,12 @@ unsafe impl UvStream for uv_tty_t {}
 pub unsafe trait UvReq: Sized {
     #[inline]
     fn as_req(&mut self) -> *mut uv_req_t {
-        (self as *mut Self).cast()
+        std::ptr::from_mut::<Self>(self).cast()
     }
     #[inline]
     fn get_data<T>(&self) -> *mut T {
         // SAFETY: req prefix invariant.
-        unsafe { uv_req_get_data((self as *const Self).cast()).cast() }
+        unsafe { uv_req_get_data(std::ptr::from_ref::<Self>(self).cast()).cast() }
     }
     #[inline]
     fn set_data(&mut self, ptr_: *mut c_void) {

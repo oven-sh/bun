@@ -769,7 +769,7 @@ mod windows_impl {
             let rc = unsafe {
                 uv::uv_fs_open(
                     (*this).loop_(),
-                    &mut (*this).io_request,
+                    &raw mut (*this).io_request,
                     posix_path.as_ptr(),
                     uv::O::CREAT
                         | uv::O::WRONLY
@@ -921,9 +921,11 @@ mod windows_impl {
                 // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
                 // points into `self.file_blob.store`, which outlives the mkdirp
                 // task (it's released only in `deinit()`).
-                path: bun_core::dirname(path)
-                    // this shouldn't happen
-                    .unwrap_or(path) as *const [u8],
+                path: std::ptr::from_ref::<[u8]>(
+                    bun_core::dirname(path)
+                        // this shouldn't happen
+                        .unwrap_or(path),
+                ),
                 ..Default::default()
             });
         }
@@ -972,10 +974,7 @@ mod windows_impl {
             let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
             bun_output::scoped_log!(WriteFile, "mkdirp complete");
             debug_assert!(this.err.is_none());
-            this.err = match err_ {
-                bun_sys::Result::Err(e) => Some(e),
-                bun_sys::Result::Ok(()) => None,
-            };
+            this.err = err_.err();
             let ct = ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
                 this,
                 Self::on_mkdirp_complete_task,
@@ -1135,13 +1134,13 @@ mod windows_impl {
 
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in this Box-allocated struct;
             // cleanup is safe to call between uses of the same req.
-            unsafe { uv::uv_fs_req_cleanup(&mut (*this).io_request) };
+            unsafe { uv::uv_fs_req_cleanup(&raw mut (*this).io_request) };
             // SAFETY: uv_loop is the VM's libuv loop (outlives `*this`); io_request/uv_bufs are
             // embedded in `*this` which stays alive until on_write_complete fires; fd is open.
             let rc = unsafe {
                 uv::uv_fs_write(
                     uv_loop,
-                    &mut (*this).io_request,
+                    &raw mut (*this).io_request,
                     (*this).fd,
                     (*this).uv_bufs.as_mut_ptr(),
                     1,
@@ -1204,7 +1203,7 @@ mod windows_impl {
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.
-                uv::uv_fs_req_cleanup(&mut (*this).io_request);
+                uv::uv_fs_req_cleanup(&raw mut (*this).io_request);
                 // `this` was allocated via Self::new (heap::into_raw); reclaim and drop here.
                 drop(bun_core::heap::take(this));
             }

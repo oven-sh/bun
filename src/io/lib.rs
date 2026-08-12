@@ -2263,7 +2263,7 @@ pub mod closer {
                 (*closer).io_request.data = closer.cast::<c_void>();
                 if let Some(err) = uv::uv_fs_close(
                     loop_,
-                    &mut (*closer).io_request,
+                    &raw mut (*closer).io_request,
                     fd.uv(),
                     Some(Self::on_close),
                 )

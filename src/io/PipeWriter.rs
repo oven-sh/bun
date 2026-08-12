@@ -1277,10 +1277,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         // This is critical for spawnSync to use its isolated loop
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
-        let mut source = match Source::open(loop_, fd) {
-            sys::Result::Ok(source) => source,
-            sys::Result::Err(err) => return sys::Result::Err(err),
-        };
+        let mut source = Source::open(loop_, fd)?;
         // Creating a uv_pipe/uv_tty takes ownership of the file descriptor
         // TODO: Change the type of the parameter and update all places to
         //       use MovableFD
@@ -1671,7 +1668,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 Some(Source::SyncFile(_)) => {
                     panic!("This code path shouldn't be reached - sync_file in PipeWriter.rs");
                 }
-                Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
+                Some(Source::File(f)) => (std::ptr::from_mut(f.as_mut()), core::ptr::null_mut()),
                 Some(s) => (core::ptr::null_mut(), s.to_stream()),
             };
 
@@ -1691,9 +1688,9 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             if let Some(err) = unsafe {
                 uv::uv_fs_write(
                     Parent::loop_(self.parent()),
-                    &mut file.fs,
+                    &raw mut file.fs,
                     file.file,
-                    &self.write_buffer,
+                    &raw const self.write_buffer,
                     1,
                     -1,
                     Some(Self::on_fs_write_complete),
@@ -1715,7 +1712,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             // the buffered version should always have a stable ptr
             self.pending_payload_size = buffer_len;
             self.write_buffer = write_buf;
-            let self_ptr = self as *mut Self;
+            let self_ptr = std::ptr::from_mut::<Self>(self);
             if let Some(write_err) = self
                 .write_req
                 // SAFETY: `p` is `self_ptr`; libuv invokes on the loop thread with no
@@ -2277,7 +2274,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Some(Source::SyncFile(_)) => {
                     panic!("sync_file pipe write should not be reachable");
                 }
-                Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
+                Some(Source::File(f)) => (std::ptr::from_mut(f.as_mut()), core::ptr::null_mut()),
                 Some(s) => (core::ptr::null_mut(), s.to_stream()),
             };
 
@@ -2314,9 +2311,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             if let Some(err) = unsafe {
                 uv::uv_fs_write(
                     Parent::loop_((*this).parent()),
-                    &mut file.fs,
+                    &raw mut file.fs,
                     file.file,
-                    &(*this).write_buffer,
+                    &raw const (*this).write_buffer,
                     1,
                     -1,
                     Some(Self::on_fs_write_complete),

@@ -1232,7 +1232,7 @@ impl Listener {
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
@@ -1247,7 +1247,7 @@ impl Listener {
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
@@ -1282,8 +1282,7 @@ impl Listener {
                     // here it owns the ref on every path (initWithCTX adopts on
                     // success, initTLSWrapper frees on failure), so null our local
                     // before the call so the cleanup guard above can't double-free.
-                    let ctx_for_pipe =
-                        core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
+                    let ctx_for_pipe = (*ssl_ctx_guard).take().map(|p| p.as_ptr());
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
@@ -1325,7 +1324,7 @@ impl Listener {
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev
@@ -1335,7 +1334,7 @@ impl Listener {
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),

@@ -100,10 +100,10 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     if unsafe {
         bun_sys::windows::GetProcessTimes(
             process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
+            &raw mut starttime,
+            &raw mut exittime,
+            &raw mut kerneltime,
+            &raw mut usertime,
         )
     } != 0
     {
@@ -128,7 +128,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     }
     let mut counters = IoCounters::default();
     // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
+    let _ = unsafe { GetProcessIoCounters(process_pid, &raw mut counters) };
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 

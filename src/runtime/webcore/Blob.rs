@@ -6104,10 +6104,11 @@ impl ClipboardBlobReadHandler {
 }
 
 impl ReadBytesHandler for ClipboardBlobReadHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult) {
-        // SAFETY: `self` is the `*mut Self` leaked in `Blob__implReadBytes` and
-        // delivered here exactly once; reclaim the Box so it frees on return.
-        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+        // SAFETY: `this` is the Box leaked in `Blob__implReadBytes`, delivered
+        // here exactly once per the trait's contract; reclaiming it frees it on
+        // return.
+        let boxed = unsafe { bun_core::heap::take(this) };
         boxed.finish(result);
     }
 }

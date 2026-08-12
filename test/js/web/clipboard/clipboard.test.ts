@@ -1220,36 +1220,48 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
 });
 
 // The in-process backends with operations arriving from several pool threads
-// at once, which is how they run now that nothing queues them. Regression for
-// Windows, where two threads inside the clipboard at the same time corrupted
-// the process heap (STATUS_HEAP_CORRUPTION within a few rounds of this; the
-// backend now holds one transaction at a time per process), and evidence for
-// macOS, whose pasteboard is shared between threads here. A child process
-// keeps a crash from taking the runner down; every value read must be one
-// some write actually produced.
+// at once (how they run now that nothing queues them), plus the other user of
+// the same OS clipboard in this process, Bun.Image.fromClipboard(), which reads
+// it synchronously on the JS thread. Regression for both platforms: without
+// one-transaction-at-a-time locking, Windows died of STATUS_HEAP_CORRUPTION and
+// macOS segfaulted inside AppKit within a few rounds of this. A child process
+// keeps a crash from taking the runner down; every value read must be one some
+// write actually produced.
 describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
-  test("reads and writes racing each other all settle with whole values", async () => {
+  test("reads, writes and Bun.Image.fromClipboard() racing each other all settle with whole values", async () => {
     if (savedClipboard === null) return; // no reachable clipboard in this session
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          await navigator.clipboard.write([new ClipboardItem({ "text/plain": "initial", "text/html": "<b>initial</b>" })]);
+          const png = new Blob([Buffer.from(${JSON.stringify(PNG_1X1.toString("base64"))}, "base64")], { type: "image/png" });
+          await navigator.clipboard.write([new ClipboardItem({ "text/plain": "initial", "text/html": "<b>initial</b>", "image/png": png })]);
           const texts = new Set();
           const shapes = new Set();
-          const rejections = new Set();
-          const settle = promise => promise.catch(e => rejections.add(e.name + ": " + e.message));
+          const failures = new Set();
+          const images = new Set();
+          const settle = promise => promise.catch(e => failures.add(e.name + ": " + e.message));
+          const imageNow = () => {
+            try {
+              images.add(Bun.Image.fromClipboard() === null ? "none" : "image");
+            } catch (e) {
+              failures.add("fromClipboard: " + e.message);
+            }
+          };
+          imageNow();
+          const initialImage = [...images];
           for (let round = 0; round < 10; round++) {
             const ops = [];
             for (let i = 0; i < 4; i++) {
               ops.push(settle(navigator.clipboard.writeText("w" + round + "-" + i)));
               ops.push(settle(navigator.clipboard.readText().then(text => texts.add(text))));
               ops.push(settle(navigator.clipboard.read().then(items => shapes.add(items.map(item => [...item.types].join("+")).join(",")))));
+              imageNow();
             }
             await Promise.all(ops);
           }
-          console.log(JSON.stringify({ texts: [...texts], shapes: [...shapes], rejections: [...rejections] }));
+          console.log(JSON.stringify({ initialImage, images: [...images].sort(), texts: [...texts], shapes: [...shapes], failures: [...failures] }));
         `,
       ],
       env: bunEnv,
@@ -1257,22 +1269,31 @@ describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) throw new Error(`child exited with ${exitCode}\n${stderr}`);
-    const { texts, shapes, rejections } = JSON.parse(stdout) as Record<string, string[]>;
-    // NSPasteboard has no transaction: a reader can land between a writer's
-    // clearContents and its setData and see an empty pasteboard, or give up
-    // after the contents kept changing under it. The Win32 backend's
-    // transaction lock rules both out there.
-    const wholeText = isMacOS ? /^(initial|w\d+-\d+)?$/ : /^(initial|w\d+-\d+)$/;
-    const wholeItem = isMacOS ? /^(text\/plain(\+text\/html)?)?$/ : /^text\/plain(\+text\/html)?$/;
+    const { initialImage, images, texts, shapes, failures } = JSON.parse(stdout) as Record<string, string[]>;
+    const wholeText = /^(initial|w\d+-\d+)$/;
+    const wholeItem = /^text\/plain(\+text\/html\+image\/png)?$/;
     expect({
+      initialImage,
+      // "none" once the writeText()s have replaced the initial item.
+      sawNoImage: images.includes("none"),
       tornTexts: texts.filter(text => !wholeText.test(text)),
       tornItems: shapes.filter(shape => !wholeItem.test(shape)),
       sawText: texts.length > 0,
       sawItems: shapes.length > 0,
-      rejections: rejections.filter(
-        r => !(isMacOS && r === "NotAllowedError: The system clipboard changed while it was being read."),
+      // A macOS read() spans several pasteboard transactions and gives up if
+      // the writers keep landing between them; that is its documented outcome.
+      failures: failures.filter(
+        f => !(isMacOS && f === "NotAllowedError: The system clipboard changed while it was being read."),
       ),
-    }).toEqual({ tornTexts: [], tornItems: [], sawText: true, sawItems: true, rejections: [] });
+    }).toEqual({
+      initialImage: ["image"],
+      sawNoImage: true,
+      tornTexts: [],
+      tornItems: [],
+      sawText: true,
+      sawItems: true,
+      failures: [],
+    });
   });
 });
 
@@ -1287,15 +1308,20 @@ describe.skipIf(!isMacOS)("macOS pasteboard interop", () => {
     await using pbcopy = Bun.spawn({ cmd: ["pbcopy"], stdin: "pipe", stderr: "pipe" });
     pbcopy.stdin.write(fromPbcopy);
     await pbcopy.stdin.end();
-    expect(await pbcopy.exited).toBe(0);
+    // Drained so a chatty tool cannot block; the text is in the diff, not asserted.
+    expect(await Promise.all([pbcopy.stderr.text(), pbcopy.exited])).toEqual([expect.any(String), 0]);
     expect(await navigator.clipboard.readText()).toBe(fromPbcopy);
     expect((await navigator.clipboard.read()).map(item => [...item.types])).toEqual([["text/plain"]]);
 
     const fromBun = `from bun ${Date.now()}`;
     await navigator.clipboard.writeText(fromBun);
     await using pbpaste = Bun.spawn({ cmd: ["pbpaste"], stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([pbpaste.stdout.text(), pbpaste.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: fromBun, exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      pbpaste.stdout.text(),
+      pbpaste.stderr.text(),
+      pbpaste.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: fromBun, stderr: expect.any(String), exitCode: 0 });
   });
 });
 
@@ -1700,7 +1726,11 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     await using clip = Bun.spawn({ cmd: ["clip.exe"], env: bunEnv, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     clip.stdin.write(fromClip);
     await clip.stdin.end();
-    expect(await clip.exited).toBe(0);
+    expect(await Promise.all([clip.stdout.text(), clip.stderr.text(), clip.exited])).toEqual([
+      expect.any(String),
+      expect.any(String),
+      0,
+    ]);
     expect(await navigator.clipboard.readText()).toBe(fromClip);
 
     const fromBun = `from bun ${Date.now()}`;

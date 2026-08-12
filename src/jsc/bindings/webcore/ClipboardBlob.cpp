@@ -82,11 +82,7 @@ Ref<Blob> createClipboardBlob(JSC::JSGlobalObject* globalObject, std::span<const
     auto mimeBytes = mime.bytes();
     void* impl = Blob__fromBytesWithNormalizedType(globalObject, bytes.data(), bytes.size(), mimeBytes.data(), mimeBytes.size(), normalization == MimeNormalization::LikeBlobConstructor);
     RELEASE_ASSERT(impl);
-    // Blob::create takes its own reference; drop the one the factory handed us.
-    RefPtr blob = Blob::create(impl);
-    Blob__deref(impl);
-    RELEASE_ASSERT(blob);
-    return blob.releaseNonNull();
+    return Blob::createAdopted(impl).releaseNonNull();
 }
 
 JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob, const String& type)

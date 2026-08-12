@@ -187,9 +187,10 @@ constexpr uint32_t kBunVImageDoNotTile = 16;
 // Lanczos-3, which is what we route here.)
 constexpr uint32_t kBunVImageNoAllocate = 512;
 
-// RAII pool so every early-return drains. Declared first in each entry point —
-// the framework calls beneath autorelease into it, and the WorkPool thread has
-// no enclosing pool of its own.
+// RAII pool so every early-return drains. Declared before any framework call in
+// each entry point (after the pasteboard lock, where there is one): the
+// framework calls beneath autorelease into it, and the WorkPool thread has no
+// enclosing pool of its own.
 struct Pool {
     const Syms* s;
     void* p;
@@ -244,6 +245,14 @@ inline CFRef generalPasteboard(const Syms* s)
     }
     return msg<CFRef>(s, cls, s->sel_registerName("generalPasteboard"));
 }
+
+// One thread in NSPasteboard at a time, process-wide. It is not thread-safe:
+// `navigator.clipboard` operations run on several WorkPool threads at once and
+// `Bun.Image.fromClipboard()` on the JS thread, and two of them inside the
+// pasteboard together segfault inside AppKit. Every entry point below that
+// touches the pasteboard takes this before pushing its autorelease pool, so
+// the pool also drains under it.
+std::mutex pasteboardLock;
 
 } // namespace
 
@@ -485,9 +494,9 @@ int32_t bun_coregraphics_reflect(const uint8_t* src, uint32_t w, uint32_t h,
 // AppKit to the dlopen list — `NSPasteboard` is the only symbol we need from
 // it, and AppKit is already loaded in any GUI process. We never decode here:
 // the pasteboard hands back a container (PNG, TIFF, HEIC, …) and Bun.Image's
-// regular decode path handles it. NSPasteboard is documented as main-thread
-// safe to *read*; we still call it on the JS thread (via the static
-// `fromClipboard` accessor), not the WorkPool.
+// regular decode path handles it. Called on the JS thread (via the static
+// `fromClipboard` accessor); `pasteboardLock` serializes it against the
+// `navigator.clipboard` operations on the WorkPool.
 //
 // Two-phase like encode: `out=nullptr` → probe (returns length, 0 = no image),
 // stashes the matched NSData in a thread-local; second call copies and
@@ -498,9 +507,9 @@ int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
-    Pool pool(s);
     thread_local CFRef pending = nullptr;
 
+    // The second phase only touches the NSData retained by the first.
     if (out && pending) {
         long n = s->CFDataGetLength(pending);
         std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
@@ -514,6 +523,8 @@ int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_
         pending = nullptr;
     }
 
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
+    Pool pool(s);
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;
     CFRef dataForType = s->sel_registerName("dataForType:");
@@ -545,6 +556,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 {
     auto s = load();
     if (!s) return -1;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
     Pool pool(s);
     CFRef pb = generalPasteboard(s);
     return pb ? msg<long>(s, pb, s->sel_registerName("changeCount")) : -1;
@@ -559,6 +571,7 @@ int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, s
     *out_len = 0;
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
     Pool pool(s);
 
     CFRef pb = generalPasteboard(s);
@@ -600,6 +613,7 @@ int32_t bun_coregraphics_clipboard_write_types(const char* const* utis, const ui
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
+    std::lock_guard<std::mutex> serialized(pasteboardLock);
     Pool pool(s);
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;

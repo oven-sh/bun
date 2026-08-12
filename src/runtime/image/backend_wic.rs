@@ -40,8 +40,8 @@ use core::ptr;
 use std::sync::Once;
 
 use bun_sys::windows::clipboard::{
-    CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, GlobalLock, GlobalSize,
-    GlobalUnlock, IsClipboardFormatAvailable, OpenClipboard, register_format,
+    GetClipboardSequenceNumber, GlobalLock, GlobalSize, GlobalUnlock, IsClipboardFormatAvailable,
+    OpenedClipboard, register_format,
 };
 
 use crate::image::codecs;
@@ -934,9 +934,10 @@ fn load_factory() {
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────
 //
-// JS-thread only — `OpenClipboard` is process-serialised and the static
-// `fromClipboard()` accessor calls this synchronously, so no cross-thread
-// HGLOBAL hand-off. We prefer the registered "PNG" format (Chrome/Edge/
+// Called synchronously on the JS thread by the static `fromClipboard()`;
+// `OpenedClipboard` excludes the `navigator.clipboard` jobs on the work pool
+// (and any other thread) for the duration, and every HGLOBAL is copied out
+// before it closes. We prefer the registered "PNG" format (Chrome/Edge/
 // Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
 // which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
 // the clipboard omits. Either way the result is bytes the regular Bun.Image
@@ -971,19 +972,13 @@ pub(crate) fn has_clipboard_image() -> bool {
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    // hwnd=null associates the open with the current task; fine for read-only.
-    if OpenClipboard(ptr::null_mut()) == 0 {
-        return Err(BackendUnavailable);
-    }
-    scopeguard::defer! {
-        let _ = CloseClipboard();
-    }
+    let clipboard = OpenedClipboard::open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
         let id = register_format(name);
         if id != 0 {
-            let h = GetClipboardData(id);
+            let h = clipboard.get(id);
             if !h.is_null() {
                 if let Some(b) = dup_global::<0>(h)? {
                     return Ok(Some(b));
@@ -997,7 +992,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
     //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
-        let h = GetClipboardData(cf);
+        let h = clipboard.get(cf);
         if h.is_null() {
             continue;
         }

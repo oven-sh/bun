@@ -127,33 +127,109 @@ pub mod clipboard {
         pub safe fn Sleep(dwMilliseconds: DWORD);
     }
 
+    /// One clipboard transaction per process at a time. The handles
+    /// `GetClipboardData` returns belong to the clipboard and are only valid
+    /// until it is closed, and `OpenClipboard(NULL)` does not keep another
+    /// thread of the same process out (it succeeds while another thread has
+    /// the clipboard open), so two threads inside at once corrupt the heap.
+    /// `bun_core::util::Mutex`, not `bun_threading`, which sits above this crate.
+    static TRANSACTION: bun_core::util::Mutex<()> = bun_core::util::Mutex::new(());
+
+    /// The clipboard, open for the calling thread and closed on drop. Every
+    /// open/close span in the process goes through this so they exclude each
+    /// other (see [`TRANSACTION`]). A single `OpenClipboard` also fails
+    /// spuriously while another process holds the clipboard (clipboard
+    /// managers do, right after every change), so it is retried briefly.
+    pub struct OpenedClipboard {
+        _transaction: bun_core::util::MutexGuard<'static, ()>,
+    }
+
+    impl OpenedClipboard {
+        /// `None` once another process has held the clipboard for the whole
+        /// retry window.
+        pub fn open() -> Option<OpenedClipboard> {
+            let transaction = TRANSACTION.lock();
+            for attempt in 0..5u32 {
+                if OpenClipboard(core::ptr::null_mut()) != 0 {
+                    return Some(OpenedClipboard {
+                        _transaction: transaction,
+                    });
+                }
+                Sleep(5 * (attempt + 1));
+            }
+            None
+        }
+
+        /// The clipboard's own handle for `format` (null when absent); valid,
+        /// and not to be freed, while `self` lives.
+        pub fn get(&self, format: UINT) -> HANDLE {
+            GetClipboardData(format)
+        }
+
+        pub fn empty(&self) -> bool {
+            EmptyClipboard() != 0
+        }
+
+        /// On success the system owns the memory; on failure it is freed here.
+        pub fn set(&self, format: UINT, global: OwnedGlobal) -> bool {
+            let global = core::mem::ManuallyDrop::new(global);
+            // SAFETY: the clipboard is open on this thread and `global` is an
+            // unlocked HGLOBAL this process still owns.
+            if unsafe { SetClipboardData(format, global.0) }.is_null() {
+                drop(core::mem::ManuallyDrop::into_inner(global));
+                return false;
+            }
+            true
+        }
+    }
+
+    impl Drop for OpenedClipboard {
+        fn drop(&mut self) {
+            // Closes first; the transaction lock (a field) is released after.
+            let _ = CloseClipboard();
+        }
+    }
+
     /// 0 on failure; registering the same name twice returns the same id.
     pub fn register_format(name: &core::ffi::CStr) -> UINT {
         // SAFETY: `&CStr` guarantees a readable NUL-terminated name.
         unsafe { RegisterClipboardFormatA(name.as_ptr()) }
     }
 
-    /// Copies `bytes` into a fresh `GMEM_MOVEABLE` HGLOBAL, allocating at
-    /// least one zeroed byte (a 0-byte HGLOBAL is discarded and cannot be
-    /// locked). Null on allocation failure; otherwise the caller owns the
-    /// unlocked handle.
-    pub fn global_from_bytes(bytes: &[u8]) -> HANDLE {
-        let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes.len().max(1));
-        if h.is_null() {
-            return core::ptr::null_mut();
-        }
-        // SAFETY: `h` is a fresh unlocked HGLOBAL of >= bytes.len() bytes;
-        // the copy stays in bounds, and a failed lock frees it.
-        unsafe {
-            let dst = GlobalLock(h);
-            if dst.is_null() {
-                GlobalFree(h);
-                return core::ptr::null_mut();
+    /// An unlocked `GMEM_MOVEABLE` HGLOBAL this process owns: freed on drop
+    /// unless [`OpenedClipboard::set`] hands it to the system.
+    pub struct OwnedGlobal(HANDLE);
+
+    impl OwnedGlobal {
+        /// Copies `bytes` in, allocating at least one zeroed byte (a 0-byte
+        /// HGLOBAL is discarded and cannot be locked). `None` on allocation
+        /// failure.
+        pub fn from_bytes(bytes: &[u8]) -> Option<OwnedGlobal> {
+            let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes.len().max(1));
+            if h.is_null() {
+                return None;
             }
-            core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
-            GlobalUnlock(h);
+            let global = OwnedGlobal(h);
+            // SAFETY: `h` is a fresh unlocked HGLOBAL of >= bytes.len() bytes,
+            // so the copy stays in bounds; `global` frees it if the lock fails.
+            unsafe {
+                let dst = GlobalLock(h);
+                if dst.is_null() {
+                    return None;
+                }
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+                GlobalUnlock(h);
+            }
+            Some(global)
         }
-        h
+    }
+
+    impl Drop for OwnedGlobal {
+        fn drop(&mut self) {
+            // SAFETY: allocated by `from_bytes` and never accepted by the
+            // clipboard (`set` forgets it on success), so still ours to free.
+            unsafe { GlobalFree(self.0) };
+        }
     }
 }
 

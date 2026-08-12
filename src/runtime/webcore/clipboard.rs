@@ -399,6 +399,9 @@ impl Unavailable {
 }
 
 // ─── macOS: NSPasteboard via `image_coregraphics_shim.cpp` ──────────────────
+// NSPasteboard is not thread-safe; the shim holds one process-wide lock across
+// each of these calls (and across `Bun.Image.fromClipboard()`), so a call is
+// atomic but a sequence of them is not.
 #[cfg(target_os = "macos")]
 mod platform {
     use core::ffi::{CStr, c_char, c_void};
@@ -455,8 +458,9 @@ mod platform {
         Ok(Some(buf))
     }
 
-    /// NSPasteboard has no lock, so re-read once if another process bumped
-    /// `changeCount` mid-loop; still changing on the retry fails the read.
+    /// The per-type reads are separate transactions, so re-read if anything
+    /// (another process, or a write on another pool thread) bumped
+    /// `changeCount` mid-loop; still changing after a few tries fails the read.
     pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
         let mut attempt = 0;
         loop {
@@ -520,14 +524,16 @@ mod platform {
 
 // ─── Windows ────────────────────────────────────────────────────────────────
 // `CF_UNICODETEXT` for text, "HTML Format" (CF_HTML) for HTML, and the
-// registered "PNG" / "image/png" formats for PNG. Raw externs live in
-// `bun_sys::windows::clipboard`; the guards below are the only unsafe users.
+// registered "PNG" / "image/png" formats for PNG. The externs and the
+// open/close guard (one transaction per process) live in
+// `bun_sys::windows::clipboard`, as does the owned HGLOBAL a write prepares;
+// the locked view of a clipboard-owned HGLOBAL below is the only other unsafe
+// user.
 #[cfg(windows)]
 mod platform {
     use core::ffi::{CStr, c_uint, c_void};
-    use core::ptr;
 
-    use bun_sys::windows::clipboard::{self as win32, CF_UNICODETEXT};
+    use bun_sys::windows::clipboard::{self as win32, CF_UNICODETEXT, OpenedClipboard, OwnedGlobal};
 
     use super::{Mime, Unavailable};
 
@@ -607,65 +613,15 @@ mod platform {
         Some(payload[start..end].to_vec())
     }
 
-    /// One transaction per process at a time. The handles `GetClipboardData`
-    /// returns belong to the clipboard and are only valid until it is closed,
-    /// and `OpenClipboard(NULL)` does not keep another thread of the same
-    /// process out, so two pool threads reading at once corrupt the heap.
-    static TRANSACTION: bun_threading::Mutex = bun_threading::Mutex::new();
-
-    /// The open clipboard. A single `OpenClipboard` fails spuriously while
-    /// another process holds it (clipboard managers do, right after every
-    /// change), so it is retried briefly.
-    struct ClipboardGuard {
-        _transaction: bun_threading::MutexGuard,
-    }
-
-    impl ClipboardGuard {
-        fn open() -> Option<ClipboardGuard> {
-            let transaction = TRANSACTION.lock_guard();
-            for attempt in 0..5u32 {
-                if win32::OpenClipboard(ptr::null_mut()) != 0 {
-                    return Some(ClipboardGuard {
-                        _transaction: transaction,
-                    });
-                }
-                win32::Sleep(5 * (attempt + 1));
-            }
-            None
-        }
-
-        /// Null ⇔ format absent.
-        fn get(&self, format: c_uint) -> *mut c_void {
-            win32::GetClipboardData(format)
-        }
-
-        fn empty(&self) -> bool {
-            win32::EmptyClipboard() != 0
-        }
-
-        /// On success the system owns `h`.
-        fn set(&self, format: c_uint, h: *mut c_void) -> bool {
-            // SAFETY: the clipboard is open and `h` is an unlocked HGLOBAL.
-            unsafe { !win32::SetClipboardData(format, h).is_null() }
-        }
-    }
-
-    impl Drop for ClipboardGuard {
-        fn drop(&mut self) {
-            // Closes first; the transaction lock (a field) is released after.
-            let _ = win32::CloseClipboard();
-        }
-    }
-
     /// Locked view of an HGLOBAL the open clipboard owns.
     struct LockedGlobal<'clipboard> {
         h: *mut c_void,
         p: *mut c_void,
-        _clipboard: &'clipboard ClipboardGuard,
+        _clipboard: &'clipboard OpenedClipboard,
     }
 
     impl<'clipboard> LockedGlobal<'clipboard> {
-        fn new(clipboard: &'clipboard ClipboardGuard, h: *mut c_void) -> Option<Self> {
+        fn new(clipboard: &'clipboard OpenedClipboard, h: *mut c_void) -> Option<Self> {
             // SAFETY: `h` is owned by the clipboard, which stays open for 'clipboard.
             let p = unsafe { win32::GlobalLock(h) };
             if p.is_null() {
@@ -711,7 +667,7 @@ mod platform {
     }
 
     fn read_type_locked(
-        clipboard: &ClipboardGuard,
+        clipboard: &OpenedClipboard,
         mime: Mime,
     ) -> Result<Option<Vec<u8>>, Unavailable> {
         for format in read_formats(mime).into_iter().flatten() {
@@ -756,14 +712,14 @@ mod platform {
         if read_formats(mime).iter().all(Option::is_none) {
             return Ok(None);
         }
-        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
+        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
         read_type_locked(&clipboard, mime)
     }
 
     /// One open/close spans every type, so another process cannot write
     /// between them and tear the item across two clipboard states.
     pub(super) fn read_all(types: &[Mime]) -> Result<Vec<(Mime, Vec<u8>)>, Unavailable> {
-        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
+        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
         let mut present = Vec::new();
         for mime in types {
             if let Some(bytes) = read_type_locked(&clipboard, *mime)? {
@@ -786,34 +742,6 @@ mod platform {
             prev = byte;
         }
         out
-    }
-
-    /// An HGLOBAL this process still owns; freed on Drop unless the clipboard
-    /// accepted it (`release`).
-    struct OwnedGlobal(*mut c_void);
-
-    impl OwnedGlobal {
-        fn from_bytes(payload: &[u8]) -> Option<OwnedGlobal> {
-            let h = win32::global_from_bytes(payload);
-            if h.is_null() {
-                None
-            } else {
-                Some(OwnedGlobal(h))
-            }
-        }
-
-        /// The system took ownership; do not free.
-        fn release(self) {
-            core::mem::forget(self);
-        }
-    }
-
-    impl Drop for OwnedGlobal {
-        fn drop(&mut self) {
-            // SAFETY: the handle came from `global_from_bytes` and the
-            // clipboard never accepted it, so it is still ours to free.
-            unsafe { win32::GlobalFree(self.0) };
-        }
     }
 
     /// `GMEM_MOVEABLE` HGLOBAL holding `bytes` (NUL-terminated UTF-16 for
@@ -858,16 +786,15 @@ mod platform {
             let global = make_global(*mime, bytes).ok_or(Unavailable::Platform)?;
             prepared.push((format, global));
         }
-        let clipboard = ClipboardGuard::open().ok_or(Unavailable::Platform)?;
+        let clipboard = OpenedClipboard::open().ok_or(Unavailable::Platform)?;
         if !clipboard.empty() {
             return Err(Unavailable::Platform);
         }
         for (format, global) in prepared {
-            // A rejected handle (and the rest of the iterator) drops and frees.
-            if !clipboard.set(format, global.0) {
+            // The rest of the iterator drops and frees on the way out.
+            if !clipboard.set(format, global) {
                 return Err(Unavailable::Platform);
             }
-            global.release();
         }
         Ok(())
     }

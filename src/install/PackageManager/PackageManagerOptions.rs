@@ -56,6 +56,9 @@ pub struct Options {
     // if set to `false` in bunfig, save a binary lockfile
     pub(crate) save_text_lockfile: Option<bool>,
 
+    // if set in .npmrc, write `""` instead of the configured registry's URL
+    pub(crate) omit_lockfile_registry_resolved: bool,
+
     pub(crate) lockfile_only: bool,
 
     // `bun pm version` command options
@@ -140,6 +143,7 @@ impl Default for Options {
             ca: Box::default(),
             ca_file_name: b"",
             save_text_lockfile: None,
+            omit_lockfile_registry_resolved: false,
             lockfile_only: false,
             git_tag_version: true,
             allow_same_version: false,
@@ -539,6 +543,10 @@ impl Options {
 
             if let Some(save_text_lockfile) = config.save_text_lockfile {
                 self.save_text_lockfile = Some(save_text_lockfile);
+            }
+
+            if let Some(omit_lockfile_registry_resolved) = config.omit_lockfile_registry_resolved {
+                self.omit_lockfile_registry_resolved = omit_lockfile_registry_resolved;
             }
 
             if let Some(jobs) = config.concurrent_scripts {

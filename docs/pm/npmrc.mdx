@@ -111,6 +111,29 @@ The equivalent `bunfig.toml` option is [`install.exact`](/runtime/bunfig#install
 exact = true
 ```
 
+### `omit-lockfile-registry-resolved`: Keep the lockfile registry-agnostic
+
+By default `bun.lock` records an absolute tarball URL for packages not served by
+the default registry, pinning the lockfile to that host for everyone who shares
+it. Enable this option to write `""` instead, as default-registry entries already
+do:
+
+```ini .npmrc icon="npm"
+registry=https://npm.example.com/
+omit-lockfile-registry-resolved=true
+```
+
+```json bun.lock icon="lock"
+"lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57..."],
+```
+
+An empty URL resolves against whichever registry the reader has configured.
+Integrity hashes are unaffected and still pin package contents.
+
+Packages without a supported integrity hash keep their absolute URL, so they stay
+pinned to the registry that served them rather than silently resolving against
+whichever registry the reader has configured.
+
 ### `ignore-scripts`: Skip lifecycle scripts
 
 Prevents running lifecycle scripts during installation:

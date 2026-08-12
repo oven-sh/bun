@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
@@ -1043,4 +1044,162 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
+});
+
+it("writes the configured registry's tarball URL into bun.lock by default", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "keeps-registry-resolved",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`);
+});
+
+it("omits the configured registry's tarball URL with omit-lockfile-registry-resolved", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "omits-registry-resolved",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "omit-lockfile-registry-resolved=true\n"),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
+  expect(lockfile).not.toContain(registry.registryUrl());
+
+  // integrity still pins the contents
+  expect(lockfile).toContain("sha512-");
+
+  // `""` still installs, and the URL does not come back
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+it("adding a dependency does not reintroduce registry URLs with omit-lockfile-registry-resolved", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "omits-registry-resolved-on-add",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "omit-lockfile-registry-resolved=true\n"),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  // a lockfile-updating install rewrites every entry, including the new one
+  await runBunInstall(env, packageDir, { packages: ["a-dep@1.0.1"] });
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"a-dep": ["a-dep@1.0.1", ""');
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
+  expect(lockfile).not.toContain(registry.registryUrl());
+});
+
+it("omits the tarball URL for scoped packages with omit-lockfile-registry-resolved", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "omits-registry-resolved-scoped",
+        version: "1.0.0",
+        dependencies: { "@types/no-deps": "1.0.0" },
+      }),
+    ),
+    // a scope-specific registry goes through the scope lookup in
+    // `scope_for_package_name()` rather than falling back to the default scope
+    write(
+      join(packageDir, ".npmrc"),
+      `@types:registry=${registry.registryUrl()}\nomit-lockfile-registry-resolved=true\n`,
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"@types/no-deps": ["@types/no-deps@1.0.0", ""');
+  expect(lockfile).toContain("sha512-");
+  expect(lockfile).not.toContain(registry.registryUrl());
+});
+
+it("keeps the tarball URL when the package has no supported integrity hash", async () => {
+  const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+  // a manifest with neither `integrity` nor `shasum`, so the resolution ends up
+  // with no supported integrity hash
+  await using mockRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith(".tgz")) {
+        return new Response(Bun.file(tgz));
+      }
+      return Response.json({
+        name: "no-deps",
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": {
+            name: "no-deps",
+            version: "1.0.0",
+            dist: {
+              tarball: `http://127.0.0.1:${mockRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  using dir = tempDir("omit-registry-no-integrity", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+    ".npmrc": [`registry=http://127.0.0.1:${mockRegistry.port}/`, `omit-lockfile-registry-resolved=true`, ``].join(
+      "\n",
+    ),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // no integrity to fall back on, so the URL stays and resolution remains
+  // pinned to the registry that served it
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  expect(lockfile).toContain(`http://127.0.0.1:${mockRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.stringContaining("Saved lockfile") });
 });

@@ -1806,6 +1806,7 @@ function parseOptions(
         const value = `${queryObject[key]}`.toLowerCase();
         if (value === "true" || value === "1") {
           tls = true;
+          if (sslMode === SSLMode.disable) sslMode = SSLMode.prefer;
         } else if (value === "false" || value === "0") {
           sslMode = SSLMode.disable;
         } else if (value) {

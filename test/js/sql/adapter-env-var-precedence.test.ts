@@ -451,7 +451,7 @@ describe("SQL adapter environment variable precedence", () => {
         const options = new SQL(url);
         expect(options.options.query).toBe("");
         expect(options.options.sslMode).toBe(2);
-        expect(options.options.tls).toBeTruthy();
+        expect(options.options.tls).toEqual({ serverName: "h" });
 
         const withExplicitTls = new SQL(url, { tls: { ca: "x" } });
         expect(withExplicitTls.options.sslMode).toBe(4);

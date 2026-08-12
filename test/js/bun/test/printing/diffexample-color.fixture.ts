@@ -120,3 +120,10 @@ try {
 } catch (e) {
   console.log(e.message);
 }
+
+try {
+  const items = Array.from({ length: 600 }, (_, i) => i);
+  expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+} catch (e) {
+  console.log(e.message);
+}

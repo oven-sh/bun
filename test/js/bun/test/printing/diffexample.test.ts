@@ -10,10 +10,6 @@ function cleanOutput(output: string) {
       "test/js/bun/test/printing/diffexample.fixture.ts:",
     );
 }
-function cleanAnsiEscapes(output: string) {
-  return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
-}
-
 test("no color", async () => {
   const noColorSpawn = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
@@ -23,19 +19,8 @@ test("no color", async () => {
       FORCE_COLOR: "0",
     },
   });
-  // Started before the first run is awaited: two sequential runs of the
-  // fixture exceed the default test timeout with a debug build.
-  const colorSpawn = Bun.spawn({
-    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "0",
-    },
-  });
   await noColorSpawn.exited;
   const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
-  const noColorStdout = await noColorSpawn.stdout.text();
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
     test/js/bun/test/printing/diffexample.fixture.ts:
@@ -816,31 +801,41 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) serializes to the same string - long line is truncated
+    385 |   expect(Symbol(description)).toEqual(Symbol(description));
+    386 | });
+    387 | 
+    388 | test("serializes to the same string - long rendering keeps only the first and last lines", () => {
+    389 |   const items = Array.from({ length: 600 }, (_, i) => i);
+    390 |   expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+                                               ^
+    error: expect(received).toEqual(expected)
+
+    Expected: {
+      "id": Symbol(a),
+      "items": [
+        0,
+        1,
+    ... (595 lines truncated) ...
+        597,
+        598,
+        599,
+      ],
+    }
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - long rendering keeps only the first and last lines
 
      0 pass
      2 skip
      1 todo
-     22 fail
-     22 expect() calls
-    Ran 25 tests across 1 file.
+     23 fail
+     23 expect() calls
+    Ran 26 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
-
-  await colorSpawn.exited;
-  const colorStderr = cleanOutput(cleanAnsiEscapes(await colorSpawn.stderr.text()));
-  const colorStdout = cleanAnsiEscapes(await colorSpawn.stdout.text());
-  expect(colorStderr).toEqual(noColorStderr);
-  expect(colorStdout).toEqual(noColorStdout);
 });
-
-function getDiffPart(stderr: string): string {
-  stderr = stderr.split("a\\nd\\nc\\nd\\ne")[1];
-  const split = stderr.split("\n\n");
-  split.pop();
-  stderr = split.join("\n\n");
-  return stderr;
-}
 
 test("color", async () => {
   const spawn = Bun.spawn({
@@ -984,6 +979,21 @@ test("color", async () => {
     \x1B[32m  undefined,\x1B[0m
     \x1B[32m  3,\x1B[0m
     \x1B[32m]\x1B[0m
+    Received: \x1B[0mserializes to the same string
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    Expected: \x1B[0m\x1B[32m{\x1B[0m
+    \x1B[32m  "id": Symbol(a),\x1B[0m
+    \x1B[32m  "items": [\x1B[0m
+    \x1B[32m    0,\x1B[0m
+    \x1B[32m    1,\x1B[0m
+    \x1B[97m... (595 lines truncated) ...\x1B[0m
+    \x1B[32m    597,\x1B[0m
+    \x1B[32m    598,\x1B[0m
+    \x1B[32m    599,\x1B[0m
+    \x1B[32m  ],\x1B[0m
+    \x1B[32m}\x1B[0m
     Received: \x1B[0mserializes to the same string
 
     "

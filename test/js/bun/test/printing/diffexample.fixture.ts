@@ -384,3 +384,8 @@ test("serializes to the same string - long line is truncated", () => {
   const description = Buffer.alloc(3000, "a").toString();
   expect(Symbol(description)).toEqual(Symbol(description));
 });
+
+test("serializes to the same string - long rendering keeps only the first and last lines", () => {
+  const items = Array.from({ length: 600 }, (_, i) => i);
+  expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+});

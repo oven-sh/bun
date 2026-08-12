@@ -108,6 +108,8 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
@@ -172,6 +174,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

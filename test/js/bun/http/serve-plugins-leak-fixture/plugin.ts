@@ -15,6 +15,8 @@ const plugin: BunPlugin = {
   name: "plugin-cell-probe",
   setup(build) {
     globalThis.setups++;
+    // serve-plugins-reject-fixture.ts: makes the whole plugin load reject.
+    if (process.env.SERVE_PLUGIN_SETUP_THROWS) throw new Error("setup() failed on purpose");
     build.onLoad({ filter: /\.txt$/ }, async () => {
       await globalThis.holdBuild?.();
       return { loader: "text", contents: "text-from-plugin" };

@@ -28,7 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { duplexPair, PassThrough, Writable } from "node:stream";
-import { connect as tlsConnect, createServer as createTlsServer } from "node:tls";
+import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);

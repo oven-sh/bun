@@ -1754,7 +1754,11 @@ pub(super) enum AsyncWorkStatus {
     Cancelled = 3,
 }
 
-/// must be globally allocated
+/// Heap-allocated; owned and freed by the addon. Once queued it is shared with
+/// the pool thread and the event-loop queue (`napi_cancel_async_work` may run
+/// during `execute`, and `complete` usually frees it the moment `run` has
+/// posted), so the entry points below take the addon's pointer and go through
+/// it field by field instead of forming a reference to the whole work.
 pub(crate) struct napi_async_work {
     pub task: WorkPoolTask,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -1811,20 +1815,12 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // The work is shared between the addon (which owns and frees it), the
-    // pool thread and the event-loop queue, so every entry point below takes
-    // the addon's pointer and touches individual fields through it: no frame
-    // holds a reference to the whole work while another party may write to
-    // it (`cancel` racing `run`) or free it (`complete`, which normally calls
-    // `napi_delete_async_work`, runs as soon as `run` has posted).
-
-    /// `napi_queue_async_work`, JS thread.
+    /// `napi_queue_async_work`; JS thread.
     ///
     /// # Safety
-    /// `this` is a live work from [`Self::new`].
+    /// `this` is a live work.
     pub(crate) unsafe fn schedule(this: *mut Self) {
-        // SAFETY: fn contract; the pool only gets the work at the end of this
-        // function, so until then the JS thread is the only one touching it.
+        // SAFETY: fn contract; nothing else sees the work before the last line.
         unsafe {
             if (*this).scheduled {
                 return;
@@ -1835,31 +1831,32 @@ impl napi_async_work {
             // env: counted, so the VM waits for it (Node likewise settles its
             // threadpool requests before an environment is freed).
             (*this).loop_handle.embedded_work_scheduled();
-            // Projected from the work pointer itself, as `from_task_ptr`
-            // requires of the pointer it gets back.
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: `task` is the field `schedule` handed to the pool, projected
-        // from the work pointer, and the pool runs each task once.
+        // from the work pointer; the pool runs it once.
         unsafe { Self::run(napi_async_work::from_task_ptr(task)) };
     }
 
-    /// Pool thread. Ends by handing the work to the JS thread, which runs
-    /// `complete` (and with it, usually, `napi_delete_async_work`) as soon as
-    /// the post lands, so nothing reads `*this` after the post; the cloned
-    /// `handle` is what the pool thread keeps. `napi_cancel_async_work` may
-    /// write `status` at any point during this function.
+    /// Pool thread. The JS thread may `cancel` at any point, and frees the
+    /// work (`complete`) as soon as the post below lands.
     ///
     /// # Safety
-    /// `this` is the live work `schedule` handed to the pool; called once per
-    /// scheduling.
+    /// `this` is the live work `schedule` handed to the pool.
     unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract. The JS thread does not touch these fields while
-        // the work is in the pool's hands (`status` only through its atomic).
-        let handle = unsafe { (*this).loop_handle.clone() };
+        // SAFETY: fn contract; the JS thread only touches `status` (atomic)
+        // while the pool has the work.
+        let (handle, execute, env, data) = unsafe {
+            (
+                (*this).loop_handle.clone(),
+                (*this).execute,
+                (*this).env.get(),
+                (*this).data,
+            )
+        };
         // A VM that is already stopping cancels work it has not started, as
         // Node's environment cleanup does (uv_cancel); otherwise `execute` runs
         // with the VM held open.
@@ -1878,42 +1875,33 @@ impl napi_async_work {
                 Err(state) => state != AsyncWorkStatus::Cancelled as u32,
             };
         if started {
-            // SAFETY: as above.
-            let (execute, env, data) =
-                unsafe { ((*this).execute, (*this).env.get(), (*this).data) };
             execute(env, data);
-            // SAFETY: as above.
-            unsafe {
+        }
+        // The queue takes the embedded task (and with it the work) from here
+        // on. Counted work, so the VM has not closed its handle; a VM tearing
+        // down runs `complete` from its queue release (status cancelled if
+        // `execute` never ran), as Node does at environment cleanup.
+        // SAFETY: as above; filling in the task is the pool thread's last
+        // access to `*this`.
+        let ct = unsafe {
+            if started {
                 (*this)
                     .status
-                    .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst)
-            };
-        } else {
-            // SAFETY: as above.
-            let _ = unsafe { Self::cancel(this) };
-        }
+                    .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+            } else {
+                let _ = Self::cancel(this);
+            }
+            core::ptr::NonNull::from((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit))
+        };
         drop(vm);
-        // `concurrent_task` is the inline field of this heap work; the queue
-        // takes ownership of its `next` link. Counted work, so the VM has not
-        // closed its handle; a VM tearing down runs `complete` from its queue
-        // release (status cancelled if `execute` never ran), as Node does at
-        // environment cleanup.
-        // SAFETY: as above; this is the pool thread's last access to `*this`.
-        let ct = core::ptr::NonNull::from(unsafe {
-            (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit)
-        });
         let bun_jsc::vm_handle::Posted::Queued = handle.post_task(ct) else {
             unreachable!("VM handle closed with napi async work outstanding");
         };
-        // The JS thread may have freed the work by now; `handle` is ours.
         handle.embedded_work_finished();
     }
 
-    /// `napi_cancel_async_work` (JS thread) and [`Self::run`] (pool thread),
-    /// possibly at the same time: only the atomic is touched.
-    ///
     /// # Safety
-    /// `this` is a live work.
+    /// `this` is a live work (any thread; only the atomic is touched).
     pub(crate) unsafe fn cancel(this: *mut Self) -> bool {
         // SAFETY: fn contract.
         unsafe {
@@ -1927,21 +1915,17 @@ impl napi_async_work {
         .is_ok()
     }
 
-    /// JS thread, once per scheduling: from the task queue, or from its
-    /// release when the VM tears down first. `complete` is the addon's and
-    /// normally calls `napi_delete_async_work` on this very work, so
-    /// everything the call needs is taken out of `*this` first and `this` is
-    /// not used again after `complete` starts.
+    /// JS thread, from the task queue or from its release at VM teardown.
+    /// `complete` usually frees the work, so `this` is not used after it.
     ///
     /// # Safety
-    /// `this` is the live work [`Self::run`] posted; the pool thread is done
-    /// with it.
+    /// `this` is the live work [`Self::run`] posted.
     pub(crate) unsafe fn run_from_js(
         this: *mut Self,
         vm: &mut VirtualMachine,
         global: &JSGlobalObject,
     ) {
-        // SAFETY: fn contract; the JS thread is the only one touching the work now.
+        // SAFETY: fn contract; the pool thread is done with the work.
         let (mut poll_ref, complete, env, status, data) = unsafe {
             (
                 core::mem::take(&mut (*this).poll_ref),
@@ -2265,8 +2249,7 @@ extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work
         return env.invalid_arg();
     }
     // SAFETY: non-null `work_` is the work `napi_create_async_work` allocated;
-    // the pool thread may be running it, which is why nothing here forms a
-    // reference to the whole work.
+    // the pool thread may be running it, so only individual fields are touched.
     debug_assert!(core::ptr::eq(env.to_js(), unsafe {
         (*work_).global.as_ptr()
     }));

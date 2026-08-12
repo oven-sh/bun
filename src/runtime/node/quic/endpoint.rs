@@ -1363,6 +1363,7 @@ impl QuicEndpoint {
             return Ok(true);
         }
         let mut err: c_int = 0;
+        let mut dns_error: c_int = 0;
         let cfg = self.bind_config.get();
         let socket = uws::udp::Socket::create(
             uws::Loop::get(),
@@ -1374,6 +1375,7 @@ impl QuicEndpoint {
             cfg.port,
             0,
             Some(&mut err),
+            Some(&mut dns_error),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
         if !socket.is_null() {
@@ -1386,7 +1388,10 @@ impl QuicEndpoint {
                 .with_mut(|r| r.set_strong(this_value, global));
             self.finish_close();
             self.pending_endpoint_close.set(false);
-            self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
+            // `host` is always an IP literal, so `dns_error` is at most
+            // EAI_MEMORY/EAI_SYSTEM; the status only feeds the close message.
+            let status = if err != 0 { err } else { dns_error };
+            self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, status);
             return Ok(false);
         }
         self.socket.set(Some(socket));

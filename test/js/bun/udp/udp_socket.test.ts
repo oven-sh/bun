@@ -86,6 +86,57 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
+  describe("bind failure errors", () => {
+    async function bindError(options: Parameters<typeof udpSocket>[0]): Promise<any> {
+      let socket;
+      try {
+        socket = await udpSocket(options);
+      } catch (error) {
+        return error;
+      }
+      socket.close();
+      throw new Error("expected udpSocket() to fail");
+    }
+
+    function pick({ name, code, syscall, hostname, address, message }: any) {
+      return { name, code, syscall, hostname, address, message };
+    }
+
+    // A DNS label longer than 63 bytes is illegal (RFC 1035 section 2.3.4), so
+    // getaddrinfo rejects it locally without a network round-trip.
+    const UNRESOLVABLE_HOST = Buffer.alloc(64, "a").toString() + ".com";
+
+    test("unresolvable hostname reports the resolver error, not an errno", async () => {
+      // The getaddrinfo return code used to be handed back through the errno
+      // channel, so this surfaced as whichever errno happened to share the
+      // number: `bind ENOENT <host>` on glibc, `bind ENOEXEC <host>` on macOS.
+      expect(pick(await bindError({ hostname: UNRESOLVABLE_HOST, port: 0 }))).toEqual({
+        name: "Error",
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname: UNRESOLVABLE_HOST,
+        address: undefined,
+        message: `getaddrinfo ENOTFOUND ${UNRESOLVABLE_HOST}`,
+      });
+    });
+
+    test("a failing bind() still reports the errno with the address", async () => {
+      const holder = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+      try {
+        expect(pick(await bindError({ hostname: "127.0.0.1", port: holder.port }))).toEqual({
+          name: "Error",
+          code: "EADDRINUSE",
+          syscall: "bind",
+          hostname: undefined,
+          address: "127.0.0.1",
+          message: "bind EADDRINUSE 127.0.0.1",
+        });
+      } finally {
+        holder.close();
+      }
+    });
+  });
+
   // Out-of-range connect.port used to be silently rewritten to 0, so send()
   // returned true while every datagram was dropped. The bind path already
   // rejected the same values; connect must too. Values beyond the i32 range

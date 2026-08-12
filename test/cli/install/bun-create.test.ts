@@ -352,7 +352,9 @@ describe.skipIf(!Bun.which("git"))("git repository and install", () => {
     // Both chains ran to the end: each prints its timing line.
     expect(stderr).toContain("] git");
     expect(stderr).toContain("] bun install");
-    expect(stdout).toContain("A local git repository was created for you and dependencies were installed automatically.");
+    expect(stdout).toContain(
+      "A local git repository was created for you and dependencies were installed automatically.",
+    );
     expect(await exists(join(dest, "node_modules", "localdep", "package.json"))).toBe(true);
 
     // init, add and commit ran in order, in the destination.

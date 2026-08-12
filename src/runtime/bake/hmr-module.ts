@@ -72,9 +72,7 @@ interface CJSModule {
 
 interface InFlightLoad {
   promise: Promise<HMRModule>;
-  /** The module whose top-level await the load is suspended on: the loading
-   *  module itself, or else the first of its dependencies that was suspended.
-   *  Same module `loadModuleSync` would name if it were loading the graph. */
+  /** The module whose top-level await this load is suspended on, as `loadModuleSync` would name it. */
   asyncId: Id;
 }
 
@@ -93,11 +91,7 @@ export class HMRModule {
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
   failure: unknown = null;
-  /** Set while this module's load is suspended on top-level await. Distinguishes
-   *  that from a `State.Pending` module that is merely part of an import cycle:
-   *  importers found in the meantime wait for the promise instead of reading the
-   *  not-yet-assigned namespace, and `require` refuses the module the same way
-   *  it does before the load has started. */
+  /** Set while the load is suspended on top-level await; a `Pending` module without it is in an import cycle. */
   loading: InFlightLoad | null = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
@@ -487,8 +481,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
           list as HMRModule[], // no promises as by assert above
         );
     if (result instanceof Promise) {
-      // `load` only returns a promise for a module flagged `isAsync`, so one of
-      // the two is always set. Checked in the same order as loadModuleSync does.
+      // Same blame order as loadModuleSync: the module's own await before a dependency's.
       DEBUG.ASSERT(isAsync || hasAsyncDep);
       const loading: InFlightLoad = { promise: result, asyncId: isAsync ? id : depAsyncId! };
       mod.loading = loading;

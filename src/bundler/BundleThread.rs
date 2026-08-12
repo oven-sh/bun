@@ -67,6 +67,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     ) -> Result<(), crate::Error>;
     /// Bundle thread, on dequeue: `false` if the owner released this build
     /// while it was still queued ([`free_released_unstarted`] then frees it).
+    /// Also the owner's thread, in [`singleton::enqueue`], for a build that
+    /// could not be handed to a bundle thread at all.
     fn try_start(&mut self) -> bool;
     fn free_released_unstarted(this: *mut Self);
     fn complete_on_bundle_thread(&mut self);
@@ -384,22 +386,11 @@ pub mod singleton {
             Err(err) => {
                 // SAFETY: `spawn` started nothing, so this is still the sole owner.
                 unsafe { bun_core::heap::destroy(bundle_thread.as_ptr()) };
-                return Err(spawn_errno(&err));
+                return Err(SystemErrno::from_io_error(&err).unwrap_or(SystemErrno::EAGAIN));
             }
         }
         *instance = Some(Instance(bundle_thread.cast::<()>()));
         Ok(bundle_thread.as_ptr())
-    }
-
-    fn spawn_errno(err: &std::io::Error) -> SystemErrno {
-        // On Windows the raw code is a Win32 error, which `init(u32)` maps.
-        #[cfg(windows)]
-        let errno = err
-            .raw_os_error()
-            .and_then(|code| SystemErrno::init(code as u32));
-        #[cfg(not(windows))]
-        let errno = err.raw_os_error().map(bun_errno::from_errno);
-        errno.unwrap_or(SystemErrno::EAGAIN)
     }
 
     /// The owner gets exactly one completion, even if the bundle thread cannot be started.
@@ -419,24 +410,25 @@ pub mod singleton {
             Err(errno) => errno,
         };
 
-        // Same steps as the dequeue in `thread_main`, on this thread instead.
-        // SAFETY: the task is live until its completion is posted below.
-        if !unsafe { (*completion.as_ptr()).try_start() } {
-            C::free_released_unstarted(completion.as_ptr());
-            return;
-        }
-        // SAFETY: started ⇒ the owner does not touch the task until its completion runs.
+        // SAFETY: the task is live, and until this returns nothing else uses it:
+        // it never reached the queue. The borrow ends before the caller goes on
+        // setting it up.
         let completion = unsafe { &mut *completion.as_ptr() };
-        let hint = if errno == SystemErrno::EAGAIN {
-            " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
-        } else {
-            ""
-        };
+        // Started, so a VM torn down before the completion below runs waits for
+        // it (as for a build that failed on the bundle thread) instead of
+        // releasing the task itself.
+        let started = completion.try_start();
+        assert!(
+            started,
+            "a build that was never queued cannot have been released"
+        );
         let mut log = bun_ast::Log::init();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("Failed to start the bundler thread: {errno}.{hint}"),
+            format_args!(
+                "Failed to start the bundler thread: {errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
+            ),
         );
         completion.set_log(log);
         completion.set_result(BundleV2Result::Err(errno.into()));

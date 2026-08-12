@@ -304,6 +304,26 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
+impl SystemErrno {
+    /// The OS error behind a `std::io::Error` (e.g. from a failed
+    /// `std::thread::Builder::spawn`). `None` when the error did not come from
+    /// the OS or its code has no `SystemErrno`.
+    pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
+        let code = err.raw_os_error()?;
+        #[cfg(windows)]
+        {
+            // A `GetLastError()` code: the `u32` entry point maps it through
+            // the Win32 → errno table, whereas `i64` would read it as an errno
+            // discriminant.
+            SystemErrno::init(code as u32)
+        }
+        #[cfg(not(windows))]
+        {
+            SystemErrno::init(i64::from(code))
+        }
+    }
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).

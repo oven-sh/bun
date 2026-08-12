@@ -37,12 +37,26 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // hand-over (`prepare_read` / `prepare_write`), and makes the hand-over its
 // last access; `ReadFile::run_async` and `FileOpener::get_fd` are the templates.
 //
-// Scope: the first parameter of `fn run` inside a `JobContext` trait or impl
-// block, the first parameter of `get_fd` / `get_fd_by_opening` inside the
-// `FileOpener` trait block, and the spelling `fn(&mut Self, Fd)` of an open
-// continuation anywhere. The steps below these entry points (`wait_for_*`,
-// `on_finish`, `do_close`, the libuv completions) are guarded by their own
-// conversions, not by this lint.
+// Scope, four checks:
+//   1. the first parameter of `fn run` inside a `JobContext` trait or impl block;
+//   2. the first parameter of `get_fd` / `get_fd_by_opening` inside the
+//      `FileOpener` trait block;
+//   3. the definition of `OpenCallback<T>`, which has to read
+//      `unsafe fn(*mut T, Fd)`: every continuation (`run_async_with_fd`,
+//      `run_with_fd`, `ReadFileUV::on_file_open`) is passed as a fn item where
+//      this alias is expected, so its signature is what holds theirs to `*mut`;
+//   4. as a net under 3, a continuation type spelled out as `fn(&mut X, Fd)`
+//      anywhere (the pre-conversion spelling, in whatever parameter syntax).
+// Each anchored check also records what it examined and asserts it found the
+// declarations it is about, so renaming `run` / `JobContext` / `FileOpener` /
+// `OpenCallback` fails here (update the lint) instead of emptying it.
+//
+// Not covered: the steps below these entry points. For ReadFile / WriteFile
+// those are `wait_for_*`, `on_finish`, `do_close` and the loops; for the
+// recursive readdir scan they are `perform_work` and everything under it, which
+// still take `&mut self` and perform the hand-over inside that borrow, so for
+// that job only the entry frame is converted. Those conversions carry their own
+// guards.
 //
 // Siblings: self-receiver-reclaim.test.ts (freeing the receiver),
 // fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
@@ -62,6 +76,12 @@ const tracked: Set<string> | null = (() => {
   if (!r.success) return null;
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
+
+/** One check's findings in one piece of source: byte offsets of what it examined and of what it rejects. */
+interface Scan {
+  checked: { offset: number; name: string }[];
+  offenders: number[];
+}
 
 // The line an `impl` / `trait` item starts on. A rustfmt-wrapped header puts
 // the trait name a line or two below this, so the block's indentation is read
@@ -86,39 +106,55 @@ function itemBlock(stripped: string, headerIndex: number): { start: number; bloc
 // receiver, `this: &mut Self`, `ctx: &mut C`) is the banned shape.
 const POINTER_PARAM = /^(?:mut\s+)?\w+\s*:\s*\*mut\b/;
 
-/** `fn <name>(` followed by its first parameter, for the given names. */
+/** `fn <name>(` (name restricted to `names`) followed by its first parameter. */
 function fnWithFirstParam(names: string): RegExp {
-  return new RegExp(String.raw`\bfn\s+(?:${names})\s*\(\s*([^,)]*)`, "g");
+  return new RegExp(String.raw`\bfn\s+(${names})\s*\(\s*([^,)]*)`, "g");
 }
 
-/** Offsets of every entry point in a trait/impl block (found by `header`) whose first parameter is not a pointer. */
-function entryOffenders(stripped: string, header: RegExp, fns: string): number[] {
-  const out: number[] = [];
+/** Checks 1 and 2: the named fns inside every block introduced by `header`. */
+function scanEntries(stripped: string, header: RegExp, fns: string): Scan {
+  const scan: Scan = { checked: [], offenders: [] };
   for (const h of stripped.matchAll(header)) {
     const item = itemBlock(stripped, h.index);
     if (item === null) continue;
     for (const f of item.block.matchAll(fnWithFirstParam(fns))) {
-      if (!POINTER_PARAM.test(f[1].trim())) out.push(item.start + f.index);
+      const offset = item.start + f.index;
+      scan.checked.push({ offset, name: f[1] });
+      if (!POINTER_PARAM.test(f[2].trim())) scan.offenders.push(offset);
     }
   }
-  return out;
+  return scan;
 }
 
-// `JobContext::run`: the declaration and every implementation.
+// 1. `JobContext::run`: the declaration and every implementation.
 const JOB_CONTEXT = /\btrait\s+JobContext\b|\bJobContext\s+for\b/g;
-function jobRunOffenders(stripped: string): number[] {
-  return entryOffenders(stripped, JOB_CONTEXT, "run");
+function scanJobRun(stripped: string): Scan {
+  return scanEntries(stripped, JOB_CONTEXT, "run");
 }
 
-// `FileOpener::get_fd` / `get_fd_by_opening`, the frames that invoke the continuation.
+// 2. `FileOpener::get_fd` / `get_fd_by_opening`, the frames that invoke the continuation.
 const FILE_OPENER = /\btrait\s+FileOpener\b/g;
-function fileOpenerOffenders(stripped: string): number[] {
-  return entryOffenders(stripped, FILE_OPENER, "get_fd|get_fd_by_opening");
+function scanFileOpener(stripped: string): Scan {
+  return scanEntries(stripped, FILE_OPENER, "get_fd|get_fd_by_opening");
 }
 
-// An open continuation typed as taking the task by reference, wherever it is
-// spelled (the `get_fd` parameter, the Windows stash accessors, a field).
-const OPEN_CONTINUATION_BY_REF = /\bfn\s*\(\s*&\s*(?:'\w+\s+)?mut\s+Self\s*,\s*Fd\s*\)/g;
+// 3. The alias itself. `[^;]*` spans a rustfmt-wrapped right-hand side.
+const OPEN_CALLBACK_DEF = /\btype\s+OpenCallback\s*<[^>]*>\s*=\s*([^;]*);/g;
+const POINTER_FN_TYPE = /^unsafe\s+fn\s*\(\s*(?:\w+\s*:\s*)?\*mut\b/;
+function scanOpenCallbackDef(stripped: string): Scan {
+  const scan: Scan = { checked: [], offenders: [] };
+  for (const m of stripped.matchAll(OPEN_CALLBACK_DEF)) {
+    scan.checked.push({ offset: m.index, name: "OpenCallback" });
+    if (!POINTER_FN_TYPE.test(m[1].trim())) scan.offenders.push(m.index);
+  }
+  return scan;
+}
+
+// 4. A continuation type taking the task by reference, with or without
+// parameter names and however `Fd` is qualified: `fn(&mut Self, Fd)`,
+// `fn(this: &mut T, fd: bun_sys::Fd)`.
+const OPEN_CONTINUATION_BY_REF =
+  /\bfn\s*\(\s*(?:\w+\s*:\s*)?&\s*(?:'\w+\s+)?mut\s+\w+\s*,\s*(?:\w+\s*:\s*)?(?:[\w:]+::)?Fd\s*\)/g;
 function openContinuationOffenders(stripped: string): number[] {
   return [...stripped.matchAll(OPEN_CONTINUATION_BY_REF)].map(m => m.index);
 }
@@ -127,7 +163,13 @@ function lineOf(text: string, offset: number): number {
   return text.slice(0, offset).split("\n").length;
 }
 
-const offenders = { jobRun: [] as string[], fileOpener: [] as string[], openContinuation: [] as string[] };
+const found = { jobRun: [] as string[], fileOpener: [] as string[], openCallbackDef: [] as string[] };
+const offenders = {
+  jobRun: [] as string[],
+  fileOpener: [] as string[],
+  openCallbackDef: [] as string[],
+  openContinuation: [] as string[],
+};
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -141,13 +183,16 @@ for (const abs of rustSources) {
   // describing this hazard) don't count. `[ \t]*`, not `\s*`: `\s` crosses
   // newlines and would swallow blank lines, shifting the reported line numbers.
   const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const offset of jobRunOffenders(stripped)) offenders.jobRun.push(`${source}:${lineOf(stripped, offset)}`);
-  for (const offset of fileOpenerOffenders(stripped)) {
-    offenders.fileOpener.push(`${source}:${lineOf(stripped, offset)}`);
+  const at = (offset: number) => `${source}:${lineOf(stripped, offset)}`;
+  for (const [check, scan] of [
+    ["jobRun", scanJobRun(stripped)],
+    ["fileOpener", scanFileOpener(stripped)],
+    ["openCallbackDef", scanOpenCallbackDef(stripped)],
+  ] as const) {
+    for (const c of scan.checked) found[check].push(check === "fileOpener" ? `${source} ${c.name}` : at(c.offset));
+    for (const offset of scan.offenders) offenders[check].push(at(offset));
   }
-  for (const offset of openContinuationOffenders(stripped)) {
-    offenders.openContinuation.push(`${source}:${lineOf(stripped, offset)}`);
-  }
+  for (const offset of openContinuationOffenders(stripped)) offenders.openContinuation.push(at(offset));
 }
 
 test("scans a non-empty set of tracked Rust sources", () => {
@@ -182,16 +227,21 @@ test("the JobContext::run pattern matches the banned shapes and nothing else", (
     // impl block, before or after it, and is not what this lint is about.
     "impl Foo {\n    fn run(&mut self) {}\n}\n\n" + impl("this: *mut Self,\n        _vm: &Borrow,", "unsafe fn"),
     impl("this: *mut Self,\n        _vm: &Borrow,", "unsafe fn") + "\nimpl Foo {\n    fn run(&mut self) {}\n}\n",
-    // An unrelated trait with a `run` taking a reference.
-    "impl TaskContext for Foo {\n    fn run(&mut self) {}\n}\n",
   ];
-  expect(banned.map(s => jobRunOffenders(s).length)).toEqual(banned.map(() => 1));
-  expect(allowed.map(s => jobRunOffenders(s).length)).toEqual(allowed.map(() => 0));
+  expect(banned.map(s => scanJobRun(s).offenders.length)).toEqual(banned.map(() => 1));
+  expect(allowed.map(s => scanJobRun(s).offenders.length)).toEqual(allowed.map(() => 0));
+  // Every fixture above contains exactly one `run` this check is about, and
+  // an unrelated trait's `run` is not examined at all.
+  expect([...banned, ...allowed].map(s => scanJobRun(s).checked.length)).toEqual([...banned, ...allowed].map(() => 1));
+  expect(scanJobRun("impl TaskContext for Foo {\n    fn run(&mut self) {}\n}\n")).toEqual({
+    checked: [],
+    offenders: [],
+  });
 });
 
-test("the FileOpener patterns match the banned shapes and nothing else", () => {
+test("the FileOpener entry-point pattern matches the banned shapes and nothing else", () => {
   const opener = (body: string) => `pub trait FileOpener: Sized {\n    fn opened_fd(&self) -> Fd;\n${body}}\n`;
-  const bannedEntries = [
+  const banned = [
     // `get_fd` / `get_fd_by_opening` as they were.
     opener(
       "    fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {\n        callback(self, self.opened_fd());\n    }\n",
@@ -203,40 +253,92 @@ test("the FileOpener patterns match the banned shapes and nothing else", () => {
     ),
     opener("    unsafe fn get_fd(this: &mut Self, callback: OpenCallback<Self>) {}\n"),
   ];
-  const allowedEntries = [
+  const allowed = [
     opener("    unsafe fn get_fd(this: *mut Self, callback: OpenCallback<Self>) {}\n"),
     opener(
       "    #[cfg(not(windows))]\n    unsafe fn get_fd_by_opening(this: *mut Self, callback: OpenCallback<Self>) {}\n",
     ),
-    // The accessors the entry points use may take `self`: they return before the hand-over.
+  ];
+  expect(banned.map(s => scanFileOpener(s).offenders.length)).toEqual(banned.map(() => 1));
+  expect(allowed.map(s => scanFileOpener(s).offenders.length)).toEqual(allowed.map(() => 0));
+  expect([...banned, ...allowed].map(s => scanFileOpener(s).checked.length)).toEqual(
+    [...banned, ...allowed].map(() => 1),
+  );
+  // The accessors the entry points call may take `self` (they return before
+  // the hand-over), and a `get_fd` outside the trait block (the sinks have
+  // one) is something else: neither is examined.
+  const notExamined = [
     opener(
       "    fn set_opened_fd(&mut self, fd: Fd);\n    fn open_pathlike(&mut self) -> Fd {\n        Fd::INVALID\n    }\n",
     ),
-    // A `get_fd` outside the trait block (the sinks have one) is something else.
     "impl Sink {\n    fn get_fd(&self) -> i32 {\n        self.fd\n    }\n}\n",
     opener("") + "\nimpl Reader {\n    fn get_fd(&self) -> Fd {\n        self.fd\n    }\n}\n",
   ];
-  expect(bannedEntries.map(s => fileOpenerOffenders(s).length)).toEqual(bannedEntries.map(() => 1));
-  expect(allowedEntries.map(s => fileOpenerOffenders(s).length)).toEqual(allowedEntries.map(() => 0));
+  expect(notExamined.map(s => scanFileOpener(s))).toEqual(notExamined.map(() => ({ checked: [], offenders: [] })));
+});
 
-  const bannedContinuations = [
+test("the OpenCallback patterns match the banned shapes and nothing else", () => {
+  const bannedDefs = [
+    // The alias pointed back at the old continuation shape, in any spelling.
+    "pub type OpenCallback<T> = fn(&mut T, Fd);",
+    "pub type OpenCallback<T> = unsafe fn(this: &mut T, fd: Fd);",
+    "pub type OpenCallback<T> =\n    unsafe fn(this: &mut T, fd: bun_sys::Fd);",
+    // A safe fn over the pointer: callers could then pass anything.
+    "pub type OpenCallback<T> = fn(*mut T, Fd);",
+  ];
+  const allowedDefs = [
+    "pub type OpenCallback<T> = unsafe fn(this: *mut T, fd: Fd);",
+    "pub(crate) type OpenCallback<T> = unsafe fn(*mut T, Fd);",
+    "pub type OpenCallback<T> =\n    unsafe fn(this: *mut T, fd: bun_sys::Fd);",
+  ];
+  expect(bannedDefs.map(s => scanOpenCallbackDef(s).offenders.length)).toEqual(bannedDefs.map(() => 1));
+  expect(allowedDefs.map(s => scanOpenCallbackDef(s).offenders.length)).toEqual(allowedDefs.map(() => 0));
+  expect([...bannedDefs, ...allowedDefs].map(s => scanOpenCallbackDef(s).checked.length)).toEqual(
+    [...bannedDefs, ...allowedDefs].map(() => 1),
+  );
+  // Uses of the alias, and other callback aliases, are not definitions of it.
+  const notDefs = [
+    "open_callback: OpenCallback<Self>,",
+    "pub type RequestCallback = unsafe fn(*mut Request) -> Action;",
+  ];
+  expect(notDefs.map(s => scanOpenCallbackDef(s))).toEqual(notDefs.map(() => ({ checked: [], offenders: [] })));
+
+  const bannedSpellings = [
     "fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {",
     "fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));",
     "fn open_callback(&self) -> fn(&mut Self, Fd);",
     "open_callback: fn(&mut Self, Fd),",
     "open_callback: fn(&'a mut Self, Fd),",
     "cb: fn( &mut Self , Fd ),",
+    // Named parameters, a concrete task type, a qualified `Fd`.
+    "= unsafe fn(this: &mut T, fd: Fd);",
+    "open_callback: fn(&mut ReadFileUV, Fd),",
+    "cb: fn(&mut Self, bun_sys::Fd),",
   ];
-  const allowedContinuations = [
+  const allowedSpellings = [
     "pub type OpenCallback<T> = unsafe fn(this: *mut T, fd: Fd);",
     "open_callback: OpenCallback<Self>,",
     "cb: unsafe fn(*mut Self, Fd),",
     // A predicate over the receiver, not a continuation that takes it over.
     "validate: fn(&mut Self, usize) -> bool,",
     "fn(&mut Self)",
+    // A function item is not a fn-pointer type.
+    "fn run_with_fd(&mut self, fd: Fd) {",
   ];
-  expect(bannedContinuations.map(s => openContinuationOffenders(s).length)).toEqual(bannedContinuations.map(() => 1));
-  expect(allowedContinuations.map(s => openContinuationOffenders(s).length)).toEqual(allowedContinuations.map(() => 0));
+  expect(bannedSpellings.map(s => openContinuationOffenders(s).length)).toEqual(bannedSpellings.map(() => 1));
+  expect(allowedSpellings.map(s => openContinuationOffenders(s).length)).toEqual(allowedSpellings.map(() => 0));
+});
+
+test("the anchored checks still find the declarations they are about", () => {
+  // If one of these goes empty or changes shape, the trait / alias was renamed
+  // or moved and the anchors above need updating, not the bans below.
+  expect(found.jobRun.some(entry => entry.startsWith("src/jsc/job.rs:"))).toBeTrue();
+  expect(found.jobRun.length).toBeGreaterThanOrEqual(10);
+  expect(found.fileOpener.toSorted()).toEqual([
+    "src/runtime/webcore/Blob.rs get_fd",
+    "src/runtime/webcore/Blob.rs get_fd_by_opening",
+  ]);
+  expect(found.openCallbackDef).toHaveLength(1);
 });
 
 test("every JobContext::run takes the off-thread part by pointer", () => {
@@ -247,6 +349,10 @@ test("FileOpener's entry points take the task by pointer", () => {
   expect(offenders.fileOpener).toEqual([]);
 });
 
-test("no open continuation takes the task by reference", () => {
+test("OpenCallback is an unsafe fn over the task's pointer", () => {
+  expect(offenders.openCallbackDef).toEqual([]);
+});
+
+test("no continuation type takes the task by reference", () => {
   expect(offenders.openContinuation).toEqual([]);
 });

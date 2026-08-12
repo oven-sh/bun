@@ -2204,7 +2204,9 @@ mod _async_tasks {
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
             // May finish synchronously (no subdirectories) or fan out; the last
-            // subtask finishes the token, so this is the hand-over.
+            // subtask finishes the token. The hand-over happens inside this call:
+            // `perform_work` and the steps under it still take `&mut self`, so
+            // this frame only stops adding a protected reference of its own.
             // SAFETY: fn contract; nothing touches `*this` here afterwards.
             unsafe { (*this).perform_work(root_path_z, &mut buf, true) };
             None

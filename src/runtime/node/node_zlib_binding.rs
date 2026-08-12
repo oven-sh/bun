@@ -242,11 +242,8 @@ pub(crate) trait CompressionStreamImpl:
 
     // Intrusive refcount.
     fn ref_(&self);
-    /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
-    /// `heap::take`) when it hits zero. A call that can hit zero must pass the
-    /// wrapper's own `m_ctx` pointer, never a cast `&self` (`finalize` gets it
-    /// from the GC, the write completion from `write`); `write_sync`'s
-    /// bracketed pair cannot hit zero while the wrapper's ref is live.
+    /// Decrement the intrusive refcount; frees `*this` at zero, so a call that
+    /// can reach zero passes the wrapper's `m_ctx` pointer, not a cast `&self`.
     ///
     /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
     /// in `constructor()`. After this returns, `*this` may have been freed.

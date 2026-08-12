@@ -147,6 +147,15 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
+/* Values a backend passes as the `eof` argument of us_internal_dispatch_ready_poll.
+ * Any nonzero value is an end-of-stream hint for the read side (kqueue's read-filter
+ * EV_EOF, libuv's UV_EOF / deferred DISCONNECT); the socket may still be writable and
+ * allow_half_open is honored. LIBUS_POLL_HANGUP is epoll's EPOLLHUP: the kernel has
+ * marked BOTH directions shut (AF_UNIX peer close(), TCP after FIN in each direction
+ * or RST), so nothing can ever be written, and unlike EPOLLIN it cannot be masked
+ * off - it is reported on every epoll_wait until the fd is closed. */
+#define LIBUS_POLL_EOF 1
+#define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);

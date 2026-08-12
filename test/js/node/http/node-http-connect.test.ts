@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, nodeExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";
 
 import { once } from "node:events";
@@ -618,6 +618,76 @@ describe("HTTP server CONNECT", () => {
       }).toEqual({
         server: ["server:end", "server:finish", "server:close"],
         hasClientClose: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.skipIf(!isLinux)(
+    "AF_UNIX CONNECT sockets whose peer closes first are closed, not spun on EPOLLHUP forever",
+    async () => {
+      // A CONNECT hand-off leaves the server socket allow_half_open. When the
+      // peer of an AF_UNIX socket close()s, Linux reports EPOLLHUP (not just a
+      // FIN), which is level-triggered and cannot be masked off. Before the fix
+      // the half-open path only dropped readable interest and got re-dispatched
+      // on every epoll_wait: 'close' never fired, the fd was never released,
+      // and each such socket pinned the event loop at 100% CPU for the life of
+      // the process. A long-lived HTTP proxy listening on a unix socket can
+      // accumulate tens of thousands of these. The handler deliberately never
+      // ends its own side: the peer's close() alone must release the socket.
+      // (TCP does not exercise this: a peer FIN is EPOLLIN + recv()==0, and
+      // once readable interest is dropped it is quiet.)
+      const fixture = /* js */ `
+        const http = require("node:http");
+        const net = require("node:net");
+        const N = 8;
+        const clients = new Map();
+        let ends = 0;
+        let closes = 0;
+        const server = http.createServer();
+        server.on("connect", (req, socket) => {
+          socket.on("error", () => {});
+          socket.on("end", () => ends++);
+          socket.on("close", () => {
+            if (++closes === N) {
+              console.log(JSON.stringify({ ends, closes }));
+              server.close();
+            }
+          });
+          // Now that the server holds the handed-off socket, hang up this
+          // request's client without it ever seeing a response.
+          clients.get(req.url).destroy();
+        });
+        server.listen(process.env.SOCK, () => {
+          for (let i = 0; i < N; i++) {
+            const target = "peer-" + i + ":443";
+            const client = net.connect(process.env.SOCK, () => {
+              client.write("CONNECT " + target + " HTTP/1.1\\r\\nHost: " + target + "\\r\\n\\r\\n");
+            });
+            client.on("error", () => {});
+            clients.set(target, client);
+          }
+        });
+        // Failure backstop only: with the bug the loop is busy forever and this
+        // process would otherwise never exit, so report the counts instead of
+        // timing out. unref() so it cannot delay the natural exit that follows
+        // server.close() once the sockets do close.
+        setTimeout(() => {
+          console.log(JSON.stringify({ ends, closes }));
+          process.exit(1);
+        }, 3_000).unref();
+      `;
+      using dir = tempDir("connect-unix-hangup", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, SOCK: join(String(dir), "proxy.sock") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ ends: 8, closes: 8 }),
         stderr: "",
         exitCode: 0,
       });

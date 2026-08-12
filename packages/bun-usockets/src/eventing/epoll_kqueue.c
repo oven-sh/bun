@@ -263,7 +263,11 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
              * forwarded as a libus close code, and a raw EPOLLERR (8) would
              * read as errno 8 (ENOEXEC) in the JS error path. */
             const int error = !!(events & EPOLLERR);
-            const int eof = events & EPOLLHUP;
+            /* A read-side FIN arrives as EPOLLIN + recv()==0 (EPOLLRDHUP is never
+             * requested, see us_poll_start_rc); EPOLLHUP means both directions are
+             * down and is reported on every wait until the fd is closed. Tag it so
+             * the socket dispatch closes instead of treating it as another FIN. */
+            const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : 0;
             events &= us_poll_events(poll);
             if (events || error || eof) {
                 us_internal_dispatch_ready_poll(poll, error, eof, events);

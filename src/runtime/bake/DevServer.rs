@@ -4322,12 +4322,9 @@ pub(super) fn finalize_bundle(
 
     let mut has_route_bits_set = false;
 
-    // Framework routes whose server-side files (or anything those import) were
-    // re-bundled; a layout counts for every route below it. Routes affected
-    // through client components are traced separately below. The `meta.styles`
-    // of these routes was traced through the old graph, so it is dropped here
-    // whether or not anybody is listening for hot updates: only the payload
-    // built below depends on listeners.
+    // Framework routes whose server-side files were re-bundled (a layout counts
+    // for every route below it) lose their cached `meta.styles` whether or not
+    // anybody listens for hot updates; only the payload below depends on that.
     let mut framework_route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
     for request in &dev.incremental_result.framework_routes_affected {
         let route = dev.router.route_ptr(request.route_index());
@@ -4457,9 +4454,8 @@ pub(super) fn finalize_bundle(
         has_route_bits_set = true;
     }
 
-    // `route_bits` will have all of the routes that were modified. Their
-    // caches were invalidated above and in `invalidate_client_bundle`; what is
-    // left is telling their viewers which CSS files the routes have now.
+    // `route_bits` will have all of the routes that were modified. Tell their
+    // viewers which CSS files these routes have now.
     if has_route_bits_set && will_hear_hot_update {
         let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();

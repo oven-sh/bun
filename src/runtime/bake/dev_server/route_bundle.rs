@@ -31,9 +31,8 @@ pub struct Framework {
     pub(crate) cached_module_list: jsc::StrongOptional,
     /// Embeds `client_script_generation`; cleared by `invalidate_client_bundle`.
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
-    /// `meta.styles`, traced through the route's server files and the client
-    /// components they reach. Cleared by `invalidate_client_bundle` and, when
-    /// any of the route's server files were re-bundled, by `finalize_bundle`.
+    /// `meta.styles`; cleared by `invalidate_client_bundle` and, for
+    /// server-side changes, by `finalize_bundle`.
     pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
@@ -127,10 +126,8 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// Called when a client-side file of the route was re-bundled. Drops the
-    /// client bundle along with what the route serves that is derived from
-    /// it: the bundle URL and `meta.styles` of a framework route, the rendered
-    /// page of an HTML route. They are rebuilt on the next request.
+    /// Called when a client-side file of the route was re-bundled: drops the
+    /// client bundle and what the route serves derived from it.
     ///
     /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// only `dev.source_maps` is touched, and the two keystone

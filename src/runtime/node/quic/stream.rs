@@ -207,6 +207,22 @@ impl QuicStream {
             st.pending = 0;
         });
         self.write_stat(IDX_STATS_OPENED_AT, super::now_ns());
+        // Wrapper already reset while still pending: propagate to the lsquic
+        // stream it was just given. `read_ended` distinguishes a full cancel
+        // (`mark_reset`, both sides) from user `resetStream()` (write side
+        // only, read must still come up).
+        if let Some((code, read_done)) =
+            self.with_state(|st| (st.reset != 0).then_some((st.reset_code, st.read_ended != 0)))
+        {
+            self.pending_headers.with_mut(Vec::clear);
+            if read_done {
+                s.stop_sending(code);
+                s.reset(code);
+                s.shutdown_internal();
+                return;
+            }
+            s.reset(code);
+        }
         let pre_reset_code = s.error_code();
         if s.is_rejected() && self.peer_stop_sending_code.get().is_none() {
             self.peer_stop_sending_code.set(Some(pre_reset_code));
@@ -384,8 +400,8 @@ impl QuicStream {
         self.wakeup.replace(None)
     }
 
-    /// 0-RTT was rejected: Node destroys every stream opened during the
-    /// early-data phase.
+    /// 0-RTT was rejected: Node destroys every early-data stream. Runs
+    /// inside the engine tick from `on_early_data_failed`.
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
@@ -393,9 +409,16 @@ impl QuicStream {
             o.fin_pending = false;
             o.trailers_pending = false;
         });
+        self.pending_headers.with_mut(Vec::clear);
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
-            // Node destroys it silently.
+            // `shutdown_internal` alone leaves `sm_readable` at the H3 QPACK
+            // filter, which asserts on a read-done stream. `reset` makes
+            // `send_ctl_next_lost` elide this stream's 0-RTT frames.
+            s.stop_sending(code);
+            s.reset(code);
+            // Sets U_WRITE_DONE so on_close schedules without waiting on the
+            // RST ack; the queued RST/STOP_SENDING still go out.
             s.shutdown_internal();
         }
     }

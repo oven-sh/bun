@@ -208,16 +208,16 @@ void us_internal_socket_group_unlink_socket(us_socket_group_r group, us_socket_r
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 void us_internal_socket_after_open(us_socket_r s, int error);
-/* SSL_new() + BIO setup + connect/accept state; sets s->ssl and the ssl_*
- * bitfields on us_socket_t. No separate per-socket allocation — `s->ssl` is a
- * direct SSL*, and the 6 state bits live in us_socket_t's pad-to-pointer gap.
+/* SSL_new() + BIO setup + connect/accept state; sets s->ssl, s->ssl_id and the
+ * ssl_* bitfields on us_socket_t. No separate per-socket allocation: `s->ssl`
+ * is a direct SSL*, and the state bits live in us_socket_t's pad-to-pointer gap.
  * `listener` is the accepting us_listen_socket_t (server) or NULL (client/
  * adopt) — stashed per-SSL so sni_cb can resolve the right tree without
  * relying on a shared SSL_CTX servername_arg. */
 void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
-/* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
+/* Releases the per-loop TLS scratch owned by s (keyed by s->ssl_id), then
+ * SSL_free(s->ssl); s->ssl = NULL. Idempotent; safe on plain sockets. */
 void us_internal_ssl_detach(us_socket_r s);
-void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -329,6 +329,14 @@ struct us_socket_t {
    * the sweep escalates via SO_ERROR when the peer later resets). */
   unsigned char unclassified_send_failures : 7;
   unsigned char fin_deferred : 1;
+  /* Identity of the TLS connection: handed out by us_internal_ssl_attach from
+   * a per-loop counter, 0 on plain sockets. The per-loop TLS scratch a single
+   * connection owns at a time (the spill slot and the parked handshake reason
+   * in openssl.c's loop_ssl_data) is keyed by this rather than by the socket's
+   * address, which the allocator recycles and adoption moves; an id is never
+   * reused on a loop. Occupies former tail padding on epoll/kqueue (see the
+   * size assert below). */
+  uint64_t ssl_id;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -341,6 +349,10 @@ struct us_socket_t {
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
+/* 16-byte poll header + 8 bytes of small fields + ssl_id + 6 pointers, and
+ * LIBUS_EXT_ALIGNMENT rounds the total to a multiple of 16: ssl_id replaced
+ * tail padding, so the struct (and the ext offset behind it) did not grow. */
+_Static_assert(sizeof(struct us_socket_t) == 5 * LIBUS_EXT_ALIGNMENT, "us_socket_t grew");
 #endif
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block

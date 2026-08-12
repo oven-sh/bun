@@ -86,10 +86,18 @@ struct loop_ssl_data {
    * ERR_error_string_n, which NUL-terminates and truncates to the buffer
    * size (OpenSSL's own error strings stay well under it). */
   char ssl_last_fatal_error[US_SSL_FATAL_ERROR_REASON_MAX];
-  /* The socket that parked ssl_last_fatal_error. The scratch is per-loop, so
-   * a reason parked by one socket must never be reported for another (a
-   * server and a client in the same process share this loop). */
-  void *ssl_last_fatal_error_owner;
+  /* ssl_id of the connection that parked ssl_last_fatal_error, 0 when
+   * nothing is parked. The scratch is per-loop, so a reason parked by one
+   * socket must never be reported for another (a server and a client in the
+   * same process share this loop). */
+  uint64_t ssl_last_fatal_error_owner;
+
+  /* Source of us_socket_t.ssl_id: bumped once per us_internal_ssl_attach, so
+   * an id names one TLS connection on this loop for the loop's whole life,
+   * whatever address its us_socket_t has at the moment (the allocator
+   * recycles addresses; adoption moves a live connection to a new one).
+   * ssl_last_fatal_error_owner and ssl_spill_owner are keyed by it. */
+  uint64_t ssl_id_counter;
 
   /* Ciphertext write batching: while one us_internal_ssl_write runs,
    * BIO_s_custom_write appends each sealed record here instead of issuing one
@@ -105,8 +113,9 @@ struct loop_ssl_data {
    * SSL believes these records were written, so they MUST reach this exact
    * socket's fd, in order, before any of its later records. Drained from the
    * owner's writable event; while the slot is occupied, other sockets write
-   * through per record (the pre-batching path). */
-  struct us_socket_t *ssl_spill_owner;
+   * through per record (the pre-batching path). ssl_spill_owner is the
+   * owning connection's ssl_id, 0 while the slot is free. */
+  uint64_t ssl_spill_owner;
   char *ssl_spill;
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
@@ -701,6 +710,14 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   return written;
 }
 
+/* Whether `s` is the connection a per-loop slot (ssl_spill_owner or
+ * ssl_last_fatal_error_owner) is held for. A free slot holds 0, as does the
+ * ssl_id of a plain socket (the release paths run for those too on close), so
+ * 0 must never count as a match. */
+static inline int ssl_owns_slot(uint64_t slot_owner, const struct us_socket_t *s) {
+  return s->ssl_id != 0 && slot_owner == s->ssl_id;
+}
+
 /* Flush the ciphertext batch to its socket in one write. A partial write
  * spills the remainder into the loop's single spill slot - SSL already
  * counts those records as delivered, so they are drained (in order, to this
@@ -725,26 +742,30 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
     loop_ssl_data->ssl_spill = spill;
     loop_ssl_data->ssl_spill_len = remainder;
     loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = s;
+    loop_ssl_data->ssl_spill_owner = s->ssl_id;
     return 0;
   }
   return 1;
 }
 
+static void ssl_spill_free(struct loop_ssl_data *loop_ssl_data) {
+  us_free(loop_ssl_data->ssl_spill);
+  loop_ssl_data->ssl_spill = NULL;
+  loop_ssl_data->ssl_spill_len = 0;
+  loop_ssl_data->ssl_spill_off = 0;
+  loop_ssl_data->ssl_spill_owner = 0;
+}
+
 /* Try to drain the spill slot for `s`. Returns 1 when clear (or not ours),
  * 0 while ciphertext is still pending for this socket. */
 static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
-  if (loop_ssl_data->ssl_spill_owner != s) return 1;
+  if (!ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) return 1;
   unsigned int pending = loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
   int written = us_socket_raw_write(s, loop_ssl_data->ssl_spill + loop_ssl_data->ssl_spill_off, (int)pending);
   if (written < 0) written = 0;
   loop_ssl_data->ssl_spill_off += (unsigned int)written;
   if (loop_ssl_data->ssl_spill_off == loop_ssl_data->ssl_spill_len) {
-    us_free(loop_ssl_data->ssl_spill);
-    loop_ssl_data->ssl_spill = NULL;
-    loop_ssl_data->ssl_spill_len = 0;
-    loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = NULL;
+    ssl_spill_free(loop_ssl_data);
     return 1;
   }
   return 0;
@@ -753,29 +774,23 @@ static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket
 /* Release the spill slot when its owner dies (close path). */
 static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
+  if (loop_ssl_data && ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) {
     /* Hard close with ciphertext still spilled: give the kernel one last
      * chance to take it (it usually can - the spill is bounded small). */
     ssl_drain_spill(loop_ssl_data, s);
   }
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
-    us_free(loop_ssl_data->ssl_spill);
-    loop_ssl_data->ssl_spill = NULL;
-    loop_ssl_data->ssl_spill_len = 0;
-    loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = NULL;
+  if (loop_ssl_data && ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) {
+    ssl_spill_free(loop_ssl_data);
   }
 }
 
-void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
-                                      struct us_socket_t *new_s) {
+/* Drop the handshake reason `s` parked, if any: its owner is going away or is
+ * about to report a different verdict, so no dispatch may claim it later. */
+static void ssl_clear_parked_reason(struct us_loop_t *loop, struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  if (!loop_ssl_data) return;
-  if (loop_ssl_data->ssl_spill_owner == old_s) {
-    loop_ssl_data->ssl_spill_owner = new_s;
-  }
-  if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
-    loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
+  if (loop_ssl_data && ssl_owns_slot(loop_ssl_data->ssl_last_fatal_error_owner, s)) {
+    loop_ssl_data->ssl_last_fatal_error[0] = 0;
+    loop_ssl_data->ssl_last_fatal_error_owner = 0;
   }
 }
 
@@ -1587,6 +1602,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   }
 
   s->ssl = ssl;
+  s->ssl_id = ++loop_ssl_data->ssl_id_counter;
   s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
@@ -1602,11 +1618,13 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
 }
 
 void us_internal_ssl_detach(struct us_socket_t *s) {
-  /* Error/RST teardowns (us_internal_socket_close_raw) reach here without going
-   * through us_internal_ssl_close: release any spilled ciphertext this socket
-   * owns or the loop-wide slot dangles (batching permanently disabled, and a
-   * reused socket address would drain the dead socket's records). */
+  /* Every teardown ends here, including the error/RST ones that never pass
+   * through us_internal_ssl_close, so this is where the connection gives back
+   * the per-loop scratch it may still hold: spilled ciphertext (an occupied
+   * slot keeps batching off for the whole loop) and a parked handshake reason
+   * no dispatch can claim any more. */
   ssl_release_spill(s->group->loop, s);
+  ssl_clear_parked_reason(s->group->loop, s);
   if (s->ssl) {
     if (s->ssl_in_use) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
@@ -1618,13 +1636,6 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
     }
     SSL_free(s_ssl(s));
     s->ssl = NULL;
-    /* Same for a parked handshake reason: no dispatch can claim it now, and a
-     * socket reusing this address would report it as its own failure. */
-    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
-      loop_ssl_data->ssl_last_fatal_error[0] = 0;
-      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
-    }
   }
 }
 
@@ -1721,7 +1732,7 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
     if (ssl_queue_err != 0) {
       ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
                          sizeof(loop_ssl_data->ssl_last_fatal_error));
-      loop_ssl_data->ssl_last_fatal_error_owner = s;
+      loop_ssl_data->ssl_last_fatal_error_owner = s->ssl_id;
     }
   }
   ERR_clear_error();
@@ -1739,13 +1750,13 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
   if (!loop_ssl_data || !loop_ssl_data->ssl_last_fatal_error[0] ||
-      loop_ssl_data->ssl_last_fatal_error_owner != (void *)s) {
+      !ssl_owns_slot(loop_ssl_data->ssl_last_fatal_error_owner, s)) {
     return 0;
   }
   char reason[sizeof(loop_ssl_data->ssl_last_fatal_error)];
   memcpy(reason, loop_ssl_data->ssl_last_fatal_error, sizeof(reason));
   loop_ssl_data->ssl_last_fatal_error[0] = 0;
-  loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+  loop_ssl_data->ssl_last_fatal_error_owner = 0;
   struct us_bun_verify_error_t verify_error = {
       .error = -71, .code = "EPROTO", .reason = reason};
   us_dispatch_handshake(s, 0, verify_error);
@@ -1765,13 +1776,7 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
    * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), not
    * the SSL protocol reason that may wrap it. */
   if (!success && inline_rejected && s->ssl && s_ssl(s)) {
-    struct loop_ssl_data *loop_ssl_data =
-        (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data &&
-        loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
-      loop_ssl_data->ssl_last_fatal_error[0] = 0;
-      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
-    }
+    ssl_clear_parked_reason(s->group->loop, s);
     us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
     /* Nothing else will tear this connection down (the peer is still waiting
      * for a Finished that will never come) - close unless JS already did. */
@@ -2093,7 +2098,7 @@ static struct us_socket_t *ssl_deliver_eof(struct us_socket_t *s) {
 static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
   if (!s->ssl_write_wants_read || s->ssl_read_wants_write) return s;
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) return s;
+  if (loop_ssl_data && ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) return s;
   s->ssl_write_wants_read = 0;
   return us_internal_ssl_on_writable(s);
 }
@@ -2324,7 +2329,7 @@ restart:
           ssl_park_fatal_reason(s);
         }
         ssl_close(s, 0, NULL);
-        loop_ssl_data->ssl_last_fatal_error[0] = 0;
+        ssl_clear_parked_reason(s->group->loop, s);
         return NULL;
       } else {
         if (err == SSL_ERROR_WANT_WRITE) s->ssl_read_wants_write = 1;
@@ -2461,7 +2466,7 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
  * userspace. */
 unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-  if (!loop_ssl_data || loop_ssl_data->ssl_spill_owner != s) return 0;
+  if (!loop_ssl_data || !ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) return 0;
   return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
 }
 
@@ -2505,7 +2510,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * we report as written are honest up to one bounded spill. Reporting a
    * whole large write as consumed while its ciphertext sat in memory let the
    * layers above fire 'finish' and close before the data reached the wire. */
-  int batching = (loop_ssl_data->ssl_spill_owner == NULL);
+  int batching = (loop_ssl_data->ssl_spill_owner == 0);
   loop_ssl_data->ssl_write_batching = batching;
 
   int total = 0;
@@ -2565,7 +2570,7 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
    * writable event once the spill drains. */
   {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
+    if (loop_ssl_data && ssl_owns_slot(loop_ssl_data->ssl_spill_owner, s)) {
       if (!ssl_drain_spill(loop_ssl_data, s)) {
         s->ssl_shutdown_after_spill = 1;
         return;

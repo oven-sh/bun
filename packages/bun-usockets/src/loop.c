@@ -529,6 +529,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->group = accept_group;
                         s->kind = listen_socket->accept_kind;
                         s->ssl = NULL;
+                        s->ssl_id = 0;
                         s->connect_state = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;

@@ -316,9 +316,8 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
-            if (s->ssl) {
-                us_internal_ssl_socket_relocated(loop, s, new_s);
-            }
+            /* s->ssl and s->ssl_id moved with the copy; the per-loop TLS
+             * scratch is keyed by ssl_id, so nothing there needs re-pointing. */
         }
         if (c) {
             c->connecting_head = new_s;
@@ -355,6 +354,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->group = group;
     s->kind = 0; /* listener itself never dispatches */
     s->ssl = NULL;
+    s->ssl_id = 0;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
@@ -534,6 +534,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->group = group;
     s->kind = kind;
     s->ssl = NULL;
+    s->ssl_id = 0;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;

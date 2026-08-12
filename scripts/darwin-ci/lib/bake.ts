@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { config } from "./config";
+import { config, toolchain } from "./config";
 import { ensureHostKey, guest } from "./guest";
 import { fail, log } from "./shell";
 import { tart } from "./tart";
@@ -35,7 +35,7 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
 
   log(`bootstrap toolchain in guest (${config.bun.repo}@${ref})`);
   const status = await g.run(
-    `/bin/bash -l /tmp/bake.sh ${config.bun.repo} ${ref} ${config.buildkiteAgent.version} 2>&1 | tee /tmp/bake.log; grep -qx BAKE_OK /tmp/bake.log`,
+    `/bin/bash -l /tmp/bake.sh ${config.bun.repo} ${ref} ${config.buildkiteAgent.version} '${toolchain.join(" ")}' 2>&1 | tee /tmp/bake.log; grep -qx BAKE_OK /tmp/bake.log`,
   );
   if (status !== 0) fail(`bake failed in guest; ${image} untouched, ${staging} left running at ${ip} for inspection`);
 

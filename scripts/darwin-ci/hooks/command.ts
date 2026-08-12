@@ -86,7 +86,7 @@ async function retryBoot(): Promise<string | undefined> {
 
 async function pushEnv(g: ReturnType<typeof guest>): Promise<void> {
   const lines = Object.entries(env)
-    .filter(([key]) => /^(BUILDKITE|BUN_)|^(CI|ASAN_OPTIONS)$/.test(key) && !hostOnlyEnv.has(key))
+    .filter(([key]) => /^(BUILDKITE|BUN_|EXPECTED_PLATFORM_)|^(CI|ASAN_OPTIONS)$/.test(key) && !hostOnlyEnv.has(key))
     .map(([key, value]) => `${key}=${$.escape(String(value ?? ""))}`);
   const file = `/tmp/${vm}.env`;
   writeFileSync(file, lines.join("\n") + "\n");

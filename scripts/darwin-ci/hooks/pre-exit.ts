@@ -11,7 +11,8 @@ await tart.destroy(`bk-${process.env.BUILDKITE_JOB_ID ?? "none"}`);
 const vms = join(homedir(), ".tart", "vms");
 const tenMinutesAgo = Date.now() - 10 * 60_000;
 for (const name of readdirSync(vms).filter((name: string) => name.startsWith("bk-"))) {
-  if (statSync(join(vms, name)).mtimeMs > tenMinutesAgo) continue;
+  const stat = statSync(join(vms, name), { throwIfNoEntry: false });
+  if (!stat || stat.mtimeMs > tenMinutesAgo) continue;
   if (await succeeds($`pgrep -f ${`tart run ${name}`}`)) continue;
   await tart.remove(name);
   console.log(`pre-exit: reaped orphan guest ${name}`);

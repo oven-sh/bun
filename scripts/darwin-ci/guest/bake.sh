@@ -1,8 +1,8 @@
 #!/bin/bash
-# Runs inside a fresh guest to turn the base image into bun-ci-base. Args: <bun repo> <ref> <buildkite-agent version>
-set -uo pipefail
+# Runs inside a fresh guest to turn the base image into bun-ci-base. Args: <bun repo> <ref> <buildkite-agent version> <tools to verify>
+set -euo pipefail
 exec </dev/null
-repo=$1 ref=$2 agent_version=$3
+repo=$1 ref=$2 agent_version=$3 toolchain=$4
 
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' | sudo tee /etc/ssh/sshd_config.d/000-hardening.conf >/dev/null
 sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop >/dev/null 2>&1 || true
@@ -19,7 +19,7 @@ git clone -q --depth=1 --branch "$ref" "$repo" ~/bun-bootstrap
 (cd ~/bun-bootstrap && ./scripts/bootstrap.sh) || echo "bootstrap.sh exited $?; verifying toolchain"
 
 missing=0
-for tool in bun node cmake ninja ccache cargo go clang-21; do
+for tool in $toolchain; do
   path=$(bash -lc "command -v $tool" || true)
   printf '  %-10s %s\n' "$tool" "${path:-MISSING}"
   [ -n "$path" ] || missing=1

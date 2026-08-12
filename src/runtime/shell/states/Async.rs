@@ -150,10 +150,12 @@ impl Async {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        use bun_event_loop::ConcurrentTask::AutoDeinit;
         let me = interp.as_async_mut(this);
         let task = me.task;
         debug_assert!(!task.is_null());
+        // Same-thread "next tick" bounce through the owning loop's concurrent queue.
+        let poster = bun_jsc::ConcurrentPoster::from_event_loop_handle(&me.event_loop);
         match me.event_loop {
             EventLoopHandle::Js { .. } => {
                 // SAFETY: `task` is the live heap payload allocated in `init`
@@ -163,9 +165,9 @@ impl Async {
                 // before the state machine can enqueue again.
                 unsafe {
                     let ct = (*task).concurrent_task.from(task, AutoDeinit::ManualDeinit);
-                    me.event_loop.enqueue_task_concurrent(EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    });
+                    // This runs on the VM's own thread while it executes, so the
+                    // post is always accepted.
+                    let _ = poster.post_js(core::ptr::NonNull::from(ct));
                 }
             }
             EventLoopHandle::Mini(_) => {
@@ -175,8 +177,7 @@ impl Async {
                     task,
                     run_from_main_thread_mini,
                 );
-                me.event_loop
-                    .enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+                poster.post_mini(core::ptr::NonNull::new(any).expect("heap task"));
             }
         }
     }
@@ -212,6 +213,12 @@ enum NextAction {
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+    /// The `Async` node's bounce box, freed only at the end of a chain that
+    /// will not continue: free it here.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 /// Mini-loop trampoline.

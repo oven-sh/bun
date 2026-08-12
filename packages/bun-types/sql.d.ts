@@ -323,17 +323,38 @@ declare module "bun" {
       max_lifetime?: number | undefined;
 
       /**
-       * Whether to use TLS/SSL for the connection
+       * Whether to use TLS/SSL for the connection. A string selects the
+       * SSL mode (`"disable"`, `"allow"`, `"prefer"`, `"require"`, `"verify-ca"`, `"verify-full"`).
        * @default false
        */
-      tls?: Bun.BunFile | TLSOptions | boolean | undefined;
+      tls?:
+        | Bun.BunFile
+        | TLSOptions
+        | boolean
+        | "disable"
+        | "allow"
+        | "prefer"
+        | "require"
+        | "verify-ca"
+        | "verify-full"
+        | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
        * @deprecated Prefer {@link tls}
        * @default false
        */
-      ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
+      ssl?:
+        | Bun.BunFile
+        | TLSOptions
+        | boolean
+        | "disable"
+        | "allow"
+        | "prefer"
+        | "require"
+        | "verify-ca"
+        | "verify-full"
+        | undefined;
 
       /**
        * Unix domain socket path for connection

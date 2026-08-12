@@ -248,7 +248,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM);
+    WebCore::JSVMClientData::create(&vm, bunVM, /* isWorkerVM */ false);
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(
@@ -263,22 +263,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     global->setConsole(console);
     global->isThreadLocalDefaultGlobalObject = true;
 
-    // if (shouldDisableStopIfNecessaryTimer) {
     vm.heap.disableStopIfNecessaryTimer();
-    // }
-
-    // if you process.nextTick on a microtask we need thsi
-    // TODO: it segfaults! process.nextTick is scoped out for now i guess!
-    // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-    // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-    //     global->resetOnEachMicrotaskTick();
-    //     // Bun::JSNextTickQueue *queue =
-    //     //     uncheckedDowncast<Bun::JSNextTickQueue>(nextTickQueue);
-    //     // queue->drain(vm, global);
-    //     return;
-    //   }
-    // });
 
     return global;
 }

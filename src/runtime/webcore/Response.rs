@@ -216,12 +216,12 @@ pub struct Response {
     redirected: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
-    pub(crate) ref_count: Cell<u32>,
+    ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
-    pub(crate) weak_ptr_data: WeakPtrData,
+    weak_ptr_data: WeakPtrData,
     js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
@@ -1015,7 +1015,7 @@ impl Response {
             },
             |r| r.body.get().reset(),
         );
-        let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
+        let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
@@ -1154,7 +1154,7 @@ impl Response {
                 ..Default::default()
             };
 
-            let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
+            let url_string_value = args.next_eat().unwrap_or_default();
             url_string = OwnedString::new(if url_string_value.is_empty() {
                 BunString::empty()
             } else {

@@ -4403,7 +4403,12 @@ describe("transitive file dependencies", () => {
         await lstat(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json"))
       ).isSymbolicLink(),
       readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
-      exists(join(packageDir, "pkg1", "node_modules", "aliased-file-dep")), // false
+      file(join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "package.json")).json(),
+      (
+        await lstat(
+          join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "node_modules", "files", "package.json"),
+        )
+      ).isSymbolicLink(),
       (
         await lstat(
           join(
@@ -4446,11 +4451,20 @@ describe("transitive file dependencies", () => {
       ...(Array(7).fill({ name: "a-dep", version: "1.0.1" }) as any),
       true,
       [] as string[],
-      false,
+      { name: "file-dep", version: "1.0.1", dependencies: { files: "file:." } },
       true,
       true,
       true,
-      ["@another-scope", "@scoped", "dep-file-dep", "file-dep", "missing-file-dep", "self-file-dep"],
+      true,
+      [
+        "@another-scope",
+        "@scoped",
+        "aliased-file-dep",
+        "dep-file-dep",
+        "file-dep",
+        "missing-file-dep",
+        "self-file-dep",
+      ],
     ];
 
     // @ts-ignore
@@ -4638,7 +4652,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4661,7 +4675,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4696,7 +4710,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4727,7 +4741,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "15 packages installed",
     ]);
   });
 
@@ -9280,4 +9294,88 @@ test("npm manifest cache entries with invalid package version records are treate
   await write(corrupted, bytes);
 
   expect(() => parseManifest(corrupted, registryUrl())).toThrow("manifest is invalid");
+});
+
+test("npm manifest cache entries are only reused for the package name they were saved for", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "basic-1": "1.0.0",
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ basic-1@1.0.0");
+    expect(out).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  const byName: Record<string, string> = {};
+  for (const manifestFile of manifestFiles) {
+    const fullPath = join(cacheDir, manifestFile);
+    byName[parseManifest(fullPath, registryUrl()).name] = fullPath;
+  }
+  expect(Object.keys(byName).sort()).toEqual(["basic-1", "no-deps"]);
+
+  copyFileSync(byName["basic-1"], byName["no-deps"]);
+  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("basic-1");
+
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ no-deps@1.0.0");
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  const lockfile = parseLockfile(packageDir);
+  const npmPackages = (Object.values(lockfile.packages) as any[]).filter(pkg => pkg.resolution.tag === "npm");
+  expect(npmPackages.map(pkg => pkg.name)).toEqual(["no-deps"]);
+  expect(npmPackages[0].resolution.resolved).toBe(`http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`);
+
+  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
+  expect(exitCode).toBe(0);
 });

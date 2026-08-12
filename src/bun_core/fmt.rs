@@ -430,6 +430,29 @@ pub fn format_json_string_utf8(
     JSONFormatterUTF8 { input: text, opts }
 }
 
+/// Replaces each `{[name]s}` placeholder in `template` with the value paired
+/// with `name` in `args`. Anything else, including placeholders whose name is
+/// not in `args`, is copied through unchanged.
+pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(template.len());
+    let mut remaining = template;
+    'scan: while let Some(start) = strings::index_of(remaining, b"{[") {
+        out.extend_from_slice(&remaining[..start]);
+        let after = &remaining[start + 2..];
+        for &(name, value) in args {
+            if after.starts_with(name) && after[name.len()..].starts_with(b"]s}") {
+                out.extend_from_slice(value);
+                remaining = &after[name.len() + 3..];
+                continue 'scan;
+            }
+        }
+        out.extend_from_slice(b"{[");
+        remaining = after;
+    }
+    out.extend_from_slice(remaining);
+    out
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Shared temp buffer (threadlocal)
 // ───────────────────────────────────────────────────────────────────────────
@@ -1684,12 +1707,12 @@ impl Keywords {
 
 pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // 5 entries — a `matches!` chain is plenty at this size (the big keyword
+    // 6 entries — a `matches!` chain is plenty at this size (the big keyword
     // table in `Keywords::get` is where the length-dispatched map pays off).
     pub(crate) fn has(s: &[u8]) -> bool {
         matches!(
             s,
-            b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
+            b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
         )
     }
 }
@@ -2322,7 +2345,7 @@ pub fn format_ip<'a>(
     let mut end = written;
 
     // Strip `:<port>`
-    if let Some(colon) = into[start..end].iter().rposition(|&b| b == b':') {
+    if let Some(colon) = strings::last_index_of_char(&into[start..end], b':') {
         end = start + colon;
     }
     // Strip brackets
@@ -2333,7 +2356,7 @@ pub fn format_ip<'a>(
     // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
     // in6_addr and never includes the zone identifier; the scope is exposed
     // separately (e.g. `scopeid` in os.networkInterfaces()).
-    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+    if let Some(percent) = strings::index_of_char_usize(&into[start..end], b'%') {
         end = start + percent;
     }
     Ok(&mut into[start..end])

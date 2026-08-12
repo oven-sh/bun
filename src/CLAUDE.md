@@ -101,19 +101,26 @@ let s = bun_core::String::from_js(value, global)?;
 let err = s.to_error_instance(global);
 ```
 
-`bun_core::strings` is the SIMD-backed `&[u8]` toolkit. Use it instead of
-`std::str` / `std::iter` for searching and comparing byte slices:
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
+with runtime CPU dispatch). Byte and substring search **must** go through it —
+`str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
+`bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
+of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
+`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`:
 
 ```rust
 use bun_core::strings;
 
-strings::index_of(haystack, needle)      // Option<usize>
+strings::index_of_char_usize(s, b'x')    // Option<usize>   (not .iter().position())
+strings::index_of_any(s, b"\r\n")        // Option<usize>   first byte in set
+strings::last_index_of_char(s, b'x')     // Option<usize>   (not .iter().rposition())
+strings::contains_char(s, b'x')          // bool            (not .contains(&b'x'))
+strings::count_char(s, b'\n')            // usize
+strings::index_of(haystack, needle)      // Option<usize>   substring (memmem)
 strings::contains(haystack, needle)      // bool
-strings::eql(a, b)                       // bool
-strings::starts_with(s, prefix)          // bool
-strings::ends_with(s, suffix)            // bool
+strings::split(s, b",") / split_any(s, b" \t") / tokenize(s, b" ") / split_once_char(s, b'=')
+strings::eql(a, b)                       // bool  (== / starts_with / ends_with are memcmp and fine as-is)
 strings::has_prefix_comptime(s, b"x")    // 'static comparand
-strings::has_suffix_comptime(s, b"x")
 strings::first_non_ascii(s)              // Option<u32>
 strings::to_utf16_alloc(...)             // encoding conversions
 ```

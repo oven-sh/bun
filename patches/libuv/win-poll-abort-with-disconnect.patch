@@ -1,8 +1,6 @@
-diff --git a/src/win/poll.c b/src/win/poll.c
-index ecc6cf3..361b0fc 100644
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -115,7 +115,12 @@ static void uv__fast_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+@@ -115,9 +115,24 @@
          AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_ABORT;
    } else {
      if (handle->events & UV_DISCONNECT) {
@@ -15,8 +13,20 @@ index ecc6cf3..361b0fc 100644
 +          AFD_POLL_ABORT;
      }
    }
++  if (handle->events & UV_PRIORITIZED) {
++    /* ABORT-only subscription. A graceful FIN leaves AFD_POLL_DISCONNECT
++     * signaled forever (AFD is level-triggered), so a watcher that already
++     * consumed the FIN cannot keep DISCONNECT armed without completing
++     * instantly in a loop - yet it still needs the peer's later RST.
++     * UV_PRIORITIZED, unused on Windows, subscribes exactly that remaining
++     * signal; the reporting below surfaces it as UV_PRIORITIZED so the
++     * requested-events mask keeps it. */
++    afd_poll_info->Handles[0].Events |= AFD_POLL_ABORT;
++  }
    if (handle->events & UV_WRITABLE) {
-@@ -168,9 +173,13 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+     afd_poll_info->Handles[0].Events |= AFD_POLL_SEND | AFD_POLL_CONNECT_FAIL;
+   }
+@@ -168,9 +183,19 @@
      if ((afd_poll_info->Handles[0].Events & (AFD_POLL_RECEIVE |
          AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_ABORT)) != 0) {
        events |= UV_READABLE;
@@ -30,6 +40,12 @@ index ecc6cf3..361b0fc 100644
 +       * DISCONNECT for either, outside the READABLE block, so it survives
 +       * the requested-events mask when only UV_DISCONNECT is armed. */
 +      events |= UV_DISCONNECT;
++    }
++    if ((afd_poll_info->Handles[0].Events & AFD_POLL_ABORT) != 0) {
++      /* The ABORT-only subscription reports as UV_PRIORITIZED: a watcher
++       * armed with UV_PRIORITIZED alone has UV_DISCONNECT stripped by the
++       * requested-events mask below. */
++      events |= UV_PRIORITIZED;
      }
      if ((afd_poll_info->Handles[0].Events & (AFD_POLL_SEND |
          AFD_POLL_CONNECT_FAIL)) != 0) {

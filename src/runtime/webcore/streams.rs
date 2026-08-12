@@ -585,10 +585,6 @@ impl Pending {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return;
-        }
-
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
@@ -612,10 +608,27 @@ impl Pending {
         boxed.run();
         drop(boxed);
     }
+
+    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
+    /// the read any more, so drop the promise's root and the parked result.
+    pub(crate) fn release_without_running(this: *mut Pending) {
+        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
+        let mut boxed = unsafe { bun_core::heap::take(this) };
+        boxed.state = PendingState::Used;
+        if let PendingFuture::Promise { promise, .. } = &boxed.future {
+            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        }
+        drop(boxed);
+    }
 }
 
 impl bun_event_loop::Taskable for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+    /// Deferred out of a finalizer or a late completion: do the script-free
+    /// part of what the dispatch would have done.
+    unsafe fn release_unrun(this: *mut Self) {
+        Pending::release_without_running(this);
+    }
 }
 
 pub enum PendingFuture {
@@ -751,7 +764,11 @@ impl StreamResult {
             // `release()` frees `.owned`/`.owned_and_done` ByteLists and
             // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
-            return Ok(JSValue::ZERO);
+            // No value is produced for a VM that is going away; say so the one
+            // way callers (a pull promise's settle) understand: a pending
+            // termination, not an empty "Ok".
+            global_this.vm().ensure_termination_exception_pending();
+            return Err(jsc::JsError::Terminated);
         }
 
         match self {
@@ -912,6 +929,10 @@ pub enum SourceHandle {
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
+    /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
+    /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
+    /// deterministic for tests.
+    TestingCancelOnDrain(BackRef<crate::webcore::ByteStream>),
 }
 
 impl SourceHandle {
@@ -954,6 +975,7 @@ impl SourceHandle {
             SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 
@@ -977,6 +999,7 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            SourceHandle::TestingCancelOnDrain(p) => p.on_cancel(),
             // Remaining variants leave `on_ready` at the trait default (no-op).
             SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
@@ -996,7 +1019,8 @@ impl SourceHandle {
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::S3DownloadBody(_)
-            | SourceHandle::HTMLRewriter(_) => {}
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
 }
@@ -2090,35 +2114,16 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
         StartTag::HTTPResponseSink
     });
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
-    fn finalize(&mut self) {
-        Self::finalize(self)
-    }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
+    crate::impl_js_sink_forwarders!();
+
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is live, and only the RequestContext's
+        // `destroy` frees it (never the inherent `finalize`), so the `&mut`
+        // scoped to this call stays valid throughout.
+        unsafe { (*this).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
@@ -2162,7 +2167,6 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
-    pub(crate) cancel: bool,
 }
 
 impl Default for NetworkSink {
@@ -2178,7 +2182,6 @@ impl Default for NetworkSink {
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
-            cancel: false,
         }
     }
 }
@@ -2228,7 +2231,6 @@ impl NetworkSink {
                 self.high_water_mark = chunk_size;
             }
         }
-        self.ended = false;
         self.source.start();
         bun_sys::Result::Ok(())
     }
@@ -2312,7 +2314,6 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         self.source.close(None);
-        self.cancel = true;
         self.finalize();
     }
 
@@ -2498,16 +2499,7 @@ impl NetworkSink {
         if self.task.is_some() && !self.done {
             // we need to wait for the task to end
             self.end_promise = JSPromiseStrong::init(self.global_this());
-            let value = self.end_promise.value();
-            if !self.ended {
-                self.ended = true;
-                // we need to send EOF
-                if let Some(task) = self.task_ref() {
-                    let _ = task.write_bytes(b"", true);
-                }
-                self.source.close(None);
-            }
-            return bun_sys::Result::Ok(value);
+            return bun_sys::Result::Ok(self.end_promise.value());
         }
         // task already detached
         bun_sys::Result::Ok(JSValue::js_number(0.0))
@@ -2536,35 +2528,16 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
-    fn finalize(&mut self) {
-        Self::finalize(self)
-    }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
+    crate::impl_js_sink_forwarders!();
+
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is live, and the inherent `finalize`
+        // only releases the ref on the separate `MultiPartUpload`, never this
+        // sink, so the `&mut` scoped to this call stays valid throughout.
+        unsafe { (*this).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

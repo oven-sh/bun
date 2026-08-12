@@ -1171,6 +1171,7 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
+    "mariadb_plain": 3306,
     "mysql:8": 3306, // Map mysql:8 to mysql_plain
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,

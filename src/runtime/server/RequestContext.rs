@@ -92,6 +92,17 @@ pub type RequestContextStackAllocator<
     REQUEST_CONTEXT_POOL_CAPACITY,
 >;
 
+#[derive(Clone, Copy)]
+pub(crate) enum UpgradeState {
+    /// Plain HTTP request.
+    None,
+    /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
+    /// context (one per `.ws()` route) and it outlives the request.
+    Pending(NonNull<WebSocketUpgradeContext>),
+    /// `server.upgrade()` handed the socket over to a `ServerWebSocket`.
+    Upgraded,
+}
+
 ///
 pub struct RequestContext<
     ThisServer,
@@ -120,7 +131,7 @@ pub struct RequestContext<
 
     pub(crate) flags: Flags<DEBUG_MODE>,
 
-    pub(crate) upgrade_context: Cell<Option<*mut WebSocketUpgradeContext>>,
+    pub(crate) upgrade_context: Cell<UpgradeState>,
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
@@ -222,6 +233,7 @@ where
 // stream handling, error handling.
 use bun_collections::VecExt;
 use bun_core::Output;
+use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_paths::PathBuffer;
@@ -428,28 +440,7 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-use bun_options_types::schema::api as Api;
-
-use bun_js_parser::parser::Runtime::Fallback;
-
-/// NOTE: `Api.JsException` is split across two crates —
-/// `bun_jsc::schema_api::JsException` (carries `stack`, used by
-/// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
-/// Bridge the two here so the
-/// fallback page actually carries the captured exceptions instead of an empty
-/// array (react-response.test.ts asserts `exceptions[0].message`).
-fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
-    list.into_iter()
-        .map(|ex| Api::JsException {
-            name: (!ex.name.is_empty()).then_some(ex.name),
-            message: (!ex.message.is_empty()).then_some(ex.message),
-            runtime_type: Some(ex.runtime_type),
-            // jsc copy widened `code` to u16 (from `u16::from(u8)`); spec is u8.
-            code: Some(ex.code as u8),
-        })
-        .collect()
-}
+use crate::server::DevErrorPage;
 
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);
@@ -1111,10 +1102,9 @@ where
 
     pub(crate) fn render_default_error(
         &self,
-        log: &mut bun_ast::Log,
-        err: &crate::Error,
-        exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>,
+        log: &bun_ast::Log,
+        exceptions: &[jsc::exception_list::JsException],
+        message: &[u8],
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
@@ -1124,30 +1114,6 @@ where
             }
         }
 
-        let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", fmt);
-        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let fallback_container = Box::new(Api::FallbackMessageContainer {
-            message: Some(message.into_boxed_slice()),
-            router: None,
-            reason: Some(Api::FallbackStep::fetch_event_handler),
-            cwd: Some(cwd.to_vec().into_boxed_slice()),
-            problems: Some(Api::Problems {
-                code: 500,
-                name: err.name().as_bytes().to_vec().into_boxed_slice(),
-                exceptions: exceptions.to_vec(),
-                build: {
-                    // `log.to_api()` returns `bun_ast::api::Log`; the schema
-                    // crate has its own `api::Log` (msgs omitted). Map fields.
-                    let api_log = log.to_api();
-                    Api::Log {
-                        warnings: api_log.warnings,
-                        errors: api_log.errors,
-                    }
-                },
-            }),
-        });
-
         Output::flush();
 
         if self.method == Method::HEAD {
@@ -1155,10 +1121,13 @@ where
             return;
         }
 
-        // Explicitly use the global allocator and *not* the arena
-        let mut bb: Vec<u8> = Vec::new();
-
-        Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
+        let bb = DevErrorPage {
+            message,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            exceptions,
+            log: Some(log),
+        }
+        .render();
         let try_end_ok = match self.resp.get() {
             None => true,
             Some(resp) => resp.try_end(&bb, bb.len(), self.should_close_connection()),
@@ -1273,6 +1242,12 @@ where
             self.detach_response();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
+            // This end can run uncorked (e.g. render_production_error from a
+            // rejection microtask), where no cork or parser gate runs the
+            // close check for Connection: close or a graceful-stop mark. The
+            // shim no-ops when the socket is corked (the cork wrapper's own
+            // gate runs later) or already closed.
+            resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
             // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
             // and free the stream out from under the local `resp` copy.
@@ -1359,7 +1334,7 @@ where
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
-                upgrade_context: Cell::new(None),
+                upgrade_context: Cell::new(UpgradeState::None),
                 response_jsvalue: Cell::new(JSValue::ZERO),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
@@ -2294,10 +2269,7 @@ where
     }
 
     pub(crate) fn did_upgrade_web_socket(&self) -> bool {
-        self.upgrade_context
-            .get()
-            .map(|p| p as usize == usize::MAX)
-            .unwrap_or(false)
+        matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
     fn to_async_without_abort_handler(
@@ -3046,7 +3018,6 @@ where
                         .vm()
                         .as_mut()
                         .run_error_handler(err, Some(&mut exception_list));
-                    let exception_list = jsc_exceptions_to_api(exception_list);
 
                     // The fallback page below writes into `resp`, which must
                     // not be dereferenced once the sink has already ended the
@@ -3064,29 +3035,13 @@ where
                             }
                         }
 
-                        // Create error message for the stream rejection
-                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-                        let fallback_container = Box::new(Api::FallbackMessageContainer {
-                            message: Some(
-                                b"Stream error during server-side rendering"
-                                    .to_vec()
-                                    .into_boxed_slice(),
-                            ),
-                            router: None,
-                            reason: Some(Api::FallbackStep::fetch_event_handler),
-                            cwd: Some(cwd.to_vec().into_boxed_slice()),
-                            problems: Some(Api::Problems {
-                                code: 500,
-                                name: b"StreamError".to_vec().into_boxed_slice(),
-                                exceptions: exception_list,
-                                build: Api::Log::default(),
-                            }),
-                        });
-
-                        let mut bb: Vec<u8> = Vec::new();
-
-                        Fallback::render_backend(&fallback_container, &mut bb)
-                            .expect("unreachable");
+                        let bb = DevErrorPage {
+                            message: b"Stream error during server-side rendering",
+                            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+                            exceptions: &exception_list,
+                            log: None,
+                        }
+                        .render();
 
                         if let Some(resp) = self.resp.get() {
                             // SAFETY: FFI handle
@@ -3628,14 +3583,12 @@ where
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
+            let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list =
-                Some(NonNull::from(&mut exception_list_upstream));
+            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
-            let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
@@ -3643,12 +3596,7 @@ where
                 self.ensure_pathname()
             );
             let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
-            self.render_default_error(
-                log,
-                &crate::Error::ExceptionOcurred,
-                &exception_list,
-                format_args!("{}", msg),
-            );
+            self.render_default_error(log, &exception_list, msg.as_bytes());
             log.reset();
             return;
         }
@@ -3899,10 +3847,7 @@ where
             // we may not know the content-type when streaming
             && (!blob.is_detached()
                 || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
-            && !content_type
-                .value
-                .iter()
-                .any(|&b| matches!(b, b'\r' | b'\n' | 0))
+            && !strings::contains_any(&content_type.value, b"\r\n\0")
         {
             resp.write_header(b"content-type", &content_type.value);
         }
@@ -3925,10 +3870,7 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !truncated
-                        .iter()
-                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
-                    {
+                    if !strings::contains_any(truncated, b"\r\n\0\"") {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
                             if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {

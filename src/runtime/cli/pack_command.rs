@@ -295,13 +295,6 @@ impl PackCommand {
                     );
                     Global::crash();
                 }
-                PackError::MissingPackageJSON => {
-                    Output::err_generic(
-                        "failed to find a package.json in: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_pkg_json.as_bytes())),
-                    );
-                    Global::crash();
-                }
                 // for_publish-only variants — unreachable when FOR_PUBLISH=false.
                 PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
             }
@@ -326,8 +319,6 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageVersion,
     #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
-    #[error("MissingPackageJSON")]
-    MissingPackageJSON,
     // The following two are only valid when FOR_PUBLISH == true (const-generic
     // enums cannot conditionally include variants, so both instantiations
     // share one enum).
@@ -2994,10 +2985,8 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 /// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
 /// segments) keep packing as before.
 fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
-    value
-        .split(|&c| c == b'/')
-        .any(|component| component == b"." || component == b"..")
-        || value.iter().any(|&c| matches!(c, b'\\' | b':' | 0))
+    strings::split(value, b"/").any(|component| component == b"." || component == b"..")
+        || strings::contains_any(value, b"\\:\0")
 }
 
 fn tarball_destination<'a>(
@@ -3766,7 +3755,7 @@ impl IgnorePatterns {
 
         let mut has_rel_path = false;
 
-        for line in contents.split(|&b| b == b'\n') {
+        for line in strings::split(&contents, b"\n") {
             if line.is_empty() {
                 continue;
             }

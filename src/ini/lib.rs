@@ -41,7 +41,7 @@ pub(crate) fn is_quoted(val: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
-    key.iter().position(|&b| b == b'.')
+    bun_core::strings::index_of_char_usize(key, b'.')
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -277,7 +277,7 @@ mod draft {
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
-            let mut iter = src.split(|&b| b == b'\n');
+            let mut iter = bun_core::strings::split(src, b"\n");
             // `StoreRef` is the arena-backed handle `ExprData` already stores;
             // it is `Copy`, so keeping the root and the current-section head as
             // separate values is a split borrow, not an alias.
@@ -305,7 +305,9 @@ mod draft {
                     let mut treat_as_key = false;
                     'treat_as_key: {
                         skip_until_next_section = false;
-                        let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
+                        let Some(close_bracket_idx) =
+                            bun_core::strings::index_of_char_usize(line, b']')
+                        else {
                             // Skip the whole line: treat_as_key stays false and
                             // we fall through to `continue` below.
                             break 'treat_as_key;
@@ -391,7 +393,7 @@ mod draft {
                 let line_offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                     .expect("int cast");
 
-                let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
+                let maybe_eq_sign_idx = bun_core::strings::index_of_char_usize(line, b'=');
 
                 let key_raw: &[u8] = Self::prepare_str(
                     env,
@@ -1494,7 +1496,7 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
-                    let registry = result.registry.dupe();
+                    let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }
@@ -1885,7 +1887,8 @@ mod draft {
             return Ok(());
         }
         let username_password = &decoded[..result.count];
-        let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
+        let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
+        else {
             log.add_error_opts(
                 b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
                 bun_ast::AddErrorOptions {

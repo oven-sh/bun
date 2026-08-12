@@ -111,8 +111,8 @@ pub struct ParseTask {
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
-    pub completion_ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -248,8 +248,7 @@ impl ParseTask {
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            ctx: Some(ctx_ref.shared()),
-            completion_ctx: Some(ctx_ref),
+            ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -298,7 +297,6 @@ impl Default for ParseTask {
     fn default() -> Self {
         ParseTask {
             ctx: None,
-            completion_ctx: None,
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
@@ -533,7 +531,6 @@ pub mod parse_worker {
 
         let parse_task = ParseTask {
             ctx: None,
-            completion_ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             jsx: options::jsx::Pragma {
@@ -801,7 +798,12 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::yaml::CyclicAliases::Reject,
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -835,6 +837,37 @@ pub mod parse_worker {
                             b"",
                         )?
                         .ok_or(AnyError::ParserError)?,
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
+                    let rows: Expr = bun_parsers::xml::XML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::xml::Options {
+                            compact: true,
+                            encoding: bun_parsers::xml::InputEncoding::File,
+                        },
+                    )?;
+                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .unwrap(),
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -2775,7 +2808,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.completion_ctx.expect("ParseTask.completion_ctx unset"),
+            ctx: this.ctx.expect("ParseTask.ctx unset"),
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`
@@ -2808,15 +2841,27 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                owner.enqueue_task_concurrent(
+            bun_event_loop::AnyEventLoop::Js { .. } => {
+                let ct =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    }),
-                );
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // Owning JS VM torn down mid-bundle: free the hop and the result.
+                    // SAFETY: refused ⇒ we own the task box and the leaked result.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        drop(bun_core::heap::take(result));
+                    }
+                }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;

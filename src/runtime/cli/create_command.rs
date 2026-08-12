@@ -66,7 +66,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     }
 
     let mut count: usize = 0;
-    for _ in task.split(|b| *b == b' ') {
+    for _ in strings::split(task, b" ") {
         count += 1;
     }
 
@@ -82,7 +82,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         argv.push(NPM_TASK_ARGS[0]);
     }
 
-    for split in task.split(|b| *b == b' ') {
+    for split in strings::split(task, b" ") {
         argv.push(split);
     }
     debug_assert_eq!(argv.len(), total);
@@ -736,7 +736,6 @@ impl CreateCommand {
                     }
                 }
             }
-            _ => unreachable!(),
         }
 
         node.end();
@@ -1708,7 +1707,6 @@ impl Default for Example {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ExampleTag {
-    Unknown,
     GithubRepository,
     Official,
     LocalFolder,

@@ -331,7 +331,8 @@ pub mod dir_iterator {
                 // scan for the terminator; a scalar
                 // byte loop here showed up in startup profiles on large directories.
                 let name_field = &buf[base + 19..base + reclen];
-                let nul = memchr::memchr(0, name_field).unwrap_or(name_field.len());
+                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
+                    .unwrap_or(name_field.len());
                 let name = &name_field[..nul];
 
                 // skip . and .. entries
@@ -1409,6 +1410,7 @@ impl Tag {
     pub(crate) const getrlimit: Tag = Tag(105);
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
+    pub const clone3: Tag = Tag(107);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1416,7 +1418,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 107] = [
+        const NAMES: [&str; 108] = [
             "TODO",
             "dup",
             "access",
@@ -1525,6 +1527,7 @@ impl Tag {
             "ioctl",
             "getrlimit",
             "setrlimit",
+            "clone3",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1970,8 +1973,26 @@ mod posix_impl {
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
-                Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                    UNAVAILABLE.store(true, Ordering::Relaxed);
+                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                    let probe = super::linux_syscall::openat2_in_root(
+                        dir,
+                        bun_core::zstr!("."),
+                        O::PATH | O::DIRECTORY | O::CLOEXEC,
+                        0,
+                    );
+                    match probe {
+                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                            UNAVAILABLE.store(true, Ordering::Relaxed);
+                        }
+                        other => {
+                            if let Ok(fd) = other {
+                                let _ = close(fd);
+                            }
+                            return Err(
+                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
@@ -7658,10 +7679,7 @@ fn linux_kernel_is_freebsd() -> bool {
         let mut buf = [0u8; 512];
         let n = read(fd, &mut buf).unwrap_or(0);
         let _ = close(fd);
-        if buf[..n]
-            .windows(7)
-            .any(|w| w.eq_ignore_ascii_case(b"freebsd"))
-        {
+        if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
             1

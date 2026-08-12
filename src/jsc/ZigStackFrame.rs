@@ -8,7 +8,7 @@ use bun_core::String as BunString;
 use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
-use crate::schema_api as api;
+use crate::exception_list;
 use crate::{ZigStackFrameCode, ZigStackFramePosition};
 
 /// Represents a single frame in a stack trace
@@ -42,38 +42,27 @@ impl ZigStackFrame {
         self.source_url.deref();
     }
 
-    pub(crate) fn to_api(
+    pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackFrame, bun_alloc::AllocError> {
-        let mut frame: api::StackFrame = api::StackFrame::default();
-        if !self.function_name.is_empty() {
-            let slicer = self.function_name.to_utf8();
-            // TODO: Memory leak? `frame.function_name` may have just been allocated by this
-            // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
-            // make the ownership clearer, but would also make the memory leak worse without an
-            // additional free.
-            frame.function_name = Box::<[u8]>::from(slicer.slice());
-        }
-
+    ) -> exception_list::StackFrame {
+        let mut file = Vec::<u8>::new();
         if !self.source_url.is_empty() {
-            let mut buf = Vec::<u8>::new();
             write!(
-                &mut buf,
+                &mut file,
                 "{}",
                 self.source_url_formatter(root_path, origin, true, false)
             )
             .expect("Vec<u8> write is infallible");
-            frame.file = buf.into_boxed_slice();
         }
 
-        frame.position = self.position;
-        // api::StackFrameScope is a #[repr(transparent)] u8 newtype with the same
-        // discriminants as ZigStackFrameCode.
-        frame.scope = api::StackFrameScope(self.code_type.0);
-
-        Ok(frame)
+        exception_list::StackFrame {
+            function_name: Box::from(self.function_name.to_utf8().slice()),
+            file: file.into_boxed_slice(),
+            position: self.position,
+            code_type: self.code_type,
+        }
     }
 
     pub const ZERO: ZigStackFrame = ZigStackFrame {
@@ -175,7 +164,8 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !source_slice.is_empty()
+        if !self.exclude_line_column
+            && !source_slice.is_empty()
             && (self.position.line.is_valid() || self.position.column.is_valid())
         {
             if self.enable_color {

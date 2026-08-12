@@ -118,8 +118,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
     // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread.
-        unsafe { (*p).destroy() };
+        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
+        // queued work is released here rather than by a thread teardown.
+        unsafe {
+            (*p).release_queued_work();
+            (*p).destroy()
+        };
     });
 
     // A special global object is used to allow registering virtual modules
@@ -342,7 +346,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
+    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
+        .map_err(|_| js_err(jsc::JsError::Terminated))?;
     let jsc_vm = vm.jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
@@ -1196,7 +1201,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // above accessed the same allocation through `vm_ptr`, invalidating the
     // earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise));
+    vm.wait_for_promise(AnyPromise::Normal(render_promise))
+        .map_err(|_| js_err(jsc::JsError::Terminated))?;
     let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
@@ -1235,7 +1241,8 @@ fn load_module(
     let vm_ref = VirtualMachine::get();
     vm_ref
         .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise));
+        .wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|_| js_err(jsc::JsError::Terminated))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.

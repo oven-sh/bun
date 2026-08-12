@@ -22,13 +22,16 @@ use core::{fmt, mem, ptr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
-// (no `bun_output` dep), so the macro compiles to nothing in release and to
-// an `eprintln!` gated by `BUN_DEBUG_uv` in debug.
+// (no `bun_output` dep): an `eprintln!` gated by `BUN_DEBUG_uv` in debug, a
+// constant-false branch in release — the arguments stay type-checked (and
+// count as used) in both, like `bun_core::scoped_log!`.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
-#[cfg(debug_assertions)]
 #[inline]
 pub fn __uv_log_enabled() -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
     // `Output.scoped` reads the env var once at startup; `inc/dec` are on the
     // per-handle ref/unref hot path, so cache the lookup instead of paying a
     // GetEnvironmentVariableW syscall + alloc per tick.
@@ -39,8 +42,7 @@ pub fn __uv_log_enabled() -> bool {
 #[macro_export]
 macro_rules! __uv_log {
     ($($arg:tt)*) => {{
-        #[cfg(debug_assertions)]
-        if $crate::__uv_log_enabled() {
+        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
             ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
         }
     }};
@@ -401,6 +403,24 @@ thread_local! {
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Open stream/process handles on this thread — Bun's HandleWrap list.
+//
+// Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
+// `uv_process_t` this thread initialises is listed here from `init`/`spawn`
+// until the `uv_close` for it is issued (`UvHandle::close`,
+// `Pipe::close_and_destroy`). Whoever currently drives the handle records
+// itself with [`open_handles::set_owner`] — readers/writers do so through
+// `Source::set_owner`, IPC / named pipes / Process when they take the handle —
+// so a thread teardown can close each handle through its owner's ordinary
+// close path (parents observe the close; pending writes finish ECANCELED)
+// while the VM is alive, or directly if nothing ever adopted it. Keyed by the
+// handle's address, which is stable for its life (boxed / embedded in a boxed
+// owner), so ownership moving between objects needs no re-registration.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "open_handles.rs"]
+pub mod open_handles;
+
 impl Loop {
     /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
@@ -427,9 +447,41 @@ impl Loop {
         })
     }
 
-    /// Closes this
-    /// thread's libuv loop. Called from `WebWorker::shutdown`.
-    pub fn shutdown() {
+    /// Complete every in-flight request on this thread's loop (fs, write,
+    /// connect): requests cannot be cancelled, and their callbacks expect the
+    /// VM that issued them — and may start more work (a shell pipeline moving
+    /// to its next builtin) — so teardown runs this in its stop phase, script
+    /// forbidden but the VM alive and still accepting (and later awaiting)
+    /// off-thread work (Node's `CleanupHandles`). `true` if anything ran.
+    pub fn drain_requests() -> bool {
+        THREADLOCAL_LOOP.with(|slot| {
+            let loop_ = slot.get();
+            if loop_.is_null() {
+                return false;
+            }
+            let mut ran = false;
+            // SAFETY: live per-thread loop; `count` is the active arm of the
+            // union whenever the loop is initialised (uv/win.h).
+            unsafe {
+                while (*loop_).active_reqs.count > 0 {
+                    log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
+                    uv_run(loop_, RunMode::Once);
+                    ran = true;
+                }
+            }
+            ran
+        })
+    }
+
+    /// Closes this thread's libuv loop. Called from `WebWorker::shutdown` after
+    /// the thread's uws loop has been freed and the event loop's pending
+    /// keep-alive delta has been folded (Bun's virtual keep-alive count shares
+    /// `active_handles` with libuv, so an unbalanced ref would keep the loop
+    /// alive forever). Every handle Bun registered on the loop must have been
+    /// closed while its owner was alive; what remains here is uSockets' own
+    /// pre/check/async/timer, closed by us_loop_free and freed by their close
+    /// callbacks when the loop next turns.
+    pub fn close_thread_loop() {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
@@ -437,17 +489,37 @@ impl Loop {
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
             if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
-                // Only EBUSY means handles are
-                // still open; walk + close them, run once to flush close
-                // callbacks, then close again (must succeed). `uv_loop_close`
-                // documents no other failure code.
+                // Only EBUSY means handles are still linked; walk + close any not
+                // already closing, run to flush close callbacks and endgames, then
+                // close again (must succeed). `uv_loop_close` documents no other
+                // failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
+                    // Anything open and not already closing here was left by an
+                    // owner that never closed it; name it under BUN_DEBUG_uv.
+                    // SAFETY: every linked handle's storage is still allocated
+                    // (owners are freed only after this returns).
+                    unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                    // NOTE the call is unconditional — the close must run in
-                    // release builds too.
-                    let rc = unsafe { uv_loop_close(loop_) };
-                    debug_assert_eq!(rc, ReturnCode::ZERO);
+                    // Everything is closing now; only close callbacks / endgames
+                    // remain. Turn the loop without blocking until they have run —
+                    // RunMode::Default would also wait on ref'd-but-idle state
+                    // (Bun's virtual keep-alive count lives in active_handles) and
+                    // never return.
+                    let mut rc = ReturnCode::ZERO;
+                    for _ in 0..64 {
+                        // SAFETY: this thread's initialised loop; nothing else drives it.
+                        let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        // SAFETY: as above.
+                        rc = unsafe { uv_loop_close(loop_) };
+                        if rc == ReturnCode::ZERO {
+                            break;
+                        }
+                    }
+                    debug_assert_eq!(
+                        rc,
+                        ReturnCode::ZERO,
+                        "uv loop still busy after closing every handle"
+                    );
                 }
             }
             slot.set(ptr::null_mut());
@@ -535,6 +607,44 @@ impl Loop {
     }
 }
 
+/// `Loop::close_thread_loop` diagnostics: which handles keep the worker's loop busy.
+unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void) {
+    // SAFETY: libuv passes live handles.
+    if unsafe { uv_is_closing(handle) } == 0 {
+        // SAFETY: as above.
+        unsafe { log_walk_cb(handle, data) };
+    }
+}
+
+/// # Safety
+/// `handle` is a live libuv handle (only its header is read).
+unsafe fn handle_type_name<'a>(handle: *mut uv_handle_t) -> &'a str {
+    // SAFETY: fn contract; libuv returns a static C string or null.
+    unsafe {
+        let name = uv_handle_type_name(uv_handle_get_type(handle));
+        if name.is_null() {
+            "?"
+        } else {
+            core::ffi::CStr::from_ptr(name).to_str().unwrap_or("?")
+        }
+    }
+}
+
+unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
+    // SAFETY: libuv passes a live handle; these calls only read its header.
+    unsafe {
+        log!(
+            "handle left open by its owner: {} @{:p} active={} closing={} ref={} data={:p}",
+            handle_type_name(handle),
+            handle,
+            uv_is_active(handle),
+            uv_is_closing(handle),
+            uv_has_ref(handle),
+            (*handle).data
+        );
+    }
+}
+
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
@@ -613,6 +723,7 @@ pub unsafe trait UvHandle: Sized {
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
+        open_handles::remove(self.as_handle_mut());
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
         unsafe {
             uv_close(
@@ -1171,13 +1282,22 @@ pub struct Pipe {
 pub type uv_pipe_t = Pipe;
 
 impl Pipe {
+    #[inline]
+    pub fn ipc_remote_pid(&self) -> DWORD {
+        // SAFETY: `conn` is the active variant for a connected IPC pipe (init
+        unsafe { self.pipe.conn.ipc_remote_pid }
+    }
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+        let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
+        if rc.0 == 0 {
+            open_handles::add_pipe(self);
+        }
+        rc
     }
     #[inline]
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
@@ -1267,6 +1387,16 @@ impl Pipe {
     /// registered `uv_close` callback is assumed to free the box;
     /// if a non-freeing callback was registered, the pipe leaks.
     pub unsafe fn close_and_destroy(this: *mut Pipe) {
+        open_handles::remove(this.cast());
+        // SAFETY: caller contract.
+        unsafe { Self::close_and_destroy_unlisted(this) }
+    }
+
+    /// [`close_and_destroy`] for a pipe already taken off the open-handles list.
+    ///
+    /// # Safety
+    /// As [`close_and_destroy`].
+    pub(crate) unsafe fn close_and_destroy_unlisted(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
             drop(unsafe { Box::from_raw(handle) });
@@ -1343,7 +1473,13 @@ impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
         // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        unsafe { uv_tty_init(loop_, self, file, 0) }
+        let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
+        // fd 0 is the process-static stdin tty (never freed, shared across
+        // threads by design); everything else is a heap tty owned by this thread.
+        if rc.0 == 0 && file != 0 {
+            open_handles::add_tty(self);
+        }
+        rc
     }
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
@@ -1574,7 +1710,11 @@ impl Process {
     #[inline]
     pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
-        unsafe { uv_spawn(loop_, self, options) }
+        let rc = unsafe { uv_spawn(loop_, self, options) };
+        if rc.0 == 0 {
+            open_handles::add_process(self);
+        }
+        rc
     }
     #[inline]
     pub fn kill(&mut self, signum: c_int) -> ReturnCode {

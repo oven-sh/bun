@@ -56,7 +56,9 @@ pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
 pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
-pub(super) use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
+pub(super) use super::request_context::{
+    DeferDeinitFlag, RequestContext as NewRequestContext, UpgradeState,
+};
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
@@ -436,10 +438,11 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
-    use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
+    use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
     use bun_ast::{E, Expr, G};
+    use bun_core::Environment::Architecture;
     use bun_core::Global;
 
     pub(crate) struct BunInfo {
@@ -449,7 +452,6 @@ pub mod BunInfo {
 
     fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
         match os {
-            OperatingSystem::None => b"_none",
             OperatingSystem::Linux => b"linux",
             OperatingSystem::Macos => b"macos",
             OperatingSystem::Windows => b"windows",
@@ -461,9 +463,9 @@ pub mod BunInfo {
 
     fn arch_tag_name(arch: Architecture) -> &'static [u8] {
         match arch {
-            Architecture::None => b"_none",
             Architecture::X64 => b"x64",
-            Architecture::Arm => b"arm",
+            Architecture::Arm64 => b"arm",
+            Architecture::Wasm => b"wasm",
         }
     }
 
@@ -492,7 +494,10 @@ pub mod BunInfo {
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(
+                b"arch",
+                str_expr(arch_tag_name(bun_core::Environment::ARCH)),
+            ),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(
@@ -1935,15 +1940,13 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        let upgrade_context = upgrader.upgrade_context.get();
-        if upgrade_context.is_none() || upgrade_context.map(|p| p as usize) == Some(usize::MAX) {
+        let UpgradeState::Pending(upgrade_ctx) = upgrader.upgrade_context.get() else {
             return Ok(JSValue::FALSE);
-        }
+        };
 
         let Some(resp) = upgrader.resp.get() else {
             return Ok(JSValue::FALSE);
         };
-        let upgrade_ctx = upgrade_context.unwrap();
 
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
@@ -2036,9 +2039,7 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !upgrade_header
-            .slice()
-            .split(|&c| c == b',')
+        if !strings::split(upgrade_header.slice(), b",")
             .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
         {
             return Ok(JSValue::FALSE);
@@ -2181,9 +2182,7 @@ where
 
         // --- After this point, do not throw an exception
         // See https://github.com/oven-sh/bun/issues/1339
-        upgrader
-            .upgrade_context
-            .set(Some(usize::MAX as *mut WebSocketUpgradeContext));
+        upgrader.upgrade_context.set(UpgradeState::Upgraded);
         let signal = upgrader.signal.take();
         upgrader.resp.set(None);
 
@@ -2229,11 +2228,9 @@ where
             sec_websocket_key_str.slice(),
             proto_str.slice(),
             ext_str.slice(),
-            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe
-            // deref (`upgrade_ctx` checked non-null / non-sentinel above;
-            // the uWS HttpContext owns it for the request's
-            // duration).
-            Some(bun_opaque::opaque_deref_mut(upgrade_ctx)),
+            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
+            // deref; `UpgradeState::Pending` documents who keeps it alive.
+            Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
         );
 
         Ok(JSValue::TRUE)
@@ -2606,16 +2603,17 @@ where
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if self.app.is_none() || self.deinit_running.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::js_number(0.0));
         }
         // On a Bun.serve server each close reaches `on_connection_filter(-1)`
         // synchronously; hold the guard so it cannot re-derive `&mut self`
-        // while this frame owns it.
+        // while this frame owns it. One-shot sweep (Node semantics): busy
+        // connections are spared and are NOT marked to close later.
         self.deinit_running.set(true);
-        self.app_mut().close_idle_connections();
+        let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
         self.deinit_if_we_can();
-        Ok(JSValue::UNDEFINED)
+        Ok(JSValue::js_number(closed as f64))
     }
 
     pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
@@ -3272,16 +3270,18 @@ where
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the
             // second `&mut req` borrow for `url` is unconflicted.
-            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
-                let fmt = bun_fmt::HostFormatter {
-                    is_https: true,
-                    host,
-                    port: None,
-                };
-                let mut s = Vec::new();
-                write!(&mut s, "https://{}", fmt).ok();
-                s
-            });
+            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host")
+                .filter(|host| Request::is_valid_host_header(host))
+                .map(|host| {
+                    let fmt = bun_fmt::HostFormatter {
+                        is_https: true,
+                        host,
+                        port: None,
+                    };
+                    let mut s = Vec::new();
+                    let _ = write!(&mut s, "https://{}", fmt);
+                    s
+                });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(mut s) = prefix {
@@ -3389,7 +3389,11 @@ where
             return;
         };
         // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
-        unsafe { (*prepared.ctx).upgrade_context.set(Some(upgrade_ctx)) };
+        unsafe {
+            (*prepared.ctx)
+                .upgrade_context
+                .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
+        };
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server_ref.global_this);
@@ -3513,7 +3517,8 @@ where
             Some(signal_for_req),
             body_hive,
         ));
-        ctx.upgrade_context.set(Some(upgrade_ctx));
+        ctx.upgrade_context
+            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
         // Leaked so the ctx (which outlives this stack frame) can hold the
         // pointer; freed via ctx.deinit's request_weakref. Everything below
         // goes through this raw pointer rather than a `&mut Request` reborrow:
@@ -3639,7 +3644,7 @@ where
         //   }
         // }
         let mut json_string = Vec::new();
-        write!(
+        let _ = write!(
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
@@ -3647,8 +3652,7 @@ where
                 Default::default()
             ),
             uuid,
-        )
-        .ok();
+        );
 
         resp.write_status(b"200 OK");
         resp.write_header(b"Content-Type", b"application/json");

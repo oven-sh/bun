@@ -193,7 +193,7 @@ const UNDERSCORE_IN_NUMBER: &[u8] = b"Underscores in numbers must be surrounded 
 /// TOML says excess fractional-second precision "should be truncated, not
 /// rounded"; Temporal rejects more than its 9 digits, so drop the rest here.
 fn truncate_fractional_seconds<'a>(text: &'a [u8], bump: &'a Bump) -> &'a [u8] {
-    let Some(dot) = text.iter().position(|&b| b == b'.') else {
+    let Some(dot) = bun_core::strings::index_of_char_usize(text, b'.') else {
         return text;
     };
     let frac_start = dot + 1;

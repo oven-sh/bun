@@ -8,22 +8,12 @@ pub enum Error {
     NotDir,
     #[error("NameTooLong")]
     NameTooLong,
-    #[error("FileTooBig")]
-    FileTooBig,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("ProcessFdQuotaExceeded")]
-    ProcessFdQuotaExceeded,
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("ReadOnlyFileSystem")]
-    ReadOnlyFileSystem,
-    #[error("FileSystem")]
-    FileSystem,
-    #[error("FileBusy")]
-    FileBusy,
     #[error("DeviceBusy")]
     DeviceBusy,
     #[error("TarballHTTP400")]
@@ -271,14 +261,9 @@ impl Error {
             Self::AccessDenied => "AccessDenied",
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
-            Self::FileTooBig => "FileTooBig",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::ReadOnlyFileSystem => "ReadOnlyFileSystem",
-            Self::FileSystem => "FileSystem",
-            Self::FileBusy => "FileBusy",
             Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",

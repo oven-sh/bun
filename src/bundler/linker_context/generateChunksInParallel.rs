@@ -64,7 +64,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
-            chunks: bun_ptr::BackRef::new_mut(chunks),
+            chunks: bun_ptr::BackRef::new(&*chunks),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -138,13 +138,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         {
             let mut total_count: usize = 0;
             // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
+            // before the `iter_mut()` borrow so the same slice backref can be
             // stored in every ctx.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk], bun_ptr::Mut> =
-                bun_ptr::BackRef::new_mut(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
@@ -266,6 +265,59 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             c.source_maps.quoted_contents_wait_group.wait();
             c.source_maps.quoted_contents_tasks = Box::default();
             debug!("  DONE {} source maps (quoted contents)", chunks.len());
+        }
+
+        // A part that failed to print (e.g. the recursion guard tripped on a
+        // deeply nested AST) must fail the build instead of joining the chunk
+        // as silently truncated output. Dev server excluded: its callers turn
+        // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
+        // so unprintable parts keep the old dropped-code behavior there.
+        if !IS_DEV_SERVER {
+            let mut had_print_error = false;
+            // Without code splitting a failing file is printed once per chunk
+            // that includes it; report each file once.
+            let mut reported_sources = AutoBitSet::init_empty(c.parse_graph().input_files.len())?;
+            for chunk in chunks.iter() {
+                for compile_result in chunk.compile_results_for_chunk.iter() {
+                    let message: Cow<'static, [u8]> = match compile_result {
+                        crate::CompileResult::Javascript {
+                            result: bun_js_printer::PrintResult::Err(err),
+                            ..
+                        } => match err {
+                            bun_js_printer::Error::StackOverflow => Cow::Borrowed(
+                                b"Maximum call stack size exceeded while generating code for this file"
+                                    .as_slice(),
+                            ),
+                            err => Cow::Owned(
+                                format!("Failed to generate code for this file ({})", err.name())
+                                    .into_bytes(),
+                            ),
+                        },
+                        crate::CompileResult::Css {
+                            result: Err(err), ..
+                        } => Cow::Owned(
+                            format!("Failed to generate CSS for this file ({})", err.name())
+                                .into_bytes(),
+                        ),
+                        _ => continue,
+                    };
+                    had_print_error = true;
+                    let source_index = compile_result.source_index();
+                    let source = if source_index != Index::INVALID.get() {
+                        if reported_sources.is_set(source_index as usize) {
+                            continue;
+                        }
+                        reported_sources.set(source_index as usize);
+                        Some(c.get_source(source_index))
+                    } else {
+                        None
+                    };
+                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                }
+            }
+            if had_print_error {
+                return Err(crate::Error::PrintError);
+            }
         }
 
         // For dev server, only post-process CSS + HTML chunks.
@@ -450,10 +502,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if c.options.generate_bytecode_cache
-        && c.options.output_format == options::Format::Esm
-        && c.options.compile_mode.is_executable()
-    {
+    if c.options.generates_module_info() {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -1100,10 +1149,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // Create module_info output file for ESM bytecode in --compile builds
             let module_info_output_file: Option<options::OutputFile> = 'brk: {
-                if c.options.generate_bytecode_cache
-                    && c.options.output_format == options::Format::Esm
-                    && c.options.compile_mode.is_executable()
-                {
+                if c.options.generates_module_info() {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
                         c.parse_graph().input_files.items_loader()
                             [chunk.entry_point.source_index() as usize]

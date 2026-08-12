@@ -4304,19 +4304,26 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
-it("http2 allowHTTP1 fallback aborts the in-flight request when the HTTP/1.1 client goes away", async () => {
-  // Node's socketOnClose -> abortIncoming() applies to allowHTTP1 connections
-  // too: a request whose body was still arriving when the client disconnected
-  // emits 'aborted', then (after the response's 'close') 'error' ECONNRESET
-  // and 'close', and ends up destroyed. Event order is Node v26's.
+// Node's socketOnClose -> abortIncoming() applies to allowHTTP1 connections too:
+// a request whose response has not finished when the connection closes emits
+// 'aborted', then (after the response's 'close') 'error' ECONNRESET and 'close',
+// and ends up destroyed. Event order is Node v26's.
+const HTTP1_ABORTED_EVENTS = ["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"];
+
+// Sends one HTTP/1.1 POST (body cut short) to an allowHTTP1 server over TLS and
+// records the request/response lifecycle events. `onRequest` runs inside the
+// request handler; `afterDispatch` runs once the request reached the server.
+async function allowHTTP1AbortScenario({ onRequest, afterDispatch }) {
   const events = [];
   const dispatched = Promise.withResolvers();
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
     req.on("aborted", () => events.push("req-aborted"));
     req.on("error", err => events.push("req-error:" + err.code));
     req.on("close", () => events.push("req-close"));
+    res.on("finish", () => events.push("res-finish"));
     res.on("close", () => events.push("res-close"));
     const connectionClosed = new Promise(resolve => req.socket.on("close", resolve));
+    onRequest?.(req, res);
     dispatched.resolve({ req, connectionClosed });
   });
   await new Promise(resolve => server.listen(0, resolve));
@@ -4328,21 +4335,40 @@ it("http2 allowHTTP1 fallback aborts the in-flight request when the HTTP/1.1 cli
   try {
     const { req, connectionClosed } = await dispatched.promise;
     expect(req.httpVersion).toBe("1.1");
-    socket.destroy();
+    afterDispatch?.(socket);
     await connectionClosed;
     // The request's 'error'/'close' are process.nextTick hops behind the
     // connection's 'close'; after a macrotask the event list is final.
     await new Promise(resolve => setImmediate(resolve));
-    expect(events).toEqual(["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"]);
-    expect({ destroyed: req.destroyed, aborted: req.aborted, complete: req.complete }).toEqual({
-      destroyed: true,
-      aborted: true,
-      complete: false,
-    });
+    return { events, req };
   } finally {
     socket.destroy();
     server.close();
   }
+}
+
+it("http2 allowHTTP1 fallback aborts the in-flight request when the HTTP/1.1 client goes away", async () => {
+  const { events, req } = await allowHTTP1AbortScenario({ afterDispatch: socket => socket.destroy() });
+  expect(events).toEqual(HTTP1_ABORTED_EVENTS);
+  expect({ destroyed: req.destroyed, aborted: req.aborted, complete: req.complete }).toEqual({
+    destroyed: true,
+    aborted: true,
+    complete: false,
+  });
+});
+
+it("http2 allowHTTP1 fallback aborts the request when the handler ends the response right after destroying the connection", async () => {
+  // A TLS socket emits 'close' a turn after destroy(). The res.end() issued in
+  // between cannot reach the wire; like node it must not count as the response
+  // finishing (no 'finish'), or the request would be left out of the abort.
+  const { events, req } = await allowHTTP1AbortScenario({
+    onRequest: (req, res) => {
+      req.socket.destroy();
+      res.end("late");
+    },
+  });
+  expect(events).toEqual(HTTP1_ABORTED_EVENTS);
+  expect({ destroyed: req.destroyed, aborted: req.aborted }).toEqual({ destroyed: true, aborted: true });
 });
 
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy

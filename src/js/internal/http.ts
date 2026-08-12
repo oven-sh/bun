@@ -98,7 +98,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-// Node's res._last: set by renderNativeHeaders, acted on when the response finishes.
+// Node's res._last: the connection is to be closed once this response has finished.
 const kMustCloseConnection = Symbol("kMustCloseConnection");
 
 const kEmptyObject = Object.freeze(Object.create(null));

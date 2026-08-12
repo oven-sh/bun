@@ -4203,3 +4203,29 @@ it("connectionListener serves a Duplex that has no setTimeout() even when server
   clientSide.destroy();
   serverSide.destroy();
 });
+
+it("connectionListener with httpAllowHalfOpen ends the connection once the response to a half-closed client finishes", async () => {
+  // Node's socketOnEnd marks the in-flight response as the connection's last one instead of
+  // ending the connection under the response; resOnFinish then ends it.
+  const writableEndedAfterFinish = Promise.withResolvers<boolean>();
+  const server = createServer((req, res) => {
+    // The request's own Connection header allows keep-alive; only the half-close says otherwise.
+    req.socket.once("end", () => {
+      res.on("finish", () => writableEndedAfterFinish.resolve(req.socket.writableEnded));
+      res.end("ok");
+    });
+  });
+  server.httpAllowHalfOpen = true;
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  const clientSawEnd = once(clientSide, "end");
+  let response = "";
+  clientSide.on("data", d => (response += d));
+  clientSide.end("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  expect(await writableEndedAfterFinish.promise).toBe(true);
+  await clientSawEnd;
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(response).toEndWith("\r\n\r\nok");
+  clientSide.destroy();
+  serverSide.destroy();
+});

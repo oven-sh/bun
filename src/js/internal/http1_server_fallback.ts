@@ -445,7 +445,7 @@ function connectionListenerHTTP1(server, socket, options) {
     }
     const httpMessage = socket._httpMessage;
     if (httpMessage) {
-      httpMessage._last = true;
+      httpMessage[kMustCloseConnection] = true;
     } else if (socket.writable) {
       socket.end();
     }

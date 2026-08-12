@@ -1159,8 +1159,7 @@ function buildSharedCreds(server) {
   ));
 }
 
-// The addContext() entry for a servername, matched the way node's default SNICallback does: a `*`
-// in the name stands for part of one label, and the newest matching entry wins.
+// Node's default SNICallback: `*` spans part of one label, the newest matching entry wins.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
 function matchContext(contexts: Map<string, typeof InternalSecureContext>, servername: string) {
   let match;
@@ -1238,10 +1237,8 @@ function Server(options, secureConnectionListener): void {
     if (!(context instanceof InternalSecureContext)) {
       context = new InternalSecureContext(context, true);
     }
-    // Kept like node's _contexts (a later listen() loads them into its listener again) and, for a
-    // connection that never passed through a native listener of this server, consulted by
-    // wrappedSNICallback below. Re-adding a name moves it to the end: the newest entry wins.
-    contexts.delete(hostname);
+    // Kept like node's _contexts: reloaded by the next listen(), matched for connections wrapped below.
+    contexts.delete(hostname); // a re-added name becomes the newest entry
     contexts.set(hostname, context);
     const handle = this._handle;
     // A cluster worker fed by the primary listens on node's faux handle, which has no SNI tree.
@@ -1253,10 +1250,8 @@ function Server(options, secureConnectionListener): void {
   };
 
   const server = this;
-  // SNI for a connection this server wraps itself (server.emit('connection'), or one handed off by the
-  // cluster primary): no listener SNI tree is involved, so the addContext() entries are resolved here.
-  // They apply behind a user SNICallback that selects nothing, as with our native listener (node's
-  // own default would not consult them once an SNICallback is set). `this` is the wrapping TLSSocket.
+  // SNI for the connections this server wraps itself (no listener SNI tree). addContext() entries apply
+  // behind a user SNICallback that selects nothing, like on our native listener (node's would not).
   const wrappedSNICallback = function (servername, callback) {
     const userCallback = server._SNICallback;
     if (typeof userCallback !== "function") {

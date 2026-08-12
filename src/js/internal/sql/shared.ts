@@ -1779,6 +1779,9 @@ function parseOptions(
   let path: string;
   let prepare: boolean = true;
 
+  // postgres.js configs use `socket` for a socket factory function, which is not a path.
+  const socketPath = typeof options.socket === "string" ? options.socket : undefined;
+
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
   }
@@ -1791,14 +1794,18 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || (url.hostname ? "" : url.pathname);
+    let pathParam: string | undefined;
+    let socketParam: string | undefined;
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
-        path = queryObject[key];
+      } else if (lowerKey === "path") {
+        pathParam = queryObject[key];
+      } else if (lowerKey === "socket") {
+        socketParam = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1812,6 +1819,8 @@ function parseOptions(
       }
     }
     query = query.trim();
+
+    path ||= pathParam || socketParam || options.path || socketPath || (url.hostname ? "" : url.pathname);
   }
 
   switch (adapter) {
@@ -1844,7 +1853,7 @@ function parseOptions(
     }
   }
 
-  path ||= options.path || "";
+  path ||= options.path || socketPath || "";
 
   if (adapter === "postgres") {
     // add /.s.PGSQL.${port} if the unix domain socket is listening on that path

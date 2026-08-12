@@ -121,8 +121,8 @@ new SQL("mysql2://user:pass@localhost:3306/database");
 // With query parameters
 new SQL("mysql://user:pass@localhost/db?ssl=true");
 
-// Unix socket connection
-new SQL("mysql://user:pass@/database?socket=/var/run/mysqld/mysqld.sock");
+// Unix socket connection (the host is ignored when a socket is given)
+new SQL("mysql://user:pass@localhost/database?socket=/var/run/mysqld/mysqld.sock");
 ```
 
 </Accordion>
@@ -613,7 +613,7 @@ const sql = new SQL({
   username: "dbuser",
   password: "secretpass",
 
-  // Unix socket connection (alternative to hostname/port)
+  // Unix socket connection (alternative to hostname/port; `path` is accepted as an alias)
   // socket: "/var/run/mysqld/mysqld.sock",
 
   // Connection pool settings

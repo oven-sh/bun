@@ -1,13 +1,26 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  describeWithContainer,
+  isDockerEnabled,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import path from "path";
 import {
+  closedPort,
   listeningServer,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
   mysqlOkPacket,
+  mysqlParseHandshakeResponse41,
   mysqlRawPacket,
   mysqlReadPackets,
   mysqlStmtPrepareOk,
@@ -1275,4 +1288,53 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }
+});
+
+// The containers only expose TCP, so a scripted server listening on a unix
+// socket stands in for mysqld; it only has to answer the handshake. Skipped on
+// Windows: net.Server.listen(path) is a named pipe there, so no socket file
+// exists on disk, and parseOptions only honors a socket path that exists.
+describe.skipIf(isWindows)("MySQL: unix socket", () => {
+  test.concurrent.each([
+    [
+      "the `socket` option",
+      (sock: string, port: number) =>
+        new SQL({ adapter: "mysql", socket: sock, hostname: "127.0.0.1", port, username: "socket_user", max: 1 }),
+    ],
+    [
+      "?socket= in the connection string",
+      (sock: string, port: number) => new SQL(`mysql://socket_user@127.0.0.1:${port}/db?socket=${sock}`, { max: 1 }),
+    ],
+  ])("connects over the unix socket given as %s", async (_, connect) => {
+    using dir = tempDir("sql-mysql-unix-socket", {});
+    const sock = path.join(String(dir), "mysqld.sock");
+    const handshakeUsernames: string[] = [];
+    const server = net.createServer(socket => {
+      let buffered: Buffer = Buffer.alloc(0);
+      socket.write(mysqlHandshakeV10());
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (handshakeUsernames.length === 0) {
+            handshakeUsernames.push(mysqlParseHandshakeResponse41(payload).username);
+            socket.write(mysqlOkPacket(seq + 1));
+          } else {
+            socket.end();
+          }
+        });
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(sock);
+    await once(server, "listening");
+
+    try {
+      // hostname/port name a TCP port nothing listens on: with a socket
+      // configured they must not be used, so connecting there is the failure.
+      await using sql = connect(sock, await closedPort());
+      await sql.connect();
+      expect(handshakeUsernames).toEqual(["socket_user"]);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
 });

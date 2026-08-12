@@ -336,10 +336,24 @@ declare module "bun" {
       ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
 
       /**
-       * Unix domain socket path for connection
+       * Unix domain socket to connect through instead of TCP. When it is set,
+       * {@link hostname} and {@link port} are not used to connect. For
+       * PostgreSQL it may also be the directory containing the server's
+       * `.s.PGSQL.<port>` socket. If the path does not exist when the client is
+       * created, it is ignored and a TCP connection is made instead. Can also be
+       * given as the `?path=` query parameter of the connection URL.
        * @default undefined
        */
       path?: string | undefined;
+
+      /**
+       * Unix domain socket to connect through instead of TCP (alias for
+       * {@link path}, matching the `socket` option of the MySQL client tools).
+       * Can also be given as the `?socket=` query parameter of the connection
+       * URL.
+       * @default undefined
+       */
+      socket?: string | undefined;
 
       /**
        * Called when a connection attempt completes.

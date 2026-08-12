@@ -7,6 +7,7 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_core::String as BunString;
+use bun_io::StreamBuffer;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -164,76 +165,6 @@ pub(crate) fn do_send(
         }
     }
 
-    let mut zig_handle: Option<Handle> = None;
-    let mut pause_target = JSValue::UNDEFINED;
-    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
-    let mut dup_err: Option<bun_sys::Error> = None;
-    if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
-            log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
-                crate::socket::listener::ListenerType::Uws(socket_uws) => {
-                    // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    #[cfg(not(windows))]
-                    match Handle::init_dup(fd, handle, false) {
-                        Ok(h) => zig_handle = Some(h),
-                        Err(e) => dup_err = Some(e),
-                    }
-                    #[cfg(windows)]
-                    {
-                        zig_handle = Some(Handle::init(fd, handle));
-                    }
-                }
-                crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
-                crate::socket::listener::ListenerType::None => {}
-            }
-        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
-            if fd != bun_sys::Fd::INVALID {
-                log!("got tcp socket fd");
-                let keep_open = !options_.is_undefined_or_null()
-                    && options_
-                        .get(global_object, "keepOpen")?
-                        .is_some_and(|v| v.to_boolean());
-                if !keep_open {
-                    pause_target = handle;
-                }
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, !keep_open) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(if keep_open {
-                        Handle::init(fd, handle)
-                    } else {
-                        Handle::init_close_on_complete(fd, handle)
-                    });
-                }
-            }
-        } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
-            if let Some(fd) = udp.native_fd() {
-                log!("got udp socket fd");
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, false) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(Handle::init(fd, handle));
-                }
-            }
-        }
-    }
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it here (node: postSend on error).
     let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
         if target.is_object() {
@@ -249,21 +180,50 @@ pub(crate) fn do_send(
         }
     };
 
-    #[cfg(not(windows))]
-    if let Some(e) = dup_err {
-        use bun_jsc::SysErrorJsc as _;
-        close_detached(global_object, pause_target);
-        return do_send_err(global_object, callback, e.to_js(global_object), from);
-    }
-
-    #[cfg(windows)]
-    if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
-            Some(hex) => {
-                h.win_export_hex = Some(hex);
-                h.peer_pid = peer_pid;
+    let mut zig_handle: Option<Handle> = None;
+    let mut pause_target = JSValue::UNDEFINED;
+    if let Some(fd) = native_handle_fd(handle) {
+        log!("sending handle {:?}", fd);
+        let mut close_on_complete = false;
+        if handle.as_class_ref::<crate::socket::TCPSocket>().is_some() {
+            let keep_open = !options_.is_undefined_or_null()
+                && options_
+                    .get(global_object, "keepOpen")?
+                    .is_some_and(|v| v.to_boolean());
+            if !keep_open {
+                pause_target = handle;
+                close_on_complete = true;
             }
-            None => zig_handle = None,
+        }
+        // The handle is read again when the message is actually written; if it
+        // was closed by then the message goes out on its own, so that form of
+        // it is serialized up front (node serializes at write time instead).
+        let mut without_handle = StreamBuffer::default();
+        if IPC::serialize(
+            ipc_data.mode,
+            &mut without_handle,
+            global_object,
+            original_message,
+            is_internal,
+        )
+        .is_err()
+        {
+            close_detached(global_object, pause_target);
+            return send_failed(global_object, callback, from);
+        }
+        #[cfg(windows)]
+        {
+            zig_handle =
+                attach_windows_socket_payload(global_object, message, fd, peer_pid).map(|hex| {
+                    let mut h = Handle::native(handle, close_on_complete, without_handle);
+                    h.win_export_hex = Some(hex);
+                    h.peer_pid = peer_pid;
+                    h
+                });
+        }
+        #[cfg(not(windows))]
+        {
+            zig_handle = Some(Handle::native(handle, close_on_complete, without_handle));
         }
     }
     if zig_handle.is_none() {
@@ -292,13 +252,7 @@ pub(crate) fn do_send(
 
     if status == SerializeAndSendResult::Failure {
         close_detached(global_object, pause_target);
-        let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
-        ex.put(
-            global_object,
-            b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
-        );
-        return do_send_err(global_object, callback, ex, from);
+        return send_failed(global_object, callback, from);
     }
 
     // in the success or backoff case, serializeAndSend will handle calling the callback
@@ -307,6 +261,36 @@ pub(crate) fn do_send(
     } else {
         JSValue::FALSE
     })
+}
+
+fn send_failed(
+    global_object: &JSGlobalObject,
+    callback: JSValue,
+    from: FromEnum,
+) -> JsResult<JSValue> {
+    let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
+    ex.put(
+        global_object,
+        b"syscall",
+        bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
+    );
+    do_send_err(global_object, callback, ex, from)
+}
+
+/// The descriptor currently behind the native object `Ipc.ts`'s `serialize()`
+/// picked out of a `net.Server`, `net.Socket` or `dgram.Socket`; `None` once
+/// it has been closed (or for anything else).
+pub(crate) fn native_handle_fd(handle: JSValue) -> Option<bun_sys::Fd> {
+    if let Some(listener) = handle.as_class_ref::<Listener>() {
+        return listener.native_fd();
+    }
+    if let Some(socket) = handle.as_class_ref::<crate::socket::TCPSocket>() {
+        let fd = socket.socket.get().fd();
+        return (fd != bun_sys::Fd::INVALID).then_some(fd);
+    }
+    handle
+        .as_class_ref::<crate::socket::UDPSocket>()?
+        .native_fd()
 }
 
 #[bun_jsc::host_fn]

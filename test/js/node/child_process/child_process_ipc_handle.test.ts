@@ -655,4 +655,127 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // Only one handle message can be in flight (the next waits for the NODE_HANDLE_ACK), so every
+  // send() after the first one here is queued. node keeps a reference to the handle object and reads
+  // its descriptor when the message is finally written; the sender's descriptor table must not grow
+  // with the backlog (it used to gain one dup(2) per queued message, held until that message's ack).
+  test.concurrent("queued handle messages hold no descriptors in the sender", async () => {
+    using dir = tempDir("ipc-handle-queued-fds", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const { readdirSync } = require('node:fs');
+const COUNT = 32;
+const openDescriptors = () => readdirSync('/dev/fd').length;
+const child = fork('child.js');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  const before = openDescriptors();
+  let lastSendReturned;
+  for (let i = 0; i < COUNT; i++) lastSendReturned = child.send({ count: COUNT }, server);
+  const descriptorGrowth = openDescriptors() - before;
+  child.on('message', received => {
+    console.log(JSON.stringify({ lastSendReturned, descriptorGrowth, received }));
+    child.kill();
+    process.exit(0);
+  });
+});
+`,
+      "child.js": `
+const net = require('node:net');
+let servers = 0;
+process.on('message', (m, handle) => {
+  if (!(handle instanceof net.Server)) return process.send({ error: 'message ' + servers + ' arrived with ' + typeof handle });
+  handle.close();
+  if (++servers === m.count) process.send({ servers });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { lastSendReturned: false, descriptorGrowth: 0, received: { servers: 32 } },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // node reads the handle when the message is written, not when send() is called: a handle that was
+  // closed while its message sat in the queue is dropped and the message is delivered on its own
+  // (its callback still succeeds). https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
+  test.concurrent("a handle closed while its message is queued is delivered as a plain message", async () => {
+    using dir = tempDir("ipc-handle-closed-while-queued", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const dgram = require('node:dgram');
+const child = fork('child.js');
+const callbacks = [];
+const callback = name => err => callbacks.push(name + ':' + (err === null ? 'null' : err.code));
+const accepted = [];
+const server = net.createServer(socket => {
+  accepted.push(socket);
+  if (accepted.length < 2) return;
+  const udp = dgram.createSocket('udp4');
+  udp.bind(0, '127.0.0.1', () => {
+    const sendReturned = [
+      child.send('first', accepted[0], callback('first')),
+      child.send('server', server, callback('server')),
+      child.send('socket', accepted[1], { keepOpen: true }, callback('socket')),
+      child.send('dgram', udp, callback('dgram')),
+      child.send('plain', callback('plain')),
+    ];
+    server.close();
+    accepted[1].destroy();
+    udp.close();
+    child.on('message', childGot => {
+      console.log(JSON.stringify({ sendReturned, callbacks, childGot }));
+      child.kill();
+      process.exit(0);
+    });
+  });
+});
+server.listen(0, '127.0.0.1', () => {
+  for (let i = 0; i < 2; i++) net.connect(server.address().port, '127.0.0.1').on('error', () => {});
+});
+`,
+      "child.js": `
+const net = require('node:net');
+const dgram = require('node:dgram');
+const got = [];
+process.on('message', (m, handle) => {
+  let kind = typeof handle;
+  if (handle instanceof net.Server) { kind = 'net.Server'; handle.close(); }
+  else if (handle instanceof net.Socket) { kind = 'net.Socket'; handle.destroy(); }
+  else if (handle instanceof dgram.Socket) { kind = 'dgram.Socket'; handle.close(); }
+  got.push(m + ':' + kind);
+  if (m === 'plain') process.send(got);
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: {
+        sendReturned: [true, true, false, false, false],
+        callbacks: ["first:null", "server:null", "socket:null", "dgram:null", "plain:null"],
+        childGot: ["first:net.Socket", "server:undefined", "socket:undefined", "dgram:undefined", "plain:undefined"],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

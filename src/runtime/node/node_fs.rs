@@ -648,6 +648,16 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
     }
 
+    /// Runs when the completion (or `release_unrun`) drops the reclaimed box, on
+    /// the JS thread; the promise handle and the protected arguments are released
+    /// by their own field drops.
+    #[cfg(windows)]
+    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> Drop for UVFSRequest<R, A, F> {
+        fn drop(&mut self) {
+            self.r#ref.unref(bun_io::js_vm_ctx());
+        }
+    }
+
     #[cfg(windows)]
     impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F>
     where
@@ -682,9 +692,9 @@ mod _async_tasks {
                 tracker: AsyncTaskTracker::init(vm),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
-            // names that hand-off — it is `Box::leak` under the hood; the reclaim
-            // happens in `destroy()`, not in this scope.
+            // reclaimed (`heap::take`) by the task-queue arm that runs
+            // `run_from_js_thread`, or by `release_unrun`. `heap::release` names that
+            // hand-off — it is `Box::leak` under the hood.
             let task: &mut Self = bun_core::heap::release(task);
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
@@ -942,35 +952,20 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        /// Settles the promise and frees the request (the task queue's entry point).
-        ///
-        /// Raw-pointer receiver: this function ends in `destroy(this)`. A `&mut self`
-        /// argument would be protected for the whole frame, and freeing the allocation
-        /// while that protector is live is UB ("deallocating while item is protected");
-        /// the borrows below are plain locals whose last use precedes the free.
-        ///
-        /// # Safety
-        /// `this` is the pointer leaked in `create()`, enqueued exactly once (by the
-        /// libuv callback, or by `create()` itself for the no-op `writev`), and is not
-        /// used after this call.
-        pub(crate) unsafe fn run_from_js_thread(
-            this: *mut Self,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            // SAFETY: fn contract — frees `*this` once, on every return path, after
-            // everything below has run.
-            let _deinit = scopeguard::guard(this, |p| unsafe { Self::destroy(p) });
-            // Move `result` out (the sentinel left behind is dropped in `destroy()`) so
-            // the rest of the function only needs shared access.
-            // SAFETY: fn contract — exclusive access; the `&mut` is statement-scoped.
-            let mut result =
-                core::mem::replace(unsafe { &mut (*this).result }, Err(sys::Error::default()));
-            // SAFETY: fn contract — `*this` is live until the guard runs and nothing
-            // below mutates it.
-            let task = unsafe { &*this };
-            let global_object = task.global_object();
-            let success = matches!(result, Ok(_));
-            let promise_value = task.promise.value();
-            let promise = task.promise.get();
+        /// Settles the promise. The task-queue arm reclaims the box `create()` leaked
+        /// and passes it in; dropping it on the way out (every return path) releases
+        /// the keep-alive and frees the request. Owning the box, rather than taking
+        /// `&mut self`, is what makes freeing it here sound: a reference argument is
+        /// protected for the whole call and must not be deallocated through.
+        #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
+            // Move `result` out so the `global_object()` borrow below can coexist with
+            // the `&mut` conversion; the sentinel left behind drops with the box.
+            let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+            let global_object = self.global_object();
+            let success = result.is_ok();
+            let promise_value = self.promise.value();
+            let promise = self.promise.get();
             let result = match &mut result {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
@@ -987,7 +982,7 @@ mod _async_tasks {
             };
             promise_value.ensure_still_alive();
 
-            let _dispatch = task.tracker.dispatch(global_object);
+            let _dispatch = self.tracker.dispatch(global_object);
 
             if success {
                 promise.resolve(global_object, result)?;
@@ -995,15 +990,6 @@ mod _async_tasks {
                 promise.reject(global_object, Ok(result))?;
             }
             Ok(())
-        }
-
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            // `bun_sys::Error` frees its path on Drop.
-            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1238,10 +1224,10 @@ mod _async_tasks {
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
-        /// tick: destroy releases its promise handle and keep-alive.
+        /// tick: dropping it releases its promise handle and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { Self::destroy(this) }
+            // SAFETY: fn contract — leaked in `UVFSRequest::create`, reclaimed once.
+            unsafe { bun_core::heap::destroy(this) }
         }
     }
 
@@ -1412,6 +1398,17 @@ mod _async_tasks {
         pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
+    /// Runs on the owning thread when the completion (or `release_unrun`) drops
+    /// the box `schedule_new` leaked. `Drop for ThreadSafe<args::Cp>` releases the
+    /// `protect()` taken by `to_thread_safe()` when `src`/`dest` are Buffers.
+    impl<const IS_SHELL: bool> Drop for NewAsyncCpTask<IS_SHELL> {
+        fn drop(&mut self) {
+            if !IS_SHELL {
+                self.r#ref.unref(event_loop_handle_to_ctx(self.evtloop));
+            }
+        }
+    }
+
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
@@ -1525,11 +1522,11 @@ mod _async_tasks {
         } else {
             bun_event_loop::task_tag::AsyncCpTask
         };
-        /// A finished fs.cp whose completion will not run: destroy releases
+        /// A finished fs.cp whose completion will not run: dropping it releases
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            unsafe { Self::destroy(this) }
+            unsafe { bun_core::heap::destroy(this) }
         }
     }
 
@@ -1568,7 +1565,9 @@ mod _async_tasks {
                 tracker,
                 core::ptr::null_mut(),
             );
-            // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
+            // SAFETY: `schedule_new` returns the leaked box, which only the completion
+            // posted to this thread reclaims, so it is live until we return to the
+            // event loop; the pool side never touches `promise`.
             unsafe { &*task }.promise.value()
         }
 
@@ -1698,10 +1697,11 @@ mod _async_tasks {
                 let at =
                     AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
                         debug_assert!(IS_SHELL, "only the shell posts cp tasks to a mini loop");
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked
-                        // task. The shell specialization settles no promise, so there is
-                        // no termination to report: the result is always `Ok`.
-                        let _ = unsafe { Self::run_from_js_thread(p) };
+                        // SAFETY: subtask count hit zero ⇒ this is the only pointer left to
+                        // the box `schedule_new` leaked; reclaim it. The shell
+                        // specialization settles no promise, so there is no termination to
+                        // report: the result is always `Ok`.
+                        let _ = unsafe { bun_core::heap::take(p) }.run_from_js_thread();
                     });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
@@ -1710,37 +1710,25 @@ mod _async_tasks {
             poster.embedded_work_finished();
         }
 
-        /// Delivers the result (settles the promise, or hands it to the shell's
-        /// `ShellCpTask`) and frees the task. Posted by `on_subtask_done`.
-        ///
-        /// Raw-pointer receiver: this function ends in `destroy(this)`. A `&mut self`
-        /// argument would be protected for the whole frame, and freeing the allocation
-        /// while that protector is live is UB ("deallocating while item is protected");
-        /// the borrows below are plain locals whose last use precedes the free.
-        ///
-        /// # Safety
-        /// `this` is the pointer `schedule_new()` leaked, every subtask has dropped its
-        /// reference (`subtask_count` reached zero, so this thread has exclusive
-        /// access), and it is not used after this call.
-        pub(crate) unsafe fn run_from_js_thread(
-            this: *mut Self,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            // SAFETY: fn contract — frees `*this` once, on every return path, after
-            // everything below has run.
-            let _deinit = scopeguard::guard(this, |p| unsafe { Self::destroy(p) });
-            // SAFETY: fn contract — `*this` is live until the guard runs; `result` is a
-            // `Cell`, so moving it out below needs only this shared borrow.
-            let task = unsafe { &*this };
+        /// Delivers the result: settles the promise, or hands it to the shell's
+        /// `ShellCpTask`. The completion `on_subtask_done` posted reclaims the box
+        /// `schedule_new` leaked and passes it in; dropping it on the way out (every
+        /// return path) releases the keep-alive and frees the task. Owning the box,
+        /// rather than taking `&mut self`, is what makes freeing it here sound: a
+        /// reference argument is protected for the whole call and must not be
+        /// deallocated through.
+        #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+        pub(crate) fn run_from_js_thread(self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
             // `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
-            let mut result = task.result.replace(Ok(()));
+            let mut result = self.result.replace(Ok(()));
             if IS_SHELL {
-                let shelltask = task.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
+                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
                 // outlives this task; `cp_on_finish` continues it in place.
                 unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
                 return Ok(());
             }
-            let go_ptr = task.evtloop.global_object();
+            let go_ptr = self.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
                     "No global object, this indicates a bug in Bun. Please file a GitHub issue."
@@ -1749,8 +1737,8 @@ mod _async_tasks {
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = result.is_ok();
-            let promise_value = task.promise.value();
-            let promise = task.promise.get();
+            let promise_value = self.promise.value();
+            let promise = self.promise.get();
             let result = match &mut result {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
@@ -1767,7 +1755,7 @@ mod _async_tasks {
             };
             promise_value.ensure_still_alive();
 
-            let _dispatch = task.tracker.dispatch(global_object);
+            let _dispatch = self.tracker.dispatch(global_object);
 
             if success {
                 promise.resolve(global_object, result)?;
@@ -1775,21 +1763,6 @@ mod _async_tasks {
                 promise.reject(global_object, Ok(result))?;
             }
             Ok(())
-        }
-
-        /// SAFETY: `this` must be the pointer returned by Box::leak in
-        /// `schedule_new()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in
-            // schedule_new()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            if !IS_SHELL {
-                let ctx = event_loop_handle_to_ctx(task.evtloop);
-                task.r#ref.unref(ctx);
-            }
-            // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
-            // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version

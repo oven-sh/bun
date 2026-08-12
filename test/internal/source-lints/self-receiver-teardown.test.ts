@@ -18,13 +18,16 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // "the strongly protected tag disallows deallocations" under Miri, the model
 // `bun run rust:miri` checks; the protector is the model's counterpart of the
 // `dereferenceable` attribute rustc puts on reference arguments, so this is not
-// only a Miri concern). The function that frees has to take the allocation
-// pointer (`this: *mut Self`) and reborrow per statement, with its caller (a
-// dispatch arm, a C callback, a scope guard over the raw pointer) passing the
-// pointer through; see the comment on `deinit(this: *mut Self)` in
-// src/sql_jsc/postgres/PostgresSQLConnection.rs and
+// only a Miri concern). The method has to own the allocation instead: the
+// caller that holds the raw pointer (a dispatch arm, a C callback) reclaims
+// the box (`heap::take`) and calls a `self: Box<Self>` method, with the
+// teardown in `Drop`, so every return path frees it; see
 // `UVFSRequest::run_from_js_thread` / `NewAsyncCpTask::run_from_js_thread` in
-// src/runtime/node/node_fs.rs.
+// src/runtime/node/node_fs.rs and the arms that call them in
+// src/runtime/dispatch.rs. Where the pointer cannot be turned back into a box
+// at the entry point, the fallback is a `this: *mut Self` function that
+// reborrows per statement and frees through `this` (see the comment on
+// `deinit(this: *mut Self)` in src/sql_jsc/postgres/PostgresSQLConnection.rs).
 //
 // Scope: the two single-expression shapes above, with the callee literally
 // named `destroy` or `deinit` (the name list is the enforcement boundary; a new
@@ -169,7 +172,9 @@ test("the patterns recognize the spellings they claim to", () => {
     "let _g = scopeguard::guard(self as *mut Self, move |p| unsafe { Self::deinit(p) });",
   ];
   const allowed = [
-    // The converted shapes: the pointer comes in as a parameter.
+    // The converted shapes: the caller reclaims the box, or the pointer comes
+    // in as a parameter.
+    "unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::AsyncCpTask)) }.run_from_js_thread()?;",
     "unsafe { Self::destroy(this) }",
     "let _deinit = scopeguard::guard(this, |p| unsafe { Self::destroy(p) });",
     "unsafe { Self::destroy(cast_ptr!(crate::node::fs::AsyncCpTask)) }",

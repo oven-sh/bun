@@ -300,23 +300,16 @@ pub(crate) fn run_task(
             }
             .run();
         }
-        // `run_from_js_thread` frees the task, so it takes the raw pointer (no
-        // `&mut` at this boundary, same as `DuplexUpgradeContext` above).
         task_tag::AsyncCpTask => {
-            // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-            unsafe {
-                crate::node::fs::AsyncCpTask::run_from_js_thread(cast_ptr!(
-                    crate::node::fs::AsyncCpTask
-                ))?
-            };
+            // SAFETY: leaked by `schedule_new`; posted by `on_subtask_done` with the
+            // count at zero, so this is the last pointer to it and the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::AsyncCpTask)) }
+                .run_from_js_thread()?;
         }
         task_tag::ShellAsyncCpTask => {
             // SAFETY: as above.
-            unsafe {
-                crate::node::fs::ShellAsyncCpTask::run_from_js_thread(cast_ptr!(
-                    crate::node::fs::ShellAsyncCpTask
-                ))?
-            };
+            unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::ShellAsyncCpTask)) }
+                .run_from_js_thread()?;
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
@@ -437,12 +430,11 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    // SAFETY: §Dispatch — tag identifies the pointee, a `UVFSRequest`
-                    // enqueued exactly once on completion. Raw pointer because
-                    // `run_from_js_thread` frees it.
-                    $(task_tag::$tag => unsafe {
-                        fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty))?
-                    },)*
+                    // SAFETY: §Dispatch — tag identifies the pointee, the box
+                    // `UVFSRequest::create` leaked, enqueued exactly once on
+                    // completion; the arm consumes it.
+                    $(task_tag::$tag => unsafe { bun_core::heap::take(cast_ptr!(fs_async::$ty)) }
+                        .run_from_js_thread()?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};

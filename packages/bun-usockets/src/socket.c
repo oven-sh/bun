@@ -458,7 +458,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->group = group;
     s->kind = kind;
     s->ssl = NULL;
-    s->ssl_id = 0;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;

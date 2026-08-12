@@ -91,9 +91,12 @@ struct loop_ssl_data {
    * SSL believes these records were written, so they MUST reach this exact
    * socket's fd, in order, before any of its later records. Drained from the
    * owner's writable event; while the slot is occupied, other sockets write
-   * through per record (the pre-batching path). ssl_spill_owner is the
-   * owning connection's ssl_id, 0 while the slot is free; ssl_owns_spill is
-   * the only way the slot is matched to a socket. */
+   * through per record (the pre-batching path). One slot per loop rather than
+   * one per connection is the bound on ciphertext that has been reported as
+   * written but not handed to the kernel: at most one spill exists at a time,
+   * however many peers stall. Because the slot is shared it needs an owner;
+   * ssl_spill_owner is the owning connection's ssl_id (0 while the slot is
+   * free), and ssl_owns_spill is the only way it is matched to a socket. */
   uint64_t ssl_spill_owner;
   char *ssl_spill;
   unsigned int ssl_spill_len;
@@ -696,12 +699,13 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   return written;
 }
 
-/* Whether the spill slot holds `s`'s ciphertext. A free slot records owner 0,
- * as does the ssl_id of a plain socket (ssl_release_spill runs for those too,
- * from us_internal_ssl_detach), so 0 never counts as a match. */
+/* Whether the spill slot holds `s`'s ciphertext. Like every other ssl_* header
+ * field, s->ssl_id is only meaningful once us_internal_ssl_attach has run, so
+ * callers reach this through the TLS paths only (see us_internal_ssl_detach);
+ * a free slot records owner 0, which attach never hands out. */
 static inline int ssl_owns_spill(const struct loop_ssl_data *loop_ssl_data,
                                  const struct us_socket_t *s) {
-  return s->ssl_id != 0 && loop_ssl_data->ssl_spill_owner == s->ssl_id;
+  return loop_ssl_data->ssl_spill_owner == s->ssl_id;
 }
 
 /* Flush the ciphertext batch to its socket in one write. A partial write
@@ -1594,11 +1598,16 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
 }
 
 void us_internal_ssl_detach(struct us_socket_t *s) {
-  /* Every teardown ends here, including the error/RST ones that never pass
-   * through us_internal_ssl_close, so this is where a connection gives the
-   * spill slot back; an occupied slot keeps batching off for the whole loop. */
-  ssl_release_spill(s->group->loop, s);
+  /* Called for every socket that closes, plain ones included; a plain socket
+   * never attached, so its ssl_* header fields (ssl_id among them) are
+   * uninitialized and nothing below may run for it. */
   if (s->ssl) {
+    /* Every TLS teardown ends here, including the error/RST ones that never
+     * pass through us_internal_ssl_close, so this is where a connection gives
+     * the spill slot back; an occupied slot keeps batching off for the whole
+     * loop. Runs before the in-use check: the SSL may have to outlive this
+     * call, the slot must not. */
+    ssl_release_spill(s->group->loop, s);
     if (s->ssl_in_use) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
        * inside it destroyed the socket); freeing now would leave BoringSSL

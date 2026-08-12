@@ -353,7 +353,6 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->group = group;
     s->kind = 0; /* listener itself never dispatches */
     s->ssl = NULL;
-    s->ssl_id = 0;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
@@ -533,7 +532,6 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->group = group;
     s->kind = kind;
     s->ssl = NULL;
-    s->ssl_id = 0;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;

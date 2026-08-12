@@ -328,12 +328,13 @@ struct us_socket_t {
    * the sweep escalates via SO_ERROR when the peer later resets). */
   unsigned char unclassified_send_failures : 7;
   unsigned char fin_deferred : 1;
-  /* Identity of the TLS connection: handed out by us_internal_ssl_attach from
-   * a per-loop counter, 0 on plain sockets. The loop's single ciphertext spill
-   * slot (openssl.c, loop_ssl_data) records which connection it belongs to as
-   * this id rather than as a socket address: the allocator recycles addresses
-   * and adoption moves a connection to a new one, while an id is never reused
-   * on a loop, so a connection can only ever drain or release a spill it made
+  /* Identity of the TLS connection, handed out by us_internal_ssl_attach from
+   * a per-loop counter (never 0); like the ssl_* bits above it is only set,
+   * and only read, once `ssl` is. The loop's single ciphertext spill slot
+   * (openssl.c, loop_ssl_data) records which connection it belongs to as this
+   * id rather than as a socket address: the allocator recycles addresses and
+   * adoption moves a connection to a new one, while an id is never reused on
+   * a loop, so a connection can only ever drain or release a spill it made
    * itself. */
   uint64_t ssl_id;
 

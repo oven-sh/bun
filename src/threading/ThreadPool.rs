@@ -1033,18 +1033,15 @@ enum WaitError {
 // the compiler is free to reorder fields (the 4-byte `Event` invites it),
 // which profiled ~43% hotter on the steal traversal.
 //
-// Once `register` has published a worker's `Thread`, it is reached from other
-// threads through that pointer for as long as the worker runs: stealers read
-// `next` and drain `run_queue`/`run_buffer`, `push_idle_task` pushes into
-// `idle_queue`, and the join chain fires `join_event`. So nothing, the owning
-// worker included, may form a `&mut Thread` after that point; every method
-// takes `&self` and the worker's own state lives in a `Cell`
+// From `register` until the worker exits, other threads steal from this struct
+// and push into `idle_queue` through the published pointer, so nothing (the
+// owning worker included) may hold a `&mut Thread`: every method takes `&self`
+// and owner-private state is a `Cell`
 // (test/internal/source-lints/thread-pool-shared-receivers.test.ts).
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
-    /// Work-stealing cursor into the pool's `threads` stack. Only read and
-    /// written by the owning worker, in `pop`.
+    /// Work-stealing cursor into the pool's `threads` stack; owner-private.
     target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
@@ -1202,11 +1199,8 @@ impl Thread {
         // SAFETY: self_ptr is our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
 
-        // SAFETY: `self_` is live for the rest of this fn, and from
-        // registration on it is only ever accessed shared, by this thread as
-        // much as by the stealers (see the note on `Thread`), so one `&Thread`
-        // serves the whole loop.
-        let this: &Thread = unsafe { &*self_ptr };
+        // Published now, so our own view is shared too (see the note on `Thread`).
+        let this: &Thread = &self_;
         let stats = stats_enabled();
         let mut is_waking = false;
         loop {
@@ -1277,10 +1271,6 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    ///
-    /// Owner-only (it refills `run_buffer` and advances `target`), but `&self`
-    /// all the same: other workers are stealing from this `Thread` while it
-    /// runs (see the note on `Thread`).
     pub(crate) fn pop(&self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {

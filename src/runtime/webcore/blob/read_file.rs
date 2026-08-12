@@ -470,8 +470,7 @@ impl ReadFile {
         }
     }
 
-    /// `wait_for_readable` for named pipes: waits on this (pool) thread.
-    /// Returns `false` if the wait failed, with the error recorded for `then()`.
+    /// `wait_for_readable` for named pipes, on this thread; `false` if the wait itself failed.
     #[cfg(target_os = "macos")]
     fn block_until_readable(&mut self) -> bool {
         bloblog!("ReadFile.blockUntilReadable");

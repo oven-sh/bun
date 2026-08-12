@@ -1711,8 +1711,7 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        // `_DARWIN_UNLIMITED_SELECT` select(2): the bare syscall, so no
-        // FD_SETSIZE check, and a set is just ceil(nfds / 32) 32-bit words.
+        // `_DARWIN_UNLIMITED_SELECT` select(2): no FD_SETSIZE limit; a set is ceil(nfds/32) words.
         #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
         pub(crate) fn select(
             nfds: c_int,
@@ -7622,13 +7621,10 @@ pub fn kevent(
 
 /// Blocks in `select(2)` until `fd` is readable or at EOF; retries on EINTR.
 ///
-/// For named pipes. XNU hooks a FIFO's `EVFILT_READ` (and `poll(2)`, which it
-/// implements with kqueue) to the vnode, where it only fires while bytes are
-/// buffered, and `fifo_close` posts nothing, so neither ever reports the last
-/// writer closing. `select(2)` goes through `fifo_select` to the FIFO's socket,
-/// whose readability includes `SS_CANTRCVMORE`: set by that close, clear while
-/// no writer has connected yet. `pipe(2)` pipes have their own filter with
-/// `EV_EOF` and do not need this.
+/// For named pipes: XNU's kqueue filter for a FIFO (`filt_vnode_common`, which
+/// `poll(2)` uses too) fires only while bytes are buffered, never for the last
+/// writer closing; `fifo_select` consults the FIFO's socket, which reports that
+/// close (and not a writer that has yet to connect). `pipe(2)` pipes report `EV_EOF`.
 #[cfg(target_os = "macos")]
 pub fn block_until_readable(fd: Fd) -> Maybe<()> {
     debug_assert!(fd.is_valid());

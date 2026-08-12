@@ -29,10 +29,7 @@ pub struct Framework {
     pub(crate) route_index: framework_router::RouteIndex,
     /// Only depends on the router, which does not change after startup.
     pub(crate) cached_module_list: jsc::StrongOptional,
-    /// Embeds `client_script_generation`; cleared by `invalidate_client_bundle`.
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
-    /// `meta.styles`; cleared by `invalidate_client_bundle` and, for
-    /// server-side changes, by `finalize_bundle`.
     pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
@@ -126,9 +123,6 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// Called when a client-side file of the route was re-bundled: drops the
-    /// client bundle and what the route serves derived from it.
-    ///
     /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
@@ -148,6 +142,7 @@ impl RouteBundle {
         match &mut self.data {
             Data::Framework(fw) => {
                 fw.cached_client_bundle_url.clear_without_deallocation();
+                // `meta.styles` includes the CSS imported by client components.
                 fw.cached_css_file_array.clear_without_deallocation();
             }
             Data::Html(html) => html.cached_response = None,

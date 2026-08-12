@@ -510,8 +510,6 @@ pub(crate) mod js_bundler {
     }
 
     impl Config {
-        /// On error the caller still holds whatever was stored in `plugins`;
-        /// dropping it releases the plugin cell.
         pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
@@ -1892,11 +1890,9 @@ pub(crate) mod js_bundler {
         }
     }
 
-    /// Owner of a `JSBundlerPlugin` from [`PluginJscExt::create`]. The handle
-    /// is a `protect()`ed JSCell, not a heap allocation: a `Box<Plugin>` around
-    /// it frees nothing (`Plugin` is a ZST opaque), so the only thing that
-    /// releases the cell is this type's `Drop` calling [`PluginJscExt::destroy`].
-    /// JS thread only.
+    /// Owns a cell from [`PluginJscExt::create`]; `Drop` is its one
+    /// [`PluginJscExt::destroy`]. The cell is a protected JSCell, not a heap
+    /// allocation, so nothing else (a `Box<Plugin>` included) releases it. JS thread only.
     pub(crate) struct OwnedPlugin(core::ptr::NonNull<Plugin>);
 
     impl OwnedPlugin {
@@ -1907,9 +1903,7 @@ pub(crate) mod js_bundler {
             )
         }
 
-        /// The handle itself, for holders that only borrow the plugin (the
-        /// bundle thread, routes and the dev server sharing a server's plugins).
-        /// Valid until `self` drops.
+        /// For holders that only borrow the cell; valid until `self` drops.
         #[inline]
         pub(crate) fn as_non_null(&self) -> core::ptr::NonNull<Plugin> {
             self.0

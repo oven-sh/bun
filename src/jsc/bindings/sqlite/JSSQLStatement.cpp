@@ -1216,6 +1216,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
+    String sqlitePath = sqliteStrValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (sqlitePath.find('\0') != WTF::notFound) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The SQLite library path must not contain null bytes"_s));
+        return {};
+    }
+
 #if LAZY_LOAD_SQLITE
     if (sqlite3_handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
@@ -1224,8 +1231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
 
     // Use a static CString to keep the string alive for the lifetime of the process
     static CString sqlite3_lib_path_storage;
-    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
-    RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path_storage = sqlitePath.utf8();
     sqlite3_lib_path = sqlite3_lib_path_storage.data();
 
     if (lazyLoadSQLite() == -1) {
@@ -1418,6 +1424,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (extensionString.find('\0') != WTF::notFound) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The extension path must not contain null bytes"_s));
+        return {};
+    }
+
+    auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (entryPointStr.find('\0') != WTF::notFound) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The extension entry point must not contain null bytes"_s));
+        return {};
+    }
+
     sqlite3* db = versionDB->handle();
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
@@ -1429,8 +1447,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return {};
     }
 
-    auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
-    RETURN_IF_EXCEPTION(scope, {});
     auto entryPointUtf8 = entryPointStr.utf8();
     const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
     auto extensionStringUtf8 = extensionString.utf8();
@@ -1783,6 +1799,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     String path = pathValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
     (void)topExceptionScope.tryClearException();
+    if (path.find('\0') != WTF::notFound) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "The database path must not contain null bytes"_s));
+        return {};
+    }
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);

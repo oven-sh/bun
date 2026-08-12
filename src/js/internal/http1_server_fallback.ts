@@ -440,17 +440,14 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  // Node's socketOnClose: free the parser, then abortIncoming(). The request
-  // node would still have in state.incoming is the one whose response is still
-  // assigned to the socket (a finished response detached itself on 'finish');
-  // destroying it emits 'aborted' and 'close', and 'error' (ECONNRESET) when
-  // something listens for it. Registered before any response's assignSocket()
-  // 'close' listener so req 'aborted' precedes res 'close', as in node.
+  // Node's socketOnClose (freeParser + abortIncoming). Must be registered before
+  // any response's assignSocket() 'close' listener: req 'aborted' precedes res 'close'.
   function onHttp1SocketClose() {
     connections.delete(socket);
     try {
       parser.close();
     } catch {}
+    // Node's state.incoming equivalent: a finished response detached on 'finish'.
     const inflightReq = socket._httpMessage?.req;
     if (inflightReq && !inflightReq.destroyed) {
       inflightReq.destroy(new ConnResetException("aborted"));

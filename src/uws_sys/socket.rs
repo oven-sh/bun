@@ -734,6 +734,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {

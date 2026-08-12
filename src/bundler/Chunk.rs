@@ -1591,13 +1591,6 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
-                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
-            }
-        }
         pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),

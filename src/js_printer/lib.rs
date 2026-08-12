@@ -364,7 +364,7 @@ pub mod analyze_transpiled_module {
             self.record_kinds.push(kind);
             self.buffer.extend_from_slice(data);
         }
-        pub fn add_import_info_single(
+        pub(crate) fn add_import_info_single(
             &mut self,
             module_name: StringID,
             import_name: StringID,
@@ -386,7 +386,7 @@ pub mod analyze_transpiled_module {
                 ],
             );
         }
-        pub fn add_import_info_namespace(
+        pub(crate) fn add_import_info_namespace(
             &mut self,
             module_name: StringID,
             local_name: StringID,
@@ -506,7 +506,7 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
-        pub fn request_module(
+        pub(crate) fn request_module(
             &mut self,
             import_record_path: StringID,
             fetch_parameters: FetchParameters,
@@ -528,6 +528,67 @@ pub mod analyze_transpiled_module {
         ) {
             self.requested_modules
                 .insert_if_absent(import_record_path, fetch_parameters, phase);
+        }
+
+        /// Appends `other`'s requested modules and import/export records to
+        /// `self`, re-interning its strings. The bundler prints the part ranges
+        /// of a chunk in parallel, each into its own `ModuleInfo`, then appends
+        /// them to the chunk's `ModuleInfo` in output order, so the chunk's
+        /// record lists its dependencies in the order JSC's parser would derive
+        /// from the printed source. `is_typescript` describes the destination
+        /// module and is left alone.
+        pub fn append(&mut self, other: &ModuleInfo) {
+            debug_assert!(!self.finalized);
+            debug_assert!(!other.finalized);
+
+            let mut ids: Vec<StringID> = Vec::with_capacity(other.strings_lens.len());
+            let mut offset = 0usize;
+            for &len in other.strings_lens.iter() {
+                let len = len as usize;
+                ids.push(self.str(&other.strings_buf[offset..offset + len]));
+                offset += len;
+            }
+            // Record slots also hold `STAR_DEFAULT` / `STAR_NAMESPACE`, the
+            // `ExportInfoLocal` padding word, and bitcast `FetchParameters`
+            // (a string ID for host-defined loaders, otherwise a sentinel);
+            // everything that is not an index into `other`'s string table is
+            // copied through unchanged.
+            let map = |raw: u32| -> u32 { ids.get(raw as usize).map_or(raw, |id| id.0) };
+
+            let (keys, values, phases) = (
+                other.requested_modules.keys(),
+                other.requested_modules.values(),
+                other.requested_modules.phases(),
+            );
+            for ((&key, &value), &phase) in keys.iter().zip(values).zip(phases) {
+                self.requested_modules.insert_if_absent(
+                    StringID(map(key.0)),
+                    FetchParameters(map(value.0)),
+                    phase,
+                );
+            }
+
+            let mut i = 0usize;
+            for &kind in other.record_kinds.iter() {
+                let data = &other.buffer[i..i + kind.len()];
+                i += kind.len();
+                // Same first-declaration-wins rule as `add_export_info_*`.
+                if matches!(
+                    kind,
+                    RecordKind::ExportInfoIndirect
+                        | RecordKind::ExportInfoLocal
+                        | RecordKind::ExportInfoNamespace
+                ) && self.has_or_add_exported_name(StringID(map(data[0].0)))
+                {
+                    continue;
+                }
+                self.record_kinds.push(kind);
+                self.buffer
+                    .extend(data.iter().map(|slot| StringID(map(slot.0))));
+            }
+
+            self.flags.contains_import_meta |= other.flags.contains_import_meta;
+            self.flags.has_tla |= other.flags.has_tla;
         }
 
         /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
@@ -4797,14 +4858,12 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(binding.loc);
                     self.print_symbol(b.r#ref);
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
-                            if tlm.is_export {
-                                let name_id = mi.str(local_name);
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            let name_id = mi.str(local_name);
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
                 }
@@ -4914,15 +4973,14 @@ pub(crate) mod __gated_printer {
                                                     if str.slice8()
                                                         == self.name_for_symbol(id.r#ref)
                                                     {
-                                                        if Self::MAY_HAVE_MODULE_INFO {
+                                                        if Self::MAY_HAVE_MODULE_INFO
+                                                            && tlm.is_export
+                                                        {
                                                             if let Some(mi) = self.module_info() {
-                                                                if tlm.is_export {
-                                                                    let name_id =
-                                                                        mi.str(str.slice8());
-                                                                    mi.add_export_info_local(
-                                                                        name_id, name_id,
-                                                                    );
-                                                                }
+                                                                let name_id = mi.str(str.slice8());
+                                                                mi.add_export_info_local(
+                                                                    name_id, name_id,
+                                                                );
                                                             }
                                                         }
                                                         self.maybe_print_default_binding_value(
@@ -4948,16 +5006,14 @@ pub(crate) mod __gated_printer {
                                                     str.slice16(),
                                                     self.name_for_symbol(id.r#ref),
                                                 ) {
-                                                    if Self::MAY_HAVE_MODULE_INFO {
+                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
-                                                            if tlm.is_export {
-                                                                let name_id = mi.str(str8);
-                                                                mi.add_export_info_local(
-                                                                    name_id, name_id,
-                                                                );
-                                                            }
+                                                            let name_id = mi.str(str8);
+                                                            mi.add_export_info_local(
+                                                                name_id, name_id,
+                                                            );
                                                         }
                                                     }
                                                     self.maybe_print_default_binding_value(
@@ -5064,12 +5120,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(local_name);
                     self.print_func(&s.func);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.func.flags.contains(G::FnFlags::IsExport) {
                         if let Some(mi) = self.module_info() {
-                            if s.func.flags.contains(G::FnFlags::IsExport) {
-                                let name_id = mi.str(local_name);
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            let name_id = mi.str(local_name);
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 
@@ -5095,12 +5149,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(name_str);
                     self.print_class(&s.class);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.is_export {
                         if let Some(mi) = self.module_info() {
-                            if s.is_export {
-                                let name_id = mi.str(name_str);
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            let name_id = mi.str(name_str);
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 

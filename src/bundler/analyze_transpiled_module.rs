@@ -25,11 +25,6 @@ pub use bun_js_printer::analyze_transpiled_module::{
 /// `bundler_jsc::analyze_jsc::to_js_module_record`.
 pub type RequestedModuleValue = FetchParameters;
 
-/// Legacy name used by `linker_context::postProcessJSChunk` — the type was
-/// renamed `ImportAttributes` → `FetchParameters` but the bundler call site
-/// still spells `ImportAttributes::None`.
-pub(crate) type ImportAttributes = FetchParameters;
-
 // ──────────────────────────────────────────────────────────────────────────
 // RecordKind
 // ──────────────────────────────────────────────────────────────────────────

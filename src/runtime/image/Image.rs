@@ -1302,9 +1302,11 @@ impl<'a> BlobReadChain<'a> {
         // file/S3). Ownership of the chain transfers there; the trait impl
         // below reconstructs the Box and frees it.
         let raw = bun_core::heap::into_raw(chain);
-        // SAFETY: `raw` is freshly leaked and uniquely owned by the read
-        // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
+        // SAFETY: `raw` is freshly leaked and not used again here; the read
+        // dispatch hands it to `on_read_bytes` below exactly once, also when it
+        // returns `Err` (a termination hit while delivering synchronously, i.e.
+        // after the chain has already been reclaimed).
+        unsafe { blob.read_bytes_to_handler(raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
@@ -1377,12 +1379,11 @@ impl<'a> BlobReadChain<'a> {
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    fn on_read_bytes(&mut self, result: ReadBytesResult) {
-        // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
-        // `read_bytes_to_handler` in `start()`; we are the sole consumer on
-        // the JS thread. Reconstruct the Box so the body can move fields out
-        // and free the allocation.
-        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+        // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
+        // handed back to us exactly once (trait contract); nothing else points
+        // at it, so reclaiming it here is the chain's one and only free.
+        let boxed = unsafe { bun_core::heap::take(this) };
         boxed.on_read_bytes_impl(result);
     }
 }

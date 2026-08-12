@@ -1658,7 +1658,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     // Unlike other sinks, the controller does not own the pipe: its ref is
     // released by `controller_detached` below, and the free happens wherever
     // the last ref drops.
-    fn finalize(&mut self) {}
+    unsafe fn finalize(_this: *mut Self) {}
     fn controller_detached(&mut self) {
         RewriterPipe::release_pump_ref(self);
     }

@@ -8271,24 +8271,21 @@ impl H2FrameParser {
         Ok(JSValue::js_number(result as f64))
     }
 
+    /// `set_next_stream_id` can park `last_stream_id` anywhere in the u32 range, so the step
+    /// saturates; callers that open the stream reject anything above `MAX_STREAM_ID`.
     fn get_next_stream_id(&self) -> u32 {
-        let mut stream_id: u32 = self.last_stream_id.get();
+        let stream_id = self.last_stream_id.get();
         if self.is_server.get() {
             if stream_id.is_multiple_of(2) {
-                stream_id += 2;
+                stream_id.saturating_add(2)
             } else {
-                stream_id += 1;
+                stream_id.saturating_add(1)
             }
+        } else if stream_id.is_multiple_of(2) {
+            stream_id.saturating_add(1)
         } else {
-            if stream_id.is_multiple_of(2) {
-                stream_id += 1;
-            } else if stream_id == 0 {
-                stream_id = 1;
-            } else {
-                stream_id += 2;
-            }
+            stream_id.saturating_add(2)
         }
-        stream_id
     }
 
     #[bun_jsc::host_fn(method)]
@@ -8301,22 +8298,21 @@ impl H2FrameParser {
         debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
-        let mut last_stream_id = stream_id_arg.to_u32();
-        if this.is_server.get() {
-            if last_stream_id.is_multiple_of(2) {
-                last_stream_id -= 2;
+        // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
+        // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
+        // so the subtraction saturates to the initial state instead of wrapping.
+        let next_stream_id = stream_id_arg.to_u32();
+        let last_stream_id = if this.is_server.get() {
+            if next_stream_id.is_multiple_of(2) {
+                next_stream_id.saturating_sub(2)
             } else {
-                last_stream_id -= 1;
+                next_stream_id.saturating_sub(1)
             }
+        } else if next_stream_id.is_multiple_of(2) {
+            next_stream_id.saturating_sub(1)
         } else {
-            if last_stream_id.is_multiple_of(2) {
-                last_stream_id -= 1;
-            } else if last_stream_id == 1 {
-                last_stream_id = 0;
-            } else {
-                last_stream_id -= 2;
-            }
-        }
+            next_stream_id.saturating_sub(2)
+        };
         this.last_stream_id.set(last_stream_id);
         Ok(JSValue::UNDEFINED)
     }

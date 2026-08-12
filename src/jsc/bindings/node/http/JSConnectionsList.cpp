@@ -68,6 +68,7 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return result;
@@ -95,6 +96,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
 
         if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -122,6 +124,7 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return result;

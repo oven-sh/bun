@@ -647,16 +647,25 @@ describe("reconnect", () => {
     const got = Promise.withResolvers<string>();
     await sql.listen("ch", got.resolve, repaired.after(2));
 
+    // Plain awaits rather than expect().rejects: that one runs the event loop
+    // re-entrantly, and this code is still inside the dropped connection's
+    // data callback; on Windows the inner run frees the socket under it.
+    const outcome = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        (err: Error) => err.message,
+      );
+
     // Issued in the same tick as the drop, this lands on the dying connection
     // and rejects once the client has processed the drop, which is the moment
     // the client considers "ch" unsubscribed and has armed its backoff.
     server.dropConnections();
-    await expect(sql.listen("probe", () => {})).rejects.toThrow();
+    expect(await outcome(sql.listen("probe", () => {}))).toMatch(/closed/i);
 
     // This listen() brings the connection back (cancelling the backoff) and is
     // the one sending LISTEN "ch"; its rejection must not strand the first listener.
     server.failNextListen("ch");
-    await expect(sql.listen("ch", () => {})).rejects.toThrow("cannot LISTEN ch");
+    expect(await outcome(sql.listen("ch", () => {}))).toBe("cannot LISTEN ch");
 
     await repaired;
     expect(server.connections).toEqual([['LISTEN "ch"'], ['LISTEN "ch"', 'LISTEN "ch"']]);

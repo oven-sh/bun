@@ -4314,12 +4314,14 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
   );
   await new Promise(resolve => server.listen(0, resolve));
   const port = server.address().port;
+  const clients = [];
 
   // Resolves once the server has accepted the connection too: Http2SecureServer sets the HTTP/1
   // fallback up in its own 'secureConnection' listener, which runs before this one.
   async function connectHttp1() {
     const accepted = new Promise(resolve => server.once("secureConnection", resolve));
     const client = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+    clients.push(client);
     await new Promise((resolve, reject) => {
       client.once("secureConnect", resolve);
       client.once("error", reject);
@@ -4365,10 +4367,10 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
     return promise;
   }
 
-  const fresh = await connectHttp1();
-  const partial = await connectHttp1();
-  const done = await connectHttp1();
   try {
+    const fresh = await connectHttp1();
+    const partial = await connectHttp1();
+    const done = await connectHttp1();
     const partialHeadArrived = new Promise(resolve => partial.serverSocket.once("data", resolve));
     partial.client.write("GET /partial HTTP/1.1\r\nHost: localhost\r\n");
     await partialHeadArrived;
@@ -4393,9 +4395,7 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
     expect(await Promise.all([freshBody, partialBody])).toEqual(["served /fresh", "served /partial"]);
     await serverClosed;
   } finally {
-    fresh.client.destroy();
-    partial.client.destroy();
-    done.client.destroy();
+    for (const client of clients) client.destroy();
     if (server.listening) server.close();
   }
 });

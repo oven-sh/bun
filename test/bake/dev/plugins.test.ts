@@ -1,5 +1,6 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { expect } from "bun:test";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -108,6 +109,74 @@ devTest("onResolve + onLoad virtual file", {
       },
       "file-on-disk",
     ]);
+  },
+});
+// The two ways an onLoad answer fails its file: the callback threw, or nothing answered
+// for a module outside the file namespace. Each plugin below awaits `defer()` first, which
+// resolves once nothing else in the bundle is pending, so its answer is what finishes the
+// bundle: the dev server then tears the bundle down (including the arena that the request
+// being answered lives in) while that answer is still being handled. MIMALLOC_PURGE_DELAY=0
+// makes a touch of the torn-down arena fault instead of reading memory that still happens
+// to look intact.
+function failingOnLoadFiles(plugin: string, entry: string) {
+  return {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": plugin,
+    "index.html": emptyHtmlFile({ scripts: ["entry.ts"] }),
+    "entry.ts": entry,
+  };
+}
+devTest("onLoad callback that throws fails the route and leaves the dev server usable", {
+  env: { MIMALLOC_PURGE_DELAY: "0" },
+  files: failingOnLoadFiles(
+    `
+      export default {
+        name: "throwing-onload",
+        setup(build) {
+          build.onLoad({ filter: /entry\\.ts$/ }, async ({ defer }) => {
+            await defer();
+            throw new Error("onLoad failed on purpose");
+          });
+        },
+      };
+    `,
+    `console.log("never bundled");`,
+  ),
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.output.waitForLine(/onLoad failed on purpose/);
+    // Bundles the route again, so the dev server has to be intact after the failed bundle.
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("onLoad that does not answer for a module outside the file namespace leaves the dev server usable", {
+  env: { MIMALLOC_PURGE_DELAY: "0" },
+  files: failingOnLoadFiles(
+    `
+      export default {
+        name: "declining-onload",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:config$/ }, () => ({ path: "config", namespace: "virtual" }));
+          // Registered so that the bundler asks this plugin to load the module; answering
+          // nothing leaves a module outside the file namespace with nothing to load it from.
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async ({ defer }) => {
+            await defer();
+            return undefined;
+          });
+        },
+      };
+    `,
+    `import "virtual:config";`,
+  ),
+  async test(dev) {
+    // Only the error being reported is asserted here: this failure is logged against the
+    // bundle rather than the file, so unlike a thrown callback it does not fail the route.
+    await dev.fetch("/");
+    await dev.output.waitForLine(/Module not found "virtual:config" in namespace "virtual"/);
+    await dev.fetch("/");
   },
 });
 // devTest("onLoad with watchFile", {

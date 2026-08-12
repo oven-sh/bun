@@ -4415,7 +4415,24 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Bundle thread: a plugin answered `load` (or none matched).
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            let parse_scheduled = Self::apply_load_answer(load, this);
+            if !parse_scheduled {
+                // Last, once `apply_load_answer` has released `load`: in the dev
+                // server this decrement can finish the bundle
+                // (`finish_from_bake_dev_server`), which drops the arena `load` is
+                // allocated in along with `this`. Neither may be touched afterwards.
+                this.decrement_scan_counter();
+            }
+        }
+
+        /// Feeds the answer into the graph and releases everything `load` owns.
+        ///
+        /// Returns whether the file's parse task was scheduled. The load carries
+        /// that task's scan-counter unit: once scheduled, the task gives it back
+        /// on completion; otherwise the file failed and the caller gives it back.
+        fn apply_load_answer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) -> bool {
             this.graph.outstanding_loads.unlink(load);
             load.deferred = false;
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
@@ -4458,7 +4475,7 @@ pub mod bv2_impl {
                     // The file could be on disk.
                     if source.path.is_file() {
                         this.graph.pool().schedule(load.parse_task_mut());
-                        return;
+                        return true;
                     }
 
                     // When it's not a file, this is a build error and we should report it.
@@ -4472,9 +4489,7 @@ pub mod bv2_impl {
                             bun_core::fmt::quote(source.path.namespace),
                         ),
                     );
-
-                    // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    false
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
@@ -4561,6 +4576,7 @@ pub mod bv2_impl {
                             }
                         }
                     }
+                    true
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
                     if let Some(dev) = this.dev_server {
@@ -4589,9 +4605,7 @@ pub mod bv2_impl {
                         log.errors += (kind == bun_ast::Kind::Err) as u32;
                         log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                     }
-
-                    // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    false
                 }
                 jsc_api::JSBundler::LoadValue::Pending
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
@@ -4618,6 +4632,9 @@ pub mod bv2_impl {
             this.graph.outstanding_resolves.unlink(resolve);
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
+            // Declared before `_resolve_deinit` so that it drops after it: as in
+            // `on_load`, the decrement can finish the bundle and free the arena
+            // `resolve` is allocated in.
             let _dec_guard = this.decrement_scan_counter_on_drop();
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);

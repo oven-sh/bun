@@ -517,11 +517,10 @@ export const globalFlags: Flag[] = [
     // parent and the LTO codegen aborts ("Associative COMDAT symbol
     // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
     // built without it for the same reason.
-    // webkitLto: WPD assumes every derived class is in the LTO unit; with a native JSC/ICU in the link it would devirtualize to bun's subclasses alone.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
-    when: c => c.unix && c.webkitLto,
+    when: c => c.unix && c.lto,
     lang: "cxx",
-    desc: "Enable devirtualization across whole program (LTO with WebKit in the LTO unit only)",
+    desc: "Enable devirtualization across whole program (LTO only)",
   },
   {
     // Every summaried bitcode module in the link must agree on the
@@ -867,7 +866,7 @@ export const linkerFlags: Flag[] = [
     // satisfies the whole-program assumption. ld64.lld has no named option
     // for this; -mllvm reaches the underlying cl::opt directly.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
-    when: c => c.darwin && c.webkitLto,
+    when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
@@ -876,18 +875,13 @@ export const linkerFlags: Flag[] = [
     // so this upgrades JSC/WTF's exported classes to hidden LTO visibility
     // and lets WPD fire on them, not just on our -fvisibility=hidden classes.
     flag: ["-Wl,--lto-whole-program-visibility"],
-    when: c => c.unix && !c.darwin && c.webkitLto,
+    when: c => c.unix && !c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time (lld ELF)",
   },
   {
-    flag: "-flto=thin",
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
     when: c => c.unix && c.lto,
     desc: "LTO at link time (matches compile-side -flto=thin)",
-  },
-  {
-    flag: ["-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && c.webkitLto,
-    desc: "WPD at link time (matches the compile-side entry; same webkitLto gate)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.

@@ -134,8 +134,6 @@ export interface Config {
    * entirely — see workarounds.ts "globalopt-crash-aarch64-musl".
    */
   crossLangLto: boolean;
-  /** WebKit is in the LTO unit too (a `-lto` prebuilt, or a local build): required for whole-program devirtualization. */
-  webkitLto: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -791,21 +789,19 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const assertions = partial.assertions ?? (debug || asan);
 
   // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, freebsd, darwin-cross, and windows-cross. All use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). Native windows/darwin stay
-  // non-LTO (no -lto WebKit prebuilt for the native toolchains).
+  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
+  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
+  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
   const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || freebsd || darwinCross || windowsCross) && ci && !assertions && !asan;
+  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
   // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers), and bun's
-  // own C++ would hit the same emitter, so it stays fully non-LTO.
-  if ((asan && lto) || (windows && arm64)) {
+  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
+  if ((asan && lto) || abi === "android" || (windows && arm64)) {
     lto = false;
   }
-  // Android and FreeBSD have no -lto WebKit prebuilt: bun's C++ and Rust still ThinLTO together, JSC/ICU stay native, and WPD is off (flags.ts).
-  const webkitLto = lto && ((partial.webkit ?? "prebuilt") === "local" || (abi !== "android" && !freebsd));
 
   // Cross-language LTO normally tracks `lto`. Gated off only for native
   // Windows hosts — there `ld` is the host LLVM's lld-link and no rust-lld
@@ -1194,7 +1190,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     mode: partial.mode ?? "full",
     lto,
     crossLangLto,
-    webkitLto,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1533,7 +1528,7 @@ export function formatConfig(cfg: Config, exe: string): string {
     `  ${label("revision")} ${cfg.revision === "unknown" ? "unknown" : cfg.revision.slice(0, 10)}`,
   ];
   const features: string[] = [];
-  if (cfg.lto) features.push(cfg.webkitLto ? "lto" : "lto (webkit native)");
+  if (cfg.lto) features.push("lto");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");

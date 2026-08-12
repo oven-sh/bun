@@ -15,9 +15,13 @@ enum State {
 
 pub struct Seq {
     state: State,
-    start: f32,
-    end: f32,
-    increment: f32,
+    start: f64,
+    end: f64,
+    increment: f64,
+    /// Most decimal places any positional argument was written with
+    /// (`seq 0 0.25 1` → 2). The sequence is generated in units of
+    /// 10^-decimals so fractional steps stay exact.
+    decimals: u32,
     /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
@@ -31,6 +35,7 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
+            decimals: 0,
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
         }
@@ -91,10 +96,14 @@ impl Seq {
         macro_rules! parse_num {
             ($i:expr) => {{
                 let s = Builtin::of(interp, cmd).arg_bytes($i);
-                match parse_f32(s) {
+                let n = match bun_core::fmt::parse_f64(s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
-                }
+                };
+                let decimals = decimal_places(s);
+                let me = Self::state_mut(interp, cmd);
+                me.decimals = me.decimals.max(decimals);
+                n
             }};
         }
 
@@ -159,9 +168,11 @@ impl Seq {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         // Render entirely into a local Vec, then either enqueue it or
         // write_no_io it; we buffer once for simplicity.
-        let (start, end, incr, sep, term) = {
+        let (start, end, incr, scale, sep, term) = {
             let me = Self::state_mut(interp, cmd);
-            (me.start, me.end, me.increment, me.separator, me.terminator)
+            let (start, end, incr, scale) =
+                scale_to_decimals(me.start, me.end, me.increment, me.decimals);
+            (start, end, incr, scale, me.separator, me.terminator)
         };
         let mut out = Vec::new();
         let mut current = start;
@@ -170,16 +181,18 @@ impl Seq {
         } else {
             current >= end
         } {
-            // Rust `{}` for f32 prints the shortest decimal that round-trips
-            // (no exponent, no trailing ".0").
-            let _ = write!(&mut out, "{}", current);
+            // Rust `{}` for f64 prints the shortest decimal that round-trips
+            // (no exponent, no trailing ".0"), so an integer divided by an
+            // exact power of ten prints as the plain decimal (`13 / 10` → `1.3`).
+            let _ = write!(&mut out, "{}", current / scale);
             out.extend_from_slice(sep.slice());
             let next = current + incr;
             if next == current {
-                // f32 rounding can make `current + incr` equal `current`
-                // (e.g. `seq 1 99999999` saturates at 2^24, or a tiny
-                // increment relative to `current`). Without this check the
-                // loop never terminates and `out` grows without bound.
+                // Reached only when `scale_to_decimals` had to leave the
+                // operands unscaled and `incr` is below f64 resolution at this
+                // magnitude (`seq 1 1e-17 2`, integers past 2^53): the
+                // sequence cannot advance, and without this check the loop
+                // never terminates and `out` grows without bound.
                 break;
             }
             current = next;
@@ -218,7 +231,51 @@ impl Seq {
     }
 }
 
-#[inline]
-fn parse_f32(bytes: &[u8]) -> Option<f32> {
-    bun_core::fmt::parse_f32(bytes)
+/// Decimal places a positional argument was written with: `0.25` → 2,
+/// `1e-3` → 3, `2.50e1` → 1. `arg` has already been accepted by `parse_f64`,
+/// so it has the shape `[sign]digits[.digits][e[sign]digits]`.
+fn decimal_places(arg: &[u8]) -> u32 {
+    let (mantissa, exponent) = match bun_core::strings::index_of_any(arg, b"eE") {
+        Some(e) => {
+            // An exponent outside i32 either overflowed to inf (rejected by
+            // the caller) or underflowed to 0, which needs no decimal places.
+            let exponent = bun_core::fmt::parse_decimal::<i32>(&arg[e + 1..]).unwrap_or(0);
+            (&arg[..e], i64::from(exponent))
+        }
+        None => (arg, 0),
+    };
+    let fraction = match bun_core::strings::index_of_char_usize(mantissa, b'.') {
+        Some(dot) => (mantissa.len() - dot - 1) as i64,
+        None => 0,
+    };
+    (fraction - exponent).clamp(0, i64::from(u32::MAX)) as u32
+}
+
+/// Rescales the operands so the sequence is counted in whole units of the
+/// finest decimal place any operand was written with: `seq 0 0.1 1` counts
+/// 0..=10 by 1 and divides by 10 when printing. Integer-valued f64s below 2^53
+/// add exactly, which avoids both the drift of summing fractions (ten 0.1s
+/// make 0.9999999999999999) and the noise of multiplying them (3 * 0.1 prints
+/// as 0.30000000000000004). Returns `(start, end, increment, scale)`; operands
+/// that cannot be scaled exactly are returned as they are with scale 1.
+fn scale_to_decimals(start: f64, end: f64, incr: f64, decimals: u32) -> (f64, f64, f64, f64) {
+    const POW10: [f64; 23] = [
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16,
+        1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+    ];
+    const MAX_EXACT_INTEGER: f64 = 9007199254740992.0; // 2^53
+
+    if decimals == 0 {
+        return (start, end, incr, 1.0);
+    }
+    // 1e22 is the largest power of ten f64 represents exactly.
+    let Some(&scale) = POW10.get(decimals as usize) else {
+        return (start, end, incr, 1.0);
+    };
+    let scaled = [start, end, incr].map(|v| (v * scale).round());
+    if scaled.iter().any(|v| v.abs() >= MAX_EXACT_INTEGER) {
+        return (start, end, incr, 1.0);
+    }
+    let [start, end, incr] = scaled;
+    (start, end, incr, scale)
 }

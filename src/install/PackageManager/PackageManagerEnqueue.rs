@@ -302,16 +302,7 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        let task = enqueue_git_clone(
-            this,
-            clone_id,
-            alias,
-            &repository,
-            dependency_id,
-            &dep,
-            resolution,
-            None,
-        );
+        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
 }
@@ -612,6 +603,36 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
     this.patch_task_fifo
         .write_item_assume_capacity(bun_core::heap::into_raw(task));
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A resolve task's callback queue is drained exactly once. If `task_id`
+/// already completed and appended a package, resolve `id` against it directly:
+/// a context queued now would never be processed. Applies the same
+/// `package_name` / `resolved` fix-up the completion drain applies.
+fn resolve_from_appended_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+) -> Option<PackageID> {
+    let &pkg_id = this.appended_task_packages.get(&task_id)?;
+    let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
+    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+    let v = &mut this.lockfile.buffers.dependencies[id as usize].version;
+    // The buffer row can hold a different tag than the enqueue arm when the
+    // dependency comes from `overrides`.
+    match v.tag {
+        dependency::version::Tag::Git => {
+            let repo = v.git_mut();
+            if pkg_res.tag == ResolutionTag::Git {
+                repo.resolved = pkg_res.git().resolved;
+            }
+            repo.package_name = pkg_name;
+        }
+        dependency::version::Tag::Github => v.github_mut().package_name = pkg_name,
+        dependency::version::Tag::Tarball => v.tarball_mut().package_name = pkg_name,
+        _ => {}
+    }
+    Some(pkg_id)
 }
 
 /// Q: "What do we do with a dependency in a package.json?"
@@ -1204,18 +1225,42 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let resolved = Repository::find_commit(
-                    this.env_mut(),
-                    this.log_mut(),
-                    repo_fd,
-                    alias,
-                    this.lockfile.str(&dep.committish),
-                    clone_id,
-                )?;
-                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
-
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+
+                // An already-resolved dependency (install-phase re-enqueue
+                // after the shared clone finished) is pinned: its install
+                // context is keyed on the stored SHA, and a branch
+                // committish's current tip may differ.
+                let pinned: Option<Vec<u8>> = if needs_ctx {
+                    None
+                } else {
+                    let pkg_id = this.lockfile.buffers.resolutions[id as usize];
+                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+                    // SAFETY: tag checked — `value.git` is the active union arm.
+                    (pkg_res.tag == ResolutionTag::Git)
+                        .then(|| this.lockfile.str(&pkg_res.git().resolved).to_vec())
+                };
+                let resolved = match pinned {
+                    Some(resolved) => resolved,
+                    None => Repository::find_commit(
+                        this.env_mut(),
+                        this.log_mut(),
+                        repo_fd,
+                        alias,
+                        this.lockfile.str(&dep.committish),
+                        clone_id,
+                    )?,
+                };
+                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
+
+                if needs_ctx {
+                    if let Some(pkg_id) = resolve_from_appended_task(this, checkout_id, id) {
+                        success_fn(this, id, pkg_id);
+                        return Ok(());
+                    }
+                }
+
                 let entry = this
                     .task_queue
                     .get_or_put_context(checkout_id, ())
@@ -1270,8 +1315,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                let task =
-                    enqueue_git_clone(this, clone_id, alias, &dep, id, dependency, &res, None);
+                let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
                 this.task_batch.push(ThreadPool::Batch::from(task));
             }
             Ok(())
@@ -1300,6 +1344,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bstr::BStr::new(this.lockfile.str(&version.literal)),
                     bstr::BStr::new(&url),
                 );
+            }
+
+            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+                if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             let ctx = if is_root {
@@ -1501,6 +1552,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
+            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+                if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
+            }
+
             let ctx = if is_root {
                 TaskCallbackContext::RootDependency(id)
             } else {
@@ -1650,7 +1708,6 @@ fn enqueue_git_clone(
     task_id: Task::Id,
     name: &[u8],
     repository: &Repository,
-    dep_id: DependencyID,
     dependency: &Dependency,
     res: &Resolution,
     // if patched then we need to do apply step after network task is done
@@ -1695,7 +1752,6 @@ fn enqueue_git_clone(
                 )
                 .expect("unreachable"),
                 env: crate::repository::SharedEnv::get(this.env_mut()),
-                dep_id,
                 res: *res,
             }),
         },

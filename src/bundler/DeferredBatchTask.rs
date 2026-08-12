@@ -25,50 +25,44 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
 }
 
 impl DeferredBatchTask {
-    pub(crate) fn init(&mut self) {
-        // Kept as `&mut self` (not `-> Self`) — this struct is embedded
-        // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
-        // it is reset in place, never separately constructed.
+    /// Bundle thread: post `bv2.drain_defer_task` (the one instance of this
+    /// type a pass has) to the plugins' thread.
+    pub(crate) fn schedule(bv2: &mut BundleV2<'_>) {
+        let this = &mut bv2.drain_defer_task;
         #[cfg(debug_assertions)]
-        debug_assert!(!self.running);
-        // No Drop / no owned fields — pure reset.
-        let _ = core::mem::take(self);
+        {
+            debug_assert!(!this.running);
+            this.running = false;
+        }
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(this)));
+
+        bv2.enqueue_on_js_loop_for_plugins(task);
     }
 
-    pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
-        // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
-        // this struct is never instantiated standalone. Lifetime erased to 'static;
-        // callers must not outlive the owning bundle.
+    /// Plugins' JS thread. For `Bun.build` the pass this task is embedded in
+    /// is being driven by the bundle thread meanwhile, so it is only reached
+    /// through a raw pointer, for two fields fixed before the pass started;
+    /// see `BundleV2::plugins_on_js_thread`.
+    pub fn run_on_js_thread(&mut self) {
+        // SAFETY: `self` is the `drain_defer_task` field of a `BundleV2`
+        // (`schedule` is the only way to post it), and that pass is live: it is
+        // waiting on the loads whose `.defer()` promises this settles
+        // (`Graph::drain_deferred_tasks` moved their units back into
+        // `pending_items` before posting this). `completion` is `Copy` and set
+        // before the pass started, so reading it through the pointer races with
+        // nothing; the completion task it points at lives on this thread.
+        // `plugins` is set, or `enqueue_on_js_loop_for_plugins` would not have
+        // posted this.
         unsafe {
-            &mut *bun_core::from_field_ptr!(
+            let bv2 = bun_core::from_field_ptr!(
                 BundleV2<'static>,
                 drain_defer_task,
                 std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
-
-    pub(crate) fn schedule(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.running);
-            self.running = false;
-        }
-        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
-
-        self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
-    }
-
-    pub fn run_on_js_thread(&mut self) {
-        // `deinit` only resets
-        // the debug `running` flag; nothing follows `drain_deferred`, so
-        // resetting the flag afterwards covers both paths.
-        {
-            let bv2 = self.get_bundle_v2();
-            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
+            );
+            let rejected = (*bv2).completion.is_some_and(|c| c.result_is_err());
             // The void result is discarded — see
             // `Plugin::drain_deferred` for the exception-scope note.
-            bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
+            BundleV2::plugins_on_js_thread(bv2).drain_deferred(rejected);
         }
         self.deinit();
     }

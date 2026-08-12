@@ -196,7 +196,8 @@ impl<'a> BundleV2<'a> {
 
     /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
     /// Set once in `init` from `BakeOptions` / completion config; live for the
-    /// bundle pass.
+    /// bundle pass. The hops that run on the plugins' own thread have no
+    /// `&BundleV2` to call this on; they use [`Self::plugins_on_js_thread`].
     #[inline]
     pub(crate) fn plugins_ref(&self) -> Option<&JSBundlerPlugin> {
         // SAFETY: BACKREF — opaque C++ object owned by the completion task /
@@ -205,13 +206,28 @@ impl<'a> BundleV2<'a> {
         self.plugins.map(|p| unsafe { p.as_ref() })
     }
 
-    /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    /// The same backref, for the hops that run on the plugins' JS thread
+    /// (`Resolve` / `Load` / `DeferredBatchTask::run_on_js_thread`). For
+    /// `Bun.build` the pass they point at belongs to the bundle thread, which
+    /// is inside `wait_for_parse` mutating it while the hop runs, so a hop
+    /// must not form a `&BundleV2` / `&mut BundleV2` (which is what a `&self`
+    /// accessor would make it do); this reads the one field it needs through
+    /// the pointer.
+    ///
+    /// # Safety
+    /// `this` must point at the live `BundleV2` that posted the hop, with
+    /// `plugins` set (`enqueue_on_js_loop_for_plugins` asserts it).
     #[inline]
-    pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
-        // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
-        // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
-        self.plugins.map(|mut p| unsafe { p.as_mut() })
+    pub(crate) unsafe fn plugins_on_js_thread<'p>(this: *const Self) -> &'p mut JSBundlerPlugin {
+        // SAFETY: `this` is live (fn contract). `plugins` is `Copy` and is
+        // written only before the pass starts, so reading the field through
+        // the pointer races with nothing and borrows nothing of the pass. The
+        // pointee is the opaque ZST handle of `plugins_ref` (live for the
+        // pass, see there); the `&mut` mirrors the C++ signatures of
+        // `matchOn*` / `drainDeferred` and covers no bytes, so it overlaps
+        // nothing the bundle thread holds.
+        let plugins = unsafe { (*this).plugins }.expect("plugins");
+        JSBundlerPlugin::opaque_mut(plugins.as_ptr())
     }
 
     /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
@@ -1143,25 +1159,25 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
                 }
+                /// Plugins' JS thread. The pass that posted this (`bv2`) is
+                /// owned and being driven by the bundle thread meanwhile, so it
+                /// is only ever touched through `plugins_on_js_thread` here.
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
-                        );
+                    // SAFETY: `bv2` is the backref set by `init`, and the pass
+                    // cannot finish while this request is outstanding; it was
+                    // dispatched through `enqueue_on_js_loop_for_plugins`, so
+                    // `plugins` is set.
+                    unsafe { BundleV2::plugins_on_js_thread(self.bv2) }.match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                    );
                 }
             }
 
@@ -1278,26 +1294,21 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
+                /// Plugins' JS thread; see `Resolve::run_on_js_thread`.
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.path` / `&self.namespace` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_load(
-                            &self.path,
-                            &self.namespace,
-                            self_ptr,
-                            default_loader,
-                            is_server_side,
-                        );
+                    // SAFETY: as in `Resolve::run_on_js_thread`.
+                    unsafe { BundleV2::plugins_on_js_thread(self.bv2) }.match_on_load(
+                        &self.path,
+                        &self.namespace,
+                        self_ptr,
+                        default_loader,
+                        is_server_side,
+                    );
                 }
             }
             impl bun_event_loop::Taskable for Load {

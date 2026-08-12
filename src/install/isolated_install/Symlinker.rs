@@ -75,13 +75,12 @@ impl Symlinker {
                                     },
                                 },
                                 // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. A non-empty
-                                // directory is the `bun patch <pkg>` workspace (a
-                                // detached copy the user is editing before
-                                // `--commit`) and must survive. rmdir only succeeds
-                                // on an empty directory (e.g. one ninja pre-created
-                                // for a declared output), so its failure is the
-                                // signal to leave dest alone.
+                                // dest exists but isn't a symlink. If it's a non-empty
+                                // directory, leave it: this is the `bun patch <pkg>`
+                                // workspace (a detached copy the user is editing
+                                // before `--commit`), and `deleteTree` here would
+                                // silently destroy their in-progress edits. If it's
+                                // a regular file, replace it.
                                 _ => {
                                     #[cfg(windows)]
                                     let is_dir = if let Some(a) =
@@ -100,6 +99,7 @@ impl Symlinker {
                                         false
                                     };
                                     if is_dir {
+                                        // rmdir succeeds only on an empty directory.
                                         if bun_sys::rmdir(self.dest.slice_z()).is_err() {
                                             return Ok(());
                                         }

@@ -841,6 +841,37 @@ fn update_package_json_and_install_with_manager_with_updates(
                                     }
                                 }
                             }
+                            #[cfg(windows)]
+                            bun_sys::EntryKind::File => {
+                                // Windows counterpart of the SymLink arm: `<name>.bunx` + `<name>.exe` shim pairs.
+                                let name = entry.name.slice_u8();
+                                if !strings::has_suffix_comptime(name, b".bunx") {
+                                    continue 'iterator;
+                                }
+                                node_modules_buf[..name.len()].copy_from_slice(name);
+                                node_modules_buf[name.len()] = 0;
+                                let bunx_name: &ZStr =
+                                    ZStr::from_buf(&node_modules_buf, name.len());
+
+                                if !is_dangling_windows_shim(
+                                    node_modules_bin,
+                                    bunx_name,
+                                    manager.options.bin_path,
+                                ) {
+                                    continue 'iterator;
+                                }
+
+                                let _ = bun_sys::unlinkat(node_modules_bin, bunx_name);
+
+                                let stem_len = name.len() - b".bunx".len();
+                                node_modules_buf[stem_len..stem_len + b".exe".len()]
+                                    .copy_from_slice(b".exe");
+                                node_modules_buf[stem_len + b".exe".len()] = 0;
+                                let exe_name: &ZStr =
+                                    ZStr::from_buf(&node_modules_buf, stem_len + b".exe".len());
+                                let _ = bun_sys::unlinkat(node_modules_bin, exe_name);
+                                continue 'iterator;
+                            }
                             _ => {}
                         }
                     }
@@ -861,6 +892,62 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     Ok(())
+}
+
+/// Does `bunx_name`'s encoded target (see `windows-shim/BinLinkingShim.rs`) no longer exist?
+#[cfg(windows)]
+fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) -> bool {
+    let Ok(file) = bun_sys::File::openat(bin_dir, bunx_name.as_bytes(), bun_sys::O::RDONLY, 0)
+    else {
+        return false;
+    };
+    let Ok(contents) = file.read_to_end_small() else {
+        return false;
+    };
+
+    // encoding: [WSTR:bin_path][u16:'"']...; bin_path is relative to `dirname(bin_dir)`.
+    let mut rel_target_byte_len = None;
+    let mut i = 0;
+    while i + 1 < contents.len() {
+        if contents[i] == b'"' && contents[i + 1] == 0 {
+            rel_target_byte_len = Some(i);
+            break;
+        }
+        i += 2;
+    }
+    let Some(rel_target_byte_len) = rel_target_byte_len else {
+        return false;
+    };
+    if rel_target_byte_len == 0 {
+        return false;
+    }
+
+    let base = bun_paths::dirname(bin_dir_path.as_bytes()).unwrap_or(b".");
+    let mut joined = bun_paths::w_path_buffer_pool::get();
+    let base_len = strings::convert_utf8_to_utf16_in_buffer(joined.as_mut_slice(), base).len();
+
+    let rel_target_units = rel_target_byte_len / 2;
+    let total = base_len + 1 + rel_target_units;
+    if total >= joined.len() {
+        return false;
+    }
+
+    joined[base_len] = b'\\' as u16;
+    for j in 0..rel_target_units {
+        joined[base_len + 1 + j] = u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
+    }
+
+    // encoded target may contain `..`; resolve before the NT-path existence check.
+    let mut target_buf = bun_paths::w_path_buffer_pool::get();
+    let target = bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Windows>(
+        &joined[..total],
+        target_buf.as_mut_slice(),
+    );
+
+    match bun_sys::exists_at_type_w(Fd::cwd(), target) {
+        Ok(_) => false,
+        Err(e) => e.get_errno() == bun_sys::E::ENOENT,
+    }
 }
 
 pub fn update_package_json_and_install_and_cli(

@@ -838,7 +838,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
-                if (hangup) us_poll_stop(&s->p, loop);
+                if (hangup) {
+                    us_poll_stop(&s->p, loop);
+                    /* Sync the recorded mask with the DEL (a pause from on_data leaves WRITABLE) so end() is a no-op. */
+                    s->p.state.poll_type = us_internal_poll_type(&s->p);
+                }
 #endif
                 eof = 0;
             }

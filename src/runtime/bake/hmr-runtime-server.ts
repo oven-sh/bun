@@ -159,8 +159,7 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    // Unhandled, a rejection here exits the process. Not awaited: requests deferred
-    // on this bundle run as soon as this returns and read the manifest updated below.
+    // Not awaited: requests deferred on this bundle run as soon as this returns and read the manifest below.
     replaceModules(modules).catch(err => {
       console.error(err);
     });

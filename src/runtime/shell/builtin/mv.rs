@@ -544,6 +544,8 @@ impl ShellMvBatchedTask {
             if sst.st_dev != st.st_dev || sst.st_ino != st.st_ino {
                 return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
             }
+            let st = sst;
+            let mode = st.st_mode as bun_core::Mode;
             // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
             if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
                 if e.get_errno() != E::EEXIST {

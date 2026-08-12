@@ -101,7 +101,12 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
-  /** Manually specify which html files to serve */
+  /**
+   * Manually specify which html files to serve. Defaults to every `*.html` in
+   * `files`. A single file is served at `/*`; several are served at the routes
+   * `bun ./a.html ./b.html` would give them (`index.html` at `/`,
+   * `docs/index.html` at `/docs`, `docs/guide.html` at `/docs/guide`).
+   */
   htmlFiles?: string[];
   /**
    * Framework to use. Consider `minimalFramework` if possible.
@@ -1779,23 +1784,23 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
+/** Same routes as `bun ./index.html ./docs/index.html ./docs/guide.html`: "/", "/docs", "/docs/guide". */
+function htmlFileRoute(posixRelativePath: string) {
+  const segments = posixRelativePath.replace(/\.html$/, "").split("/");
+  if (segments.at(-1) === "index") segments.pop();
+  return "/" + segments.join("/");
+}
+
+/** `htmlFiles` are relative to the directory the script is written to, in the platform's separator. */
 export function indexHtmlScript(htmlFiles: string[]) {
+  const files = htmlFiles.map(file => file.replaceAll(path.sep, "/"));
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
+    ...files.map((file, i) => `import html${i} from ${JSON.stringify("./" + file)};`),
     "export default {",
     "  static: {",
-    ...(htmlFiles.length === 1
+    ...(files.length === 1
       ? [`    '/*': html0,`]
-      : htmlFiles.map(
-          (file, i) =>
-            `    ${JSON.stringify(
-              "/" +
-                file
-                  .replace(/\.html$/, "")
-                  .replace("/index", "")
-                  .replace(/\/$/, ""),
-            )}: html${i},`,
-        )),
+      : files.map((file, i) => `    ${JSON.stringify(htmlFileRoute(file))}: html${i},`)),
     "  },",
     "  fetch(req) {",
     "    return new Response('Not Found', { status: 404 });",

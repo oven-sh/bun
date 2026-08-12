@@ -3074,7 +3074,11 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// candidate, and only when it is the same kind as the dependency (the
 /// "incorrect peer dependency" case; the fresh resolver inspects only
 /// `list[0]` there, and reproducing its choice exactly is the point of
-/// this helper). Returns `None` when no package with the name exists
+/// this helper). The fresh resolver skips that fallback for explicit
+/// update targets (`bun add x@1.0.0`) and resolves fresh. By the time
+/// the lockfile is saved, the fresh resolution is a satisfying
+/// candidate, so the scan here picks the same package without the
+/// update-run context. Returns `None` when no package with the name exists
 /// or the fallback is a different kind; the caller then falls back to
 /// the path walk.
 ///

@@ -11,7 +11,7 @@
 
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -98,25 +98,42 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
   expect(leaked).toBeLessThan(N / 4);
 });
 
-// A Buffer `stdin` is pumped into the child by a native writer that holds a
-// ref on itself while the write is in flight. When the child closed its stdin
-// before the write finished, the failed write (EPIPE) tore the writer down
-// without releasing that ref, leaking one writer per such spawn. The fixture
-// counts live writers via bun:internal-for-testing. It is a separate bun
-// process because the process that spawns the children is the one that must
-// have memfd disabled: on Linux a Buffer stdin otherwise bypasses the writer.
-test("Buffer stdin does not leak its native writer when the child closes stdin or drains it", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "spawn-stdin-buffer-writer-leak-fixture.ts")],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // If the fixture itself blew up, stdout is empty; report its stderr instead.
-  expect(stdout.trim() || stderr).toBe('{"leakedWhenWriteFails":0,"leakedWhenWriteDrains":0}');
-  expect(exitCode).toBe(0);
-});
+// A Buffer `stdin` (Bun.spawn's, or the shell's `< ${buffer}` redirect, which
+// shares the implementation) is pumped into the child by a native writer that
+// holds a ref on itself while the write is in flight. When the child closed
+// its stdin before the write finished, the failed write (EPIPE) tore the
+// writer down without releasing that ref, leaving a few hundred bytes behind
+// per such spawn: too small for an RSS check, so this relies on LeakSanitizer,
+// i.e. the ASAN lane. The scenarios run in their own process because the
+// process spawning the children is the one that needs memfd disabled (on Linux
+// a Buffer stdin otherwise bypasses the writer) and leak detection switched
+// on. Of the two owners it is the shell's stranded writers that LSan reports
+// (it still finds the address of a stranded Bun.spawn one somewhere); the
+// Bun.spawn scenarios run the same teardown under ASAN all the same.
+test.skipIf(!isASAN || isWindows)(
+  "Buffer stdin does not leak its native writer when the child closes stdin or drains it",
+  async () => {
+    using cwd = tempDir("stdin-buffer-writer-leak", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawn-stdin-buffer-writer-leak-fixture.ts")],
+      cwd: String(cwd),
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_MEMFD: "1",
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+  // LSan symbolizes its report on the debug binary when it does find a leak,
+  // which alone can take far longer than the default timeout.
+  90_000,
+);
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.

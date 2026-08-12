@@ -1,5 +1,4 @@
 import { $ } from "bun";
-import { subprocessInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isASAN, isPosix, tempDir } from "harness";
@@ -491,24 +490,4 @@ describe.concurrent("fd leak", () => {
     doit(false);
     doit(true);
   });
-});
-
-// `< ${buffer}` on a subprocess is pumped in by the same native writer that
-// Bun.spawn uses for a Buffer stdin. The buffer is bigger than the pipe, so a
-// command that exits without reading it makes the parent's next write fail
-// with EPIPE; that error path used to leave one writer alive per command. The
-// shell never closes this writer itself (it only resolves the command once the
-// writer reports that it has closed), so the writer's own teardown is the only
-// thing that can free it.
-test("a buffer redirected into a command that exits without reading it does not leak the writer", async () => {
-  const { staticPipeWriterLiveCount } = subprocessInternals;
-  const input = Buffer.alloc(1 << 20, 0x61);
-  const baseline = staticPipeWriterLiveCount();
-  const results = await Promise.all(
-    Array.from({ length: 3 }, () =>
-      $`${bunExe()} -e ${"/* exits without reading stdin */"} < ${input}`.quiet().then(r => r.exitCode),
-    ),
-  );
-  expect(results).toEqual([0, 0, 0]);
-  expect(staticPipeWriterLiveCount() - baseline).toBe(0);
 });

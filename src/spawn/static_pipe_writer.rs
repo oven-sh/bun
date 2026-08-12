@@ -1,5 +1,4 @@
 use core::mem::size_of;
-use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_event_loop::EventLoopHandle;
 #[cfg(windows)]
@@ -26,15 +25,6 @@ pub trait StaticPipeWriterProcess {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
-}
-
-/// Number of live `StaticPipeWriter` allocations across every owner type.
-/// Read by `bun:internal-for-testing` so tests can catch refcount leaks,
-/// which at ~100 bytes per writer are invisible to RSS-based checks.
-static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
-
-pub fn live_count() -> i32 {
-    LIVE_COUNT.load(Ordering::Relaxed)
 }
 
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
@@ -158,7 +148,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             }
         }
         let this = bun_core::heap::into_raw(boxed);
-        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just leaked above; borrow scoped to registering
         // the parent backref.
         unsafe { (*this).writer.set_parent(this) };
@@ -322,7 +311,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
 /// The heap free is handled by `IntrusiveRc` after `drop` returns.
 impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     fn drop(&mut self) {
-        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         self.writer.end();
         // `buffer` aliases `self.source`'s storage; clear it before detach()
         // frees that storage (upholds the field's documented invariant).

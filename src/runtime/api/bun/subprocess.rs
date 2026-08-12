@@ -1584,18 +1584,6 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
 pub mod testing_apis {
     use super::*;
 
-    /// Live `StaticPipeWriter` count (every owner: `Bun.spawn`, the shell, the
-    /// security scanner). A buffer-stdin writer that is never freed is ~100
-    /// bytes, far below anything an RSS-based leak test can see.
-    pub(crate) fn static_pipe_writer_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(f64::from(
-            static_pipe_writer::live_count(),
-        )))
-    }
-
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
     /// callback (Windows) had failed with EBADF. Used by tests to exercise

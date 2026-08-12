@@ -98,17 +98,6 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
-  /**
-   * Live native writers backing a Buffer/Blob `stdin` (shared by Bun.spawn,
-   * Bun.spawnSync and the shell's `< ${buffer}` redirect). Each is freed once
-   * its write drains or fails, so this returns to baseline after the children
-   * exit; a leak shows up as +1 per spawn.
-   */
-  staticPipeWriterLiveCount: $newRustFunction(
-    "subprocess.rs",
-    "TestingAPIs.staticPipeWriterLiveCount",
-    0,
-  ) as () => number,
 };
 
 export const iniInternals = {

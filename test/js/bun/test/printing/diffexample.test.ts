@@ -825,13 +825,41 @@ test("no color", async () => {
 
           at <anonymous> (FILE:LINE)
     (fail) serializes to the same string - long rendering keeps only the first and last lines
+    390 |   expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+    391 | });
+    392 | 
+    393 | test("serializes to the same string - short multi-line rendering is printed in full", () => {
+    394 |   const items = Array.from({ length: 10 }, (_, i) => i);
+    395 |   expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+                                               ^
+    error: expect(received).toEqual(expected)
+
+    Expected: {
+      "id": Symbol(a),
+      "items": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+      ],
+    }
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - short multi-line rendering is printed in full
 
      0 pass
      2 skip
      1 todo
-     23 fail
-     23 expect() calls
-    Ran 26 tests across 1 file.
+     24 fail
+     24 expect() calls
+    Ran 27 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);

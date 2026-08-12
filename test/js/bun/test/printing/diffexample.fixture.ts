@@ -389,3 +389,8 @@ test("serializes to the same string - long rendering keeps only the first and la
   const items = Array.from({ length: 600 }, (_, i) => i);
   expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
 });
+
+test("serializes to the same string - short multi-line rendering is printed in full", () => {
+  const items = Array.from({ length: 10 }, (_, i) => i);
+  expect({ items, id: Symbol("a") }).toEqual({ items, id: Symbol("a") });
+});

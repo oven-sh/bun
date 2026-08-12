@@ -1,8 +1,9 @@
 // Spawned by spawn-stdin-pipe-fd-leak.test.ts in an empty cwd, with leak
-// detection enabled and memfd disabled (on Linux a Buffer stdin otherwise
-// bypasses the writer this exercises). Drives the writer that pumps a buffer
-// into a child's stdin through both of its owners (Bun.spawn and the shell's
-// `< ${buffer}` redirect) and both ways its write can end, then exits;
+// detection enabled and memfd disabled (on Linux, Bun.spawn would otherwise
+// give the child a memfd instead of going through the writer this exercises;
+// the shell redirect uses the writer regardless). Drives the writer that pumps
+// a buffer into a child's stdin through both of its owners (Bun.spawn and the
+// shell's `< ${buffer}` redirect) and both ways its write can end, then exits;
 // LeakSanitizer reports whatever is still allocated at that point.
 //
 // In every "write fails" case the child closes its stdin without reading it,

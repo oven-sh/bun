@@ -104,12 +104,14 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
 // its stdin before the write finished, the failed write (EPIPE) tore the
 // writer down without releasing that ref, leaving a few hundred bytes behind
 // per such spawn: too small for an RSS check, so this relies on LeakSanitizer,
-// i.e. the ASAN lane. The scenarios run in their own process because the
-// process spawning the children is the one that needs memfd disabled (on Linux
-// a Buffer stdin otherwise bypasses the writer) and leak detection switched
-// on. Of the two owners it is the shell's stranded writers that LSan reports
-// (it still finds the address of a stranded Bun.spawn one somewhere); the
-// Bun.spawn scenarios run the same teardown under ASAN all the same.
+// i.e. the ASAN lane, and the scenarios run in their own process so that leak
+// detection can be switched on for exactly them. That process also gets memfd
+// disabled, which only matters for the Bun.spawn scenarios: on Linux Bun.spawn
+// otherwise hands a Buffer stdin to the child as a memfd and never creates the
+// writer, while the shell redirect uses the writer on every configuration. Of
+// the two owners it is the shell's stranded writers that LSan reports (it still
+// finds the address of a stranded Bun.spawn one somewhere); the Bun.spawn
+// scenarios run the same teardown under ASAN all the same.
 test.skipIf(!isASAN || isWindows)(
   "Buffer stdin does not leak its native writer when the child closes stdin or drains it",
   async () => {

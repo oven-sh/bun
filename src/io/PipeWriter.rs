@@ -176,10 +176,10 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Only writes; the caller dispatches the callbacks (`&self` enforces it).
-    /// An error is `Err` even after a partial drain: the caller's `on_error`
-    /// closes the parent, so the drained count has nobody left to go to, and
-    /// parents rely on no `on_write` arriving after `on_error`.
+    /// Only writes; the caller dispatches the callbacks (`&self` enforces it,
+    /// and parents rely on no `on_write` arriving after `on_error`). An error
+    /// is always `Err`: `try_write` reports a short write as `Pending`, never
+    /// as `Wrote`, so an error here means nothing was written this round.
     fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 

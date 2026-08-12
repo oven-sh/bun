@@ -13,26 +13,25 @@ const skip = !isLinux || !cc;
 
 // Nothing at pthread_create() time says which thread is being created (the name
 // is set by the thread itself, and under ASAN every thread even gets the same
-// entry point), so the shim narrows it down three ways. The thread has to be
-// created by the main thread, the one running Bun.build() / the request handler,
-// with Rust's default 2 MiB stack (bun's pools and its HTTP client thread use
-// 4 MiB, the allocators pass no attributes), and only while the fixture has the
-// BUNDLE_THREAD_SPAWN_ARMED_FILE in place, which it is exactly around the calls
-// that start the bundle thread. JSC's on-demand threads also use 2 MiB on ASAN
-// builds; the fixtures run a GC right before arming so those are already up.
-// Other std-spawned 2 MiB threads (file watchers, the Bun.file() IO thread)
-// would be caught too, so the fixtures must not use fs.watch or Bun.file()
-// while armed.
-const BUNDLE_THREAD_STACK_SIZE = 2 * 1024 * 1024;
+// entry point), so the shim goes by the requested stack size, and the fixtures
+// are run with RUST_MIN_STACK set to a size nothing else asks for. Rust's std
+// applies it to the threads spawned without an explicit size, and in these
+// fixtures the bundle thread is the only one: bun's pools, its HTTP client
+// thread and the Bun.file() IO thread pass explicit sizes, and JSC's and the
+// allocators' threads are not created through std. (Matching std's default
+// 2 MiB instead is ambiguous: JSC's threads use the attr default, which glibc
+// derives from RLIMIT_STACK, and that is 2 MiB on agents running with an
+// unlimited stack.) A multiple of 64 KiB so std's page rounding leaves it as is.
+const BUNDLE_THREAD_STACK_SIZE = 35 * 64 * 1024;
 
 // The highest value Linux reserves for errnos; far beyond the ones bun names.
 // Stands in for what Windows produces for most failed thread creations: an OS
 // code with no errno equivalent.
 const UNNAMED_ERRNO = 4095;
 
-// BUNDLE_THREAD_SPAWN_PLAN has one letter per such attempt: 'f' fails it with
-// EAGAIN (a thread limit), 'n' with ENOMEM, 'u' with a code bun has no errno
-// name for, 's' lets it through; the last letter repeats.
+// BUNDLE_THREAD_SPAWN_PLAN has one letter per attempt to create the thread: 'f'
+// fails it with EAGAIN (a thread limit), 'n' with ENOMEM, 'u' with a code bun has
+// no errno name for, 's' lets it through; the last letter repeats.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -40,18 +39,14 @@ const SHIM_C = /* c */ `
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
-static const char *armed_file;
 static const char *plan;
 static size_t plan_len;
 static size_t attempts;
 
 __attribute__((constructor)) static void init(void) {
   real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
-  armed_file = getenv("BUNDLE_THREAD_SPAWN_ARMED_FILE");
   plan = getenv("BUNDLE_THREAD_SPAWN_PLAN");
   plan_len = plan ? strlen(plan) : 0;
 }
@@ -59,8 +54,7 @@ __attribute__((constructor)) static void init(void) {
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
   size_t stack_size = 0;
   if (attr) pthread_attr_getstacksize(attr, &stack_size);
-  if (stack_size == ${BUNDLE_THREAD_STACK_SIZE} && plan_len > 0 && armed_file &&
-      syscall(SYS_gettid) == getpid() && access(armed_file, F_OK) == 0) {
+  if (stack_size == ${BUNDLE_THREAD_STACK_SIZE} && plan_len > 0) {
     size_t i = __sync_fetch_and_add(&attempts, 1);
     switch (plan[i < plan_len ? i : plan_len - 1]) {
       case 'f': return EAGAIN;
@@ -75,40 +69,19 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 const EXPECTED_ERROR =
   "Failed to start the bundler thread: EAGAIN. The process or thread limit may have been reached (ulimit -u, or the container's pids limit).";
 
-// The sync fs calls arm and disarm the shim without creating threads themselves.
-const ARM_HELPERS = /* js */ `
-import { unlinkSync, writeFileSync } from "node:fs";
-function arm() {
-  Bun.gc(true);
-  writeFileSync(process.env.BUNDLE_THREAD_SPAWN_ARMED_FILE, "");
-}
-function disarm() {
-  unlinkSync(process.env.BUNDLE_THREAD_SPAWN_ARMED_FILE);
-}
-`;
-
 // Prints one JSON line per Bun.build() call; `throw` is taken from argv so the
 // same fixture covers the rejecting and the { success: false } flavors.
-// Bun.build() starts the bundle thread before it returns its promise.
 const BUILD_FIXTURE = /* js */ `
-${ARM_HELPERS}
 const [, , throwArg, count] = process.argv;
 for (let i = 0; i < Number(count); i++) {
   let onEnd = "not called";
   const plugin = { name: "record", setup(build) { build.onEnd(result => { onEnd = result.success; }); } };
-  arm();
-  let build;
   try {
-    build = Bun.build({
+    const result = await Bun.build({
       entrypoints: [import.meta.dirname + "/entry.js"],
       throw: throwArg === "throw",
       plugins: [plugin],
     });
-  } finally {
-    disarm();
-  }
-  try {
-    const result = await build;
     console.log(JSON.stringify({ settled: "resolved", success: result.success, logs: result.logs.map(l => l.message), onEnd }));
   } catch (e) {
     console.log(JSON.stringify({ settled: "rejected", name: e.name, message: e.message, errors: e.errors.map(err => err.message), onEnd }));
@@ -121,33 +94,21 @@ for (let i = 0; i < Number(count); i++) {
 // request and writes a failed build's log to stderr, so the second request
 // shows whether the thread gets started again.
 const SERVE_FIXTURE = /* js */ `
-${ARM_HELPERS}
 import index from "./index.html";
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: { hmr: false }, routes: { "/": index } });
-arm();
-let first, second;
-try {
-  first = await fetch(server.url);
-  second = await fetch(server.url);
-} finally {
-  disarm();
-}
+const first = await fetch(server.url);
+const second = await fetch(server.url);
 console.log(JSON.stringify({ first: first.status, second: second.status }));
 server.stop(true);
 `;
 
-// Exits while the failed build's completion is still queued. Run with
+// Bun.build() tries to start the thread before returning its promise; this
+// exits while the failed build's completion is still queued. Run with
 // BUN_DESTRUCT_VM_ON_EXIT, the exit tears the VM down the way a finished
 // Worker's is, which has to release that completion like any other build's
 // instead of hanging on it or freeing it twice.
 const EXIT_FIXTURE = /* js */ `
-${ARM_HELPERS}
-arm();
-try {
-  Bun.build({ entrypoints: [import.meta.dirname + "/entry.js"], throw: false });
-} finally {
-  disarm();
-}
+Bun.build({ entrypoints: [import.meta.dirname + "/entry.js"], throw: false });
 console.log(JSON.stringify({ exiting: true }));
 process.exit(0);
 `;
@@ -183,8 +144,6 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-let runs = 0;
-
 async function runWithPlan(plan: string, args: string[], env: Record<string, string> = {}) {
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
@@ -193,9 +152,8 @@ async function runWithPlan(plan: string, args: string[], env: Record<string, str
     env: {
       ...bunEnv,
       LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+      RUST_MIN_STACK: String(BUNDLE_THREAD_STACK_SIZE),
       BUNDLE_THREAD_SPAWN_PLAN: plan,
-      // Per run: a fixture that crashes while armed must not arm the others.
-      BUNDLE_THREAD_SPAWN_ARMED_FILE: join(String(dir), `armed-${runs++}`),
       ...env,
     },
     stdout: "pipe",

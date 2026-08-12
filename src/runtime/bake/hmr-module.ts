@@ -82,9 +82,8 @@ export class HMRModule {
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
   cjs: CJSModule | any | null;
-  /** When a module fails to load, trying to load it again should throw the
-   *  same error, until a hot update reaches it (see `replaceModules`) and has
-   *  it evaluated again. */
+  /** Loading a module that failed to load rethrows this, until a hot update
+   *  has it evaluated again. */
   failure: unknown = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
@@ -333,9 +332,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
-      // `mod` is only set here if it was stale. Put it back: a refused
-      // require() does not evaluate it, and a Pending module would be handed
-      // out as-is by the next load.
+      // Only set when it was stale; refusing it must not leave it Pending.
       if (mod) mod.state = State.Stale;
       throw new AsyncImportError(id);
     }
@@ -666,21 +663,16 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           toDispose.push(mod);
         }
       }
-      // A module that failed to evaluate has no import bindings to patch, so
-      // it is evaluated again by its next load (a replaced module: the reload
-      // below). Leaving that to the next load reports a repeated failure to
-      // whatever loads the module, and does not evaluate it while a replaced
-      // dependency with top-level await is still loading. Its importers failed
-      // along with it, so the walk continues through it like through any
-      // other module that does not accept the update.
+      // A module that failed to evaluate has no bindings to patch: its next
+      // load evaluates it again and reports any new failure (a replaced module
+      // is reloaded below). Its importers failed with it, so the walk goes on.
       else if (mod.state === State.Error) {
         mod.state = State.Stale;
         mod.failure = null;
       }
 
       // A root that does not accept the update. The rest of the queue is still
-      // walked: the boundaries and failed modules behind the other importers
-      // are needed by the server, which applies the update regardless.
+      // walked; the server applies the update regardless and needs all of it.
       if (hadSelfAccept && mod.importers.size === 0) {
         failures ??= new Set();
         failures.add(key);

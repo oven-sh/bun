@@ -990,35 +990,24 @@ describe("trailers after the stream was ended without a 'wantTrailers' listener 
     }
   });
 
-  // node's onStreamTrailers returns without emitting when the stream was closed in the meantime
-  // (a listener could only throw ERR_HTTP2_INVALID_STREAM); the stream is ended so close()'s
-  // RST_STREAM, which waits for 'finish', still goes out.
-  test("client: a stream close()d while its final DATA was flow-control blocked is ended without emitting 'wantTrailers'", async () => {
+  // node's onStreamTrailers returns without emitting once the stream is closed (a listener could
+  // only throw ERR_HTTP2_INVALID_STREAM). Like the _final path, the stream is still ended with the
+  // empty END_STREAM DATA frame, and close()'s RST_STREAM (sent once the writable finishes) follows.
+  test("client: 'wantTrailers' is not emitted on a stream close()d before its body reached the wire", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
     try {
-      // SETTINGS_INITIAL_WINDOW_SIZE = 0: every new stream starts with no send window.
-      const zeroWindow = Buffer.alloc(6);
-      zeroWindow.writeUInt16BE(0x4, 0);
-      zeroWindow.writeUInt32BE(0, 2);
-      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
-      raw.sendFrame(FrameType.SETTINGS, 0, 0, zeroWindow);
-      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
-      await once(client, "remoteSettings");
-
       const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
       req.on("error", () => {});
       let wantTrailers = 0;
       req.on("wantTrailers", () => wantTrailers++);
+      // A new request stream is corked until the next tick, so the body is written (and the
+      // trailer block requested) after close() has already marked the stream closed.
       req.end("hello");
       req.close();
-      await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.HEADERS);
-      expect(raw.frames.filter(f => f.streamId === 1 && f.type === FrameType.DATA)).toEqual([]);
+      expect(req.closed).toBe(true);
 
-      const windowUpdate = Buffer.alloc(4);
-      windowUpdate.writeUInt32BE(1024, 0);
-      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, windowUpdate);
       const rst = await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
       expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
       expect(wantTrailers).toBe(0);

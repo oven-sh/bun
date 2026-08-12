@@ -708,10 +708,10 @@ impl PatchTask {
     }
 
     /// # Safety
-    /// `this` must be the live heap `PatchTask` handed out by `enqueue_patch_task`;
-    /// `run_from_thread_pool` recovers the whole task from the pointer queued here.
+    /// `this` must be the live heap `PatchTask` handed out by `enqueue_patch_task`.
     pub(crate) unsafe fn schedule(this: *mut Self, batch: &mut Batch) {
-        // SAFETY: field projection of the live task (fn contract).
+        // SAFETY: field projection of the live task; `run_from_thread_pool`
+        // recovers the whole task from this pointer.
         batch.push(Batch::from(unsafe { &raw mut (*this).task }));
     }
 

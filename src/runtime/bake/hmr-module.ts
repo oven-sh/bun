@@ -635,6 +635,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
+    // Importers accepting `key` are reached again through every module walked
+    // past on the way up (they import `key` directly as well). Each callback
+    // runs once for `key`; the array form still runs once per updated module.
+    const accepted = new Set<HotAccept>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
     while (true) {
@@ -672,6 +676,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       for (const importer of mod.importers) {
         const cb = importer.depAccepts?.[key];
         if (cb) {
+          if (accepted.has(cb)) continue;
+          accepted.add(cb);
           toAccept.push({ cb, key });
         } else if (hadSelfAccept) {
           if (visited.has(importer)) continue;

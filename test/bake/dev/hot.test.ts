@@ -313,6 +313,62 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
+devTest("import.meta.hot.accept specifier callback runs once per update, however many paths lead to the module", {
+  // Updating `d` walks every importer of `d` and of the modules that do not
+  // accept it (`a`, `c`, `b`), reaching `index` and `other` once per path.
+  // Each accept callback must still run once.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    //  index -> d
+    //  index -> a -> d
+    //  index -> b -> c -> d
+    //  index -> other -> d
+    //           other -> a
+    "index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      import { b } from "./b";
+      import "./other";
+      console.log("index " + d + " " + a + " " + b);
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "other.ts": `
+      import "./d";
+      import "./a";
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        console.log("other accepted " + newModules[0]?.d + " " + newModules[1]?.a);
+      });
+    `,
+    "a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+    `,
+    "b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+    `,
+    "c.ts": `
+      import { d } from "./d";
+      export const c = "c(" + d + ")";
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index d1 a(d1) b(c(d1))");
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage("index accepted d2", "other accepted d2 undefined");
+    // The next update starts over: the callbacks run again, still once each.
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage("index accepted d3", "other accepted d3 undefined");
+  },
+});
 devTest("import.meta.hot.data persistence", {
   files: {
     "index.html": emptyHtmlFile({

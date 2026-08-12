@@ -202,7 +202,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
-13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
+13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.** Concretely: a comment in `src/` is one line, two at most. If it needs a third line, make the code say it (rename, restructure, assert) or put the explanation in the PR description. CI (`.github/workflows/comment-cop.yml`) flags every added comment block with three or more lines of text; lines that are only `/**`, ` *` or ` */` do not count, and `SAFETY:` comments are exempt.
 14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.

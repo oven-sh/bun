@@ -113,3 +113,7 @@ export LLVM_VERSION_MAJOR=19
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
 - Keep the exclusion list updated as new third-party code is added
+
+## comment-cop.yml Workflow
+
+Runs on `pull_request_target` for PRs labeled `claude` and leaves a review comment on every comment block the PR adds under `src/` that has three or more lines of text (`MIN_TEXT_LINES`). Lines that are only comment structure (`/**`, ` *`, ` */`, a bare `//`) are not counted, blocks containing `SAFETY:` are skipped, and a block is flagged once: threads are keyed by a hash of the block's text, and threads whose block disappeared from the diff are resolved automatically. One- and two-line comments are never flagged; the matching rule for authors is item 13 of the root `CLAUDE.md`. To check a change to the grouping logic, paste `groupsFromPatch` into a scratch script and feed it small hand-written patches; the workflow has no other inputs than the PR's file patches.

@@ -110,7 +110,10 @@ function dropStructFields(source: string): Map<string, Field[]> {
         .slice(colon + 1)
         .trim()
         .replace(/\s+/g, " ");
+      // Stripping a field's (leading) attributes leaves a verbatim suffix of
+      // the body, so this only fails if the parsing above stops holding.
       const at = text.indexOf(field, offset);
+      if (at === -1) throw new Error(`${SOURCE}: cannot locate field of struct ${name}: ${JSON.stringify(field)}`);
       offset = at + field.length;
       fields.push({ struct: name, name: fieldName, type, line: lineOf(text, at) });
     }

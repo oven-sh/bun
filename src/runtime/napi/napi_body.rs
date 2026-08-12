@@ -2403,11 +2403,12 @@ extern "C" fn napi_internal_enqueue_finalizer(
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
 /// `thread_count` references, and whoever drops the last one frees it.
 ///
-/// Addon-thread entry points (`push`, `acquire`, `release`) take `*mut Self` and
-/// borrow one field at a time: once a dispatch is posted the JS thread uses the
-/// object (and frees it after the last reference), so no `&Self` / `&mut Self`
-/// of ours may be live then, and the posted pointer must be the addon's own,
-/// not one made from a receiver. The `&mut self` methods are JS-thread only.
+/// `schedule_dispatch` hands its pointer to the JS thread, which locks and may
+/// free through it, so it must be the pointer `new` returned (the addon's
+/// handle), not one made from a `&Self` / `&mut Self`, and no such reference
+/// may be live while that thread uses it. Hence `push` / `acquire` / `release`
+/// and what they call take `*mut Self` and borrow one field at a time; a
+/// `&mut self` caller that merely passes `self` on reintroduces the problem.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
@@ -2759,7 +2760,8 @@ impl ThreadSafeFunction {
     /// Addon thread (Node's `Push`). A `napi_closing` result consumes the
     /// caller's thread reference, so like `release` this can free the function.
     ///
-    /// SAFETY: `this` is live and the caller holds no reference into it.
+    /// SAFETY: `this` is the live pointer `new` returned, and no reference into
+    /// the object is live in the caller.
     pub(crate) unsafe fn push(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
@@ -2781,10 +2783,12 @@ impl ThreadSafeFunction {
         status
     }
 
-    /// Caller must hold `lock`. Returns `(status, caller_must_free)`; the free
-    /// must happen after the lock is dropped.
+    /// Returns `(status, caller_must_free)`; the free must happen after the
+    /// lock is dropped.
     ///
-    /// SAFETY: `this` is live and the caller holds `lock`.
+    /// SAFETY: `this` is the live pointer `new` returned (it is what gets
+    /// posted), no reference into the object is live in any calling frame, and
+    /// the caller holds `lock`.
     unsafe fn push_locked(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
@@ -2829,12 +2833,12 @@ impl ThreadSafeFunction {
         (NapiStatus::ok as napi_status, false)
     }
 
-    /// Caller must hold `lock`. Reached from addon threads (`push_locked`,
-    /// `release_locked`); the VM is reached only through its handle, and the
-    /// task carries `this` itself: the JS thread may be in `on_dispatch` from
-    /// the moment it is queued.
+    /// The VM is reached only through its handle, and the JS thread may be in
+    /// `on_dispatch` from the moment the task is queued.
     ///
-    /// SAFETY: `this` is live and the caller holds `lock`.
+    /// SAFETY: `this` is the live pointer `new` returned (it is what gets
+    /// posted), no reference into the object is live in any calling frame, and
+    /// the caller holds `lock`.
     unsafe fn schedule_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: see `push_locked`; `loop_handle` is immutable after creation.
         unsafe {
@@ -2999,7 +3003,8 @@ impl ThreadSafeFunction {
 
     /// Addon thread.
     ///
-    /// SAFETY: `this` is live and the caller holds no reference into it.
+    /// SAFETY: `this` is the live pointer `new` returned, and no reference into
+    /// the object is live in the caller.
     pub(crate) unsafe fn acquire(this: *mut ThreadSafeFunction) -> napi_status {
         // SAFETY: live per fn contract; the guard holds the lock by pointer and
         // the other two accesses each borrow one atomic.
@@ -3016,7 +3021,8 @@ impl ThreadSafeFunction {
     /// Addon thread. Frees an orphaned function when this drops its last
     /// thread reference.
     ///
-    /// SAFETY: `this` is live and the caller holds no reference into it.
+    /// SAFETY: `this` is the live pointer `new` returned, and no reference into
+    /// the object is live in the caller.
     pub(crate) unsafe fn release(
         this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,
@@ -3037,10 +3043,12 @@ impl ThreadSafeFunction {
         status
     }
 
-    /// Caller must hold `lock`. Returns `(status, caller_must_free)`; the free
-    /// must happen after the lock is dropped.
+    /// Returns `(status, caller_must_free)`; the free must happen after the
+    /// lock is dropped.
     ///
-    /// SAFETY: `this` is live and the caller holds `lock`.
+    /// SAFETY: `this` is the live pointer `new` returned (it is what gets
+    /// posted), no reference into the object is live in any calling frame, and
+    /// the caller holds `lock`.
     unsafe fn release_locked(
         this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,

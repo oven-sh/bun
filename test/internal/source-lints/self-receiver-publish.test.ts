@@ -11,9 +11,11 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   ConcurrentTask::create_from(self)            // `&mut Self` coerces to `*mut Self`
 //   let this = std::ptr::from_mut(self); ... Task::init(this)
 //   let p: *mut Self = self;             ... ConcurrentTask::create_from(p)
+//   ThreadSafeFunction::schedule_dispatch(self)  // a helper that posts its argument
 //
 // as the argument of `Task::init(..)` / `..::create_from(..)` /
-// `..::from_callback(..)` is banned.
+// `..::from_callback(..)`, or of one of the helpers in `POSTING_HELPERS` whose
+// contract is to post the pointer they are given, is banned.
 //
 // The post is the hand-over, and it goes wrong in two ways. The consumer
 // (another thread, for a `ConcurrentTask`) starts using the object the moment
@@ -49,12 +51,20 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // src/runtime/node/node_zlib_binding.rs, `post_job` in src/jsc/VmHandle.rs.
 //
 // Scope: the spellings above, with `self` as the receiver and the three task
-// constructors as the callee. A pointer produced by a helper (`self.as_ptr()`),
-// a `NonNull::from(self)` binding posted through `.as_ptr()`, the intrusive
-// `ConcurrentTask::from(..)` form, and reference *parameters* other than
-// `self` (`fn f(load: &mut Load)` posting `from_mut(load)`) are the same
-// hazard but outside this lint. Siblings: self-receiver-reclaim.test.ts,
-// fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
+// constructors or a listed helper as the callee. The conversion of a posting
+// site moves the post behind a `this: *mut Self` function, and `&mut Self`
+// coerces to `*mut Self` silently, so a `&mut self` caller that passes `self`
+// into that function recreates the bug without any of the spellings above
+// appearing at the post itself: that is what `POSTING_HELPERS` is for, and a
+// function that takes a pointer in order to post it has to be added there when
+// it is introduced (its `SAFETY` contract should say the pointer must be the
+// allocation's own, which is the other half of the guard). A pointer produced
+// by a helper (`self.as_ptr()`), a `NonNull::from(self)` binding posted through
+// `.as_ptr()`, the intrusive `ConcurrentTask::from(..)` form, and reference
+// *parameters* other than `self` (`fn f(load: &mut Load)` posting
+// `from_mut(load)`) are the same hazard but outside this lint. Siblings:
+// self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
+// frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -72,13 +82,22 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
+// Functions whose contract is to post the pointer they are given (see the
+// header): `post_job` in src/jsc/VmHandle.rs, `ThreadSafeFunction::
+// schedule_dispatch` in src/runtime/napi/napi_body.rs. Qualified or not.
+const POSTING_HELPERS = [String.raw`(?:[\w:]+::)?post_job`, String.raw`[\w:]+::schedule_dispatch`];
+
 // `Task::init(`, `ConcurrentTask::create_from(`, `ConcurrentTask::from_callback(`,
-// however the path in front is spelled, optionally turbofished. The `\b`
-// before `Task` keeps `NapiFinalizerTask::init(self)` (a constructor that
-// copies out of `self`) out; `create_from` / `from_callback` require a path
-// in front so a method call of the same name does not count. `\s*` after the
-// paren so a rustfmt-wrapped argument still matches.
-const POST = String.raw`\b(?:Task::init|[\w:]+::create_from|[\w:]+::from_callback)(?:::<[^>]*>)?\(\s*`;
+// however the path in front is spelled, optionally turbofished, or one of the
+// helpers above. The `\b` before `Task` keeps `NapiFinalizerTask::init(self)` (a
+// constructor that copies out of `self`) out; `create_from` / `from_callback` /
+// `schedule_dispatch` require a path in front so a method call of the same name
+// does not count. `\s*` after the paren so a rustfmt-wrapped argument still
+// matches.
+const POST =
+  String.raw`\b(?:Task::init|[\w:]+::create_from|[\w:]+::from_callback|` +
+  POSTING_HELPERS.join("|") +
+  String.raw`)(?:::<[^>]*>)?\(\s*`;
 
 // The ways of spelling "`self`, as a raw pointer" as the first argument. Each
 // is anchored at its front only, so a trailing `.cast_mut()` / `.as_ptr()`
@@ -230,6 +249,14 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let p: *mut Self = std::ptr::from_mut(self);\nlet ct = bun_jsc::ConcurrentTask::create_from(p);",
     "let p = core::ptr::from_ref(self).cast_mut();\nlet ct = ConcurrentTask::create_from(p);",
     "let p = &raw mut *self;\nlet task = Task::init(p);",
+    // A `&mut self` caller handing `self` (coerced) or a pointer made from it
+    // to a function that posts its argument: the shape a receiver-taking
+    // `release_locked` would have after this conversion.
+    "unsafe { ThreadSafeFunction::schedule_dispatch(self) };",
+    "unsafe {\n    Self::schedule_dispatch(\n        self,\n    )\n};",
+    "let self_ptr: *mut Self = self;\nunsafe { Self::schedule_dispatch(self_ptr) };",
+    "unsafe { bun_jsc::post_job(std::ptr::from_mut(self)) };",
+    "unsafe { post_job::<Self>(self as *mut Self) };",
   ];
   const allowed = [
     // Posting the pointer the caller handed us is the intended shape.
@@ -237,6 +264,11 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));",
     "ConcurrentTask::create_from(task.as_ptr())",
     "ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream)",
+    "unsafe { ThreadSafeFunction::schedule_dispatch(this) };",
+    "unsafe { crate::post_job(job) };",
+    // A method call means the callee takes a receiver; its own body is where
+    // the post (and the lint hit) is.
+    "self.schedule_dispatch();",
     // An owned box handed over whole (`NapiFinalizerTask::schedule(self: Box<Self>)`).
     "let this = bun_core::heap::into_raw(self);\nlet ct = ConcurrentTask::create(Task::init(this));",
     // Something the receiver owns or points at, or a helper's pointer, is

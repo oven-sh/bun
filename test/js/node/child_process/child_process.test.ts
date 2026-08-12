@@ -582,12 +582,9 @@ describe("spawn()", () => {
     });
 
     // The parent's end of each extra pipe is a net.Socket made with net.connect({ fd }), which adopts
-    // the descriptor synchronously, so it is connected by the time spawn() returns. It used to be
-    // reported as still connecting, which parked every write behind a 'connect' event that had
-    // already been emitted; on Windows nothing flushed them later. Playwright launches browsers
-    // with --remote-debugging-pipe (CDP requests to the browser's fd 3, replies on fd 4), so
-    // chromium.launch() timed out (#15679, #27977); ffmpeg reading an input from pipe:3 never got
-    // any data (#17989).
+    // the descriptor synchronously, so it must be connected and writable as soon as spawn() returns.
+    // The request/reply shape below mirrors Playwright's --remote-debugging-pipe (requests on the
+    // browser's fd 3, replies on fd 4).
     describe("extra pipes (stdio[3+])", () => {
       // The children below read their pipes with blocking fs.readSync loops: the parent-side socket
       // is what is under test, and loading fs streams roughly doubles a debug child's startup time.

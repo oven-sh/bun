@@ -1883,10 +1883,6 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
-      // Adoption completes inside this call: SocketHandlers.open runs
-      // synchronously, attaches the handle and emits 'connect'. `connecting`
-      // must stay false below, or _write parks every chunk behind a 'connect'
-      // that has already been emitted (child_process stdio[3+] writes were lost).
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1915,6 +1911,9 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
+      // An adopted fd is already connected: doConnect() above ran SocketHandlers.open
+      // synchronously, so marking it connecting would park writes behind a 'connect'
+      // that has already been emitted.
       if (fd == null) this.connecting = true;
     }
     if (fd != null) {

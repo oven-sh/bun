@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "fs";
+import { watch, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -233,6 +233,14 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
         signal.addEventListener("unrelated", () => {});
       },
     ],
+    [
+      // Native consumers observe the signal through a native callback rather
+      // than a JS listener; fs.watch() drops its callback synchronously in close().
+      "the fs.watch() it was passed to was closed",
+      signal => {
+        watch(import.meta.dir, { signal }).close();
+      },
+    ],
   ];
 
   test.each(churn)("after %s", async (_, apply) => {
@@ -267,8 +275,8 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
     expect(thrown).toBe(signal.reason);
   });
 
-  // Native consumers observe the signal through a native callback instead of a
-  // JS listener; Bun.spawn() registers one and releases it when the child exits.
+  // Same native-callback release as fs.watch() above, but asynchronous: the
+  // subprocess lets go of the signal when the child exits.
   test("after the Bun.spawn() child it was passed to has exited", async () => {
     // The child has to be gone before the deadline. A shell exits in ~1ms
     // (a debug build of bun takes 100ms+ just to start), so 500ms leaves

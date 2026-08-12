@@ -573,6 +573,38 @@ it("should sort overrides before comparing", async () => {
   expect(secondLockfile).toBe(lockfile);
 });
 
+it("should pass frozen lockfile check when a bundled dependency has an optional peer satisfiable from the root", async () => {
+  // A bundled dependency's optional peer must not resolve across the bundle
+  // hoist root when the lockfile is loaded, otherwise a fresh install and a
+  // loaded lockfile disagree about the tree and --frozen-lockfile rejects a
+  // lockfile bun itself just wrote (issue #37346).
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "frozen-bundled-optional-peer",
+      dependencies: {
+        // bundles `optional-peer-deps`, which has an optional peer on `no-deps`
+        "bundled-optional-peer": "1.0.0",
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"bundled": true');
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // and from a cold start with no node_modules
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
 it("should include unused resolutions in the lockfile", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

@@ -785,7 +785,14 @@ describe("defer() that is not awaited", () => {
     using dir = tempDir("defer-cancelled", {
       "main.ts": /* ts */ `
         const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-        await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+        const { data } = await new Promise<MessageEvent>((resolve, reject) => {
+          worker.addEventListener("message", resolve, { once: true });
+          worker.addEventListener("error", reject, { once: true });
+        });
+        if (data !== "armed") {
+          console.log(data);
+          process.exit(1);
+        }
         await worker.terminate();
         console.log("terminated");
       `,
@@ -810,8 +817,8 @@ describe("defer() that is not awaited", () => {
             },
           ],
         }).then(
-          () => console.log("unexpected: the build finished"),
-          error => console.log("unexpected: the build failed before being cancelled:", error),
+          () => postMessage("unexpected: the build finished"),
+          error => postMessage("unexpected: the build failed before being cancelled: " + error),
         );
       `,
     });

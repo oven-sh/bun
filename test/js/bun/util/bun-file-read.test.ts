@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir, waitForFileToContain } from "harness";
 import { mkfifo } from "mkfifo";
 import { randomBytes } from "node:crypto";
-import { closeSync, constants, openSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -58,10 +58,12 @@ describe("Bun.file read-loop target selection", () => {
   });
 });
 
-// Reading a FIFO by path. The payload is several pipe buffers long, so the
-// ReadFile is handed to the io thread every time it drains the pipe and has to
-// wait for more, and once the writer closes it is (on Linux) handed over once
-// more to unregister the fd before the fd it opened is closed.
+// Reading a FIFO by path. Nothing is written until the child has found the pipe
+// empty and handed its ReadFile to the io thread, so the read goes through at
+// least one io-thread round trip, and (on Linux) through one more at the end to
+// unregister the fd before the fd it opened is closed. In debug builds the
+// child's ReadFile trace is what proves those hand-overs happened; in release
+// builds the logging is compiled out and only the result is checked.
 //
 // macOS: the child never finishes this read (the test times out with the child
 // still alive) while the same setup completes on Linux; reading a FIFO by path
@@ -70,10 +72,13 @@ describe("Bun.file read-loop target selection", () => {
 // are covered on macOS by the Bun.stdin pipe tests (test/regression/issue/07500,
 // bun-stdin-slice.test.ts); what this adds is the path-opened variant.
 describe.skipIf(isWindows || isMacOS)("Bun.file(fifo)", () => {
-  it("bytes() reads a pipe that is filled in pieces and ends when the writer closes", async () => {
+  const count = (trace: string, marker: string) => trace.split(marker).length - 1;
+
+  it("bytes() waits for the writer, reads what it writes and ends when it closes", async () => {
     const payload = randomBytes(256 * 1024);
     using dir = tempDir("bun-file-read-fifo", {});
     const fifo = path.join(String(dir), "in.fifo");
+    const trace = path.join(String(dir), "trace.log");
     mkfifo(fifo);
     // The write end can only be opened, and written to without EPIPE, while
     // some reader has the FIFO open; `holder` is that reader until the child
@@ -91,20 +96,25 @@ describe.skipIf(isWindows || isMacOS)("Bun.file(fifo)", () => {
           "-e",
           `const bytes = await Bun.file(process.env.FIFO).bytes(); process.stdout.write(bytes.length + " " + Bun.hash(bytes));`,
         ],
-        env: { ...bunEnv, FIFO: fifo },
+        // ReadFile logs under the WriteFile scope; BUN_DEBUG sends the scoped logs to a file.
+        env: { ...bunEnv, FIFO: fifo, ...(isDebug ? { BUN_DEBUG_WriteFile: "1", BUN_DEBUG: trace } : {}) },
         stdout: "pipe",
         stderr: "pipe",
       });
       const stderr = proc.stderr.text();
-      // The write end is blocking, so the write only completes as the child
-      // drains the pipe, and closing it afterwards is what ends the child's
-      // read. The child cannot exit before that unless it failed; dropping
-      // `holder` then leaves the pipe without readers, so the blocked write
-      // fails with EPIPE instead of waiting forever.
+      // The child cannot exit before the payload is written unless it failed;
+      // dropping `holder` then leaves the pipe without readers, so a write
+      // blocked on it fails with EPIPE instead of waiting forever.
       const childDied = proc.exited.then(async exitCode => {
         closeHolder();
         throw new Error(`child exited with ${exitCode} before the payload was written: ${await stderr}`);
       });
+      if (isDebug) {
+        // The io thread has run the child's request: it is waiting for data that does not exist yet.
+        await Promise.race([waitForFileToContain(trace, "ReadFile.onRequestReadable"), childDied]);
+      }
+      // The write end is blocking, so this completes as the child drains the
+      // pipe; closing it afterwards is what ends the child's read.
       const written = await Promise.race([Bun.write(Bun.file(writer), payload), childDied]);
       closeSync(writer);
       writer = -1;
@@ -116,6 +126,22 @@ describe.skipIf(isWindows || isMacOS)("Bun.file(fifo)", () => {
         stderr: "",
       });
       expect(exitCode).toBe(0);
+
+      if (isDebug) {
+        const log = readFileSync(trace, "utf8");
+        const waits = count(log, "ReadFile.waitForReadable");
+        expect(waits).toBeGreaterThanOrEqual(1);
+        // Every wait is one request popped by the io thread and one readiness
+        // callback; the close then round-trips through the io thread once
+        // (deferred) before the read completes (immediately).
+        expect({
+          requests: count(log, "ReadFile.onRequestReadable"),
+          readies: count(log, "ReadFile.onReady"),
+          ioErrors: count(log, "ReadFile.onIOError"),
+          deferredCloses: count(log, "ReadFile.onFinish() = deferred"),
+          completions: count(log, "ReadFile.onFinish() = immediately"),
+        }).toEqual({ requests: waits, readies: waits, ioErrors: 0, deferredCloses: 1, completions: 1 });
+      }
     } finally {
       if (writer !== -1) closeSync(writer);
       closeHolder();

@@ -7,8 +7,12 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
   isWindows,
   tempDir,
+  waitForFileToContain,
   withoutAggressiveGC,
 } from "harness";
 import { mkfifo } from "mkfifo";
@@ -538,79 +542,197 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
-  // A non-blocking FIFO that is already full when Bun.write() starts: the
-  // WriteFile is handed to the io thread before its first write(), again each
-  // time the pipe fills up while the payload drains, and (on Linux) once more
-  // to unregister the fd when it is done. The payload is at least 256 KiB so
-  // Bun.write() takes the WriteFile path rather than the synchronous one.
-  it.skipIf(isWindows)("Bun.write(Bun.file(fd)) to a full non-blocking FIFO waits for the reader", async () => {
+  // Bun.write() into a non-blocking FIFO that is already full when it starts, so
+  // every WriteFile involved is handed to the io thread before its first
+  // write() (the pipe is not drained until that has happened), then again
+  // whenever the pipe fills up while the payload drains, and (except on macOS,
+  // whose one-shot kqueue registration needs no unregistering) once more at
+  // the end to unregister the fd. In debug builds the child's WriteFile trace
+  // proves those hand-overs; in release builds the logging is compiled out and
+  // only the outcome is checked. 256 KiB skips Bun.write()'s synchronous path
+  // (the full pipe would make it fall back to WriteFile anyway) and is several
+  // pipe buffers long.
+  describe.skipIf(isWindows)("Bun.write(Bun.file(fd)) into a full non-blocking FIFO", () => {
     const size = 256 * 1024;
-    using dir = tempDir("bun-write-fifo", {});
-    const fifo = join(String(dir), "out.fifo");
-    mkfifo(fifo);
-    // A reader has to exist for the child's O_NONBLOCK open of the write end to
-    // succeed; this one never reads, the readFile below does.
-    const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-    try {
-      const script = `
-        const fs = require("fs");
-        const fd = fs.openSync(process.env.FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
-        const dest = Bun.file(fd);
-        // fstat()s the fd: Bun.write() only polls a destination it knows is not a regular file.
-        dest.size;
-        const chunk = Buffer.alloc(4096, "P");
-        let filled = 0;
-        try {
-          for (;;) filled += fs.writeSync(fd, chunk);
-        } catch (e) {
-          if (e.code !== "EAGAIN") throw e;
-        }
-        const written = Bun.write(dest, Buffer.alloc(${size}, "W"));
-        process.stderr.write("filled " + filled + "\\n");
-        process.stdout.write(String(await written));
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, FIFO: fifo },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const stdout = proc.stdout.text();
-      const filled = Promise.withResolvers();
-      const stderr = (async () => {
-        let text = "";
-        for await (const chunk of proc.stderr) {
-          text += Buffer.from(chunk).toString();
-          const m = /^filled (\d+)\n/m.exec(text);
-          if (m) filled.resolve(Number(m[1]));
-        }
-        filled.reject(new Error(`child exited before filling the FIFO: ${text}`));
-        return text;
-      })();
-      // Only start draining once the child has filled the pipe and started the write.
-      const prefill = await filled.promise;
-      const data = await fs.promises.readFile(fifo);
-      const [resolved, stderrText, exitCode] = await Promise.all([stdout, stderr, proc.exited]);
+    const count = (trace, marker) => trace.split(marker).length - 1;
 
-      expect({
+    // Runs `writes` concurrent Bun.write()s of the payload in a child, drains
+    // the FIFO once the child reports the pipe full (and, in debug builds, once
+    // `writes` WriteFiles have reached the io thread), and returns what came
+    // out of the pipe and how each write settled.
+    async function writeIntoFullFifo(writes) {
+      using dir = tempDir("bun-write-fifo", {});
+      const fifo = join(String(dir), "out.fifo");
+      const trace = join(String(dir), "trace.log");
+      mkfifo(fifo);
+      // A reader has to exist for the child's O_NONBLOCK open of the write end
+      // to succeed; this one never reads, the drain below does.
+      const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      let opening;
+      try {
+        const script = `
+          const fs = require("fs");
+          const fd = fs.openSync(process.env.FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          const dest = Bun.file(fd);
+          // fstat()s the fd: Bun.write() only polls a destination it knows is not a regular file.
+          dest.size;
+          const chunk = Buffer.alloc(4096, "P");
+          let filled = 0;
+          try {
+            for (;;) filled += fs.writeSync(fd, chunk);
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+          const payload = Buffer.alloc(${size}, "W");
+          const settled = Promise.allSettled(Array.from({ length: ${writes} }, () => Bun.write(dest, payload)));
+          process.stderr.write("filled " + filled + "\\n");
+          const results = (await settled).map(r =>
+            r.status === "fulfilled" ? { written: r.value } : { code: r.reason.code, syscall: r.reason.syscall },
+          );
+          process.stdout.write(JSON.stringify(results));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          // BUN_DEBUG sends the scoped debug logs to a file instead of stdout.
+          env: { ...bunEnv, FIFO: fifo, ...(isDebug ? { BUN_DEBUG_WriteFile: "1", BUN_DEBUG: trace } : {}) },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stdout = proc.stdout.text();
+        const filled = Promise.withResolvers();
+        const stderr = (async () => {
+          let text = "";
+          for await (const chunk of proc.stderr) {
+            text += Buffer.from(chunk).toString();
+            const m = /^filled (\d+)\n/m.exec(text);
+            if (m) filled.resolve(Number(m[1]));
+          }
+          return text;
+        })();
+        // The child cannot finish before the pipe is drained, so exiting before
+        // the drain has started is a failure. A blocking open of the read end
+        // would otherwise wait forever for a writer once the child is gone;
+        // after it, a dying child just ends the drain early (EOF) and the
+        // assertions report what arrived.
+        const childDied = proc.exited.then(async exitCode => {
+          throw new Error(`child exited with ${exitCode} before the FIFO was drained: ${await stderr}`);
+        });
+        const prefill = await Promise.race([filled.promise, childDied]);
+        if (isDebug) {
+          await Promise.race([waitForFileToContain(trace, "WriteFile.onRequestWritable()", writes), childDied]);
+        }
+        opening = fs.promises.open(fifo, "r");
+        const drain = await Promise.race([opening, childDied]);
+        opening = undefined;
+        let data;
+        try {
+          data = await drain.readFile();
+        } finally {
+          await drain.close();
+        }
+        const [stdoutText, stderrText, exitCode] = await Promise.all([stdout, stderr, proc.exited]);
+        let results;
+        try {
+          results = JSON.parse(stdoutText);
+        } catch {
+          results = stdoutText;
+        }
+        return {
+          prefill,
+          data,
+          results,
+          stderr: stderrText,
+          exitCode,
+          log: isDebug ? fs.readFileSync(trace, "utf8") : "",
+        };
+      } finally {
+        if (opening) {
+          // The open lost the race above and is still waiting for a writer:
+          // lend it one so it completes, then close what it opened.
+          opening.then(
+            handle => handle.close(),
+            () => {},
+          );
+          fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+        }
+        fs.closeSync(holder);
+      }
+    }
+
+    function pipeContents(prefill, data, payloads) {
+      return {
         prefilled: prefill > 0,
-        resolved,
-        stderr: stderrText,
         length: data.length,
         prefillIntact: data.subarray(0, prefill).equals(Buffer.alloc(prefill, "P")),
-        payloadIntact: data.subarray(prefill).equals(Buffer.alloc(size, "W")),
-      }).toEqual({
+        payloadsIntact: data.subarray(prefill).equals(Buffer.alloc(size * payloads, "W")),
+      };
+    }
+
+    it("waits for the reader and delivers the payload", async () => {
+      const { prefill, data, results, stderr, exitCode, log } = await writeIntoFullFifo(1);
+
+      expect({ ...pipeContents(prefill, data, 1), results, stderr }).toEqual({
         prefilled: true,
-        resolved: String(size),
-        stderr: `filled ${prefill}\n`,
         length: prefill + size,
         prefillIntact: true,
-        payloadIntact: true,
+        payloadsIntact: true,
+        results: [{ written: size }],
+        stderr: `filled ${prefill}\n`,
       });
       expect(exitCode).toBe(0);
-    } finally {
-      fs.closeSync(holder);
-    }
+
+      if (isDebug) {
+        const requests = count(log, "WriteFile.onRequestWritable()");
+        expect(requests).toBeGreaterThanOrEqual(1);
+        // Every request the io thread popped came back as one readiness
+        // callback. Closing round-trips through the io thread as well, which
+        // makes on_finish run a second time; macOS clears that flag when the
+        // one-shot registration fires, so there it runs once.
+        expect({
+          readies: count(log, "WriteFile.onReady()"),
+          ioErrors: count(log, "WriteFile.onIOError()"),
+          finishes: count(log, "WriteFile.onFinish()"),
+        }).toEqual({ readies: requests, ioErrors: 0, finishes: isMacOS ? 1 : 2 });
+      }
+    });
+
+    // Two WriteFiles on one fd: the second epoll registration of the fd fails
+    // with EEXIST (two pollers per fd is not supported today; if that ever
+    // changes, this case becomes two successful writes), which is the one way
+    // to reach the registration-error hand-over: the io thread reports the
+    // error back, and the failed WriteFile still closes through the io thread
+    // and rejects, while the other one delivers its payload. Debug builds only,
+    // because only the trace makes the outcome deterministic: the pipe is not
+    // drained until both requests have reached the io thread, so the second
+    // registration always finds the first one in place. Linux only: on kqueue
+    // the second registration silently replaces the first instead of failing.
+    it.skipIf(!isLinux || !isDebug)(
+      "a second concurrent write is rejected with EEXIST and the first still completes",
+      async () => {
+        const { prefill, data, results, stderr, exitCode, log } = await writeIntoFullFifo(2);
+
+        expect({ ...pipeContents(prefill, data, 1), results, stderr }).toEqual({
+          prefilled: true,
+          length: prefill + size,
+          prefillIntact: true,
+          payloadsIntact: true,
+          results: expect.arrayContaining([{ written: size }, { code: "EEXIST", syscall: "epoll_ctl" }]),
+          stderr: `filled ${prefill}\n`,
+        });
+        expect(results).toHaveLength(2);
+        expect(exitCode).toBe(0);
+
+        const requests = count(log, "WriteFile.onRequestWritable()");
+        expect(requests).toBeGreaterThanOrEqual(2);
+        // One request ended in the error callback instead of a readiness
+        // callback; both WriteFiles still closed through the io thread.
+        expect({
+          readies: count(log, "WriteFile.onReady()"),
+          ioErrors: count(log, "WriteFile.onIOError()"),
+          finishes: count(log, "WriteFile.onFinish()"),
+        }).toEqual({ readies: requests - 1, ioErrors: 1, finishes: 4 });
+      },
+    );
   });
 
   it("Bun.file(0) survives GC", async () => {

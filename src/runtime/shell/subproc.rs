@@ -1948,10 +1948,8 @@ impl PipeReader {
     /// the latter. No `&`/`&mut PipeReader` is held across the re-entrant
     /// `try_signal_done_to_cmd` / `run_yield_with` calls — both reach back
     /// into this same allocation via the `Readable::Pipe` `Arc` clone.
-    ///
-    /// NOTE: this does **not** gate on `is_done()` — the error path runs
-    /// unconditionally. The `is_done()` early-return is `on_reader_done`-only
-    /// and lives in [`on_reader_done`].
+    /// Callers gate on `is_done()` first so the captured-writer tee has
+    /// drained before `on_close_io` drops the `Readable::Pipe` Arc.
     fn finish_after_state_set(guard: &Arc<Self>) {
         let me = arc_as_mut_ptr(guard);
         // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
@@ -1996,8 +1994,6 @@ impl PipeReader {
             unsafe {
                 let owned = (*me).to_owned_slice();
                 (*me).state = PipeReaderState::Done(owned);
-                // `on_reader_done` (only) waits for the
-                // captured-writer tee to drain before signalling.
                 if !(*me).is_done() {
                     return;
                 }
@@ -2140,6 +2136,9 @@ impl PipeReader {
                     drop(buf);
                 }
                 (*me).state = PipeReaderState::Err(Some(Box::new(err.to_system_error())));
+                if !(*me).is_done() {
+                    return;
+                }
             }
         }
         Self::finish_after_state_set(&guard);

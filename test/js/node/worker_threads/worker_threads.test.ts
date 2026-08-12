@@ -1461,6 +1461,46 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("cpuUsageInternal");
 });
 
+test("env: process.env reads in a worker module are evaluated at runtime against the worker's env", async () => {
+  using dir = tempDir("worker-threads-env-runtime-reads", {
+    "worker.js": `
+      const { parentPort } = require("node:worker_threads");
+      const inherited = process.env.BUN_TEST_WT_ENV_KEY;
+      process.env["BUN_TEST_WT_ENV_KEY"] = "assigned-in-worker";
+      const assigned = process.env.BUN_TEST_WT_ENV_KEY;
+      parentPort.postMessage({ inherited, assigned, nodeEnv: process.env.NODE_ENV });
+    `,
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(require("node:path").join(__dirname, "worker.js"), {
+        env: { BUN_TEST_WT_ENV_KEY: "from-worker-option", NODE_ENV: "production" },
+      });
+      worker.on("error", err => { console.error(err); process.exit(1); });
+      worker.on("message", msg => {
+        console.log(JSON.stringify(msg));
+        worker.terminate();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: { ...bunEnv, BUN_TEST_WT_ENV_KEY: "from-parent-process", NODE_ENV: "development" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    message: stdout ? JSON.parse(stdout) : stdout,
+    stderr: exitCode === 0 ? "" : stderr,
+    exitCode,
+  }).toEqual({
+    message: { inherited: "from-worker-option", assigned: "assigned-in-worker", nodeEnv: "production" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({

@@ -148,13 +148,15 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
-    // Like NodeHTTPResponse after its connection closed: ServerResponse's write()/end() then emit no 'finish'.
+    // Derived from the connection like NodeHTTPResponse's socket-closed bit; write()/end() then emit no 'finish'.
     get flags() {
       return socket.writable ? 0 : NodeHTTPResponseFlags.socket_closed;
     },
+    get aborted() {
+      return !handle.ended && !socket.writable;
+    },
     ended: false,
     finished: false,
-    aborted: false,
     bufferedAmount: 0,
     shouldKeepAlive,
     onfinished: null,
@@ -227,7 +229,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return length;
     },
     abort() {
-      this.aborted = true;
       if (!socket.destroyed) socket.destroy();
     },
   };

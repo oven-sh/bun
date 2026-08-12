@@ -4321,7 +4321,8 @@ for (const [trigger, destroyConnection] of destroyThenEndTriggers) {
       res.on("close", () => events.push("res-close"));
       req.socket.on("close", () => connectionClosed.resolve(req));
       destroyConnection(req, httpServer);
-      res.end("late");
+      // Still chainable, like node's end() (and the native response's on a closed connection).
+      events.push(res.end("late") === res ? "end-returned-res" : "end-returned-other");
     });
     const netServer = createNetServer(socket => httpServer.emit("connection", socket));
     netServer.listen(0, "127.0.0.1");
@@ -4335,7 +4336,7 @@ for (const [trigger, destroyConnection] of destroyThenEndTriggers) {
       const req = await connectionClosed.promise;
       // The request's 'error'/'close' are nextTick hops behind the socket's 'close'.
       await new Promise(resolve => setImmediate(resolve));
-      expect(events).toEqual(ABORTED_EVENTS);
+      expect(events).toEqual(["end-returned-res", ...ABORTED_EVENTS]);
       expect({ destroyed: req.destroyed, aborted: req.aborted }).toEqual({ destroyed: true, aborted: true });
     } finally {
       client.destroy();

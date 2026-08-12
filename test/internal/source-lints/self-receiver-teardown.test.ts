@@ -44,7 +44,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   - in-place finalizers and UFCS forwarding (`Self::finalize(self)`), which
 //     take no address; a self-derived pointer stashed in a local and freed
 //     later; reference parameters (`fn f(this: &mut T)` freeing `this`); and a
-//     guard closure that does more than the one call.
+//     guard closure whose first expression is not the teardown call (whatever
+//     follows that call is not looked at).
 //
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
 // unsound-erased-box.test.ts.
@@ -97,9 +98,10 @@ const DIRECT = new RegExp(`${TEARDOWN}${SELF_AS_POINTER}\\s*[,)]`, "g");
 // `scopeguard::guard(<self as pointer>, |p| { unsafe { Self::destroy(p) } })` or
 // `scopeguard::guard(<self as pointer>, Self::destroy)`: the guard's callback
 // must be the teardown routine, applied (in the closure form, via the
-// back-reference) to the guarded pointer itself. A guard over `self`'s address
-// that does something else with it (src/runtime/ffi/ffi_body.rs frees a field)
-// does not count.
+// back-reference, as the closure's first expression; anything after it still
+// runs after the free and does not rescue the guard) to the guarded pointer
+// itself. A guard over `self`'s address that does something else with it
+// (src/runtime/ffi/ffi_body.rs frees a field) does not count.
 const DEFERRED = new RegExp(
   String.raw`scopeguard::guard\(\s*${SELF_AS_POINTER}\s*,\s*(?:` +
     String.raw`(?:move\s+)?\|\s*(\w+)\s*\|\s*(?:\{\s*)?(?:unsafe\s*\{\s*)?${TEARDOWN}\1\s*\)` +
@@ -120,23 +122,46 @@ function scanText(content: string): { line: number; text: string }[] {
     .sort((a, b) => a.line - b.line);
 }
 
-// Documented, ratcheted exceptions: files allowed to keep exactly N of the
-// shape while their conversion is in flight. Delete an entry when its file is
-// converted; never raise one.
-const ALLOW: Record<string, number> = {
+// Documented, ratcheted exceptions: a file may keep exactly `count` hits whose
+// (whitespace-collapsed) text is exactly `text` while their conversion is in
+// flight; any other spelling in the file, or one more of this one, is an
+// offender. Delete an entry when its file is converted; never raise one.
+const ALLOW: Record<string, { count: number; text: string }> = {
   // `LifecycleScriptSubprocess::handle_exit` / `deinit_and_delete_package`
   // (`&mut self`) free the subprocess at five sites; #37551 turns them into a
   // disposition that the raw-pointer thunks act on.
-  "src/install/lifecycle_script_runner.rs": 5,
+  "src/install/lifecycle_script_runner.rs": {
+    count: 5,
+    text: "Self::destroy(std::ptr::from_mut::<Self>(self))",
+  },
   // `Worker::deinit_soon` (`&mut self`) frees itself inline when the worker
   // was created off the pool; #37685 converts it.
-  "src/bundler/ThreadPool.rs": 1,
+  "src/bundler/ThreadPool.rs": { count: 1, text: "Self::deinit(std::ptr::from_mut::<Self>(self))" },
   // `CopyFileWindows::throw` / `resolve_promise` and `ReadFileUV::on_finish`
   // (`&mut self`) free the task they run on, reached through further
   // `&mut self` frames; #37705 converts them.
-  "src/runtime/webcore/blob/copy_file.rs": 2,
-  "src/runtime/webcore/blob/read_file.rs": 1,
+  "src/runtime/webcore/blob/copy_file.rs": { count: 2, text: "Self::destroy(core::ptr::from_mut(self))" },
+  "src/runtime/webcore/blob/read_file.rs": { count: 1, text: "Self::finalize(core::ptr::from_mut(self))" },
 };
+
+/**
+ * Applies one file's allowlist entry: `documented` counts the hits with the
+ * documented text (the ratchet), and everything that is not one of the first
+ * `count` of those is an offender.
+ */
+function triage(
+  source: string,
+  hits: { line: number; text: string }[],
+  allow: { count: number; text: string } | undefined,
+): { documented: number; offenders: string[] } {
+  let documented = 0;
+  const offenders: string[] = [];
+  for (const { line, text } of hits) {
+    if (allow !== undefined && text === allow.text && documented++ < allow.count) continue;
+    offenders.push(`${source}:${line}: ${text}`);
+  }
+  return { documented, offenders };
+}
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];
@@ -148,12 +173,9 @@ for (const abs of rustSources) {
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
-  const hits = scanText(await file(abs).text());
-  if (hits.length === 0) continue;
-  counts[source] = hits.length;
-  for (const { line, text } of hits.slice(ALLOW[source] ?? 0)) {
-    offenders.push(`${source}:${line}: ${text}`);
-  }
+  const result = triage(source, scanText(await file(abs).text()), ALLOW[source]);
+  if (result.documented > 0) counts[source] = result.documented;
+  offenders.push(...result.offenders);
 }
 
 const matches = (snippet: string): boolean => scanText(snippet).length > 0;
@@ -191,6 +213,7 @@ test("the patterns recognize the spellings they claim to", () => {
     // Deferred: block body with a SAFETY comment, `move`, and the fn-value form.
     "let _g = scopeguard::guard(std::ptr::from_mut::<Self>(self), |this| {\n    // SAFETY: leaked in new(); freed exactly once here.\n    unsafe { Self::destroy(this) }\n});",
     "let _g = scopeguard::guard(self as *mut Self, move |p| unsafe { Self::deinit(p) });",
+    'let _g = scopeguard::guard(core::ptr::from_mut(self), |p| { unsafe { Self::destroy(p) }; log!("freed"); });',
     "let _g = scopeguard::guard(core::ptr::from_mut(self), Self::destroy);",
     "let _g = scopeguard::guard(self as *mut Self, Worker::deinit);",
   ];
@@ -267,14 +290,32 @@ test("a file is scanned with comments stripped and hits attributed to their line
   ]);
 });
 
+test("an allowlist entry exempts only its documented spelling, and only that many of it", () => {
+  const destroy = "Self::destroy(core::ptr::from_mut(self))";
+  const deinit = "Self::deinit(core::ptr::from_mut(self))";
+  const hits = [
+    { line: 10, text: destroy },
+    { line: 20, text: destroy },
+    { line: 30, text: deinit },
+  ];
+  expect(triage("x.rs", hits, { count: 1, text: destroy })).toEqual({
+    documented: 2,
+    offenders: [`x.rs:20: ${destroy}`, `x.rs:30: ${deinit}`],
+  });
+  expect(triage("x.rs", hits, undefined)).toEqual({
+    documented: 0,
+    offenders: [`x.rs:10: ${destroy}`, `x.rs:20: ${destroy}`, `x.rs:30: ${deinit}`],
+  });
+});
+
 test("no method hands its own receiver to destroy/deinit/finalize", () => {
   expect(offenders).toEqual([]);
 });
 
-test("allowlisted files still carry exactly their documented count", () => {
+test("allowlisted files still carry exactly their documented sites", () => {
   // Ratchet: once an allowlisted file is converted, delete its entry so a new
   // instance cannot take the old one's place.
-  for (const [f, n] of Object.entries(ALLOW)) {
-    expect(counts[f] ?? 0).toBe(n);
-  }
+  const actual = Object.fromEntries(Object.keys(ALLOW).map(f => [f, counts[f] ?? 0]));
+  const documented = Object.fromEntries(Object.entries(ALLOW).map(([f, { count }]) => [f, count]));
+  expect(actual).toEqual(documented);
 });

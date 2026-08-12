@@ -7910,7 +7910,10 @@ impl H2FrameParser {
 
         // Encode trailer headers using HPACK
         while let Some(header_name) = iter.next()? {
-            if header_name.length() == 0 {
+            // As in node, a property whose value is undefined is not a header at all: it is
+            // skipped before its name is validated or counted.
+            let js_value = iter.value;
+            if header_name.length() == 0 || js_value.is_undefined() {
                 continue;
             }
 
@@ -7928,8 +7931,7 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
 
-            let js_value = iter.value;
-            if js_value.is_undefined_or_null() {
+            if js_value.is_null() {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
                     format_args!("Invalid value for header \"{}\"", BStr::new(name)),
@@ -8093,6 +8095,13 @@ impl H2FrameParser {
                     return Ok(ret);
                 }
             }
+        }
+        if encoded_headers.is_empty() {
+            // Nothing survived the walk (undefined values, empty arrays): end the stream the way
+            // no_trailers() does. node also sends an empty DATA frame for an empty trailer list.
+            stream.wait_for_trailers = false;
+            let _ = this.send_data(&mut stream, b"", true, JSValue::UNDEFINED, false, false);
+            return Ok(JSValue::UNDEFINED);
         }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
@@ -8392,7 +8401,10 @@ impl H2FrameParser {
                 },
             )?;
             while let Some(header_name) = iter.next()? {
-                if header_name.length() == 0 {
+                // As in node, a property whose value is undefined is not a header at all: it is
+                // skipped before its name is validated or counted.
+                let js_value = iter.value;
+                if header_name.length() == 0 || js_value.is_undefined() {
                     continue;
                 }
                 let name_slice = header_name.to_utf8();
@@ -8431,8 +8443,7 @@ impl H2FrameParser {
                 } else if ignore_pseudo_headers == 0 {
                     continue;
                 }
-                let js_value = iter.value;
-                if js_value.is_empty_or_undefined_or_null() {
+                if js_value.is_null() {
                     continue;
                 }
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
@@ -8985,7 +8996,10 @@ impl H2FrameParser {
             )?;
 
             while let Some(header_name) = iter.next()? {
-                if header_name.length() == 0 {
+                // As in node, a property whose value is undefined is not a header at all: it is
+                // skipped before its name is validated or counted.
+                let js_value = iter.value;
+                if header_name.length() == 0 || js_value.is_undefined() {
                     continue;
                 }
 
@@ -9030,8 +9044,7 @@ impl H2FrameParser {
                     continue;
                 }
 
-                let js_value = iter.value;
-                if js_value.is_undefined_or_null() {
+                if js_value.is_null() {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
                         format_args!("Invalid value for header \"{}\"", BStr::new(name)),
@@ -9131,7 +9144,7 @@ impl H2FrameParser {
                             return Ok(JSValue::UNDEFINED);
                         }
                     }
-                } else if !js_value.is_empty_or_undefined_or_null() {
+                } else {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if single_value_headers[idx] {

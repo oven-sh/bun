@@ -1237,20 +1237,19 @@ class Http2ServerResponse extends Stream {
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {
-        headers[key] = hints[key];
+        // Like setHeader(), the compat layer rejects undefined/null values and invalid names
+        // itself; the stream-level additionalHeaders() below would skip undefined values.
+        const name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(key));
+        assertValidHeader(name, hints[key]);
+        if (!checkIsHttpToken(name)) throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
+        headers[name] = hints[key];
       }
     }
     if (linkHeaderValue.length === 0) {
       return false;
     }
-    const stream = this[kStream];
-    if (stream.headersSent || this[kState].closed) return false;
-    stream.additionalHeaders({
-      ...headers,
-      [HTTP2_HEADER_STATUS]: HTTP_STATUS_EARLY_HINTS,
-      "Link": linkHeaderValue,
-    });
-    return true;
+    headers.Link = linkHeaderValue;
+    return this.writeInformation(HTTP_STATUS_EARLY_HINTS, headers);
   }
 }
 
@@ -2611,7 +2610,9 @@ class Http2Stream extends Duplex {
     // a zero-length HPACK block as a callback failure. When the user passes an
     // empty trailer object (which the compat Http2ServerResponse does
     // unconditionally from onStreamTrailersReady), emit an empty DATA frame
-    // with END_STREAM instead — this matches Node's wire output.
+    // with END_STREAM instead — this matches Node's wire output. The native
+    // sendTrailers() does the same when every field is skipped (undefined
+    // values, empty arrays); this is just the short-cut for the common case.
     // Mark before the native call so a re-entrant sendTrailers() from a header-value
     // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
     // (no frame is written then) so a corrected retry succeeds like node.
@@ -3655,7 +3656,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     for (const name in headers) {
-      if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS) {
+      if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS && headers[name] !== undefined) {
         throw $ERR_HTTP2_INVALID_PSEUDOHEADER(name);
       }
     }
@@ -3965,6 +3966,7 @@ const kForbiddenConnectionHeaders = new SafeSet([
 ]);
 function assertNoConnectionHeaders(headers): void {
   for (const name in headers) {
+    if (headers[name] === undefined) continue;
     const lower = name.toLowerCase();
     if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[name] !== "trailers")) {
       const err = new TypeError(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
@@ -4027,6 +4029,8 @@ function assertSingleValueHeaders(headers) {
     const lower = keys[i].toLowerCase();
     if (!kSingleValueHeaders.has(lower)) continue;
     const value = headers[keys[i]];
+    // The encoder skips undefined values, so they are not an occurrence of the field.
+    if (value === undefined) continue;
     if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {
       throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
     }
@@ -6224,12 +6228,13 @@ class ClientHttp2Session extends Http2Session {
       // Validate header names in JS like node's buildNgHeaderString does: request() must throw
       // synchronously for an invalid name even while the session is still connecting (the native
       // encoder only sees the headers once a queued request is actually submitted). Empty names
-      // keep going to the native validator, matching its acceptance.
+      // keep going to the native validator, matching its acceptance; undefined values are skipped
+      // by the encoder without looking at the name, as in node.
       {
         const headerNames = ObjectKeys(headers);
         for (let i = 0; i < headerNames.length; i++) {
           const name = headerNames[i];
-          if (name === "") continue;
+          if (name === "" || headers[name] === undefined) continue;
           if (name.charCodeAt(0) === 0x3a /* ':' */) {
             // Unknown pseudo-header names throw synchronously (node's mapToHeaders); known ones
             // are still re-checked by the native encoder at submission time.
@@ -6316,7 +6321,7 @@ class ClientHttp2Session extends Http2Session {
         // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
         if (options.endStream) {
           for (const key of Object.keys(headers)) {
-            if (key.toLowerCase() === "content-length") {
+            if (key.toLowerCase() === "content-length" && headers[key] !== undefined) {
               rejectContentLengthOnNoPayload = true;
               break;
             }

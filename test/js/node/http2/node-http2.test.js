@@ -3984,6 +3984,347 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+// node's buildNgHeaderString drops a property whose value is undefined before it looks at the
+// name, so such a property is neither validated, nor counted as an occurrence of a single-value
+// field, nor sent. Every outbound block builder has to agree on that: the native encoders behind
+// request()/respond()/additionalHeaders(), sendTrailers() and pushStream(), and the checks the JS
+// layer runs before encoding.
+describe("http2 undefined header values", () => {
+  // The fields a peer decoded from the wire as a flat [name, value, ...] list, without the
+  // pseudo-headers and the date respond() adds on its own.
+  function fieldsOf(rawHeaders) {
+    const fields = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      if (rawHeaders[i].startsWith(":") || rawHeaders[i] === "date") continue;
+      fields.push(rawHeaders[i], rawHeaders[i + 1]);
+    }
+    return fields;
+  }
+
+  // Runs `body(client)` against a server that hands every request to `onStream(stream, headers,
+  // fields)` and resolves with body's result. Any error on either side (both sessions included)
+  // fails the test, so a header block that is rejected half-way, or one that leaves the shared
+  // HPACK table out of step with the peer, shows up even when the individual request looks fine.
+  async function withSession(onStream, body) {
+    const { promise: failure, reject } = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", reject);
+    server.on("sessionError", reject);
+    server.on("stream", (stream, headers, flags, rawHeaders) => {
+      stream.on("error", reject);
+      onStream(stream, headers, fieldsOf(rawHeaders));
+    });
+    let client;
+    try {
+      await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+      client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", reject);
+      return await Promise.race([failure, body(client)]);
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  // Resolves with what the client saw for one request: the response status, the fields of every
+  // informational ('headers') block, the response block and the trailers block (null when the
+  // peer sent none), and the stream's rstCode once it closed.
+  function observe(client, headers, options = { endStream: true }) {
+    return new Promise((resolve, reject) => {
+      const req = client.request(headers, options);
+      const seen = { status: undefined, info: [], response: null, trailers: null, rstCode: undefined };
+      req.on("error", reject);
+      req.on("headers", (_headers, _flags, rawHeaders) => seen.info.push(fieldsOf(rawHeaders)));
+      req.on("response", (responseHeaders, _flags, rawHeaders) => {
+        seen.status = responseHeaders[":status"];
+        seen.response = fieldsOf(rawHeaders);
+      });
+      req.on("trailers", (_headers, _flags, rawHeaders) => (seen.trailers = fieldsOf(rawHeaders)));
+      req.on("close", () => {
+        seen.rstCode = req.rstCode;
+        resolve(seen);
+      });
+      req.resume();
+    });
+  }
+
+  it("request() sends the block without the undefined-valued properties", async () => {
+    const received = [];
+    const result = await withSession(
+      (stream, _headers, fields) => {
+        received.push(fields);
+        stream.respond({ ":status": 200 }, { endStream: true });
+      },
+      async client => {
+        const first = await observe(client, {
+          ":path": "/object",
+          // Skipped before the name is validated.
+          ":bogus": undefined,
+          "bad name": undefined,
+          // Not an occurrence of the single-value field, so the other spelling is the only one.
+          "content-type": undefined,
+          "Content-Type": "text/plain",
+          // Not a content-length on this payload-less (endStream) request either.
+          "content-length": undefined,
+          "x-undefined": undefined,
+          "x-ok": "1",
+        });
+        const raw = await observe(client, [":path", "/raw", "x-undefined", undefined, "x-ok", "1"]);
+        // The session is still healthy afterwards: nothing was encoded and then thrown away.
+        const after = await observe(client, { ":path": "/after", "x-after": "2" });
+        return [first, raw, after].map(({ status, rstCode }) => ({ status, rstCode }));
+      },
+    );
+
+    expect(received).toEqual([
+      ["content-type", "text/plain", "x-ok", "1"],
+      ["x-ok", "1"],
+      ["x-after", "2"],
+    ]);
+    expect(result).toEqual([
+      { status: 200, rstCode: 0 },
+      { status: 200, rstCode: 0 },
+      { status: 200, rstCode: 0 },
+    ]);
+  });
+
+  it("respond() sends the block without the undefined-valued properties", async () => {
+    const thrown = [];
+    const result = await withSession(
+      (stream, headers) => {
+        try {
+          switch (headers[":path"]) {
+            case "/object":
+              stream.respond(
+                {
+                  ":status": 201,
+                  ":bogus": undefined,
+                  "bad name": undefined,
+                  "content-type": undefined,
+                  "Content-Type": "text/plain",
+                  "x-undefined": undefined,
+                  "x-ok": "1",
+                },
+                { endStream: true },
+              );
+              break;
+            case "/only-undefined":
+              // Nothing is left to send, but the block is still a valid (defaulted) response.
+              stream.respond({ "x-undefined": undefined }, { endStream: true });
+              break;
+            case "/raw":
+              stream.respond([":status", "200", "x-undefined", undefined, "x-ok", "1"], { endStream: true });
+              break;
+          }
+        } catch (err) {
+          thrown.push(err.code);
+          stream.close();
+        }
+      },
+      async client => {
+        const object = await observe(client, { ":path": "/object" });
+        const onlyUndefined = await observe(client, { ":path": "/only-undefined" });
+        const raw = await observe(client, { ":path": "/raw" });
+        return [object, onlyUndefined, raw].map(({ status, response, rstCode }) => ({ status, response, rstCode }));
+      },
+    );
+
+    expect(thrown).toEqual([]);
+    expect(result).toEqual([
+      { status: 201, response: ["content-type", "text/plain", "x-ok", "1"], rstCode: 0 },
+      { status: 200, response: [], rstCode: 0 },
+      { status: 200, response: ["x-ok", "1"], rstCode: 0 },
+    ]);
+  });
+
+  it("additionalHeaders() sends the block without the undefined-valued properties", async () => {
+    const thrown = [];
+    const result = await withSession(
+      stream => {
+        try {
+          stream.additionalHeaders({
+            ":status": 103,
+            ":bogus": undefined,
+            "content-type": undefined,
+            "Content-Type": "text/plain",
+            "x-undefined": undefined,
+            "x-ok": "1",
+          });
+        } catch (err) {
+          thrown.push(err.code);
+        }
+        stream.respond({ ":status": 200 }, { endStream: true });
+      },
+      async client => {
+        const { status, info, rstCode } = await observe(client, { ":path": "/" });
+        return { status, info, rstCode };
+      },
+    );
+
+    expect(thrown).toEqual([]);
+    expect(result).toEqual({ status: 200, info: [["content-type", "text/plain", "x-ok", "1"]], rstCode: 0 });
+  });
+
+  it("pushStream() sends the block without the undefined-valued properties", async () => {
+    const thrown = [];
+    const callbackErrors = [];
+    const blocks = await pushedHeaderBlocks(stream => {
+      try {
+        stream.pushStream(
+          {
+            ":path": "/pushed",
+            ":bogus": undefined,
+            "bad name": undefined,
+            connection: undefined,
+            "content-type": undefined,
+            "Content-Type": "text/plain",
+            "x-undefined": undefined,
+            "x-ok": "1",
+          },
+          (err, push) => {
+            if (err) {
+              callbackErrors.push(err.code);
+            } else {
+              push.respond({ ":status": 200 });
+              push.end();
+            }
+            stream.respond({ ":status": 200 });
+            stream.end();
+          },
+        );
+      } catch (err) {
+        thrown.push(err.code);
+        stream.respond({ ":status": 200 });
+        stream.end();
+      }
+    });
+
+    expect(thrown).toEqual([]);
+    expect(callbackErrors).toEqual([]);
+    expect(blocks.map(({ path, fields }) => ({ path, fields }))).toEqual([
+      { path: "/pushed", fields: ["content-type", "text/plain", "x-ok", "1"] },
+    ]);
+  });
+
+  it("sendTrailers() sends the block without the undefined-valued properties", async () => {
+    const thrown = [];
+    const result = await withSession(
+      stream => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => {
+          try {
+            stream.sendTrailers({
+              "bad name": undefined,
+              "content-type": undefined,
+              "Content-Type": "text/plain",
+              "x-undefined": undefined,
+              "x-ok": "1",
+            });
+          } catch (err) {
+            thrown.push(err.code);
+            stream.close();
+          }
+        });
+        stream.end("body");
+      },
+      async client => {
+        const { trailers, rstCode } = await observe(client, { ":path": "/" });
+        return { trailers, rstCode };
+      },
+    );
+
+    expect(thrown).toEqual([]);
+    expect(result).toEqual({ trailers: ["content-type", "text/plain", "x-ok", "1"], rstCode: 0 });
+  });
+
+  it("sendTrailers() with nothing left to send ends the stream without a trailers block", async () => {
+    // node submits an empty header list as an empty DATA frame carrying END_STREAM, exactly as it
+    // does for sendTrailers({}), so the peer sees the stream end and never gets a 'trailers' event.
+    const trailerBlocks = {
+      "/undefined": { "x-checksum": undefined },
+      "/empty-array": { "x-checksum": [] },
+      "/empty-object": {},
+    };
+    const thrown = [];
+    const result = await withSession(
+      (stream, headers) => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => {
+          try {
+            stream.sendTrailers(trailerBlocks[headers[":path"]]);
+          } catch (err) {
+            thrown.push(err.code);
+            stream.close();
+          }
+        });
+        stream.end("body");
+      },
+      async client => {
+        const results = [];
+        for (const path of Object.keys(trailerBlocks)) {
+          const { trailers, rstCode } = await observe(client, { ":path": path });
+          results.push({ path, trailers, rstCode });
+        }
+        return results;
+      },
+    );
+
+    expect(thrown).toEqual([]);
+    expect(result).toEqual([
+      { path: "/undefined", trailers: null, rstCode: 0 },
+      { path: "/empty-array", trailers: null, rstCode: 0 },
+      { path: "/empty-object", trailers: null, rstCode: 0 },
+    ]);
+  });
+
+  it("the compat layer still rejects undefined in writeEarlyHints() but passes writeInformation() through", async () => {
+    // Http2ServerResponse validates header values itself, like setHeader() does, and node's
+    // writeEarlyHints() is one of those validating entry points; writeInformation() hands its
+    // headers straight to additionalHeaders(), which skips the undefined value.
+    const { promise: failure, reject } = Promise.withResolvers();
+    let calls;
+    const server = http2.createServer((req, res) => {
+      const attempt = fn => {
+        try {
+          return fn();
+        } catch (err) {
+          return err.code;
+        }
+      };
+      calls = {
+        earlyHintsUndefined: attempt(() => res.writeEarlyHints({ link: "</s.css>; rel=preload", "x-hint": undefined })),
+        earlyHints: attempt(() => res.writeEarlyHints({ link: "</s.css>; rel=preload", " X-Hint ": "h" })),
+        information: attempt(() => res.writeInformation(103, { "x-undefined": undefined, "x-info": "i" })),
+      };
+      res.end("body");
+    });
+    server.on("sessionError", reject);
+    let client;
+    try {
+      await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+      client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", reject);
+      const { status, info, rstCode } = await Promise.race([failure, observe(client, { ":path": "/" })]);
+      expect(calls).toEqual({
+        earlyHintsUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
+        earlyHints: true,
+        information: true,
+      });
+      expect({ status, info, rstCode }).toEqual({
+        status: 200,
+        info: [
+          ["x-hint", "h", "link", "</s.css>; rel=preload"],
+          ["x-info", "i"],
+        ],
+        rstCode: 0,
+      });
+    } finally {
+      client?.close();
+      server.close();
+    }
+  });
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

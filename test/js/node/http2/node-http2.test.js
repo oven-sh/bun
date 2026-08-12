@@ -4086,41 +4086,34 @@ it("http2 server push stream ids are independent of the client's stream ids", as
 
 it("http2 setNextStreamID ignores a fractional id below 1 instead of reusing stream ids", async () => {
   // 0.5 passes setNextStreamID's range check and reaches the native setter as 0, which nghttp2
-  // rejects: node leaves the counter where it was (values below are node v26.3.0's). Spawned
-  // because the unfixed native setter aborts a debug build on this input.
-  const fixture = `
-    const http2 = require("node:http2");
-    const server = http2.createServer((req, res) => res.end());
-    server.listen(0, "127.0.0.1", () => {
-      const client = http2.connect("http://127.0.0.1:" + server.address().port);
-      client.on("error", err => {
-        console.error(err);
-        process.exit(1);
-      });
-      const first = client.request();
-      first.resume();
-      first.on("close", () => {
-        const before = client.state.nextStreamID;
-        client.setNextStreamID(0.5);
-        const after = client.state.nextStreamID;
-        const second = client.request();
-        console.log(JSON.stringify({ firstId: first.id, before, after, secondId: second.id }));
-        second.destroy();
-        client.destroy();
-        server.close();
-      });
+  // rejects. On a fresh session ("at the edges of the id space" above) ignoring it and resetting
+  // to the first id read the same; after a stream has been used, only ignoring it keeps the next
+  // request off an id this side already used. Values are node v26.3.0's.
+  const server = http2.createServer((req, res) => res.end());
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const first = client.request();
+    first.resume();
+    await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      first.on("error", reject);
+      first.on("close", resolve);
     });
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ firstId: 1, before: 3, after: 3, secondId: 3 });
-  expect(exitCode).toBe(0);
+    const before = client.state.nextStreamID;
+    client.setNextStreamID(0.5);
+    const after = client.state.nextStreamID;
+    const second = client.request();
+    expect({ firstId: first.id, before, after, secondId: second.id }).toEqual({
+      firstId: 1,
+      before: 3,
+      after: 3,
+      secondId: 3,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
 });
 
 it("http2 option range error messages use the options. prefix", () => {

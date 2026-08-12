@@ -1005,6 +1005,65 @@ devTest('removing "use client" from a file that never bundled', {
     await dev.fetch("/").equals("page: server");
   },
 });
+// Deleting the file re-bundles the route (found through its edge to the server
+// side of the failed boundary), which now fails to resolve it. Re-creating the
+// file re-bundles both; the route, having failed before, is also bundled into
+// the SSR graph, where it imports the component as a plain SSR module. That
+// used to be taken as the component losing its directive and deleted the
+// client side of the boundary that the same bundle was adding.
+devTest('deleting and re-creating a "use client" file that never bundled', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await expectBuildFailed(dev.fetch("/"), `Could not resolve: "./sibling-missing"`);
+    await dev.delete("components/Sibling.ts", { errors: null });
+    await expectBuildFailed(dev.fetch("/"), `Could not resolve: "../components/Sibling"`);
+    await dev.write("components/Sibling.ts", `"use client"; export const sibling = 2;`, { errors: null });
+    await dev.fetch("/").equals("page");
+  },
+});
+// Same rule when everything bundles: the outer component's SSR copy imports the
+// inner component as a plain SSR module, in the same bundle that registers the
+// inner component as a boundary. Whether that used to delete the inner
+// component's client side depended on the order the files were parsed in.
+devTest('working "use client" file imported from another "use client" file', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import './Sibling';
+      export const comp = 1;
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("page");
+    // The inner component is still a boundary, so it is re-bundled as one.
+    await dev.write("components/Sibling.ts", `"use client"; export const sibling = 2;`, { errors: null });
+    await dev.fetch("/").equals("page");
+  },
+});
 // `checkRouteFailures` collects the errors reachable from a route into the
 // list that also holds the previous bundle's new errors. Without clearing it
 // first, a route that was marked as possibly failing by an earlier bundle

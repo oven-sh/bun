@@ -1656,7 +1656,10 @@ describe("inbound stream lifecycle", () => {
 // ids in a client's GOAWAY, 0 when there are none. nghttp2 (node's peer implementation) fails the
 // connection with PROTOCOL_ERROR when a GOAWAY names a stream its sender initiated, so a client
 // naming one of its own requests turns a clean shutdown into a protocol error at a node server.
-// Every expected value below was checked against node v26.3.0.
+// The last-stream-id values asserted below are what node v26.3.0 puts on the wire in the same
+// situations. The frames carrying them are not all node behaviour: the two maxSessionRejectedStreams
+// tests drive GOAWAYs that only bun writes (node has no GOAWAY for an oversized response header
+// list or a user-refused stream); their error code is only asserted to identify that GOAWAY.
 describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   const STATUS_200 = Buffer.from([0x88]); // HPACK static index 8
   const BAD_PING = Buffer.alloc(6); // a PING must be 8 octets: connection FRAME_SIZE_ERROR
@@ -1710,10 +1713,16 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     try {
       const { client, requests } = await connectClient(raw, 2);
       expect(requests.map(r => r.id)).toEqual([1, 3]);
-      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
-      raw.sendFrame(FrameType.HEADERS, 0x5, 1, STATUS_200);
-      raw.sendFrame(FrameType.HEADERS, 0x5, 3, STATUS_200);
+      // Both responses arrive first, so the client's own stream 3 is already the highest id it
+      // has seen when the (numerically lower) promise of stream 2 comes in on the still-open
+      // stream 1. The promise must still become the mark.
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, STATUS_200);
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 3, STATUS_200);
       await Promise.all(requests.map(req => once(req, "response")));
+      expect(client.state.lastProcStreamID).toBe(0);
+      const pushed = once(client, "stream");
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, pushPromise(2));
+      expect((await pushed)[0].id).toBe(2);
       expect(client.state.lastProcStreamID).toBe(2);
       raw.sendFrame(FrameType.PING, 0, 0, BAD_PING);
       const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
@@ -1752,13 +1761,40 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       });
       // Three :status fields are 3 * (7 + 3 + 32) = 126 octets of header list (§10.5.1), over
       // the 100 the client advertised: the response is refused and the rejection budget of 1
-      // is used up, so the session itself writes a GOAWAY.
+      // is used up, so the session itself writes its ENHANCE_YOUR_CALM GOAWAY (a bun-only
+      // frame, see the describe comment) ahead of the teardown GOAWAY.
       raw.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([STATUS_200, STATUS_200, STATUS_200]));
-      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
       const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
       expect(goawayFields(goaway)).toEqual({ lastStreamId: 0, errorCode: ErrorCode.ENHANCE_YOUR_CALM });
       client.destroy();
+    } finally {
+      raw.close();
+    }
+  });
+
+  test("a client's GOAWAY after an unencodable trailer block does not name its own request", async () => {
+    const raw = await RawH2Server.listen();
+    try {
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client.on("error", () => {});
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      const frameError = once(req, "frameError");
+      req.on("wantTrailers", () => {
+        // A single field above the HPACK encoder's 64 KiB limit cannot be put on the wire; the
+        // stream is reset and the session shuts down with a graceful GOAWAY (node also ends up
+        // writing GOAWAY(NO_ERROR, 0) here).
+        req.sendTrailers({ "x-big": Buffer.alloc(64 * 1024 + 1, 0x58).toString() });
+      });
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const [type, code] = await frameError;
+      expect([type, code]).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]);
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayFields(goaway)).toEqual({ lastStreamId: 0, errorCode: ErrorCode.NO_ERROR });
     } finally {
       raw.close();
     }
@@ -1786,7 +1822,9 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     server.on("stream", (stream: any) => {
       stream.on("error", () => {});
       // Reserve stream 2 (numerically above the request on 1), then refuse the request: the
-      // refusal uses up the budget of 1 and the session writes a GOAWAY.
+      // refusal uses up the budget of 1 and the session writes its ENHANCE_YOUR_CALM GOAWAY
+      // (bun counts user refusals against maxSessionRejectedStreams; node does not, but a node
+      // server's GOAWAY in this position names 1 as well).
       stream.pushStream({ ":path": "/pushed" }, (err: Error | null, pushed: any) => {
         pushError.resolve(err);
         if (!pushed) return;

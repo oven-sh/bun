@@ -2398,14 +2398,16 @@ mod tests {
             &sink,
             &frame(FrameType::Headers, flags, 1, &request_block()),
         );
+        // Our own push reserves stream 4; the client's next request on 3 then arrives below
+        // that high-water mark and must still become the peer mark.
+        c.begin_header_block();
+        assert!(c.encode_header(b":method", b"GET", false));
+        c.send_push_promise(&sink, 1, 4);
+        assert_eq!(c.last_stream_id, 4);
         c.receive(
             &sink,
             &frame(FrameType::Headers, flags, 3, &request_block()),
         );
-        // Our own push reserves stream 4, numerically above everything the client opened.
-        c.begin_header_block();
-        assert!(c.encode_header(b":method", b"GET", false));
-        c.send_push_promise(&sink, 1, 4);
         assert_eq!(c.last_stream_id, 4);
 
         let fed = c.receive(&sink, &connection_error_frame());
@@ -2469,8 +2471,17 @@ mod tests {
     fn client_goaway_names_the_last_promised_stream() {
         let sink = CaptureSink::default();
         let mut c = Connection::new(false, Settings::default());
-        // The server reserves stream 2 on the client's request stream 1 (which, as in
-        // production, this engine has no entry for), then answers the requests on 1 and 3.
+        // The server answers the client's requests on 1 (left open) and 3 first, so the
+        // client's own stream 3 is the highest id seen when the numerically lower promise of
+        // stream 2 arrives on stream 1. The promise must still become the peer mark.
+        let response = encode_block(&[(b":status", b"200")]);
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &response),
+        );
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(&sink, &frame(FrameType::Headers, flags, 3, &response));
+        assert_eq!(c.last_stream_id, 3);
         let mut push = vec![0, 0, 0, 2];
         push.extend_from_slice(&request_block());
         c.receive(
@@ -2478,12 +2489,6 @@ mod tests {
             &frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &push),
         );
         assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
-        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
-        let response = encode_block(&[(b":status", b"200")]);
-        c.receive(&sink, &frame(FrameType::Headers, flags, 1, &response));
-        // The client's own stream 3 is numerically above the promised stream and must not
-        // displace it.
-        c.receive(&sink, &frame(FrameType::Headers, flags, 3, &response));
         assert_eq!(c.last_stream_id, 3);
 
         let fed = c.receive(&sink, &connection_error_frame());

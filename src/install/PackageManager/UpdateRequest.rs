@@ -33,6 +33,9 @@ pub struct UpdateRequest {
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
     pub failed: bool,
+    /// The target lives only in a `catalog`/`catalogs` map; its catalog entry
+    /// is updated instead of adding a root dependency.
+    pub(crate) is_catalog: bool,
     /// This must be cloned to handle when the AST store resets.
     /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
     /// only valid while the store that allocated it is alive.
@@ -49,6 +52,7 @@ impl Default for UpdateRequest {
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
+            is_catalog: false,
             e_string: None,
         }
     }

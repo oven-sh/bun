@@ -509,6 +509,237 @@ describe("update", () => {
       "no-deps": "catalog:",
       "a-dep": "catalog:a",
     });
+    // the referenced catalog entry is what gets updated; untargeted entries stay
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(root.workspaces.catalogs).toEqual({ a: { "a-dep": "~1.0.1" } });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> from a workspace updates the root catalog entry it references", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-named-from-ws");
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "no-deps");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.dependencies).toBeUndefined();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+    expect(root.workspaces.catalogs).toEqual({ a: { "a-dep": "~1.0.1" } });
+    expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+      "no-deps": "catalog:",
+      "a-dep": "catalog:a",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> updates the catalog entry referenced by the root package.json itself", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-named-root-ref",
+          dependencies: { "no-deps": "catalog:" },
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "^1.0.0" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1" }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "no-deps");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    // the reference is kept and the referenced entry is updated
+    expect(root.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/32808
+  test("update <pkg> from root updates the catalog entry instead of adding a root dependency", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-named");
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "no-deps");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    // no spurious top-level dependency is synthesized for the catalog package
+    expect(root.dependencies).toBeUndefined();
+    // the targeted entry moves within range; the untargeted one is untouched
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+    expect(root.workspaces.catalogs).toEqual({ a: { "a-dep": "~1.0.1" } });
+
+    expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+      "no-deps": "catalog:",
+      "a-dep": "catalog:a",
+    });
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.1.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> from root targets a named catalog entry", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-named-group");
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "a-dep");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.dependencies).toBeUndefined();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.0.0" });
+    expect(root.workspaces.catalogs).toEqual({ a: { "a-dep": "~1.0.10" } });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> --latest from root bumps the catalog entry past its range, preserving the pin style", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-named-latest");
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "no-deps", "--latest");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.dependencies).toBeUndefined();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(root.workspaces.catalogs).toEqual({ a: { "a-dep": "~1.0.1" } });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> --latest updates every catalog group defining the package; unconsumed entries are restored", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-named-groups",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "^1.0.0",
+            },
+            catalogs: {
+              pinned: {
+                "no-deps": "1.0.1",
+              },
+              unused: {
+                "no-deps": "1.0.0",
+              },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: { "no-deps": "catalog:pinned" },
+        }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "no-deps", "--latest");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.dependencies).toBeUndefined();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(root.workspaces.catalogs.pinned).toEqual({ "no-deps": "2.0.0" });
+    // no workspace consumes this entry, so it cannot resolve and is left as-is
+    expect(root.workspaces.catalogs.unused).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> prefers a root dependency over a same-named catalog entry", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-named-precedence",
+          dependencies: { "no-deps": "^1.0.0" },
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "^1.0.0" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "no-deps");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    // the direct dependency is rewritten; the catalog entry is left alone
+    expect(root.dependencies).toEqual({ "no-deps": "^1.1.0" });
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("update <pkg> bumps an npm: aliased catalog entry, preserving the alias", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-named-alias",
+          workspaces: {
+            packages: ["packages/*"],
+            catalogs: {
+              a: { "my-no-deps": "npm:no-deps@^1.0.0" },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: { "my-no-deps": "catalog:a" },
+        }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "my-no-deps");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.dependencies).toBeUndefined();
+    expect(root.workspaces.catalogs).toEqual({ a: { "my-no-deps": "npm:no-deps@^1.1.0" } });
     expect(exitCode).toBe(0);
   });
 });

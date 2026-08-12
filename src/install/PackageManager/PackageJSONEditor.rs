@@ -582,11 +582,30 @@ fn for_each_catalog_object(
     Ok(())
 }
 
+/// Is `name` defined in any `catalog`/`catalogs` group?
+fn catalog_defines_package(root_package_json: &Expr, name: &[u8]) -> bool {
+    let mut found = false;
+    let _ = for_each_catalog_object(root_package_json, |_catalog_name, catalog_expr| {
+        if !found {
+            if let Some(obj) = catalog_expr.data.e_object() {
+                if obj.has_property(name) {
+                    found = true;
+                }
+            }
+        }
+        Ok(())
+    });
+    found
+}
+
 /// Records the original version of every catalog entry and, with `--latest`,
 /// rewrites each to `latest` in memory so the resolver fetches it.
+/// `names_filter` restricts recording to the named targets (every group
+/// defining a name, as in the interactive updater); `None` records everything.
 pub(crate) fn edit_catalogs_before_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
+    names_filter: Option<&[Box<[u8]>]>,
 ) -> Result<bool, bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
@@ -616,6 +635,15 @@ pub(crate) fn edit_catalogs_before_update(
             let Some(value) = &dep.value else { continue };
             if !matches!(value.data, bun_ast::ExprData::EString(_)) {
                 continue;
+            }
+
+            if let Some(filter) = names_filter {
+                let key_str = key
+                    .as_utf8_string_literal()
+                    .unwrap_or_else(|| bun_core::out_of_memory());
+                if !filter.iter().any(|n| strings::eql_long(n, key_str, true)) {
+                    continue;
+                }
             }
 
             let version_literal = value
@@ -904,6 +932,7 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
+                let mut matched_catalog_reference = false;
                 // order-insensitive scan: `FOUR` is fine here
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
@@ -921,6 +950,11 @@ pub(crate) fn edit(
                                                     == dependency::Tag::Catalog
                                             },
                                         );
+
+                                    // The kept reference points at a catalog
+                                    // entry; that entry is the update target.
+                                    matched_catalog_reference |=
+                                        keep_catalog_reference && options.before_install;
 
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && strings::eql_long(list, dependency_list, true)
@@ -1070,7 +1104,32 @@ pub(crate) fn edit(
                         }
                     }
                 }
+                if matched_catalog_reference {
+                    updates[i].is_catalog = true;
+                }
                 i += 1;
+            }
+        }
+    }
+
+    // Catalog named targets are handled by `edit_catalogs_*`, not the append
+    // block below. Classify only before install: post-install, a root-group
+    // match takes the `replacing` branch, which leaves `e_string` unset and
+    // must not be reclassified here.
+    if manager.subcommand == Subcommand::Update {
+        for request in updates.iter_mut() {
+            if options.before_install
+                && !request.is_catalog
+                && request.e_string.is_none()
+                && request.package_id == INVALID_PACKAGE_ID
+                && catalog_defines_package(current_package_json, request.get_name())
+            {
+                request.is_catalog = true;
+            }
+            // A catalog-only target occupies no dependency-group slot; a kept
+            // `catalog:` reference was already counted when it matched.
+            if request.is_catalog && request.e_string.is_none() {
+                remaining -= 1;
             }
         }
     }
@@ -1149,7 +1208,7 @@ pub(crate) fn edit(
         };
 
         for request in updates.iter_mut() {
-            if request.e_string.is_some() {
+            if request.e_string.is_some() || request.is_catalog {
                 continue;
             }
 

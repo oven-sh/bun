@@ -727,8 +727,11 @@ impl Lockfile {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
+                                // a `catalog:` reference keeps its literal; the
+                                // catalog definition is updated instead
                                 if res.tag != ResolutionTag::Npm
                                     || update.version.tag != dependency::Tag::DistTag
+                                    || dep.version.tag == dependency::Tag::Catalog
                                 {
                                     continue;
                                 }
@@ -782,8 +785,11 @@ impl Lockfile {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
+                                // a `catalog:` reference keeps its literal; the
+                                // catalog definition is updated instead
                                 if res.tag != ResolutionTag::Npm
                                     || update.version.tag != dependency::Tag::DistTag
+                                    || dep.version.tag == dependency::Tag::Catalog
                                 {
                                     continue;
                                 }

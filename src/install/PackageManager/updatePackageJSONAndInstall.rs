@@ -596,12 +596,28 @@ fn update_package_json_and_install_with_manager_with_updates(
             .as_deref()
             .is_none_or(|t| t.iter().any(|w| w.is_root));
 
+        let catalog_request_names: Vec<Box<[u8]>> = manager
+            .update_requests
+            .iter()
+            .filter(|r| r.is_catalog)
+            .map(|r| Box::<[u8]>::from(r.get_name()))
+            .collect();
+
         if subcommand == Subcommand::Update
-            && manager.update_requests.is_empty()
+            && (manager.update_requests.is_empty() || !catalog_request_names.is_empty())
             && root_is_targeted
         {
+            let names_filter = if manager.update_requests.is_empty() {
+                None
+            } else {
+                Some(&catalog_request_names[..])
+            };
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
-            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
+            if PackageJSONEditor::edit_catalogs_before_update(
+                manager,
+                &root_package_json_root,
+                names_filter,
+            )? {
                 editing_catalogs = true;
 
                 if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
@@ -671,21 +687,6 @@ fn update_package_json_and_install_with_manager_with_updates(
                     },
                 )?;
             }
-
-            if editing_catalogs
-                && manager.workspace_name_hash.is_none()
-                && manager.update_target_workspaces.is_none()
-            {
-                // running from root: catalogs live in this file.
-                let _ = PackageJSONEditor::edit_catalogs_after_update(
-                    manager,
-                    &new_package_json,
-                    EditOptions {
-                        exact_versions: manager.options.enable.exact_versions(),
-                        ..Default::default()
-                    },
-                )?;
-            }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
             PackageJSONEditor::edit(
@@ -699,6 +700,21 @@ fn update_package_json_and_install_with_manager_with_updates(
                         .options
                         .do_
                         .contains(Do::TRUST_DEPENDENCIES_FROM_ARGS),
+                    ..Default::default()
+                },
+            )?;
+        }
+
+        if editing_catalogs
+            && manager.workspace_name_hash.is_none()
+            && manager.update_target_workspaces.is_none()
+        {
+            // running from root: catalogs live in this file.
+            let _ = PackageJSONEditor::edit_catalogs_after_update(
+                manager,
+                &new_package_json,
+                EditOptions {
+                    exact_versions: manager.options.enable.exact_versions(),
                     ..Default::default()
                 },
             )?;

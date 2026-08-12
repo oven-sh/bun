@@ -6846,17 +6846,14 @@ bun_jsc::jsc_host_abi! {
 // FileOpener<T> / FileCloser<T>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// What [`FileOpener::get_fd`] continues with once the task's fd is known: the
-/// fd, or `Fd::INVALID` with `errno` / `system_error` set when the open failed.
-/// It takes the task over: the implementations end by handing it on
-/// (`ReadFile`, `WriteFile`; the JS thread then reads and frees the job through
-/// the job's own pointer) or by freeing it right there (`ReadFileUV`). Neither
-/// is allowed while a `&mut Self` argument is still protected, i.e. until the
-/// continuation has returned (see [`bun_jsc::JobContext::run`]); hence the
-/// pointer, here and in the `get_fd` frames that invoke it.
+/// [`FileOpener::get_fd`]'s continuation: gets the fd, or `Fd::INVALID` with
+/// `errno` / `system_error` set, and takes the task over. It ends by handing
+/// the task on (`ReadFile`, `WriteFile`) or freeing it (`ReadFileUV`), hence a
+/// pointer rather than a `&mut` that would still be protected then, here and
+/// in the `get_fd` frames that invoke it (as for [`bun_jsc::JobContext::run`]).
 ///
 /// # Safety
-/// `this` is the live task `get_fd` was given, and the caller does not touch it
+/// `this` is the live task `get_fd` was given; the caller does not touch it
 /// afterwards.
 pub type OpenCallback<T> = unsafe fn(this: *mut T, fd: Fd);
 
@@ -6898,9 +6895,8 @@ pub trait FileOpener: Sized {
     #[cfg(windows)]
     fn open_callback(&self) -> OpenCallback<Self>;
 
-    /// Opens the path in `pathlike()` and records the outcome: the fd in
-    /// `opened_fd`, or `Fd::INVALID` plus `errno` / `system_error`. Returns
-    /// what it recorded.
+    /// Opens `pathlike()`; returns the fd it recorded in `opened_fd`, or
+    /// `Fd::INVALID` after recording `errno` / `system_error`.
     #[cfg(not(windows))]
     fn open_pathlike(&mut self) -> Fd {
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -6955,11 +6951,9 @@ pub trait FileOpener: Sized {
             // Monomorphic libuv completion thunk; `req.data` carries the task.
             extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
                 use bun_sys::ReturnCodeExt as _;
-                // SAFETY: `req` is the live request queued below, whose `data`
-                // is the task's pointer; the task was left alone until this
-                // completion. The request is done with before the task is
-                // touched, each reborrow of the task ends with its accessor
-                // call, and `cb` (which takes the task over) is the last access.
+                // SAFETY: `req` is the request queued below, `data` the task it
+                // belongs to, untouched since. The request is finished with
+                // before the task is touched; `cb` takes the task over last.
                 unsafe {
                     let this = (*req).data.cast::<S>();
                     let result = (*req).result;
@@ -6995,11 +6989,9 @@ pub trait FileOpener: Sized {
             let path = path_string.slice_z(&mut buf);
 
             // SAFETY: fn contract; each reborrow ends with its accessor call.
-            // `req` is the task's own request, so it is live for as long as
-            // the open is in flight, and nothing touches it from here until
-            // `wrapped_callback` runs. `req.data` is set before the open is
-            // queued because a synchronous failure runs `callback` (which may
-            // free the task) right below.
+            // `req` is the task's own request, untouched from here until
+            // `wrapped_callback`; `data` is set before queueing because a
+            // synchronous failure runs `callback` (which may free the task).
             let rc = unsafe {
                 (*this).set_open_callback(callback);
                 let loop_ = (*this).loop_();
@@ -7015,9 +7007,8 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                // SAFETY: fn contract; libuv did not keep the request. The
-                // reborrows end with their accessor calls, and `callback` is the
-                // last access to `*this`.
+                // SAFETY: fn contract; libuv did not keep the request, and
+                // `callback` is the last access.
                 unsafe {
                     (*this).set_errno(bun_errno::from_errno(errno as i32).into());
                     (*this).set_system_error(
@@ -7036,23 +7027,20 @@ pub trait FileOpener: Sized {
         {
             // SAFETY: fn contract; the reborrow ends with the call.
             let fd = unsafe { (*this).open_pathlike() };
-            // SAFETY: fn contract, passed through; nothing here touches `*this`
-            // afterwards.
+            // SAFETY: fn contract, passed through; this is the last access.
             unsafe { callback(this, fd) }
         }
     }
 
-    /// Finds the task's fd (`opened_fd` if it is already set, the descriptor
-    /// of an fd-backed `pathlike()`, or else by opening the path) and continues
-    /// with `callback`, which takes the task over.
+    /// Finds the task's fd (already opened, the store's own, or by opening the
+    /// path) and continues with `callback`, which takes the task over.
     ///
     /// # Safety
     /// `this` is the live task and nothing else is using it; the caller does
-    /// not touch it afterwards, since `callback` hands it on or frees it (see
-    /// [`OpenCallback`]).
+    /// not touch it afterwards ([`OpenCallback`] hands it on or frees it).
     unsafe fn get_fd(this: *mut Self, callback: OpenCallback<Self>) {
         // SAFETY: fn contract; each reborrow ends with its accessor call, and
-        // `callback` is the last access to `*this` on the paths that run it.
+        // `callback` is the last access on the paths that run it.
         unsafe {
             let fd = (*this).opened_fd();
             if fd != Fd::INVALID {

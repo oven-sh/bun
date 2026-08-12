@@ -230,9 +230,7 @@ impl bun_jsc::JobContext for ReadFile {
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the read, which hands `*this` on (to the io thread, or to the
-        // JS thread by finishing the token); nothing here touches it afterwards.
-        // SAFETY: fn contract, passed through.
+        // SAFETY: fn contract, passed through; `run_async` hands `*this` on.
         unsafe { ReadFile::run_async(this, done) };
         None
     }
@@ -296,8 +294,7 @@ pub struct ReadFile {
 bun_threading::intrusive_work_task!(ReadFile, task);
 bun_io::intrusive_io_request!(ReadFile, io_request);
 
-/// What [`ReadFile::prepare_read`] decided the read continues with; performed
-/// by `run_async_with_fd` once that `&mut self` stage has returned.
+/// The step `run_async_with_fd` performs once `prepare_read`'s `&mut self` has ended.
 #[cfg(not(windows))]
 #[derive(Clone, Copy)]
 enum Next {
@@ -613,12 +610,10 @@ impl ReadFile {
         Ok(())
     }
 
-    /// The job's first pool step: keeps the token and starts the read. From
-    /// `get_fd` on, `*this` belongs to whichever thread the read continues on.
+    /// First pool step: keeps the token and starts the read; `get_fd` hands `*this` on.
     ///
     /// # Safety
-    /// [`bun_jsc::JobContext::run`]'s contract; the caller does not touch
-    /// `*this` afterwards.
+    /// [`bun_jsc::JobContext::run`]'s contract.
     unsafe fn run_async(this: *mut Self, task: ReadFileTask) {
         #[cfg(windows)]
         {
@@ -721,19 +716,16 @@ impl ReadFile {
         }
     }
 
-    /// The read's [`OpenCallback`](crate::webcore::blob::OpenCallback): decides
-    /// the next step under a reborrow that ends before the step runs, because
-    /// the step hands `*this` on (to the io thread, or to the JS thread, which
-    /// frees it).
+    /// The read's continuation: `prepare_read`'s reborrow has ended by the
+    /// time the step it chose hands `*this` on.
     ///
     /// # Safety
-    /// `OpenCallback`'s contract.
+    /// [`OpenCallback`](crate::webcore::blob::OpenCallback)'s contract.
     #[cfg(not(windows))]
     unsafe fn run_async_with_fd(this: *mut Self, fd: Fd) {
         // SAFETY: fn contract; the reborrow ends with the call.
         let next = unsafe { (*this).prepare_read(fd) };
-        // SAFETY: fn contract; whichever step runs is the last access to
-        // `*this` on this thread.
+        // SAFETY: fn contract; the step is this thread's last access.
         unsafe {
             match next {
                 Next::ReadLoop => (*this).do_read_loop(),
@@ -1164,18 +1156,15 @@ impl<'a> ReadFileUV<'a> {
         Self::finalize(core::ptr::from_mut(self));
     }
 
-    /// The read's [`OpenCallback`]: queues the fstat, or finishes (which frees
-    /// the task) if the open failed or the fstat cannot be queued.
+    /// The read's continuation: queues the fstat, or finishes (freeing the task).
     ///
     /// # Safety
-    /// `OpenCallback`'s contract.
+    /// [`OpenCallback`]'s contract.
     unsafe fn on_file_open(this: *mut Self, opened_fd: Fd) {
         log!("ReadFileUV.onFileOpen");
-        // SAFETY: fn contract. Field accesses are statement-scoped, the
-        // `on_finish` calls are the last access on their paths, and the FFI
-        // call gets the live VM uv loop, the task's own freshly deinit'd `fs_t`
-        // (whose `data` lets `on_file_initial_stat` recover the task), and the
-        // just-opened fd.
+        // SAFETY: fn contract; `on_finish` is the last access on its paths. The
+        // FFI call gets the live VM loop and the task's own deinit'd `fs_t`,
+        // whose `data` lets `on_file_initial_stat` recover the task.
         unsafe {
             if (*this).errno.is_some() {
                 return (*this).on_finish();

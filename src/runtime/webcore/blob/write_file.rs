@@ -55,9 +55,7 @@ impl bun_jsc::JobContext for WriteFile {
         _vm: &bun_jsc::vm_handle::Borrow,
         done: bun_jsc::Completion<Self>,
     ) -> Option<bun_jsc::Completion<Self>> {
-        // Starts the write, which hands `*this` on (to the io thread, or to the
-        // JS thread by finishing the token); nothing here touches it afterwards.
-        // SAFETY: fn contract, passed through.
+        // SAFETY: fn contract, passed through; `run_async` hands `*this` on.
         unsafe { WriteFile::run_async(this, done) };
         None
     }
@@ -102,8 +100,7 @@ pub struct WriteFile {
 bun_threading::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
 
-/// What [`WriteFile::prepare_write`] decided the write continues with;
-/// performed by `run_with_fd` once that `&mut self` stage has returned.
+/// The step `run_with_fd` performs once `prepare_write`'s `&mut self` has ended.
 #[cfg(not(windows))]
 #[derive(Clone, Copy)]
 enum Next {
@@ -367,12 +364,10 @@ impl WriteFile {
         Ok(())
     }
 
-    /// The job's first pool step: keeps the token and starts the write. From
-    /// `get_fd` on, `*this` belongs to whichever thread the write continues on.
+    /// First pool step: keeps the token and starts the write; `get_fd` hands `*this` on.
     ///
     /// # Safety
-    /// [`bun_jsc::JobContext::run`]'s contract; the caller does not touch
-    /// `*this` afterwards.
+    /// [`bun_jsc::JobContext::run`]'s contract.
     unsafe fn run_async(this: *mut Self, task: WriteFileTask) {
         #[cfg(windows)]
         {
@@ -418,19 +413,16 @@ impl WriteFile {
         }
     }
 
-    /// The write's [`OpenCallback`](crate::webcore::blob::OpenCallback):
-    /// decides the next step under a reborrow that ends before the step runs,
-    /// because the step hands `*this` on (to the io thread, or to the JS
-    /// thread, which frees it).
+    /// The write's continuation: `prepare_write`'s reborrow has ended by the
+    /// time the step it chose hands `*this` on.
     ///
     /// # Safety
-    /// `OpenCallback`'s contract.
+    /// [`OpenCallback`](crate::webcore::blob::OpenCallback)'s contract.
     #[cfg(not(windows))]
     unsafe fn run_with_fd(this: *mut Self, fd: Fd) {
         // SAFETY: fn contract; the reborrow ends with the call.
         let next = unsafe { (*this).prepare_write(fd) };
-        // SAFETY: fn contract; whichever step runs is the last access to
-        // `*this` on this thread.
+        // SAFETY: fn contract; the step is this thread's last access.
         unsafe {
             match next {
                 Next::WriteLoop => (*this).do_write_loop(),

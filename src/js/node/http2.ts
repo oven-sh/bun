@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, kConnectionsCheckingInterval } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
@@ -6793,17 +6793,14 @@ class Http2SecureServer extends tls.Server {
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
+      // As in node, the HTTP/1 connections get http.Server's option set (connectionListenerHTTP1
+      // reads it off the server) and its headersTimeout / requestTimeout sweep while listening.
+      const { storeHTTPOptions, setupConnectionsTracking } = require("node:_http_server");
       const http1Options = { ...options, ...options.http1Options };
-      this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
-      this.headersTimeout = http1Options.headersTimeout ?? 60000;
-      this.requestTimeout = http1Options.requestTimeout ?? 300000;
+      storeHTTPOptions.$call(this, http1Options);
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
-      // connectionListenerHTTP1 reads these off the server when initializing
-      // the per-connection parser, matching Node's storeHTTP1Options.
-      this.maxHeaderSize = http1Options.maxHeaderSize;
-      this.insecureHTTPParser = http1Options.insecureHTTPParser;
-      this.httpValidation = http1Options.httpValidation;
+      this.on("listening", setupConnectionsTracking);
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
@@ -6839,7 +6836,9 @@ class Http2SecureServer extends tls.Server {
   }
   close(callback?: Function) {
     super.close(callback);
+    // Node's httpServerPreClose (allowHTTP1 only; neither exists otherwise).
     closeIdleHttp1Connections(this);
+    clearInterval(this[kConnectionsCheckingInterval]);
     closeAllSessions(this);
   }
 }

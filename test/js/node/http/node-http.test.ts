@@ -4314,3 +4314,231 @@ it("closeAllConnections() destroys an emitted connection that closeIdleConnectio
     if (server.listening) server.close();
   }
 });
+
+const requestTimeoutResponse = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+
+// One duplexPair per name; emit() hands the server half to the server and everything the client
+// half receives is collected in `received`.
+function connectionPairs<const Name extends string>(server: Server, names: readonly Name[]) {
+  const pairs = Object.fromEntries(names.map(name => [name, duplexPair()])) as Record<
+    Name,
+    ReturnType<typeof duplexPair>
+  >;
+  const received = Object.fromEntries(names.map(name => [name, ""])) as Record<Name, string>;
+  for (const name of names) {
+    pairs[name][0].on("data", chunk => (received[name] += chunk.toString("latin1")));
+  }
+  return {
+    received,
+    emit(...emitted: Name[]) {
+      for (const name of emitted) server.emit("connection", pairs[name][1]);
+    },
+    client: (name: Name) => pairs[name][0],
+    nameOf: (socket: unknown) => names.find(name => pairs[name][1] === socket),
+    destroyed: () => Object.fromEntries(names.map(name => [name, pairs[name][1].destroyed])),
+    // duplexPair does not propagate destroy() to the other half, so watch the server half. Not
+    // events.once(): the halves below get destroyed with an error on purpose, which it would reject on.
+    closed: (...watched: Name[]) =>
+      Promise.all(watched.map(name => new Promise<void>(resolve => pairs[name][1].once("close", resolve)))),
+    destroyAll() {
+      for (const name of names) {
+        pairs[name][0].destroy();
+        pairs[name][1].destroy();
+      }
+    },
+  };
+}
+
+// Node's checkConnections() sweep covers emitted connections too: headersTimeout applies while a
+// request head is pending (including on a connection that has not sent anything yet),
+// requestTimeout while the rest of the request is, and an expired connection is treated like a
+// native one: ERR_HTTP_REQUEST_TIMEOUT through 'clientError', which by default answers with a raw
+// 408 and destroys. A request that has been received in full is subject to neither timeout.
+it("headersTimeout and requestTimeout expire emitted connections", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const dispatched: string[] = [];
+  const server = createServer(
+    { headersTimeout: 100, requestTimeout: 200, connectionsCheckingInterval: 10 },
+    (req, res) => {
+      dispatched.push(req.url!);
+      // "/body" is left unanswered: its request body never completes, so requestTimeout has to.
+      if (req.url === "/held") heldResponse.resolve(res);
+    },
+  );
+  await listen(server);
+  const connections = connectionPairs(server, ["silent", "partial", "body", "held"]);
+  try {
+    connections.emit("silent", "partial", "body", "held");
+    const expired = connections.closed("silent", "partial", "body");
+    connections.client("partial").write("GET /partial HTTP/1.1\r\nHost: x\r\n");
+    connections.client("body").write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    connections.client("held").write("GET /held HTTP/1.1\r\nHost: x\r\n\r\n");
+    const held = await heldResponse.promise;
+    await expired;
+    expect({ received: connections.received, destroyed: connections.destroyed(), dispatched }).toEqual({
+      received: {
+        silent: requestTimeoutResponse,
+        partial: requestTimeoutResponse,
+        body: requestTimeoutResponse,
+        held: "",
+      },
+      destroyed: { silent: true, partial: true, body: true, held: false },
+      dispatched: ["/body", "/held"],
+    });
+
+    // Both timeouts have elapsed for the held request too (the other connections expired in the
+    // meantime); it can still be answered.
+    const heldBody = readResponseBody(connections.client("held"));
+    held.end("answered");
+    expect(await heldBody).toBe("answered");
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
+it("a request timeout on an emitted connection is reported to 'clientError' exactly once", async () => {
+  const server = createServer({ headersTimeout: 50, requestTimeout: 50, connectionsCheckingInterval: 10 });
+  await listen(server);
+  const connections = connectionPairs(server, ["destroyed", "kept", "later"]);
+  const reports: { name: string | undefined; code: string; message: string; rawPacket: unknown }[] = [];
+  let awaitingReports: { count: number; resolve: () => void } | undefined;
+  function reportCountReaches(count: number) {
+    if (reports.length >= count) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    awaitingReports = { count, resolve };
+    return promise;
+  }
+  server.on("clientError", (err: any, socket: any) => {
+    const name = connections.nameOf(socket);
+    reports.push({ name, code: err.code, message: err.message, rawPacket: err.rawPacket });
+    switch (name) {
+      case "destroyed":
+        // The listener from Node's docs; destroying with the error emits it on the socket again.
+        socket.destroy(err);
+        break;
+      case "kept":
+        // Answers, but leaves the connection open for the following sweeps to look at again.
+        socket.end("HTTP/1.1 408 handled\r\n\r\n");
+        break;
+      default:
+        socket.destroy();
+    }
+    if (awaitingReports && reports.length >= awaitingReports.count) {
+      awaitingReports.resolve();
+      awaitingReports = undefined;
+    }
+  });
+  try {
+    connections.emit("destroyed", "kept");
+    const destroyedClosed = connections.closed("destroyed");
+    connections.client("kept").write("GET / HTTP/1.1\r\n");
+    await reportCountReaches(2);
+    // The socket's own 'error' event (from destroy(err)) precedes 'close'; it must not be reported.
+    await destroyedClosed;
+    // "later" starts counting only now, so the sweep has run over the still-open "kept"
+    // connection several more times by the time it is reported.
+    connections.emit("later");
+    await reportCountReaches(3);
+
+    const report = (name: string) => ({
+      name,
+      code: "ERR_HTTP_REQUEST_TIMEOUT",
+      message: "Request timeout",
+      rawPacket: undefined,
+    });
+    const firstTwo = reports.slice(0, 2).sort((a, b) => a.name!.localeCompare(b.name!));
+    expect({
+      reports: [...firstTwo, ...reports.slice(2)],
+      received: connections.received,
+      destroyed: connections.destroyed(),
+    }).toEqual({
+      reports: [report("destroyed"), report("kept"), report("later")],
+      received: { destroyed: "", kept: "HTTP/1.1 408 handled\r\n\r\n", later: "" },
+      destroyed: { destroyed: true, kept: false, later: true },
+    });
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
+// Node's socketOnError writes its raw 408 only while nothing of a response has reached the socket
+// (_headerSent): writeHead() alone puts nothing on the wire, the first write() does.
+it("a request timeout does not append a 408 to a response that is already on the wire", async () => {
+  const server = createServer(
+    { headersTimeout: 50, requestTimeout: 50, connectionsCheckingInterval: 10 },
+    (req, res) => {
+      res.writeHead(200, { "content-length": "10" });
+      if (req.url === "/written") res.write("partial");
+    },
+  );
+  await listen(server);
+  const connections = connectionPairs(server, ["written", "headOnly"]);
+  try {
+    connections.emit("written", "headOnly");
+    const expired = connections.closed("written", "headOnly");
+    for (const name of ["written", "headOnly"] as const) {
+      connections.client(name).write(`POST /${name} HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc`);
+    }
+    await expired;
+    const [writtenHead, ...writtenAfterHead] = connections.received.written.split("\r\n\r\n");
+    expect({
+      writtenStatusLine: writtenHead.split("\r\n")[0],
+      writtenAfterHead,
+      headOnly: connections.received.headOnly,
+      destroyed: connections.destroyed(),
+    }).toEqual({
+      writtenStatusLine: "HTTP/1.1 200 OK",
+      writtenAfterHead: ["partial"],
+      headOnly: requestTimeoutResponse,
+      destroyed: { written: true, headOnly: true },
+    });
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});
+
+// Emitted connections use Node's socketOnError, which stops listening to the socket's errors
+// before reporting one, so the error it (or the 'clientError' listener) destroys the socket with
+// is not reported a second time. Like in Node, an error from execute() carries the bytes that
+// caused it and one the parser detects at EOF does not.
+it("a parse error on an emitted connection is reported to 'clientError' exactly once", async () => {
+  const server = createServer(() => {});
+  await listen(server);
+  const connections = connectionPairs(server, ["garbage", "truncated"]);
+  const reports: { name: string | undefined; code: string; message: string; rawPacket: string | undefined }[] = [];
+  server.on("clientError", (err: any, socket: any) => {
+    reports.push({
+      name: connections.nameOf(socket),
+      code: err.code,
+      message: err.message,
+      rawPacket: err.rawPacket?.toString(),
+    });
+    socket.destroy(err);
+  });
+  try {
+    connections.emit("garbage", "truncated");
+    const closed = connections.closed("garbage", "truncated");
+    connections.client("garbage").write("GARBAGE\r\n\r\n");
+    connections.client("truncated").end("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    await closed;
+    reports.sort((a, b) => a.name!.localeCompare(b.name!));
+    expect({ reports, received: connections.received }).toEqual({
+      reports: [
+        {
+          name: "garbage",
+          code: "HPE_INVALID_METHOD",
+          message: "Parse Error: Invalid method encountered",
+          rawPacket: "GARBAGE\r\n\r\n",
+        },
+        { name: "truncated", code: "HPE_INVALID_EOF_STATE", message: "Parse Error", rawPacket: undefined },
+      ],
+      received: { garbage: "", truncated: "" },
+    });
+  } finally {
+    connections.destroyAll();
+    server.close();
+  }
+});

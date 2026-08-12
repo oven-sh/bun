@@ -263,6 +263,35 @@ describe("ConnectionsList", () => {
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
   });
+
+  // expired() takes milliseconds and compares in uv_hrtime() nanoseconds; the conversion has to be
+  // done in 64 bits, as 4295ms * 1e6 already wraps a uint32 (to about 33us), which would make the
+  // http server's default headersTimeout / requestTimeout expire connections within seconds.
+  test("expired() does not truncate timeouts above 4294ms to 32 bits", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    try {
+      // Older than any wrapped timeout, far younger than the real ones.
+      while (parser.duration() < 2) {}
+      expect({
+        wrapping: list.expired(4295, 4295),
+        httpDefaults: list.expired(60_000, 300_000),
+        active: list.active(),
+      }).toEqual({ wrapping: [], httpDefaults: [], active: [parser] });
+      // A timeout the parser really has exceeded is still reported, and only once: expired() moves
+      // it out of the active set (until its next message) but keeps it in the list.
+      expect({
+        expired: list.expired(1, 1),
+        expiredAgain: list.expired(1, 1),
+        active: list.active(),
+        all: list.all(),
+      }).toEqual({ expired: [parser], expiredAgain: [], active: [], all: [parser] });
+    } finally {
+      parser.remove();
+      parser.close();
+    }
+  });
 });
 
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {

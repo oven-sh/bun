@@ -1,8 +1,5 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const SharedHandle = require("internal/cluster/SharedHandle");
-const path = require("node:path");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
@@ -10,6 +7,8 @@ const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInterna
 const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
+let RoundRobinHandle;
+let SharedHandle;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -221,6 +220,9 @@ function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
+  RoundRobinHandle ??= require("internal/cluster/RoundRobinHandle");
+  SharedHandle ??= require("internal/cluster/SharedHandle");
+
   const key =
     `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
     (message.port === 0 ? `:${message.index}` : "");
@@ -253,7 +255,7 @@ function queryServer(worker, message) {
 
     // Find shortest path for unix sockets because of the ~100 byte limit
     if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
-      address = path.relative(process.cwd(), address);
+      address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
     }

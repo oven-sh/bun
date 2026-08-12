@@ -725,8 +725,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Every module that is about to be evaluated again is disposed of first.
-  // Only the reload loop below marks modules stale.
+  // Dispose all modules
   const disposePromises: Promise<void>[] = [];
   for (const mod of toReload) {
     const { onDispose } = mod;

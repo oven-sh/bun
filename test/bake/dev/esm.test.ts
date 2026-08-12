@@ -1,6 +1,6 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -788,5 +788,476 @@ devTest("html routes reject requests whose host header does not match the dev se
     const normal = await dev.fetch("/");
     expect(await normal.text()).toContain("/_bun/client/");
     expect(normal.status).toBe(200);
+  },
+});
+
+devTest("a module that failed to load fails the same way when it is loaded again", {
+  // A failed ESM module must be recorded as failed by every loader path.
+  // Otherwise it stays half-initialized in the registry and the next
+  // `import()` or `require()` of it silently gets a namespace that is `null`
+  // (or empty, through `require`) instead of the error. The modules that fail
+  // on their own number their evaluations in the error message, so these
+  // assertions also tell a recorded failure apart from a second evaluation
+  // that happens to fail the same way.
+  framework: minimalFramework,
+  files: {
+    "a.ts": `
+      import "./a-dep";
+      export const value = "unreachable";
+    `,
+    "a-dep.ts": `
+      throw new Error("a-dep threw");
+    `,
+    "b.ts": `
+      import "./b-dep";
+      export const value = "unreachable";
+    `,
+    "b-dep.ts": `
+      throw new Error("b-dep threw");
+    `,
+    "c.ts": `
+      import "./c-dep";
+      export const value = "unreachable";
+    `,
+    "c-dep.ts": `
+      throw new Error("c-dep threw");
+    `,
+    "d.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("d rejected #" + (globalThis.dEvaluations = (globalThis.dEvaluations ?? 0) + 1));
+    `,
+    "e.ts": `
+      import "./e-mid";
+      export const value = "unreachable";
+    `,
+    "e-mid.ts": `
+      import "./e-dep";
+      export const value = "unreachable";
+    `,
+    "e-dep.ts": `
+      throw new Error("e-dep threw");
+    `,
+    "f.ts": `
+      export const value = "unreachable";
+      throw new Error("f threw #" + (globalThis.fEvaluations = (globalThis.fEvaluations ?? 0) + 1));
+    `,
+    "g.ts": `
+      export { value } from "./g-dep";
+    `,
+    "g-dep.ts": `
+      await 1;
+      export const value = "g loaded";
+    `,
+    "h.ts": `
+      export const value = "unreachable";
+      throw new Error("h threw #" + (globalThis.hEvaluations = (globalThis.hEvaluations ?? 0) + 1));
+    `,
+    "i.ts": `
+      import "./i-dep";
+      export const value = "unreachable";
+    `,
+    "i-dep.ts": `
+      await 1;
+      throw new Error("i-dep rejected");
+    `,
+    "j.ts": `
+      import "./j-mid";
+      export const value = "unreachable";
+    `,
+    "j-mid.ts": `
+      require("./j-async");
+      export const value = "unreachable";
+    `,
+    "j-async.ts": `
+      await 1;
+      export const value = "unreachable";
+    `,
+    "k.ts": `
+      export { value } from "./k-mid";
+    `,
+    "k-mid.ts": `
+      export { value } from "./k-async";
+    `,
+    "k-async.ts": `
+      await 1;
+      export const value = "k loaded";
+    `,
+    "l.ts": `
+      import "./l-cjs";
+      export const value = "unreachable";
+    `,
+    "l-cjs.ts": `
+      require("./l-async");
+      module.exports = { value: "unreachable" };
+    `,
+    "l-async.ts": `
+      await 1;
+      export const value = "unreachable";
+    `,
+    "routes/index.ts": `
+      // A synchronous throw and a rejection produce the same result, so this
+      // does not depend on which of the two import() reports a failure with.
+      async function attempt(load) {
+        try {
+          return "resolved: " + JSON.stringify(await load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+      export default async function () {
+        const results = {};
+        results.importWithThrowingDep = [
+          await attempt(() => import("../a")),
+          await attempt(() => import("../a")),
+        ];
+        results.requireWithThrowingDep = [
+          await attempt(() => require("../b")),
+          await attempt(() => require("../b")),
+        ];
+        results.importThenRequireWithThrowingDep = [
+          await attempt(() => import("../c")),
+          await attempt(() => require("../c")),
+        ];
+        results.importWithRejectingTopLevelAwait = [
+          await attempt(() => import("../d")),
+          await attempt(() => import("../d")),
+        ];
+        results.importChain = [
+          await attempt(() => import("../e")),
+          await attempt(() => import("../e")),
+          await attempt(() => import("../e-mid")),
+        ];
+        results.requireThrowingModule = [
+          await attempt(() => require("../f")),
+          await attempt(() => require("../f")),
+        ];
+        results.requireWithAsyncDep = [
+          await attempt(() => require("../g")),
+          await attempt(() => require("../g")),
+          await attempt(() => import("../g")),
+        ];
+        results.importThrowingModule = [
+          await attempt(() => import("../h")),
+          await attempt(() => import("../h")),
+        ];
+        results.importWithRejectingDep = [
+          await attempt(() => import("../i")),
+          await attempt(() => import("../i")),
+        ];
+        results.requireWithDepThatFailedToRequire = [
+          await attempt(() => require("../j")),
+          await attempt(() => require("../j")),
+          await attempt(() => import("../j")),
+        ];
+        results.requireWithAsyncDepTwoLevelsDown = [
+          await attempt(() => require("../k")),
+          await attempt(() => require("../k")),
+          await attempt(() => require("../k-mid")),
+          await attempt(() => import("../k")),
+          await attempt(() => import("../k-mid")),
+        ];
+        results.requireWithCommonJSDepThatFailedToRequire = [
+          await attempt(() => require("../l")),
+          await attempt(() => require("../l")),
+          await attempt(() => import("../l")),
+        ];
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    const cannotRequire = (id: string, asyncId: string) =>
+      `threw: Cannot require "${id}" because "${asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
+    const cannotRequireJ = expect.stringMatching(
+      /^threw: Cannot require "(j|j-async)\.ts" because "j-async\.ts" uses top-level await, but 'require' is a synchronous operation\.$/,
+    );
+    const kLoaded = 'resolved: {"value":"k loaded"}';
+    expect(await dev.fetch("/").json()).toEqual({
+      // A static dependency throws while the module is being loaded.
+      importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
+      requireWithThrowingDep: ["threw: b-dep threw", "threw: b-dep threw"],
+      // The failure recorded by one loader is seen by the other one too.
+      importThenRequireWithThrowingDep: ["threw: c-dep threw", "threw: c-dep threw"],
+      // The module's own top-level await rejects.
+      importWithRejectingTopLevelAwait: ["threw: d rejected #1", "threw: d rejected #1"],
+      // Every module between the importer and the throwing dependency fails.
+      importChain: ["threw: e-dep threw", "threw: e-dep threw", "threw: e-dep threw"],
+      // The module's own body throws synchronously during require().
+      requireThrowingModule: ["threw: f threw #1", "threw: f threw #1"],
+      // Refusing to require() a module with an async dependency is not an
+      // evaluation failure: it keeps failing under require() and still loads
+      // through import().
+      requireWithAsyncDep: [
+        cannotRequire("g.ts", "g-dep.ts"),
+        cannotRequire("g.ts", "g-dep.ts"),
+        'resolved: {"value":"g loaded"}',
+      ],
+      // These two paths already recorded the failure; the ones above now match them.
+      importThrowingModule: ["threw: h threw #1", "threw: h threw #1"],
+      importWithRejectingDep: ["threw: i-dep rejected", "threw: i-dep rejected"],
+      // Here the dependency's body itself called require() on an async module,
+      // so the same kind of error is a real evaluation failure this time and
+      // import() must fail as well. (require() rewrites the message of the
+      // error it rethrows, hence the loose match on the module it names.)
+      requireWithDepThatFailedToRequire: [cannotRequireJ, cannotRequireJ, cannotRequireJ],
+      // The refusal travels up through k-mid, which has to stay loadable too.
+      requireWithAsyncDepTwoLevelsDown: [
+        cannotRequire("k.ts", "k-async.ts"),
+        cannotRequire("k.ts", "k-async.ts"),
+        cannotRequire("k-mid.ts", "k-async.ts"),
+        kLoaded,
+        kLoaded,
+      ],
+      // Like j, but the dependency is CommonJS. A CommonJS module that throws
+      // is evaluated again on its next load rather than recorded as failed, so
+      // the importer is left loadable as well and fails afresh every time,
+      // through import() too (which only has the inner require() name the module).
+      requireWithCommonJSDepThatFailedToRequire: [
+        cannotRequire("l.ts", "l-async.ts"),
+        cannotRequire("l.ts", "l-async.ts"),
+        cannotRequire("l-async.ts", "l-async.ts"),
+      ],
+    });
+  },
+});
+
+devTest("a module that failed to load fails the same way when it is loaded again (client)", {
+  // Same loader as the server test above, running in the browser runtime.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      async function attempt(load) {
+        try {
+          return "resolved: " + JSON.stringify(await load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+      console.log({
+        importWithThrowingDep: [await attempt(() => import("./a")), await attempt(() => import("./a"))],
+        requireWithThrowingDep: [await attempt(() => require("./b")), await attempt(() => require("./b"))],
+        importWithRejectingTopLevelAwait: [await attempt(() => import("./c")), await attempt(() => import("./c"))],
+      });
+    `,
+    "a.ts": `
+      import "./a-dep";
+      export const value = "unreachable";
+    `,
+    "a-dep.ts": `
+      throw new Error("a-dep threw");
+    `,
+    "b.ts": `
+      import "./b-dep";
+      export const value = "unreachable";
+    `,
+    "b-dep.ts": `
+      throw new Error("b-dep threw");
+    `,
+    "c.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("c rejected");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
+      requireWithThrowingDep: ["threw: b-dep threw", "threw: b-dep threw"],
+      importWithRejectingTopLevelAwait: ["threw: c rejected", "threw: c rejected"],
+    });
+  },
+});
+
+devTest("a route whose dependency throws reports that error on every request", {
+  // The server runtime loads the route's modules again for each request. A
+  // route left half-initialized by a failed dependency used to report the real
+  // error once and then "null is not an object" for every later request.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "unreachable";
+      throw new Error("dep threw");
+    `,
+    "routes/index.ts": `
+      import { value } from "../dep";
+      export default function () {
+        return new Response(value);
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+    const errorPageJson = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/;
+    for (let i = 0; i < 2; i++) {
+      const response = await dev.fetch("/");
+      const payload = JSON.parse(errorPageJson.exec(await response.text())![1]);
+      expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(["dep threw"]);
+      expect(response.status).toBe(500);
+    }
+  },
+});
+
+// Fixture for the three tests below: modules whose top-level await the test
+// settles through the route, so that a module can be hot-updated while an
+// evaluation of it (or of a module importing it) is still waiting.
+const supersededEvaluationFiles = {
+  "slow-1.ts": settledThroughRoute("slow-1"),
+  "slow-2.ts": settledThroughRoute("slow-2"),
+  "reexports-slow-2.ts": `
+    export { value } from "./slow-2";
+  `,
+  "slow-3.ts": settledThroughRoute("slow-3"),
+  "slow-4.ts": settledThroughRoute("slow-4"),
+  "slow-a.ts": settledThroughRoute("slow-a"),
+  "slow-b.ts": settledThroughRoute("slow-b"),
+  "imports-slow-a.ts": `
+    import "./slow-a";
+    export const value = "imports-slow-a v1";
+  `,
+  "imports-slow-b.ts": `
+    import "./slow-b";
+    export const value = "imports-slow-b v1";
+  `,
+  "routes/index.ts": `
+    const loaders = {
+      "slow-1": () => import("../slow-1"),
+      "slow-2": () => import("../slow-2"),
+      "reexports-slow-2": () => import("../reexports-slow-2"),
+      "slow-3": () => import("../slow-3"),
+      "slow-4": () => import("../slow-4"),
+      "slow-4-require": () => require("../slow-4"),
+      "imports-slow-a": () => import("../imports-slow-a"),
+      "imports-slow-b": () => import("../imports-slow-b"),
+    };
+    async function attempt(load) {
+      try {
+        return "resolved: " + JSON.stringify(await load());
+      } catch (e) {
+        return "threw: " + e.message;
+      }
+    }
+    export default async function (req) {
+      const [op, name, version] = req.headers.get("x-command").split(" ");
+      if (op === "start") {
+        (globalThis.started ??= {})[name] = attempt(loaders[name]);
+        return new Response("started");
+      }
+      if (op === "resolve" || op === "reject") {
+        globalThis.settlers[name + " " + version][op]();
+        return new Response("settled");
+      }
+      return Response.json({
+        first: await globalThis.started[name],
+        again: await attempt(loaders[name]),
+      });
+    }
+  `,
+};
+
+// "start <module>", "resolve <module> <version>", "reject <module> <version>"
+// or "load <module>", see the route above. (Sent as a header because static
+// framework routes currently 404 on query strings in development.)
+function command(dev: Dev, line: string) {
+  return dev.fetch("/", { headers: { "x-command": line } });
+}
+
+function settledThroughRoute(name: string) {
+  return `
+    const version = "v1";
+    const { promise, resolve, reject } = Promise.withResolvers();
+    (globalThis.settlers ??= {})["${name} " + version] = {
+      resolve,
+      reject: () => reject(new Error("${name} " + version + " failed")),
+    };
+    await promise;
+    export const value = "${name} " + version;
+  `;
+}
+
+devTest("an evaluation superseded by a hot update does not publish its outcome", {
+  // Saving a module while its top-level await is still pending starts a second
+  // evaluation of the same registry entry. When the first one settles later,
+  // it must neither record its failure over the new version nor push its
+  // namespace to the importers of the new one.
+  framework: minimalFramework,
+  files: supersededEvaluationFiles,
+  async test(dev) {
+    await command(dev, "start slow-1").equals("started");
+    await command(dev, "start slow-2").equals("started");
+    await dev.patch("slow-1.ts", { find: '"v1"', replace: '"v2"' });
+    await dev.patch("slow-2.ts", { find: '"v1"', replace: '"v2"' });
+    await command(dev, "resolve slow-1 v2").equals("settled");
+    await command(dev, "resolve slow-2 v2").equals("settled");
+    // Imports slow-2 after v2 has loaded, so its binding points at v2.
+    await command(dev, "start reexports-slow-2").equals("started");
+
+    await command(dev, "reject slow-1 v1").equals("settled");
+    await command(dev, "resolve slow-2 v1").equals("settled");
+
+    expect(await command(dev, "load slow-1").json()).toEqual({
+      first: "threw: slow-1 v1 failed",
+      again: 'resolved: {"value":"slow-1 v2"}',
+    });
+    expect(await command(dev, "load reexports-slow-2").json()).toEqual({
+      first: 'resolved: {"value":"slow-2 v2"}',
+      again: 'resolved: {"value":"slow-2 v2"}',
+    });
+  },
+});
+
+devTest("an evaluation superseded by a hot update to CommonJS does not publish its outcome", {
+  // Same as above, except that the new version of the module is CommonJS, which
+  // the loaders evaluate on a different path. The old evaluation settling must
+  // neither mark the CommonJS module as failed nor tear down its module object.
+  framework: minimalFramework,
+  files: supersededEvaluationFiles,
+  async test(dev) {
+    await command(dev, "start slow-3").equals("started");
+    await command(dev, "start slow-4").equals("started");
+    await dev.write("slow-3.ts", `module.exports = { value: "slow-3 cjs" };`);
+    await dev.write("slow-4.ts", `module.exports = { value: "slow-4 cjs" };`);
+
+    await command(dev, "reject slow-3 v1").equals("settled");
+    await command(dev, "resolve slow-4 v1").equals("settled");
+
+    expect(await command(dev, "load slow-3").json()).toEqual({
+      first: "threw: slow-3 v1 failed",
+      again: 'resolved: {"default":{"value":"slow-3 cjs"},"value":"slow-3 cjs"}',
+    });
+    // Nothing was started under this name, so only `again` is reported.
+    expect(await command(dev, "load slow-4-require").json()).toEqual({
+      again: 'resolved: {"value":"slow-4 cjs"}',
+    });
+  },
+});
+
+devTest("an importer re-evaluated by a hot update ignores the dependencies its previous evaluation waited for", {
+  // While an importer waits for a dependency with top-level await, the importer
+  // itself is saved without that import. Once the dependency settles, the
+  // superseded evaluation must neither run the old body nor record the
+  // dependency's failure over the new version.
+  framework: minimalFramework,
+  files: supersededEvaluationFiles,
+  async test(dev) {
+    await command(dev, "start imports-slow-a").equals("started");
+    await command(dev, "start imports-slow-b").equals("started");
+    await dev.write("imports-slow-a.ts", `export const value = "imports-slow-a v2";`);
+    await dev.write("imports-slow-b.ts", `export const value = "imports-slow-b v2";`);
+
+    await command(dev, "resolve slow-a v1").equals("settled");
+    await command(dev, "reject slow-b v1").equals("settled");
+
+    expect(await command(dev, "load imports-slow-a").json()).toEqual({
+      first: 'resolved: {"value":"imports-slow-a v2"}',
+      again: 'resolved: {"value":"imports-slow-a v2"}',
+    });
+    expect(await command(dev, "load imports-slow-b").json()).toEqual({
+      first: "threw: slow-b v1 failed",
+      again: 'resolved: {"value":"imports-slow-b v2"}',
+    });
   },
 });

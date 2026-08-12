@@ -84,6 +84,8 @@ export class HMRModule {
   cjs: CJSModule | any | null;
   /** Rethrown by later loads, until a hot update has the module evaluated again */
   failure: unknown = null;
+  /** Incremented whenever an evaluation starts; an evaluation a hot update superseded must not publish its outcome. */
+  generation = 0;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
@@ -310,6 +312,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (importer) {
       mod.importers.add(importer);
     }
+    mod.generation++;
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);
@@ -351,10 +354,15 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
 
+    const generation = ++mod.generation;
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
-    load(mod);
+    try {
+      load(mod);
+    } catch (e) {
+      throwLoadFailure(mod, generation, e);
+    }
     mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -416,6 +424,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (importer) {
       mod.importers.add(importer);
     }
+    mod.generation++;
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);
@@ -454,6 +463,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
+    const generation = ++mod.generation;
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
     DEBUG.ASSERT(
       isAsync //
@@ -465,22 +475,20 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // not a performance optimization but a behavioral correctness issue.
     return isAsync
       ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Error;
-            mod.failure = e;
-            throw e;
-          },
+          list => finishLoadModuleAsync(mod, generation, load, list),
+          e => throwLoadFailure(mod, generation, e),
         )
       : finishLoadModuleAsync(
           mod,
+          generation,
           load,
           list as HMRModule[], // no promises as by assert above
         );
   }
 }
 
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
+function finishLoadModuleAsync(mod: HMRModule, generation: number, load: UnloadedESM[3], modules: HMRModule[]) {
+  if (mod.generation !== generation) return mod;
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
@@ -488,13 +496,17 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     const p = load(mod);
     mod.imports = modules;
     if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+      return p.then(
+        () => {
+          if (mod.generation !== generation) return mod;
+          mod.state = State.Loaded;
+          if (mod.exports === exportsBefore) mod.exports = {};
+          mod.cjs = null;
+          if (shouldPatchImporters) patchImporters(mod);
+          return mod;
+        },
+        e => throwLoadFailure(mod, generation, e),
+      );
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -502,10 +514,17 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     mod.state = State.Loaded;
     return mod;
   } catch (e) {
+    throwLoadFailure(mod, generation, e);
+  }
+}
+
+/** Importers of a failed module must record the failure too: Pending modules are handed out as-is. */
+function throwLoadFailure(mod: HMRModule, generation: number, e: unknown): never {
+  if (mod.generation === generation) {
     mod.state = State.Error;
     mod.failure = e;
-    throw e;
   }
+  throw e;
 }
 
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
@@ -524,7 +543,17 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    let promiseOrModule;
+    try {
+      promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    } catch (e) {
+      // Refused to load synchronously (as opposed to failed): `parent` still loads via import().
+      if (e instanceof AsyncImportError && registry.get(dep)?.state !== State.Error) {
+        parent.state = State.Stale;
+        throw e;
+      }
+      throwLoadFailure(parent, parent.generation, e);
+    }
     list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];

@@ -147,10 +147,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
-  // The pieces above are separate socket.write() calls and a TLS socket completes a write a tick
-  // later, so uncorked only the first piece would be on the transport when something destroys the
-  // socket in the same tick as end() (the idle sweep, res.destroy(), ...). Like Node's write_()/
-  // end(), cork across one tick's pieces and uncork in end(); native writeHeadAndEnd corks the same way.
+  // A TLS socket completes a write on the next tick, so of the pieces above only the first would be on
+  // the transport when end() returns; cork across a tick's pieces like Node's write_()/end() do.
   let corkedThisTick = false;
   function corkThisTick() {
     if (corkedThisTick) return;
@@ -480,9 +478,8 @@ function connectionListenerHTTP1(server, socket, options) {
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
-  // A finished response can still be queued on the socket (a write still completing, a Duplex
-  // without _writev, a peer that stopped reading): let it flush, but only for as long as a
-  // connection may linger after close() anyway; past that the connection is cut as before.
+  // A response still queued on the socket (a write still completing, a Duplex without _writev, a peer
+  // that stopped reading) gets keepAliveTimeout to flush; then the connection is cut as it used to be.
   const flushTimeout = server.keepAliveTimeout > 0 ? server.keepAliveTimeout : 5000;
   for (const socket of connections) {
     if (socket[kHttp1ActiveRequests] || socket.destroyed || socket[kHttp1Draining]) continue;
@@ -495,8 +492,7 @@ function closeIdleHttp1Connections(server) {
   }
 }
 
-// net.Socket#destroySoon() (a Duplex fed in through server.emit("connection") need not have it)
-// with a deadline.
+// net.Socket#destroySoon() with a deadline; a Duplex fed in via emit("connection") need not have it.
 function destroyAfterFlush(socket, timeout) {
   if (socket.writable) socket.end();
   socket.once("finish", socket.destroy);

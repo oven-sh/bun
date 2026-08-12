@@ -4465,7 +4465,11 @@ it("http2 allowHTTP1 fallback close() gives a connection whose peer stopped read
     },
   );
   try {
+    // The cut itself may surface here as a reset; only a close before the request got through is a failure.
     socket.on("error", () => {});
+    socket.on("close", () => {
+      if (!serverSocket) serverClosed.reject(new Error("connection closed before the request reached the handler"));
+    });
     // Completes once the server gives up on flushing; waiting on the peer would never return.
     await serverClosed.promise;
     expect(serverSocket.destroyed).toBe(true);

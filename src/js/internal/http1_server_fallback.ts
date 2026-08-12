@@ -148,8 +148,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
-    // Like NodeHTTPResponse once the connection is gone: ServerResponse's write()/end()
-    // then emit no 'finish', so the response stays assigned for onHttp1SocketClose to abort.
+    // Like NodeHTTPResponse after its connection closed: ServerResponse's write()/end() then emit no 'finish'.
     get flags() {
       return socket.writable ? 0 : NodeHTTPResponseFlags.socket_closed;
     },

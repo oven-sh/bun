@@ -305,8 +305,10 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
+    // Unlike Node, don't gate on !isSessionReused(): BoringSSL keeps the peer
+    // chain on a resumed SSL_SESSION, so re-check it against this servername.
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
+    if (!verifyError && typeof checkServerIdentity === "function") {
       const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {

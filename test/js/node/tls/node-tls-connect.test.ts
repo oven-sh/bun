@@ -1426,3 +1426,109 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "%s: re-checks server identity on a resumed session (cross-servername resume must not authorize)",
+  async version => {
+    // BoringSSL stores the peer chain on the SSL_SESSION, so Bun has the real
+    // certificate on a resumed connection and can re-check it against the
+    // current servername. Node skips this check because OpenSSL leaves
+    // getPeerCertificate() empty on resume, so Node's `authorized` inherits the
+    // original handshake's verdict even if the caller passed the ticket to a
+    // different servername. Bun deliberately stays stricter here: any peer that
+    // can decrypt the ticket (a vhost on the same context, or a server that
+    // shares ticket keys) would otherwise be authorized under a name its
+    // certificate does not cover.
+    await using server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, c => {
+      c.on("error", () => {});
+      c.end("x");
+    });
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    // Full handshake: capture the ticket. The server ends the connection, so by
+    // 'close' the post-handshake NewSessionTicket has arrived.
+    let ticket: Buffer | undefined;
+    const first = tlsConnect({
+      port,
+      host: "127.0.0.1",
+      ca: COMMON_CERT_.cert,
+      servername: "localhost",
+      minVersion: version,
+      maxVersion: version,
+    });
+    first.on("session", s => (ticket = s));
+    first.on("data", () => {});
+    first.on("error", () => {});
+    await once(first, "close");
+    expect(first.authorized).toBe(true);
+    expect(Buffer.isBuffer(ticket)).toBe(true);
+
+    type Outcome = {
+      reused: boolean;
+      authorized: boolean;
+      authorizationError: unknown;
+      identityChecks: [string, unknown][];
+      result: string;
+    };
+    const resume = (servername: string) =>
+      new Promise<Outcome>(resolve => {
+        const identityChecks: [string, unknown][] = [];
+        let done = false;
+        let reused = false;
+        const s = tlsConnect({
+          port,
+          host: "127.0.0.1",
+          ca: COMMON_CERT_.cert,
+          servername,
+          session: ticket,
+          minVersion: version,
+          maxVersion: version,
+          checkServerIdentity: (host, cert) => {
+            identityChecks.push([host, cert?.subject?.CN]);
+            return tls.checkServerIdentity(host, cert);
+          },
+        });
+        const finish = (result: string) => {
+          if (done) return;
+          done = true;
+          s.destroy();
+          resolve({
+            reused,
+            authorized: s.authorized,
+            authorizationError: s.authorizationError,
+            identityChecks,
+            result,
+          });
+        };
+        s.on("secureConnect", () => (reused = s.isSessionReused()));
+        s.on("data", () => finish("ok"));
+        s.on("close", () => finish("ok"));
+        s.on("error", (e: NodeJS.ErrnoException) => finish(String(e.code ?? e.message)));
+      });
+
+    // Resuming under a servername the certificate does not cover is rejected:
+    // the stored peer certificate (CN=server-bun, SAN=localhost) is re-checked
+    // against the new servername and fails exactly as it would on a full
+    // handshake.
+    expect(await resume("not-in-cert.example")).toEqual({
+      reused: false,
+      authorized: false,
+      authorizationError: "ERR_TLS_CERT_ALTNAME_INVALID",
+      identityChecks: [["not-in-cert.example", "server-bun"]],
+      result: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
+
+    // Resuming under the same servername still authorizes. checkServerIdentity
+    // runs again because Bun has the certificate to check; this is a deliberate
+    // divergence from Node, which skips the check on resume.
+    expect(await resume("localhost")).toEqual({
+      reused: true,
+      authorized: true,
+      authorizationError: null,
+      identityChecks: [["localhost", "server-bun"]],
+      result: "ok",
+    });
+  },
+);

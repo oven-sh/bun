@@ -1,0 +1,271 @@
+/**
+ * scripts/build writes every compile flag twice: shell-quoted into the
+ * `$cflags`/`$cxxflags` variable of a build.ninja edge, and as one entry of
+ * the `arguments` argv in compile_commands.json. The flag tables therefore
+ * hold the argument exactly as clang receives it (`REPORTED_NODEJS_VERSION="1.2.3"`)
+ * and compile.ts quotes it while writing build.ninja.
+ *
+ * The tables used to hold shell-escaped text (`REPORTED_NODEJS_VERSION=\"1.2.3\"`)
+ * that compile.ts joined verbatim. ninja runs through sh, so the build was
+ * fine, but the same strings landed in compile_commands.json, whose readers
+ * (clangd, clang-tidy, anything replaying an entry) hand argv to clang as-is:
+ *
+ *   <command line>:11:34: error: missing terminating '"' character
+ *     #define REPORTED_NODEJS_VERSION \"1.2.3\"
+ *
+ * These tests run the real flag tables, compile.ts and a direct dep through
+ * a Ninja instance and read back both files. Configure-time logic only:
+ * nothing is compiled, so they run on every host.
+ */
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { cc, cxx, pch, registerCompileRules, registerDirStamps } from "../../scripts/build/compile.ts";
+import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
+import { computeFlags } from "../../scripts/build/flags.ts";
+import { Ninja, type CompileCommand } from "../../scripts/build/ninja.ts";
+import { registerDepRules, resolveDep, type Dependency } from "../../scripts/build/source.ts";
+
+/** A fully-populated fake toolchain; nothing in these tests spawns any of it. */
+const toolchain: Toolchain = {
+  cc: "/fake/llvm/bin/clang",
+  cxx: "/fake/llvm/bin/clang++",
+  hostCc: undefined,
+  hostCxx: undefined,
+  clangVersion: "21.1.8",
+  clangResourceDir: "/fake/llvm/lib/clang/21",
+  ar: "/fake/llvm/bin/llvm-ar",
+  ranlib: "/fake/llvm/bin/llvm-ranlib",
+  ld: "/fake/llvm/bin/ld.lld",
+  ld64Lld: undefined,
+  rustLld: undefined,
+  rustLlvmVersion: undefined,
+  rustSysroot: undefined,
+  rustHostTriple: undefined,
+  strip: "/fake/bin/strip",
+  llvmStrip: undefined,
+  dsymutil: undefined,
+  bun: "/fake/bin/bun",
+  jsRuntime: "/fake/bin/bun",
+  esbuild: "/fake/bin/esbuild",
+  ccache: undefined,
+  cmake: "/fake/bin/cmake",
+  cargo: undefined,
+  cargoHome: undefined,
+  rustupHome: undefined,
+  msvcLinker: undefined,
+  rc: undefined,
+  mt: undefined,
+  nasm: undefined,
+};
+
+/** Debug config for the test host with the versions that end up in string defines pinned. */
+function configFor(buildDir: string): Config {
+  return resolveConfig(
+    {
+      buildDir,
+      buildType: "Debug",
+      assertions: true,
+      ci: false,
+      nodejsVersion: "1.2.3",
+      nodejsV8Version: "4.5.6-node.7",
+    },
+    toolchain,
+  );
+}
+
+/**
+ * A direct (compiled in our own graph) dep using every flag shape source.ts
+ * assembles itself: all three `defines` value types, `includes`, the -I for
+ * its generated header, and the host codegen tool's `toolDefines`.
+ */
+function syntheticDep(srcDir: string): Dependency {
+  return {
+    name: "synth",
+    source: () => ({ kind: "local", path: srcDir }),
+    build: () => ({
+      kind: "direct",
+      sources: ["synth.c"],
+      includes: ["inc"],
+      defines: { SYNTH_NAME: "a b", SYNTH_LEVEL: 2, SYNTH_STATIC: true },
+      headers: { "config.h": "#define SYNTH_CONFIG 1\n" },
+      codegen: { tool: "synth-gen.c", toolDefines: { GEN_BANNER: "gen tool" }, args: ["$out"], output: "gen.h" },
+    }),
+    provides: () => ({ libs: [], includes: ["inc"] }),
+  };
+}
+
+/** An argv entry that still carries shell syntax: an escaped quote or a posix quote character. */
+const SHELL_SYNTAX = /\\"|'/;
+
+interface Emitted {
+  cfg: Config;
+  ninja: string;
+  compileCommands: CompileCommand[];
+  /** The argv given to pch()/cxx()/cc() for bun's own sources, assembled the way bun.ts does. */
+  bunFlags: string[];
+}
+
+/**
+ * Emit the PCH, one bun C++ edge using it, one bun C edge and the synthetic
+ * dep, then write build.ninja + compile_commands.json like configure does.
+ * The build dir (and the dep source tree inside it) contains a space so the
+ * paths need quoting too. `hostOs` selects the quoting flavour compile.ts
+ * applies; the target stays the test host's so the real tables are used.
+ */
+async function emit(hostOs: "linux" | "windows"): Promise<Emitted> {
+  using dir = tempDir("build-flags", {
+    "build dir/synth/synth.c": "",
+    "build dir/synth/synth-gen.c": "",
+  });
+  const resolved = configFor(join(String(dir), "build dir"));
+  const cfg: Config = {
+    ...resolved,
+    host: { ...resolved.host, os: hostOs, exeSuffix: hostOs === "windows" ? ".exe" : "" },
+  };
+
+  const flags = computeFlags(cfg);
+  const bunFlags = [...flags.cxxflags, `-I${cfg.buildDir}`, ...flags.defines.map(d => `-D${d}`)];
+
+  const n = new Ninja({ buildDir: cfg.buildDir });
+  registerDirStamps(n, cfg);
+  registerCompileRules(n, cfg);
+  registerDepRules(n, cfg);
+
+  const { pch: pchFile, wrapperHeader } = pch(n, cfg, "src/jsc/bindings/root-pch.h", { flags: bunFlags });
+  cxx(n, cfg, "src/jsc/bindings/BunProcess.cpp", { flags: bunFlags, pch: pchFile, pchHeader: wrapperHeader });
+  cc(n, cfg, "src/example.c", { flags: bunFlags });
+  resolveDep(n, cfg, syntheticDep(join(cfg.buildDir, "synth")), new Map());
+  await n.write();
+
+  const ninja = readFileSync(join(cfg.buildDir, "build.ninja"), "utf8");
+  const compileCommands: CompileCommand[] = JSON.parse(
+    readFileSync(join(cfg.buildDir, "compile_commands.json"), "utf8"),
+  );
+  return { cfg, ninja, compileCommands, bunFlags };
+}
+
+/**
+ * Value of variable `name` on the edge producing `output` (buildDir-relative,
+ * as compile_commands.json records it), unescaped the way ninja substitutes
+ * it into the command. Outputs here contain no characters ninja escapes.
+ */
+function edgeVar(ninja: string, output: string, name: string): string {
+  const lines = ninja.replace(/ \$\n +/g, " ").split("\n");
+  const start = lines.findIndex(l => l.startsWith(`build ${output}:`) || l.startsWith(`build ${output} |`));
+  if (start === -1) throw new Error(`no edge builds ${output}:\n${ninja}`);
+  for (let i = start + 1; i < lines.length && lines[i] !== ""; i++) {
+    const m = /^  (\w+) = (.*)$/.exec(lines[i]!);
+    if (m && m[1] === name) return m[2]!.replaceAll("$$", "$");
+  }
+  throw new Error(`edge for ${output} sets no ${name}:\n${lines.slice(start, start + 8).join("\n")}`);
+}
+
+function entryFor(compileCommands: CompileCommand[], file: string): CompileCommand & { output: string } {
+  const entry = compileCommands.find(e => e.file.endsWith(file));
+  if (entry?.output === undefined) throw new Error(`no compile_commands.json entry with an output for ${file}`);
+  return entry as CompileCommand & { output: string };
+}
+
+/** The flags part of an entry: drop the compiler, the PCH pair compile() appends, and `-c <src> -o <out>`. */
+function entryFlags(entry: CompileCommand): string[] {
+  const args = entry.arguments.slice(1, entry.arguments.lastIndexOf("-c"));
+  const pchAt = args.indexOf("-include-pch");
+  return pchAt === -1 ? args : args.slice(0, pchAt);
+}
+
+/** Word-split a build.ninja variable value exactly as ninja's `sh -c` does. */
+async function shWords(value: string): Promise<string[]> {
+  await using proc = Bun.spawn({ cmd: ["sh", "-c", `printf '%s\\n' ${value}`], stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return stdout.slice(0, -1).split("\n");
+}
+
+describe("compile flags are bare argv in compile_commands.json and quoted only in build.ninja", () => {
+  test("flags.ts holds the string defines as clang receives them", () => {
+    using dir = tempDir("build-flags", {});
+    const cfg = configFor(String(dir));
+    const { cflags, cxxflags, defines } = computeFlags(cfg);
+
+    expect(defines).toContain('REPORTED_NODEJS_VERSION="1.2.3"');
+    expect(defines).toContain('REPORTED_NODEJS_V8_VERSION="4.5.6-node.7"');
+    expect(defines).toContain(`BUN_DYNAMIC_JS_LOAD_PATH="${join(cfg.buildDir, "js").replaceAll("\\", "/")}"`);
+    expect([...cflags, ...cxxflags, ...defines].filter(f => SHELL_SYNTAX.test(f))).toEqual([]);
+  });
+
+  test("compile_commands.json carries the argv verbatim for bun sources and direct deps", async () => {
+    const { cfg, compileCommands, bunFlags } = await emit("linux");
+
+    const bunProcess = entryFor(compileCommands, "BunProcess.cpp");
+    expect(bunProcess.directory).toBe(cfg.buildDir);
+    expect(bunProcess.arguments).toEqual([
+      cfg.cxx,
+      ...bunFlags,
+      "-include-pch",
+      join("pch", "root-pch.h.hxx.pch"),
+      "-c",
+      join(cfg.cwd, "src/jsc/bindings/BunProcess.cpp"),
+      "-o",
+      join(cfg.buildDir, "obj/src/jsc/bindings/BunProcess.cpp" + cfg.objSuffix),
+    ]);
+    expect(bunProcess.arguments).toContain('-DREPORTED_NODEJS_VERSION="1.2.3"');
+    expect(entryFlags(entryFor(compileCommands, "example.c"))).toEqual(bunFlags);
+
+    expect(entryFlags(entryFor(compileCommands, "synth.c"))).toEqual(
+      expect.arrayContaining([
+        `-I${join(cfg.buildDir, "synth/inc")}`,
+        '-DSYNTH_NAME="a b"',
+        "-DSYNTH_LEVEL=2",
+        "-DSYNTH_STATIC",
+        `-I${join(cfg.buildDir, "deps/synth")}`,
+      ]),
+    );
+    expect(compileCommands.flatMap(e => e.arguments).filter(a => SHELL_SYNTAX.test(a))).toEqual([]);
+  });
+
+  test.skipIf(isWindows)("sh splits every build.ninja flags variable back into exactly that argv", async () => {
+    const { ninja, compileCommands, bunFlags } = await emit("linux");
+
+    for (const file of ["BunProcess.cpp", "example.c", "synth.c"]) {
+      const entry = entryFor(compileCommands, file);
+      const words = await shWords(edgeVar(ninja, entry.output, file.endsWith(".cpp") ? "cxxflags" : "cflags"));
+      expect(words).toEqual(entryFlags(entry));
+    }
+    // The PCH has no compile_commands.json entry. It must see the same argv
+    // as the TUs that include it, or clang rejects it over a define mismatch.
+    expect(await shWords(edgeVar(ninja, "pch/root-pch.h.hxx.pch", "cxxflags"))).toEqual(bunFlags);
+    // The dep's codegen tool is compiled by source.ts's own dep_host_cc rule.
+    expect(await shWords(edgeVar(ninja, "deps/synth/codegen-tool", "flags"))).toEqual([
+      "-w",
+      '-DGEN_BANNER="gen tool"',
+    ]);
+  });
+
+  test("unix hosts single-quote exactly the arguments that need it", async () => {
+    const { cfg, ninja, compileCommands } = await emit("linux");
+    const cxxflags = edgeVar(ninja, entryFor(compileCommands, "BunProcess.cpp").output, "cxxflags");
+    const cflags = edgeVar(ninja, entryFor(compileCommands, "synth.c").output, "cflags");
+
+    expect(cxxflags).toContain(` '-I${cfg.buildDir}' `);
+    expect(cxxflags).toContain(` '-DREPORTED_NODEJS_VERSION="1.2.3"' -DREPORTED_NODEJS_ABI_VERSION=`);
+    expect(cflags).toContain(` '-I${join(cfg.buildDir, "synth/inc")}' `);
+    expect(cflags).toContain(` '-DSYNTH_NAME="a b"' -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
+  });
+
+  test("windows hosts use the doubled-quote form the tool's own argv parser reads", async () => {
+    const { cfg, ninja, compileCommands } = await emit("windows");
+    const cxxflags = edgeVar(ninja, entryFor(compileCommands, "BunProcess.cpp").output, "cxxflags");
+    const cflags = edgeVar(ninja, entryFor(compileCommands, "synth.c").output, "cflags");
+
+    expect(cxxflags).toContain(` "-I${cfg.buildDir}" `);
+    expect(cxxflags).toContain(` "-DREPORTED_NODEJS_VERSION=""1.2.3""" -DREPORTED_NODEJS_ABI_VERSION=`);
+    expect(cflags).toContain(` "-DSYNTH_NAME=""a b""" -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
+    expect(edgeVar(ninja, join("deps", "synth", "codegen-tool.exe"), "flags")).toBe(`-w "-DGEN_BANNER=""gen tool"""`);
+    // Only the build.ninja side changes with the host.
+    expect(compileCommands.flatMap(e => e.arguments).filter(a => SHELL_SYNTAX.test(a))).toEqual([]);
+  });
+});

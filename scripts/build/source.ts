@@ -220,13 +220,20 @@ export interface DirectBuild {
    * Preprocessor defines. Value type controls the emitted form:
    *   true    → -DNAME
    *   number  → -DNAME=42
-   *   string  → -DNAME=\"value\"  (shell-quoted C string literal)
-   * The shell escaping is handled here; callers pass plain strings.
+   *   string  → -DNAME="value"  (the macro expands to a C string literal)
+   * Callers pass plain strings; shell quoting happens when the compile
+   * edges are emitted, never here.
    */
   defines?: Record<string, string | number | true>;
-  /** Extra C flags beyond computeDepFlags globals. */
+  /**
+   * Extra C flags beyond computeDepFlags globals. One argv entry per
+   * element, unquoted (same contract as CompileOpts.flags in compile.ts).
+   */
   cflags?: string[];
-  /** Flags for `.asm` sources (nasm). Separate because nasm doesn't share clang's argv shape. */
+  /**
+   * Flags for `.asm` sources (nasm). Separate because nasm doesn't share
+   * clang's argv shape; same unquoted-argv contract as cflags.
+   */
   nasmflags?: string[];
   /** Include dirs relative to srcDir (no -I prefix). "." for the root. */
   includes?: string[];
@@ -1184,9 +1191,13 @@ function emitNestedCmake(
   // Compiler flags — GLOBAL flags only. These are the dep-safe subset:
   // CPU target, optimization level, debug info, visibility, sections.
   // NO -Werror, NO bun-specific constexpr limits.
+  //
+  // The tables hold bare argv (see ComputedFlags); CMAKE_<LANG>_FLAGS is a
+  // command-line fragment cmake pastes into the inner build's commands, so
+  // each argument is quoted here for the host that runs them.
   const depFlags = computeDepFlags(cfg);
-  let cflags = depFlags.cflags.join(" ");
-  let cxxflags = depFlags.cxxflags.join(" ");
+  let cflags = quoteArgs(depFlags.cflags, hostWin);
+  let cxxflags = quoteArgs(depFlags.cxxflags, hostWin);
 
   // PIC handling:
   //   spec.pic=true  → add -fPIC (non-windows), also tell cmake
@@ -1499,7 +1510,7 @@ function emitDirect(
     picFlags.push("-fno-pic", "-fno-pie");
   }
 
-  const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
+  const incFlags = (spec.includes ?? []).map(i => `-I${resolve(srcDir, i)}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
   const libFlags = [...baseFlags, ...picFlags, ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
 
@@ -1559,7 +1570,7 @@ function emitDirect(
       rule: "dep_host_cc",
       inputs: [toolSrc],
       orderOnlyInputs: orderOnly,
-      vars: { flags: ["-w", ...toolDefs].join(" ") },
+      vars: { flags: quoteArgs(["-w", ...toolDefs], hostWin) },
     });
     const toolExe = toolOut;
 
@@ -1588,7 +1599,7 @@ function emitDirect(
   // finds literal, subst, and codegen headers alike.
   if (generatedHeader !== undefined) generated.push(generatedHeader);
   const implicit = generated;
-  const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
+  const genInc = needsBuildDirInc ? [`-I${buildDir}`] : [];
 
   const objects = spec.sources.map(s => {
     const path = typeof s === "string" ? s : s.path;
@@ -1633,11 +1644,14 @@ function emitDirect(
 }
 
 /**
- * Format a -D flag. String values become shell-escaped C string literals
- * (-DNAME=\"val\" → compiler sees "val"); numbers/true pass through bare.
+ * Format a -D flag as the argument the compiler receives. String values
+ * become C string literals (`-DNAME="val"`); numbers/true pass through bare.
+ * Not shell-escaped: the result goes into compile_commands.json verbatim,
+ * and whoever emits the ninja edge (cc()/cxx(), or the dep_host_cc edge
+ * above) quotes it for build.ninja.
  */
 function defineFlag(name: string, value: string | number | true): string {
   if (value === true) return `-D${name}`;
   if (typeof value === "number") return `-D${name}=${value}`;
-  return `-D${name}=\\"${value}\\"`;
+  return `-D${name}="${value}"`;
 }

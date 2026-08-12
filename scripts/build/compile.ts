@@ -12,7 +12,7 @@ import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
-import { quote } from "./shell.ts";
+import { quote, quoteArgs } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
@@ -191,7 +191,11 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
 // ---------------------------------------------------------------------------
 
 export interface CompileOpts {
-  /** Compiler flags (including -I, -D — caller assembles). */
+  /**
+   * Compiler flags (including -I, -D — caller assembles). One argv entry per
+   * element, exactly as the compiler should receive it (`-DFOO="bar"` means
+   * clang sees the quotes) — never shell-quoted, see flagsVar().
+   */
   flags: string[];
   /** PCH to use (absolute path to .pch/.gch output). */
   pch?: string;
@@ -218,6 +222,18 @@ export interface CompileOpts {
   orderOnlyInputs?: string[];
   /** Job pool override. */
   pool?: string;
+}
+
+/**
+ * Render a flags argv as a `$cflags`/`$cxxflags`/`$nasmflags` value. Ninja
+ * splices it into the rule command verbatim, so each argument is quoted for
+ * whatever splits that command line on the build HOST (sh on unix; on
+ * Windows ninja spawns the tool directly and its argv parser does the
+ * splitting). This is the only place compile flags pick up shell quoting:
+ * compile_commands.json `arguments` is an argv, so it gets the flags as-is.
+ */
+function flagsVar(cfg: Config, flags: string[]): string {
+  return quoteArgs(flags, cfg.host.os === "windows");
 }
 
 /**
@@ -271,7 +287,7 @@ export function nasm(
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    vars: { nasmflags: opts.flags.join(" ") },
+    vars: { nasmflags: flagsVar(cfg, opts.flags) },
   });
   return out;
 }
@@ -285,7 +301,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
 
   const implicitInputs: string[] = [...(opts.implicitInputs ?? [])];
   const vars: Record<string, string> = {
-    [flagVar]: opts.flags.join(" "),
+    [flagVar]: flagsVar(cfg, opts.flags),
   };
 
   // PCH is always an implicit dep — if it changes, recompile.
@@ -346,6 +362,7 @@ export function pch(
   cfg: Config,
   header: string,
   opts: {
+    /** Same contract as CompileOpts.flags: bare argv, quoted here. */
     flags: string[];
     /**
      * Files whose change must invalidate the PCH. Typically: dep output
@@ -413,7 +430,7 @@ export function pch(
     implicitInputs: [absHeader, wrapperHeader, ...(opts.implicitInputs ?? [])],
     orderOnlyInputs: [pchDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: {
-      cxxflags: opts.flags.join(" "),
+      cxxflags: flagsVar(cfg, opts.flags),
       pch_header: n.rel(wrapperHeader),
     },
   };

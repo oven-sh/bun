@@ -978,6 +978,32 @@ devTest('"use client" file that fails to bundle, imported from another "use clie
     await dev.fetch("/").equals("page2");
   },
 });
+// The failed file is re-bundled from the server side like any other client
+// component. Dropping the directive while fixing it turns it into a plain
+// server module, which deletes the client side of the boundary that never
+// bundled. (Before the fix the file was re-bundled as a client module and the
+// route could not load it.)
+devTest('removing "use client" from a file that never bundled', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import { sibling } from '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page: ' + sibling);
+      }
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await expectBuildFailed(dev.fetch("/"), `Could not resolve: "./sibling-missing"`);
+    await dev.write("components/Sibling.ts", `export const sibling = "server";`, { errors: null });
+    await dev.fetch("/").equals("page: server");
+  },
+});
 // `checkRouteFailures` collects the errors reachable from a route into the
 // list that also holds the previous bundle's new errors. Without clearing it
 // first, a route that was marked as possibly failing by an earlier bundle

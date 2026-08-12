@@ -1159,6 +1159,22 @@ function buildSharedCreds(server) {
   ));
 }
 
+// The addContext() entry for a servername, matched the way node's default SNICallback does: a `*`
+// in the name stands for part of one label, and the newest matching entry wins.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
+function matchContext(contexts: Map<string, typeof InternalSecureContext>, servername: string) {
+  let match;
+  for (const { 0: name, 1: context } of contexts) {
+    const source = RegExpPrototypeSymbolReplace.$call(
+      /\*/g,
+      RegExpPrototypeSymbolReplace.$call(/([.^$+?\-\\[\]{}])/g, name, "\\$1"),
+      "[^.]*",
+    );
+    if (RegExpPrototypeExec.$call(new RegExp(`^${source}$`), servername) !== null) match = context;
+  }
+  return match;
+}
+
 function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
@@ -1222,15 +1238,36 @@ function Server(options, secureConnectionListener): void {
     if (!(context instanceof InternalSecureContext)) {
       context = new InternalSecureContext(context, true);
     }
+    // Kept like node's _contexts (a later listen() loads them into its listener again) and, for a
+    // connection that never passed through a native listener of this server, consulted by
+    // wrappedSNICallback below. Re-adding a name moves it to the end: the newest entry wins.
+    if (!contexts) contexts = new Map();
+    else contexts.delete(hostname);
+    contexts.set(hostname, context);
     const handle = this._handle;
-    if (handle) {
+    // A cluster worker fed by the primary listens on node's faux handle, which has no SNI tree.
+    if (handle && typeof handle.stop === "function") {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+  };
+
+  const server = this;
+  // SNI for a connection this server wraps itself (server.emit('connection'), or one handed off by the
+  // cluster primary): no listener SNI tree is involved, so the addContext() entries are resolved here.
+  // They apply behind a user SNICallback that selects nothing, as with our native listener (node's
+  // own default would not consult them once an SNICallback is set). `this` is the wrapping TLSSocket.
+  const wrappedSNICallback = function (servername, callback) {
+    const userCallback = server._SNICallback;
+    if (typeof userCallback !== "function") {
+      callback(null, matchContext(contexts, servername));
+      return;
+    }
+    userCallback.$call(this, servername, (err, context) => {
+      if (err || context != null) callback(err, context);
+      else callback(null, matchContext(contexts, servername));
+    });
   };
 
   this.setSecureContext = function (options) {
@@ -1501,7 +1538,7 @@ function Server(options, secureConnectionListener): void {
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
+      SNICallback: contexts ? wrappedSNICallback : this._SNICallback,
       ALPNProtocols: this.ALPNProtocols,
       ALPNCallback: this._ALPNCallback,
     });

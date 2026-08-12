@@ -4100,7 +4100,13 @@ function listenInCluster(
     readableAll,
     writableAll,
     ...options,
-    sharedOnly: tls ? true : undefined,
+    // A TLS server asks for a copy of the primary's listening socket so it can accept and handshake
+    // natively. Not on Windows: copies of one listening socket polled from two processes block the
+    // loser of each accept() race inside accept() and keep the processes' exclusive AFD polls
+    // cancelling each other (libuv avoids both with AcceptEx, which our listen sockets do not use), so
+    // there a TLS worker takes the primary's connections like a plain server does and tls.Server wraps
+    // each one in its 'connection' listener, which is how node's tls.Server works everywhere.
+    sharedOnly: tls && process.platform !== "win32" ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102

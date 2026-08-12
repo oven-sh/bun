@@ -325,6 +325,141 @@ devTest("importer tracking survives flipping a module from ESM to CJS", {
     await c.expectMessage("leaf 2", "index run 3");
   },
 });
+// Loading an entry point discovers its whole graph synchronously. "tla" starts
+// evaluating, and suspends at its await, while "a" is being visited, so any
+// module visited after "a" finds "tla" and "a" still in flight.
+const tlaAndFirstImporter = {
+  "tla.ts": `
+    await 1;
+    export const v = "tla";
+  `,
+  "a.ts": `
+    import { v } from "./tla";
+    export const a = "a:" + v;
+  `,
+};
+// "b" and "c" must wait instead of being evaluated against a namespace that
+// does not exist yet ("TypeError: null is not an object (evaluating
+// 'import_tla.v')" thrown from b.ts).
+const inFlightDiamond = {
+  ...tlaAndFirstImporter,
+  // Second importer of a module that itself uses top-level await.
+  "b.ts": `
+    import { v } from "./tla";
+    export const b = "b:" + v;
+  `,
+  // Second importer of a module that is only waiting on a dependency.
+  "c.ts": `
+    import { a } from "./a";
+    export const c = "c:" + a;
+  `,
+};
+devTest("importers found while a module's top-level await is in flight wait for it (server)", {
+  framework: minimalFramework,
+  files: {
+    ...inFlightDiamond,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { b } from "../b";
+      import { c } from "../c";
+      export default function () {
+        return new Response(a + " " + b + " " + c);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("a:tla b:tla c:a:tla");
+    // The second request reuses the loaded graph.
+    await dev.fetch("/").equals("a:tla b:tla c:a:tla");
+  },
+});
+devTest("importers found while a module's top-level await is in flight wait for it (client)", {
+  files: {
+    ...inFlightDiamond,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      import { c } from "./c";
+      console.log(a + " " + b + " " + c);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("a:tla b:tla c:a:tla");
+  },
+});
+devTest("route loader waits for a layout whose load the page already started", {
+  // The server runtime loads the page module and then its layouts. The page
+  // imports the layout, so by the time the layout itself is requested its
+  // top-level await is in flight, and the loader must hand back that pending
+  // load rather than the module's unfinished namespace.
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
+  },
+  files: {
+    "routes/_layout.ts": `
+      // A module handed out without waiting has its namespace read one
+      // microtask later. \`await 1\` would have resumed within that window; a
+      // timer keeps this module suspended across it.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      export const name = "layout";
+    `,
+    "routes/index.ts": `
+      import { name } from "./_layout";
+      export default function (req, meta) {
+        const seenByLoader = meta.layouts.map(layout => (layout === null ? "null" : layout.name));
+        return new Response("page saw " + name + ", loader saw " + seenByLoader);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("page saw layout, loader saw layout");
+  },
+});
+devTest("import() and require() of a module whose top-level await is in flight", {
+  // "probes" has no static dependencies, so it is evaluated synchronously
+  // while "tla" (started by "a" just before) is still suspended at its await.
+  framework: minimalFramework,
+  files: {
+    ...tlaAndFirstImporter,
+    "probes.ts": `
+      let requireResult;
+      try {
+        requireResult = "returned " + JSON.stringify(require("./tla"));
+      } catch (e) {
+        requireResult = "threw: " + e.message;
+      }
+      export const probes = import("./tla").then(ns => ({
+        dynamicImport: ns === null ? "resolved to null" : "resolved to v=" + ns.v,
+        require: requireResult,
+      }));
+    `,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { probes } from "../probes";
+      export default async function () {
+        const duringLoad = await probes;
+        return Response.json({ a, duringLoad, requireAfterLoad: require("../tla").v });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      a: "a:tla",
+      duringLoad: {
+        dynamicImport: "resolved to v=tla",
+        // Same error as requiring it before it started loading.
+        require: `threw: Cannot require "tla.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
+      },
+      // Once the load has settled, synchronous access works again.
+      requireAfterLoad: "tla",
+    });
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and

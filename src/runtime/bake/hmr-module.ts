@@ -85,6 +85,11 @@ export class HMRModule {
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
   failure: unknown = null;
+  /** Set while this module's load is suspended on top-level await (its own or
+   *  a dependency's). Distinguishes that from a `State.Pending` module that is
+   *  merely part of an import cycle: importers found in the meantime must wait
+   *  for this promise instead of reading the not-yet-assigned namespace. */
+  loading: Promise<HMRModule> | null = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
@@ -279,8 +284,10 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (mod.state === State.Error) throw mod.failure;
     if (mod.state === State.Stale) {
       mod.state = State.Pending;
+      mod.loading = null;
       isUserDynamic = false;
     } else {
+      if (mod.loading) throw new AsyncImportError(id);
       if (importer) {
         mod.importers.add(importer);
       }
@@ -376,12 +383,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (state === State.Error) throw mod.failure;
     if (state === State.Stale) {
       mod.state = State.Pending;
+      mod.loading = null;
       isUserDynamic = false as IsUserDynamic;
     } else {
       if (importer) {
         mod.importers.add(importer);
       }
-      return mod;
+      return mod.loading ?? mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -454,7 +462,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    return isAsync
+    const result = isAsync
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, load, list),
           e => {
@@ -468,6 +476,15 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
           load,
           list as HMRModule[], // no promises as by assert above
         );
+    if (result instanceof Promise) {
+      mod.loading = result;
+      const settled = () => {
+        // A hot reload that started while this load was in flight owns the field now.
+        if (mod.loading === result) mod.loading = null;
+      };
+      result.then(settled, settled);
+    }
+    return result;
   }
 }
 

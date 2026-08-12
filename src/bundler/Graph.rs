@@ -276,6 +276,8 @@ impl<T> Default for OutstandingLink<T> {
 }
 pub trait OutstandingNode: Sized {
     fn link(&mut self) -> &mut OutstandingLink<Self>;
+    /// The pass's list of outstanding requests of this type.
+    fn outstanding<'g>(graph: &'g mut Graph<'_>) -> &'g mut OutstandingList<Self>;
 }
 /// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
 pub struct OutstandingList<T: OutstandingNode> {

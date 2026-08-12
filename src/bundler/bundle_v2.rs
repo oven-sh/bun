@@ -1111,33 +1111,9 @@ pub mod bv2_impl {
                     outstanding: Default::default(),
                 }
                 }
-                /// Bundle thread: links the request into the pass and hops to the JS
-                /// thread for the `onResolve` chain (a cancelled pass only links it,
-                /// for `is_done` to fail). Pointer receiver because `this` itself
-                /// has to be what both the list and the task hold; the reasoning is
-                /// in test/internal/source-lints/bundler-plugin-dispatch-raw-request.test.ts.
-                ///
-                /// # Safety
-                /// `this` is a fresh arena slot holding an `init`ed request, and the
-                /// caller does not use it again.
-                pub(crate) unsafe fn dispatch(this: *mut Self) {
-                    // SAFETY: `this` is live (fn contract) and this is the thread
-                    // that owns the pass `bv2` (set by `init`) points at; plugins
-                    // is Some (asserted by `enqueue_on_js_loop_for_plugins`).
-                    unsafe {
-                        let bv2 = &mut *(*this).bv2;
-                        bv2.graph.outstanding_resolves.push(this);
-                        if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
-                            return;
-                        }
-                        let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                            bun_event_loop::Task::init(this),
-                        );
-                        bv2.enqueue_on_js_loop_for_plugins(task);
-                    }
+                /// Bundle thread: hands the request to the `onResolve` plugin chain.
+                pub(crate) fn dispatch(self, bv2: &mut BundleV2<'_>) {
+                    bv2.dispatch_plugin_request(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1253,27 +1229,9 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Bundle thread: as `Resolve::dispatch`, for the `onLoad` chain.
-                ///
-                /// # Safety
-                /// As `Resolve::dispatch`.
-                pub(crate) unsafe fn dispatch(this: *mut Self) {
-                    // SAFETY: as `Resolve::dispatch`.
-                    unsafe {
-                        let bv2 = &mut *(*this).bv2;
-                        bv2.graph.outstanding_loads.push(this);
-                        if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
-                            return;
-                        }
-                        let concurrent_task =
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                                bun_event_loop::Task::init(this),
-                            );
-                        bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
-                    }
+                /// Bundle thread: hands the request to the `onLoad` plugin chain.
+                pub(crate) fn dispatch(self, bv2: &mut BundleV2<'_>) {
+                    bv2.dispatch_plugin_request(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1306,10 +1264,20 @@ pub mod bv2_impl {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
                     &mut self.outstanding
                 }
+                fn outstanding<'g>(
+                    graph: &'g mut crate::Graph::Graph<'_>,
+                ) -> &'g mut crate::Graph::OutstandingList<Self> {
+                    &mut graph.outstanding_loads
+                }
             }
             impl crate::Graph::OutstandingNode for Resolve {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
                     &mut self.outstanding
+                }
+                fn outstanding<'g>(
+                    graph: &'g mut crate::Graph::Graph<'_>,
+                ) -> &'g mut crate::Graph::OutstandingList<Self> {
+                    &mut graph.outstanding_resolves
                 }
             }
         }
@@ -1519,6 +1487,29 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2, PendingImport};
 
     impl<'a> BundleV2<'a> {
+        /// Bundle thread: parks an onResolve / onLoad request in the arena, links it
+        /// into the pass and posts it to the plugins' thread (a cancelled pass only
+        /// links it, for `is_done` to fail). Taking the request by value makes the
+        /// pointer created here the only one: the list, the JS thread and the
+        /// answer all hold it. Guarded by bundler-plugin-dispatch-raw-request.test.ts.
+        pub(crate) fn dispatch_plugin_request<T>(&mut self, request: T)
+        where
+            T: bun_event_loop::Taskable + crate::Graph::OutstandingNode,
+        {
+            let request: *mut T = self.arena_create(request);
+            T::outstanding(&mut self.graph).push(request);
+            if self.graph.cancelled {
+                // Failed by `is_done` at the loop's top level (not here,
+                // mid-caller); make sure it runs again.
+                self.wake_own_loop();
+                return;
+            }
+            let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                bun_event_loop::Task::init(request),
+            );
+            self.enqueue_on_js_loop_for_plugins(task);
+        }
+
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
@@ -5638,9 +5629,7 @@ pub mod bv2_impl {
                             original_target,
                         },
                     );
-                    let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
-                    // SAFETY: fresh slot, `init`ed above, not used again here.
-                    unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
+                    resolve.dispatch(self);
                     return true;
                 }
             }
@@ -5678,9 +5667,7 @@ pub mod bv2_impl {
                             original_target: target,
                         },
                     );
-                    let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
-                    // SAFETY: fresh slot, `init`ed above, not used again here.
-                    unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
+                    resolve.dispatch(self);
                     return true;
                 }
             }
@@ -5737,10 +5724,7 @@ pub mod bv2_impl {
                         bstr::BStr::new(&parse.path.namespace),
                         bstr::BStr::new(&parse.path.text)
                     );
-                    let load = jsc_api::JSBundler::Load::init(self, parse);
-                    let load: *mut jsc_api::JSBundler::Load = self.arena_create(load);
-                    // SAFETY: fresh slot, `init`ed above, not used again here.
-                    unsafe { jsc_api::JSBundler::Load::dispatch(load) };
+                    jsc_api::JSBundler::Load::init(self, parse).dispatch(self);
                     return true;
                 }
             }

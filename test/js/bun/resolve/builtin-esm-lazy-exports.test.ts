@@ -43,9 +43,9 @@ const helper = `
 // static entries without constructing them; for...in constructs all of them, so the entries below avoid it.) The
 // watched names are a sample of those entries plus the plain function (`write`, `createRequire`) an entry imports.
 //
-// Note that a literal `import ... from "bun"` (and `import("bun")` / `require("bun")`) is rewritten by the
-// transpiler into a read of globalThis.Bun and never loads the module; the module is what `export ... from "bun"`
-// and a non-literal import() specifier go through. Imports of node:process and node:module always load the module.
+// Note that a static `import ... from "bun"` and `require("bun")` are rewritten by the transpiler into a read of
+// globalThis.Bun and never load the module; the module is what `export ... from "bun"` and import() go through.
+// Imports of node:process and node:module always load the module.
 const WATCHED = ["$", "CryptoHasher", "Glob", "S3Client", "SQL", "TOML", "Transpiler", "secrets", "write"] as const;
 const PROCESS_WATCHED = ["allowedNodeEnvironmentFlags", "config", "release", "stderr", "stdin", "stdout", "versions"];
 const MODULE_WATCHED = [
@@ -74,9 +74,6 @@ const nativeHelper = `
   export function print(result) {
     console.log(JSON.stringify(result));
   }
-  // import(specifier) with this really loads the module; a literal (or a const the transpiler can inline) would be
-  // rewritten to globalThis.Bun instead.
-  export const specifier = "bun";
 `;
 
 const bunReexport = `
@@ -329,8 +326,8 @@ test.concurrent('"bun": re-exports construct the properties that get bound, not 
 
 test.concurrent('"bun": import() namespace has the same export list, and every export is the Bun.* value', async () => {
   const result = await runEntry(`
-    import { constructed, print, specifier } from "./native-helper.mjs";
-    const ns = await import(specifier);
+    import { constructed, print } from "./native-helper.mjs";
+    const ns = await import("bun");
     const afterImport = constructed();
     // Neither [[OwnPropertyKeys]] of the namespace nor Object.keys of the Bun object reads any of the properties.
     const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string").sort();

@@ -817,52 +817,70 @@ pub mod bv2_impl {
                     )
                 }
 
+                /// The namespace as onLoad plugins see it: `""` is `file`.
+                pub(crate) fn load_namespace(namespace: &[u8]) -> BunString {
+                    if namespace.is_empty() {
+                        BunString::static_(b"file")
+                    } else {
+                        BunString::clone_utf8(namespace)
+                    }
+                }
+
+                /// As [`Self::load_namespace`] for onResolve, which also folds a
+                /// spelled-out `file` into the static.
+                pub(crate) fn resolve_namespace(namespace: &[u8]) -> BunString {
+                    if namespace.is_empty() || namespace == b"file" {
+                        BunString::static_(b"file")
+                    } else {
+                        BunString::clone_utf8(namespace)
+                    }
+                }
+
+                /// Runs the onLoad chain for the request `context` points at.
+                ///
+                /// The strings are copies taken by the caller, not borrows of
+                /// the request: a callback that does not actually suspend (or no
+                /// matching callback at all; `runOnLoadPlugins` unwraps settled
+                /// promises without awaiting) answers from inside this call, and
+                /// from then on the bundle thread may consume the request and
+                /// free its buffers while this call is still unwinding. A `&[u8]`
+                /// argument into the request would be protected for exactly that
+                /// window.
                 pub(crate) fn match_on_load(
                     &mut self,
-                    path: &[u8],
-                    namespace: &[u8],
+                    mut path: BunString,
+                    mut namespace: BunString,
                     context: *mut core::ffi::c_void,
                     default_loader: Loader,
                     is_server_side: bool,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
-                    let mut namespace_string = if namespace.is_empty() {
-                        BunString::static_(b"file")
-                    } else {
-                        BunString::clone_utf8(namespace)
-                    };
-                    let mut path_string = BunString::clone_utf8(path);
                     JSBundlerPlugin__matchOnLoad(
                         self,
-                        &mut namespace_string,
-                        &mut path_string,
+                        &mut namespace,
+                        &mut path,
                         context,
                         default_loader as u8,
                         is_server_side,
                     );
                 }
 
+                /// Runs the onResolve chain; owned strings for the same reason as
+                /// [`Self::match_on_load`].
                 pub(crate) fn match_on_resolve(
                     &mut self,
-                    path: &[u8],
-                    namespace: &[u8],
-                    importer: &[u8],
+                    mut path: BunString,
+                    mut namespace: BunString,
+                    mut importer: BunString,
                     context: *mut core::ffi::c_void,
                     import_record_kind: ImportKind,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
-                    let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
-                        BunString::static_(b"file")
-                    } else {
-                        BunString::clone_utf8(namespace)
-                    };
-                    let mut path_string = BunString::clone_utf8(path);
-                    let mut importer_string = BunString::clone_utf8(importer);
                     JSBundlerPlugin__matchOnResolve(
                         self,
-                        &mut namespace_string,
-                        &mut path_string,
-                        &mut importer_string,
+                        &mut namespace,
+                        &mut path,
+                        &mut importer,
                         context,
                         import_record_kind as u8,
                     );
@@ -1083,15 +1101,21 @@ pub mod bv2_impl {
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
             ///
-            /// From `dispatch` until the answer reaches `BundleV2::on_resolve`,
-            /// the request is shared between two threads by field: the plugins'
-            /// thread reads `bv2` / `import_record` and writes `value` (and
-            /// `task`, to post the answer), while the bundle thread owns
-            /// `outstanding` and writes it whenever a neighbouring request is
-            /// pushed or unlinked. During that window both sides go through the
-            /// raw pointer field by field; a `&Resolve` / `&mut Resolve` would
-            /// claim the other side's fields too. (Under bake the two "threads"
-            /// are one loop; the code is shared, so it keeps the same shape.)
+            /// From `dispatch` until `BundleV2::on_resolve` consumes the answer,
+            /// the request is shared by field between the side running the
+            /// plugins and the side running the pass (two threads under
+            /// `Bun.build`, one loop under bake; the code is the same): the
+            /// plugin side reads the fields set by `init` and writes `value`
+            /// (plus `task` when it posts), while the pass side owns
+            /// `outstanding` (`Graph::OutstandingList`) and writes it whenever a
+            /// neighbouring request is pushed or unlinked. So during that window
+            /// each side goes through the raw pointer, field by field; a
+            /// `&Resolve` / `&mut Resolve` would claim the other side's fields
+            /// too. The answer may be consumed as soon as it is posted, and a
+            /// plugin that answers synchronously posts it from inside
+            /// `run_on_js_thread`'s call into the plugin, so nothing borrowed
+            /// from the request may be live across that call or after the post
+            /// (`Plugin::match_on_resolve`).
             pub struct Resolve {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
@@ -1159,20 +1183,28 @@ pub mod bv2_impl {
                 /// # Safety
                 /// `this` is the request `dispatch` posted, not yet answered.
                 pub unsafe fn run_on_js_thread(this: *mut Self) {
-                    // SAFETY: fn contract; of the request only this thread's
-                    // fields are touched (type docs). `bv2` is the backref set
-                    // by `init`, and the plugin storage is disjoint from the
-                    // request, so the `&mut JSBundlerPlugin` does not alias
-                    // `record`.
+                    // SAFETY: fn contract; of the request only this side's fields
+                    // are read (type docs), and every borrow of them ends before
+                    // the call into the plugin, which may answer (and so have
+                    // the request consumed) before it returns. `bv2` is the
+                    // backref set by `init`.
                     unsafe {
-                        let record = &(*this).import_record;
+                        let (path, namespace, importer, kind) = {
+                            let record = &(*this).import_record;
+                            (
+                                BunString::clone_utf8(&record.specifier),
+                                Plugin::resolve_namespace(&record.namespace),
+                                BunString::clone_utf8(&record.source_file),
+                                record.kind,
+                            )
+                        };
                         let bv2 = &mut *(*this).bv2;
                         bv2.plugins_mut().expect("plugins").match_on_resolve(
-                            &record.specifier,
-                            &record.namespace,
-                            &record.source_file,
+                            path,
+                            namespace,
+                            importer,
                             this.cast::<core::ffi::c_void>(),
-                            record.kind,
+                            kind,
                         );
                     }
                 }
@@ -1204,13 +1236,14 @@ pub mod bv2_impl {
             /// Task driving an onLoad plugin invocation for one source file.
             ///
             /// Shared by field while outstanding, exactly as [`Resolve`]: the
-            /// plugins' thread reads `bv2` / `path` / `namespace` /
-            /// `default_loader` / `parse_task` and writes `value`, `called_defer`
-            /// and `task`; the bundle thread owns `outstanding` and `deferred`
-            /// (the latter written by `on_notify_defer_mini` while the plugin's
-            /// callback is still suspended in `.defer()`). Until the answer
-            /// reaches `BundleV2::on_load`, neither side forms a `&Load` /
-            /// `&mut Load`.
+            /// plugin side reads the fields set by `init` and writes `value`,
+            /// `called_defer` and `task`; the pass side owns `outstanding` and
+            /// `deferred`, the latter written while the onLoad callback is
+            /// parked in `.defer()`, by `Graph::drain_deferred_tasks` and (when
+            /// the pass runs on its own mini loop) `BundleV2::on_notify_defer_mini`.
+            /// Until `BundleV2::on_load` consumes the answer, neither side forms
+            /// a `&Load` / `&mut Load`, and nothing borrowed from the request is
+            /// live across the call into the plugin or after a post.
             pub struct Load {
                 pub bv2: *mut BundleV2<'static>,
                 pub(crate) source_index: bun_ast::Index,
@@ -1302,22 +1335,23 @@ pub mod bv2_impl {
                 /// # Safety
                 /// `this` is the request `dispatch` posted, not yet answered.
                 pub unsafe fn run_on_js_thread(this: *mut Self) {
-                    // SAFETY: fn contract; of the request only this thread's
-                    // fields are touched (type docs), and the `ParseTask` behind
-                    // `parse_task` is not scheduled until the answer. `bv2` is
-                    // the backref set by `init`, and the plugin storage is
-                    // disjoint from the request, so the `&mut JSBundlerPlugin`
-                    // does not alias the `path` / `namespace` slices.
+                    // SAFETY: as `Resolve::run_on_js_thread`; additionally the
+                    // `ParseTask` behind `parse_task` is not scheduled until the
+                    // answer is consumed, which cannot happen before the call
+                    // into the plugin below.
                     unsafe {
+                        let path = BunString::clone_utf8(&(*this).path);
+                        let namespace = Plugin::load_namespace(&(*this).namespace);
+                        let default_loader = (*this).default_loader;
                         let parse_task = (*this).parse_task;
                         let is_server_side = parse_task.known_target.bake_graph()
                             != crate::bake_types::Graph::Client;
                         let bv2 = &mut *(*this).bv2;
                         bv2.plugins_mut().expect("plugins").match_on_load(
-                            &(*this).path,
-                            &(*this).namespace,
+                            path,
+                            namespace,
                             this.cast::<core::ffi::c_void>(),
-                            (*this).default_loader,
+                            default_loader,
                             is_server_side,
                         );
                     }
@@ -2097,8 +2131,9 @@ pub mod bv2_impl {
                 // reshaped for borrowck — `&self.graph` and
                 // `self` go to the same call. Take a raw ptr so the two `&mut` don't
                 // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
+                // SAFETY: `this` is the live `self`. `drain_deferred_tasks`
+                // touches the graph's counters, the outstanding loads (through
+                // their own pointers) and `drain_defer_task`.
                 if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
                     return false;
                 }

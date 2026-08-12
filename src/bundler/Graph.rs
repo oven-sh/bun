@@ -234,14 +234,12 @@ impl<'a> Graph<'a> {
             self.pending_items += self.deferred_pending;
             self.deferred_pending = 0;
             // Their units are back in `pending_items`.
-            let mut load = self.outstanding_loads.head;
-            while !load.is_null() {
-                // SAFETY: linked ⇒ arena-live; bundle thread.
-                unsafe {
-                    (*load).deferred = false;
-                    load = (*load).outstanding.next;
-                }
-            }
+            self.outstanding_loads.for_each(|load| {
+                // SAFETY: linked ⇒ arena-live. The load is still out with the
+                // plugin (its callback is parked in `.defer()`); `deferred` is
+                // this side's field (see `Load`), so nothing else is touched.
+                unsafe { (*load).deferred = false };
+            });
 
             transpiler.drain_defer_task.init();
             transpiler.drain_defer_task.schedule();
@@ -262,7 +260,7 @@ use bun_ast::SideEffects;
 /// Intrusive doubly-linked membership in an [`OutstandingList`].
 pub struct OutstandingLink<T> {
     prev: *mut T,
-    pub(crate) next: *mut T,
+    next: *mut T,
     linked: bool,
 }
 impl<T> Default for OutstandingLink<T> {
@@ -274,10 +272,10 @@ impl<T> Default for OutstandingLink<T> {
         }
     }
 }
-/// A linked node is shared with the plugins' thread by field (see the docs on
-/// `api::JSBundler::Resolve` / `Load`): the list owns the link and nothing
-/// else, so it reaches the link through this raw projection and never forms a
-/// reference to the whole node.
+/// A linked node is shared with the side running the plugins, by field (see
+/// the docs on `api::JSBundler::Resolve` / `Load`): the list owns the link and
+/// nothing else, so it reaches the link through this raw projection and never
+/// forms a reference to the whole node.
 pub trait OutstandingNode: Sized {
     /// `&raw mut (*this).outstanding`.
     ///
@@ -345,5 +343,16 @@ impl<T: OutstandingNode> OutstandingList<T> {
         }
         self.unlink(head);
         Some(head)
+    }
+    /// Every linked node, each still out with the plugins: `f` may only touch
+    /// the fields this side owns, and must not link or unlink.
+    pub(crate) fn for_each(&self, mut f: impl FnMut(*mut T)) {
+        let mut node = self.head;
+        while !node.is_null() {
+            // SAFETY: linked ⇒ arena-live; only the link is read; bundle thread.
+            let next = unsafe { (*T::link_raw(node)).next };
+            f(node);
+            node = next;
+        }
     }
 }

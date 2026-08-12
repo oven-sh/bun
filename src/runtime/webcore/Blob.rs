@@ -2055,9 +2055,14 @@ impl BlobExt for Blob {
         None
     }
 
-    /// [`Self::get_name_string`] as UTF-8; `None` when there is no name or it is empty.
+    /// [`Self::get_name_string`]'s lookup as bytes, without caching; `None` when absent or empty.
     fn get_name_utf8(&self) -> Option<ZigStringSlice> {
-        let name = self.get_name_string()?;
+        let name = self.name.get();
+        if name.tag() == bun_core::Tag::Dead {
+            return self
+                .get_file_name()
+                .map(ZigStringSlice::from_utf8_never_free);
+        }
         if name.is_empty() {
             return None;
         }

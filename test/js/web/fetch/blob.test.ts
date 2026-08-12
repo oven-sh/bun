@@ -382,29 +382,31 @@ describe("new File([blob], name) names only the new File", () => {
     ]).toEqual(["a\uFFFDb", "a\uFFFDb", "a\uFFFDb", "caf\u00e9 \u{1F600}"]);
   });
 
-  test("blob: imports pick the loader from each File's own name", async () => {
+  test("blob: imports pick the loader from each File's own name, or from a Bun.file's path", async () => {
+    using dir = tempDir("blob-url-loader", { "on-disk.json": '{"a":1}' });
     const source = new File(['{"a":1}'], "source.json");
-    const wrapped = new File([source], "wrapped.txt");
-    const sourceURL = URL.createObjectURL(source);
-    const wrappedURL = URL.createObjectURL(wrapped);
+    const urls = [
+      URL.createObjectURL(source),
+      URL.createObjectURL(new File([source], "wrapped.txt")),
+      URL.createObjectURL(Bun.file(path.join(String(dir), "on-disk.json"))),
+    ];
     try {
-      const [sourceModule, wrappedModule] = await Promise.all([import(sourceURL), import(wrappedURL)]);
-      expect([sourceModule.default, wrappedModule.default]).toEqual([{ a: 1 }, '{"a":1}']);
+      const modules = await Promise.all(urls.map(url => import(url)));
+      expect(modules.map(module => module.default)).toEqual([{ a: 1 }, '{"a":1}', { a: 1 }]);
     } finally {
-      URL.revokeObjectURL(sourceURL);
-      URL.revokeObjectURL(wrappedURL);
+      urls.forEach(url => URL.revokeObjectURL(url));
     }
   });
 
-  test("Bun.serve derives Content-Disposition from each File's own name", async () => {
+  test("Bun.serve derives Content-Disposition from each File's own name, or from a Bun.file's path", async () => {
     using dir = tempDir("file-name-content-disposition", { "on-disk.bin": "xyz" });
+    const bunFile = Bun.file(path.join(String(dir), "on-disk.bin"));
     const source = new File(["xyz"], "source.zip", { type: "application/zip" });
     const bodies: Record<string, Blob> = {
       source,
       wrapped: new File([source], "wrapped.zip", { type: "application/zip" }),
-      wrappedBunFile: new File([Bun.file(path.join(String(dir), "on-disk.bin"))], "display.zip", {
-        type: "application/zip",
-      }),
+      wrappedBunFile: new File([bunFile], "display.zip", { type: "application/zip" }),
+      bunFile,
     };
     await using server = Bun.serve({
       port: 0,
@@ -420,6 +422,7 @@ describe("new File([blob], name) names only the new File", () => {
       source: 'filename="source.zip"',
       wrapped: 'filename="wrapped.zip"',
       wrappedBunFile: 'filename="display.zip"',
+      bunFile: 'filename="on-disk.bin"',
     });
   });
 

@@ -5,7 +5,9 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
+#include "HostCall.h"
 #include "webcore/HTTPHeaderMap.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
@@ -122,6 +124,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+// Snapshot of the Bun::hostCall cache counters (see HostCall.h), so tests can
+// check that a callback actually went through the cached path. Builds without
+// assertions do not keep the counters and return undefined.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_hostCallCacheStats, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if ASSERT_ENABLED
+    auto& vm = globalObject->vm();
+    const auto& stats = hostCallCacheStats();
+    auto* object = constructEmptyObject(globalObject);
+    object->putDirect(vm, Identifier::fromString(vm, "hits"_s), jsNumber(stats.hits.load(std::memory_order_relaxed)));
+    object->putDirect(vm, Identifier::fromString(vm, "misses"_s), jsNumber(stats.misses.load(std::memory_order_relaxed)));
+    object->putDirect(vm, Identifier::fromString(vm, "replacements"_s), jsNumber(stats.replacements.load(std::memory_order_relaxed)));
+    object->putDirect(vm, Identifier::fromString(vm, "fallbacks"_s), jsNumber(stats.fallbacks.load(std::memory_order_relaxed)));
+    return JSValue::encode(object);
+#else
+    return encodedJSUndefined();
+#endif
 }
 
 }

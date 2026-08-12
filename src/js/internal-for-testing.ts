@@ -694,6 +694,15 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
+/**
+ * Process-wide counters of the cache behind native-to-JS callback calls
+ * (`Bun::hostCall`, src/jsc/bindings/HostCall.h). `undefined` in builds
+ * without assertions, which do not keep them.
+ */
+export const hostCallCacheStats: () =>
+  | { hits: number; misses: number; replacements: number; fallbacks: number }
+  | undefined = $newCppFunction("InternalForTesting.cpp", "jsFunction_hostCallCacheStats", 0);
+
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),

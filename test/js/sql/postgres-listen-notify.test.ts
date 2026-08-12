@@ -208,6 +208,22 @@ describe("listen", () => {
     expect(await got.promise).toBe("ok");
   });
 
+  test("channel names are limited to PostgreSQL's 63 identifier bytes, counted in UTF-8", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const ascii63 = Buffer.alloc(63, "c").toString();
+    const cjk63 = Buffer.alloc(63, "字").toString(); // 21 characters
+    const cjk66 = Buffer.alloc(66, "字").toString(); // 22 characters, 66 bytes
+    await expect(sql.listen(ascii63 + "c", () => {})).rejects.toThrow(/63 bytes/);
+    await expect(sql.listen(cjk66, () => {})).rejects.toThrow(/63 bytes/);
+    await expect(sql.unlisten(cjk66)).rejects.toThrow(/63 bytes/);
+    expect(() => sql.notify(cjk66)).toThrow(/63 bytes/);
+
+    await sql.listen(ascii63, () => {});
+    await sql.listen(cjk63, () => {});
+    expect(server.queries).toEqual([`LISTEN "${ascii63}"`, `LISTEN "${cjk63}"`]);
+  });
+
   test("several listeners on one channel share one LISTEN and each receives", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -816,6 +832,35 @@ describe("in a subprocess", () => {
       notifyMany([["ch", "bad"], ["ch", "good"]]);
     `);
     expect(result).toEqual(clean("got bad\nuncaught: listener failed\ngot good\n"));
+  });
+
+  test("a throwing onlisten surfaces as uncaughtException; listen() resolves and the reconnect is not retried", async () => {
+    // An empty stderr is the assertion that the reconnect sweep did not take
+    // the second throw for a failed LISTEN (which it warns about and retries).
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      let calls = 0;
+      const { state } = await sql.listen("ch", () => {}, () => {
+        console.log("onlisten " + ++calls);
+        if (calls === 2) sql.unlisten("ch").then(() => console.log("unlistened"));
+        throw new Error("onlisten failed " + calls);
+      });
+      console.log("subscribed to backend " + state.pid);
+      dropConnections();
+    `);
+    expect(result).toEqual(
+      clean(
+        [
+          "onlisten 1",
+          "uncaught: onlisten failed 1",
+          "subscribed to backend 1",
+          "onlisten 2",
+          "uncaught: onlisten failed 2",
+          "unlistened",
+          "",
+        ].join("\n"),
+      ),
+    );
   });
 
   test("delivering many notifications retains nothing", async () => {

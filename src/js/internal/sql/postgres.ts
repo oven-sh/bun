@@ -593,7 +593,16 @@ class Channel {
   fireOnlisten(state: ListenState) {
     const pairs = this.onlisten;
     if (pairs === null) return;
-    for (let i = 0; i < pairs.length; i++) pairs[i][1](state);
+    for (let i = 0; i < pairs.length; i++) callOnlisten(pairs[i][1], state);
+  }
+}
+
+// A throw must not reject listen() or look like a failed LISTEN to #sweep; it surfaces like a throwing onnotify.
+function callOnlisten(onlisten: OnListen, state: ListenState) {
+  try {
+    onlisten(state);
+  } catch (err) {
+    reportError(err);
   }
 }
 
@@ -679,7 +688,7 @@ class ListenConnection {
 
     if (onlisten !== undefined && this.#channels.get(channel) === entry && entry.has(onnotify)) {
       (entry.onlisten ??= []).push([onnotify, onlisten]);
-      onlisten(this.#state);
+      callOnlisten(onlisten, this.#state);
     }
 
     const unlisten = () => this.unlisten(channel, onnotify);

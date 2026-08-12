@@ -1014,9 +1014,9 @@ await sql.listen("orders", handleOrder, async () => {
 });
 ```
 
-- Several `listen()` calls on one channel share a single server-side subscription and each callback receives every notification. `unlisten(channel, callback)` removes one of them; `unlisten(channel)` removes them all. A callback that throws is reported as an uncaught exception.
+- Several `listen()` calls on one channel share a single server-side subscription and each callback receives every notification. `unlisten(channel, callback)` removes one of them; `unlisten(channel)` removes them all. A callback (either argument) that throws is reported as an uncaught exception and stays subscribed.
 - `state` is one object per client, updated in place on reconnect, so a reference from any `listen()` always describes the backend currently holding the subscriptions.
-- Channel names can be any non-empty string and are quoted as identifiers for you. PostgreSQL limits payloads to 8000 bytes by default.
+- Channel names are quoted as identifiers for you; like any PostgreSQL identifier they are limited to 63 bytes, and longer names are rejected rather than silently truncated. PostgreSQL limits payloads to 8000 bytes by default.
 
 ### `notify()`
 

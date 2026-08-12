@@ -245,6 +245,10 @@ const SQL: typeof Bun.SQL = function SQL(
     if (channel.includes("\0")) {
       throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
     }
+    // PostgreSQL truncates longer identifiers, so notifications would arrive under a different name.
+    if (Buffer.byteLength(channel) > 63) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be at most 63 bytes");
+    }
   }
   function validateCallback(name: string, fn: unknown, optional: boolean) {
     if (!$isCallable(fn) && !(optional && fn === undefined)) {

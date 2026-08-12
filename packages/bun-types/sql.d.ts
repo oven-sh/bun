@@ -958,9 +958,10 @@ declare module "bun" {
      * removed. If it drops, it is reconnected with exponential backoff and
      * every channel is re-subscribed; `onlisten` runs again each time.
      *
-     * A throwing `onnotify` is reported as an uncaught exception.
+     * A throwing `onnotify` or `onlisten` is reported as an uncaught exception.
      *
-     * @param channel - Channel name; any non-empty string, quoted for you
+     * @param channel - Channel name, quoted for you; at most 63 bytes, the
+     * PostgreSQL identifier limit
      * @param onnotify - Receives each notification's payload
      * @param onlisten - Runs once the `LISTEN` is acknowledged, initially and
      * after every reconnect

@@ -12,7 +12,8 @@ import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { mockToolchain } from "_util/mock-toolchain.ts";
+import { resolveConfig, type Config, type PartialConfig } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
@@ -23,40 +24,6 @@ import {
   machoEntitlementsPlist,
   machoPostlinkCommand,
 } from "../../scripts/build/shims.ts";
-
-/** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
-function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
-  return {
-    cc: "/fake/llvm/bin/clang",
-    cxx: "/fake/llvm/bin/clang++",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
-    ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
-    ld: "/fake/llvm/bin/ld.lld",
-    ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
-    strip: "/fake/bin/strip",
-    llvmStrip: "/fake/llvm/bin/llvm-strip",
-    dsymutil: "/fake/llvm/bin/dsymutil",
-    bun: "/fake/bin/bun",
-    jsRuntime: "/fake/bin/bun",
-    esbuild: "/fake/bin/esbuild",
-    ccache: undefined,
-    cmake: "/fake/bin/cmake",
-    cargo: undefined,
-    cargoHome: undefined,
-    rustupHome: undefined,
-    msvcLinker: undefined,
-    rc: undefined,
-    mt: undefined,
-    nasm: undefined,
-    ...overrides,
-  };
-}
 
 /** Shorthand: resolve a config for a darwin target (cross on non-darwin hosts). */
 function resolveDarwin(partial: PartialConfig = {}, toolchain = mockToolchain()): Config {

@@ -441,6 +441,13 @@ impl Macro {
                 env_loader,
                 is_main_thread: false,
                 ..Default::default()
+            })
+            .inspect_err(|_| {
+                if let Some(copy) = env_loader {
+                    // SAFETY: a failed `init` never wrote the transpiler that
+                    // would have kept this pointer, so the copy is still ours.
+                    unsafe { bun_core::heap::destroy(copy.as_ptr()) };
+                }
             })?;
             (_vm, true)
         };

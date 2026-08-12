@@ -18,11 +18,10 @@ process.on("exit", code => {
 });
 process.kill(123, "SIGTERM");
 
-// Node's events must stay typed on every EventEmitter method, including the
-// ones @types/node leaves to be inherited: bun-types adds its own process event
-// by extending ProcessEventMap, and must not redeclare the methods themselves
-// on NodeJS.Process, since that replaces the inherited overloads instead of
-// adding to them.
+// Node's own events, on the methods @types/node has at times left for Process to
+// inherit (this fixture checks against whatever @types/node is current; the
+// declaration style that keeps these working regardless of that is enforced by
+// test/internal/source-lints/bun-types-process-event-methods.test.ts).
 const onSignal = (signal: NodeJS.Signals) => {
   console.log(signal);
 };
@@ -41,7 +40,7 @@ process.addListener("exit", code => {
 });
 process.emit("beforeExit", 0);
 
-// Bun's own process event.
+// Bun's own process event is an entry in the event map, so every method types it.
 expectType<process.ProcessEventMap["memoryPressure"]>().is<[level: "warning" | "critical"]>();
 const onMemoryPressure = (level: "warning" | "critical") => {
   console.log(level);

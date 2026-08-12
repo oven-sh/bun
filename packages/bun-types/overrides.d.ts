@@ -314,11 +314,9 @@ declare global {
   }
 }
 
-// Bun's extra process events go into @types/node's event map. Declaring
-// on()/once()/off()/... overloads on NodeJS.Process instead would replace the
-// overloads Process inherits rather than add to them (off/removeListener on
-// @types/node <= 24, every event method on 25.0.x), breaking process.on("exit")
-// and friends.
+// Bun's process events are declared here, never as on()/once()/... overloads on
+// NodeJS.Process; test/internal/source-lints/bun-types-process-event-methods.test.ts
+// has the reasons and enforces it.
 declare module "node:process" {
   interface ProcessEventMap {
     /**

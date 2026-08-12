@@ -1257,19 +1257,23 @@ impl BunxCommand {
                         // Another bunx process may be mid-install into this
                         // shared directory; running now risks a partially
                         // copied tree. Busy → take the install path, which
-                        // waits for the installer to finish.
-                        cache_read_lock = Self::lock_cache_dir(
-                            bunx_cache_dir,
-                            bun_sys::FileLockMode::Shared,
-                            /* nonblocking */ true,
-                        );
-                        if cache_read_lock.is_none() {
-                            bun_output::scoped_log!(
-                                bunx,
-                                "install in progress for {}, waiting",
-                                BStr::new(bunx_cache_dir)
+                        // waits for the installer to finish. With
+                        // --no-install the install path is a hard error, so
+                        // keep the old behavior and run what was found.
+                        if !opts.no_install {
+                            cache_read_lock = Self::lock_cache_dir(
+                                bunx_cache_dir,
+                                bun_sys::FileLockMode::Shared,
+                                /* nonblocking */ true,
                             );
-                            break 'try_run_existing;
+                            if cache_read_lock.is_none() {
+                                bun_output::scoped_log!(
+                                    bunx,
+                                    "install in progress for {}, waiting",
+                                    BStr::new(bunx_cache_dir)
+                                );
+                                break 'try_run_existing;
+                            }
                         }
                     }
 
@@ -1381,7 +1385,9 @@ impl BunxCommand {
                                     // Same mid-install guard as the first
                                     // cache probe.
                                     let cache_read_lock =
-                                        if strings::has_prefix(out, bunx_cache_dir) {
+                                        if !opts.no_install
+                                            && strings::has_prefix(out, bunx_cache_dir)
+                                        {
                                             match Self::lock_cache_dir(
                                                 bunx_cache_dir,
                                                 bun_sys::FileLockMode::Shared,

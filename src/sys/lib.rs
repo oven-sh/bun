@@ -1052,8 +1052,9 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// Mode for [`flock`] — an advisory whole-file lock (`flock(2)` on POSIX,
-/// `LockFileEx` on Windows). The lock is released when the fd is closed.
+/// Mode for [`flock`] — a whole-file lock: advisory `flock(2)` on POSIX,
+/// mandatory `LockFileEx` on Windows (other handles' reads and writes into
+/// the locked range fail there). Released when the fd is closed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileLockMode {
     Shared,
@@ -3669,7 +3670,8 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
-    /// Advisory whole-file lock via `LockFileEx`. Returns `Ok(false)` when
+    /// Whole-file lock via `LockFileEx` (mandatory on Windows: other
+    /// handles' reads and writes into the range fail). Returns `Ok(false)` when
     /// `nonblocking` and the lock is held elsewhere. Unlike POSIX `flock`,
     /// `LockFileEx` does not upgrade/downgrade an already-held lock, but the
     /// only caller pattern is acquire-once/close, which behaves identically.

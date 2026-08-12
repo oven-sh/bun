@@ -531,6 +531,15 @@ BignumPointer BignumPointer::NewPrime(const PrimeConfig& params,
 bool BignumPointer::generate(const PrimeConfig& params,
     PrimeCheckCallback innerCb) const
 {
+    // BN_generate_prime_ex draws safe-prime candidates with the top two bits
+    // set, so below 6 bits the only safe prime it can reach is 7 (3 bits); 11
+    // and 23 are unreachable and sizes 4 and 5 loop forever. OpenSSL rejects
+    // these sizes up front (BN_generate_prime_ex2); BoringSSL only rejects 2.
+    if (params.safe && params.add.get() == nullptr && params.bits < 6 && params.bits != 3) {
+        ERR_put_error(ERR_LIB_BN, 0, BN_R_BITS_TOO_SMALL, __FILE__, __LINE__);
+        return false;
+    }
+
     // BN_generate_prime_ex() calls RAND_bytes_ex() internally.
     // Make sure the CSPRNG is properly seeded.
     std::ignore = CSPRNG(nullptr, 0);

@@ -368,6 +368,61 @@ describe("generatePrime with add/rem", () => {
   });
 });
 
+describe("generatePrime with safe and small sizes", () => {
+  // BN_generate_prime_ex draws safe-prime candidates with the top two bits set,
+  // so below 6 bits the only safe prime it can reach is 7 (size 3): sizes 4 and
+  // 5 used to spin forever (11 and 23 are unreachable), the sync form wedging
+  // the process and the async form never calling back. BoringSSL itself already
+  // rejects size 2 with BN_R_BITS_TOO_SMALL; sizes 4 and 5 must now be rejected
+  // the same way, whatever form the binding surfaces that rejection in.
+  const fixture = `
+    const { generatePrime, generatePrimeSync } = require("crypto");
+    const outcome = fn => {
+      try { return "value:" + String(fn()); } catch (e) { return "error:" + e.code; }
+    };
+    const sync = {};
+    for (const bits of [2, 4, 5]) sync[bits] = outcome(() => generatePrimeSync(bits, { safe: true, bigint: true }));
+    const reachable = {};
+    for (const bits of [3, 6, 7]) reachable[bits] = String(generatePrimeSync(bits, { safe: true, bigint: true }));
+    Promise.all(
+      [2, 4, 5].map(bits => new Promise(resolve => {
+        generatePrime(bits, { safe: true, bigint: true }, (err, p) => resolve(err ? "error:" + err.code : "value:" + String(p)));
+      })),
+    ).then(([two, four, five]) => {
+      process.stdout.write(JSON.stringify({ sync, async: { 2: two, 4: four, 5: five }, reachable }));
+    });
+  `;
+
+  it("rejects sizes 4 and 5 the same way as size 2 instead of looping forever", async () => {
+    // Subprocess with a kill guard: before the fix generatePrimeSync(4) never returns.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4500,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, signalCode: proc.signalCode }).toEqual({ stderr: "", signalCode: null });
+    expect(exitCode).toBe(0);
+
+    const result: {
+      sync: Record<string, string>;
+      async: Record<string, string>;
+      reachable: Record<string, string>;
+    } = JSON.parse(stdout);
+    expect(result).toEqual({
+      sync: { 2: result.sync[2], 4: result.sync[2], 5: result.sync[2] },
+      async: { 2: result.async[2], 4: result.async[2], 5: result.async[2] },
+      // The only safe prime with the top two bits set at each of these sizes.
+      reachable: { 3: "7", 6: "59", 7: "107" },
+    });
+    // Whatever size 2 produces, it is a rejection, not a prime.
+    expect(result.sync[2]).not.toMatch(/^value:[1-9]/);
+    expect(result.async[2]).not.toMatch(/^value:[1-9]/);
+  });
+});
+
 describe("checkPrime candidate handling", () => {
   it("checkPrimeSync uses the candidate bytes provided at call time", () => {
     expect(checkPrimeSync(Buffer.from([7]), { checks: 1 })).toBe(true);

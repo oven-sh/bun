@@ -1229,7 +1229,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  const contexts: Map<string, typeof InternalSecureContext> = new Map();
 
   this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
@@ -1241,8 +1241,7 @@ function Server(options, secureConnectionListener): void {
     // Kept like node's _contexts (a later listen() loads them into its listener again) and, for a
     // connection that never passed through a native listener of this server, consulted by
     // wrappedSNICallback below. Re-adding a name moves it to the end: the newest entry wins.
-    if (!contexts) contexts = new Map();
-    else contexts.delete(hostname);
+    contexts.delete(hostname);
     contexts.set(hostname, context);
     const handle = this._handle;
     // A cluster worker fed by the primary listens on node's faux handle, which has no SNI tree.
@@ -1538,7 +1537,7 @@ function Server(options, secureConnectionListener): void {
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: contexts ? wrappedSNICallback : this._SNICallback,
+      SNICallback: contexts.size !== 0 ? wrappedSNICallback : this._SNICallback,
       ALPNProtocols: this.ALPNProtocols,
       ALPNCallback: this._ALPNCallback,
     });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 
 async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({
@@ -226,10 +226,7 @@ describe.concurrent("type-only exports through re-exports", () => {
     expect(await runFixtures([bunExe(), "runner.ts"], dir)).toEqual(allFixturesPass);
   });
 
-  // --compile copies the whole executable (about 1 GB for a debug build), which takes a few seconds on its own and
-  // longer than the default timeout on a busy machine. Outside CI (which sets its own --timeout) give it the same
-  // ceiling itBundled gives compile tests.
-  test("compile", { timeout: isCI ? undefined : 30_000 }, async () => {
+  test("compile", async () => {
     await using dir = tempDir("type-export-compile", { ...fixtureFiles, "runner.ts": runnerSource(sourceEntries) });
     const outfile = `${dir}/runner${isWindows ? ".exe" : ""}`;
 

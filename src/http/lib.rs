@@ -58,7 +58,7 @@ pub(crate) use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
-pub use http_thread::{defer_shutdown_reclaim, shutdown_for_exit};
+pub use http_thread::shutdown_for_exit;
 pub use internal_state::InternalState;
 pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
@@ -418,7 +418,9 @@ impl HTTPClient<'_> {
         };
         let should_continue = self.handle_response_metadata(&mut response)?;
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
-        // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
+        // HTTP/1.x persistence rules (no Content-Length ⇒ no keep-alive, and the
+        // HTTP/1.0 default that the synthetic `minor_version: 0` above trips)
+        // don't apply.
         self.state.transfer_encoding = Encoding::Identity;
         if self.state.response_stage == ResponseStage::BodyChunk {
             self.state.response_stage = ResponseStage::Body;
@@ -1586,6 +1588,12 @@ impl<'a> HTTPClient<'a> {
         !self.request_body().is_empty()
     }
 
+    /// Pooling a socket whose request is still going out would land the next request inside this one's body.
+    #[inline]
+    fn is_request_fully_sent(&self) -> bool {
+        self.state.request_stage == RequestStage::Done
+    }
+
     #[inline]
     fn request_body(&self) -> &[u8] {
         // `request_body` is a `RawSlice` into `original_request_body` (sibling
@@ -2577,6 +2585,8 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
+        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
+        let keep_alive_possible = self.is_keep_alive_possible();
         // There is no struct copy-back
         // (`sync_progress_from` skips owned fields) and the original retains
         // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
@@ -2612,8 +2622,8 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if self.state.request_stage == RequestStage::Done
-            && self.is_keep_alive_possible()
+        } else if keep_alive_possible
+            && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
             // A direct TLS socket verified against a Host-header override
             // (get_tls_hostname) must not be pooled here: this.url has already
@@ -2621,10 +2631,6 @@ impl<'a> HTTPClient<'a> {
             // can no longer compute the correct pool key. Close it instead.
             && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
-            // request_stage == .done: a 303 to a streaming POST can arrive before
-            // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
-            // socket would let the next request's bytes land inside what the
-            // server is still parsing as the previous chunked body.
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
             Self::ssl_ctx_mut(ctx).release_socket(
@@ -3318,16 +3324,12 @@ impl<'a> HTTPClient<'a> {
                 let try_sending_more_data = result.try_sending_more_data;
 
                 if has_sent_headers && has_sent_body {
-                    if self.flags.proxy_tunneling {
-                        self.state.request_stage = RequestStage::ProxyHandshake;
+                    // has_sent_body is only ever true for a Bytes body, so the whole request is out.
+                    self.state.request_stage = if self.flags.proxy_tunneling {
+                        RequestStage::ProxyHandshake
                     } else {
-                        self.state.request_stage = RequestStage::Body;
-                        if self.flags.is_streaming_request_body {
-                            // lets signal to start streaming the body
-                            let ctx = self.get_ssl_ctx::<IS_SSL>();
-                            self.progress_update::<IS_SSL>(ctx, socket);
-                        }
-                    }
+                        RequestStage::Done
+                    };
                     return;
                 }
 
@@ -3717,8 +3719,7 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            let bytes_read =
-                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
+            let bytes_read = parsed.bytes_read.min(to_read.len());
             to_read = &to_read[bytes_read..];
 
             if parsed.status_code == 101 {
@@ -4157,8 +4158,7 @@ impl<'a> HTTPClient<'a> {
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
-                self.state.request_stage == RequestStage::Done
-                    && t.write_buffer.is_empty()
+                t.write_buffer.is_empty()
                     && t.wrapper
                         .as_ref()
                         .map(|w| {
@@ -4169,32 +4169,6 @@ impl<'a> HTTPClient<'a> {
                 true
             };
 
-            // The same early-reply hazard
-            // described above for tunnels applies to direct connections — a
-            // server may answer (200, Content-Length: 0) before a large PUT
-            // body has finished writing (e.g. S3 multipart UploadPart against
-            // a mock that ignores req.body). Pooling that socket lets the next
-            // request's bytes interleave with the previous body's tail on the
-            // wire, which the server then mis-parses. The redirect path
-            // (do_redirect) already gates on request_stage == Done for exactly
-            // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient for
-            // byte-buffer bodies because a fully-sent small request parks at
-            // `.body` (see on_writable), so check the unsent slice instead.
-            //
-            // For a Stream the socket carries an incomplete chunked message
-            // (no terminating 0\r\n\r\n), so a pooled reuse writes the next
-            // request's line and credential headers INTO that body (RFC 9112
-            // section 9.3: the client must close instead). Both of
-            // write_to_stream's stream-complete exits set request_stage =
-            // Done, so Done is the reliable signal for Stream and Sendfile.
-            let request_side_drained = match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                HTTPRequestBody::Stream(_) | HTTPRequestBody::Sendfile(_) => {
-                    self.state.request_stage == RequestStage::Done
-                }
-            };
-
             // The uSockets paused bit survives `state.reset()`; never hand a
             // paused socket back to the pool.
             if core::mem::take(&mut self.state.flags.receive_paused)
@@ -4203,10 +4177,10 @@ impl<'a> HTTPClient<'a> {
                 let _ = socket.resume_stream();
             }
 
-            if self.is_keep_alive_possible()
+            if self.is_request_fully_sent()
+                && self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()
                 && tunnel_poolable
-                && request_side_drained
             {
                 bun_core::scoped_log!(fetch, "release socket");
                 // Hand the client's strong ref straight to the pool: `release_socket`
@@ -4817,6 +4791,7 @@ impl<'a> HTTPClient<'a> {
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
+        let mut has_keep_alive_token = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -4912,8 +4887,10 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Connection") => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
-                    if connection_header_keep_alive(header.value()) == Some(false) {
-                        self.state.flags.allow_keepalive = false;
+                    match connection_header_keep_alive(header.value()) {
+                        Some(false) => self.state.flags.allow_keepalive = false,
+                        Some(true) => has_keep_alive_token = true,
+                        None => {}
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {
@@ -5000,6 +4977,14 @@ impl<'a> HTTPClient<'a> {
             self.flags.proxy_tunneling = false;
             self.flags.disable_keepalive = true;
             is_proxy_connect_failure = true;
+        }
+
+        // RFC 9112 §9.3: an HTTP/1.0 response is non-persistent unless it says
+        // `Connection: keep-alive`. Deliberately below the CONNECT return above:
+        // proxies commonly answer CONNECT with `HTTP/1.0 200`, which says nothing
+        // about the tunneled origin, whose own response is what gets judged here.
+        if response.minor_version == 0 && !has_keep_alive_token {
+            self.state.flags.allow_keepalive = false;
         }
 
         let status_code = response.status_code;

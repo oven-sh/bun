@@ -90,7 +90,7 @@ pub struct Request {
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
     // Clone/Drop to the C++ ref/unref.
-    pub(crate) signal: JsCell<Option<AbortSignalRef>>,
+    signal: JsCell<Option<AbortSignalRef>>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot. `ManuallyDrop` because
@@ -103,7 +103,7 @@ pub struct Request {
     pub(crate) request_context: AnyRequestContext,
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
-    pub(crate) reported_estimated_size: Cell<usize>,
+    reported_estimated_size: Cell<usize>,
     pub(crate) internal_event_callback: JsCell<InternalJSEventCallback>,
 }
 
@@ -719,6 +719,12 @@ impl Request {
 
     pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::EMPTY.to_js(global_this)
+    }
+
+    /// The `AbortSignal` this request was constructed with or lazily created
+    /// for its `signal` getter, if any.
+    pub(crate) fn abort_signal(&self) -> Option<&AbortSignalRef> {
+        self.signal.get().as_ref()
     }
 
     pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {

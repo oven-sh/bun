@@ -1448,6 +1448,98 @@ it("TLS mid-read boundary dispatch: writing to another TLS socket from data() do
   }
 }, 60_000);
 
+describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
+  // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /
+  // SNICallback go through. Both run from inside the read that is processing
+  // the ClientHello and hand the accepted socket to JS, so a write() there
+  // lands on a TLS engine that is mid-handshake on this very socket. It gets
+  // the same treatment as any other write issued before the handshake is done:
+  // nothing is consumed (write() reports 0) and drain() fires once the
+  // handshake completes. Encrypting it on the spot instead re-entered the
+  // engine and failed the handshake (client: TLSV1_ALERT_INTERNAL_ERROR).
+  const MESSAGE = "written-from-drain;";
+  const cases: Array<[string, (attempt: (socket: Socket) => void) => object, string | false]> = [
+    [
+      "alpnCallback",
+      attempt => ({
+        alpnCallback(socket: Socket) {
+          attempt(socket);
+          return "x/1";
+        },
+      }),
+      "x/1",
+    ],
+    [
+      "serverName",
+      attempt => ({
+        serverName(_listenerData: unknown, _servername: string, socket: Socket) {
+          attempt(socket);
+        },
+      }),
+      false,
+    ],
+  ];
+  for (const [hook, selection, expectedAlpn] of cases) {
+    it(`${hook}: the write is parked and the handshake still completes`, async () => {
+      const events: string[] = [];
+      const serverSideClosed = Promise.withResolvers<void>();
+      let pending = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          ...selection(socket => {
+            const written = socket.write(MESSAGE);
+            events.push(`write:${written}`);
+            pending = MESSAGE.slice(written);
+          }),
+          handshake(socket, success) {
+            events.push(`handshake:${success}`);
+            if (!pending) socket.end();
+          },
+          drain(socket) {
+            events.push("drain");
+            pending = pending.slice(socket.write(pending));
+            if (!pending) socket.end();
+          },
+          data() {},
+          error(_socket, err) {
+            events.push(`error:${err.message}`);
+          },
+          close() {
+            events.push("close");
+            serverSideClosed.resolve();
+          },
+        },
+      });
+
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        ca: tls.cert,
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+      });
+      const received = await new Promise<string>(resolve => {
+        let data = "";
+        client.setEncoding("utf8");
+        client.on("data", chunk => (data += chunk));
+        client.on("end", () => resolve(data));
+        client.on("error", err => resolve(`client error: ${err.message}`));
+      });
+      client.end();
+      await serverSideClosed.promise;
+
+      expect({ received, alpn: client.alpnProtocol, events }).toEqual({
+        received: MESSAGE,
+        alpn: expectedAlpn,
+        events: ["write:0", "handshake:true", "drain", "close"],
+      });
+    });
+  }
+});
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on
@@ -3665,5 +3757,73 @@ describe.concurrent("connect() failure promise settlement", () => {
         },
       }),
     ).rejects.toBe(boom);
+  });
+});
+
+describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
+  // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
+  // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
+  // this covers the shared usockets core in bun:test form. Unfixed, epoll
+  // re-delivered end on every writable rearm, kqueue spun the writable
+  // dispatch forever, and the libuv backend stranded (the FIN consumed the
+  // only AFD event the reset could ride).
+  it("delivers end exactly once and closes after the reset", async () => {
+    const issued = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let endCount = 0;
+    const big = Buffer.alloc(4 * 1024 * 1024, 0x78);
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(s) {
+          // Write until the kernel refuses a full chunk so the reset is
+          // guaranteed to land behind pending writes (the peer is paused, so
+          // this terminates once its receive buffer and our send buffer fill).
+          while (s.write(big) === big.byteLength) {}
+          issued.resolve();
+        },
+        data() {},
+        drain(s) {
+          s.write(big);
+        },
+        end() {
+          endCount++;
+          ended.resolve();
+        },
+        error() {},
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+
+    const opened = Promise.withResolvers<Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: {
+        open: s => opened.resolve(s),
+        data() {},
+        end() {},
+        error: (_s, e) => opened.reject(e),
+        close: () => opened.reject(new Error("peer closed before setup finished")),
+      },
+    });
+    const peer = await opened.promise;
+    peer.pause();
+    await issued.promise; // victim has queued more than the kernel will buffer
+    peer.shutdown(); // FIN
+    await ended.promise; // victim saw it
+    // The FIN-to-RST gap is where the bug lived; an immediate RST can overtake
+    // the FIN and just read as ECONNRESET on the readable side.
+    await Bun.sleep(50);
+    peer.terminate(); // RST
+    await closed.promise; // victim must tear down, not spin or strand
+    expect(endCount).toBe(1);
   });
 });

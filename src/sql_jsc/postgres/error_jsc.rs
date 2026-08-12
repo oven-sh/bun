@@ -63,14 +63,12 @@ pub(crate) fn postgres_error_to_js(
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
         InvalidBinaryData => b"ERR_POSTGRES_INVALID_BINARY_DATA",
         InvalidByteSequence => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE",
-        InvalidByteSequenceForEncoding => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING",
         InvalidCharacter => b"ERR_POSTGRES_INVALID_CHARACTER",
         InvalidMessage => b"ERR_POSTGRES_INVALID_MESSAGE",
         InvalidMessageLength => b"ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
         InvalidQueryBinding => b"ERR_POSTGRES_INVALID_QUERY_BINDING",
         InvalidServerKey => b"ERR_POSTGRES_INVALID_SERVER_KEY",
         InvalidServerSignature => b"ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
-        InvalidTimeFormat => b"ERR_POSTGRES_INVALID_TIME_FORMAT",
         MultidimensionalArrayNotSupportedYet => {
             b"ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"
         }

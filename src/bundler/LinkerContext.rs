@@ -1268,6 +1268,17 @@ pub struct LinkerOptions {
     pub(crate) public_path: &'static [u8],
 }
 
+impl LinkerOptions {
+    /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
+    /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
+    /// while printing (see `post_process_js_chunk`).
+    pub(crate) fn generates_module_info(&self) -> bool {
+        self.generate_bytecode_cache
+            && self.output_format == Format::Esm
+            && self.compile_mode.is_executable()
+    }
+}
+
 impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
@@ -1583,9 +1594,9 @@ pub struct GenerateChunkCtx<'a> {
     /// `generate_chunks_in_parallel`. The slice outlives every
     /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
-    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk], bun_ptr::Mut>,
+    /// safe `Deref`. Read-only: each task writes only through its own
+    /// `*mut Chunk`.
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
@@ -2142,6 +2153,7 @@ impl<'a> LinkerContext<'a> {
         runtime_require_ref: Option<Ref>,
         source_index: Index,
         source: &Source,
+        module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2221,6 +2233,7 @@ impl<'a> LinkerContext<'a> {
                 None
             },
             mangled_props: Some(mangled_props),
+            module_info,
             ..Default::default()
         };
 
@@ -2749,6 +2762,32 @@ impl<'a> LinkerContext<'a> {
                 if self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::Cjs {
                     can_be_removed_if_unused = false;
                 }
+            }
+
+            // The automatic JSX runtime import is synthesized by the parser; it
+            // exists only so lowered JSX can reference `jsx`/`jsxDEV`/etc. If no
+            // live part references those symbols the import must not be kept
+            // "for its side effects": the user never wrote it, and keeping it
+            // would bundle (or externally import) React for JSX that was
+            // entirely dead code. Liveness of the JSX import source, when it is
+            // actually needed, is established via part.dependencies (step 6
+            // wires the wrapper_ref/__toESM dependency onto this part), so
+            // skipping the side-effect scan here is safe.
+            if part.tag == bun_ast::PartTag::JsxImport {
+                if !can_be_removed_if_unused
+                    || (!part.force_tree_shaking
+                        && !self.options.tree_shaking
+                        && ctx.entry_point_kinds[source_index as usize].is_entry_point())
+                {
+                    let part_index = u32::try_from(part_index).expect("int cast");
+                    if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                        ctx.worklist.push(TreeShakeWork::Part {
+                            part_index,
+                            source_index,
+                        });
+                    }
+                }
+                continue;
             }
 
             // Also include any statement-level imports

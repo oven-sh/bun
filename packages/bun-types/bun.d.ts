@@ -555,6 +555,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**
@@ -6948,6 +6960,33 @@ declare module "bun" {
        * POSIX only. On Windows the spawn fails with `ENOTSUP`.
        */
       gid?: number;
+
+      /**
+       * Start the child process inside this control group.
+       *
+       * Pass the path of an existing cgroup directory (e.g.
+       * `"/sys/fs/cgroup/my-jobs"`), or an open file descriptor for one. The
+       * child joins it before it begins executing, so resource limits
+       * configured on the cgroup (`memory.max`, `pids.max`, …) apply from its
+       * first instruction and to everything it spawns in turn. Works with both
+       * cgroup v1 and v2 hierarchies.
+       *
+       * Bun does not create or configure the cgroup; do that with `node:fs`
+       * beforehand.
+       *
+       * Linux only; ignored on other platforms. On Linux, the spawn fails if
+       * the cgroup cannot be joined (e.g. the directory does not exist).
+       *
+       * @example
+       * ```ts
+       * import { mkdirSync, writeFileSync } from "node:fs";
+       * const dir = "/sys/fs/cgroup/build-jobs";
+       * mkdirSync(dir, { recursive: true });
+       * writeFileSync(dir + "/memory.max", String(2 * 1024 ** 3));
+       * Bun.spawn({ cmd: ["make"], cgroup: dir });
+       * ```
+       */
+      cgroup?: string | number;
 
       /**
        * The environment variables of the process

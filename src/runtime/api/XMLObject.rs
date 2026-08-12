@@ -12,6 +12,7 @@
 use bun_collections::HashMap;
 use bun_core::{OwnedString, String as BunString};
 use bun_core::{StackCheck, strings};
+use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
@@ -27,18 +28,6 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
-    // UTF-16 / declared-encoding detection. Anything else is coerced to a JS
-    // string by `with_text_format_source`, i.e. already-decoded text whose
-    // encoding declaration must not be acted upon.
-    let input = frame.argument(0);
-    let encoding = if input.js_type().is_array_buffer_like()
-        || input.as_class_ref::<crate::webcore::Blob>().is_some()
-    {
-        xml::InputEncoding::Bytes
-    } else {
-        xml::InputEncoding::Text
-    };
     let options = frame.argument(1);
     let compact = if options.is_undefined_or_null() {
         true
@@ -52,14 +41,48 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         );
     };
 
-    super::with_text_format_source(
+    // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
+    // UTF-16 / declared-encoding detection. A string is already-decoded text
+    // whose encoding declaration must not be acted upon: a Latin-1 string is
+    // parsed byte-per-character as is, anything else re-encoded as UTF-8.
+    super::with_text_format_source_encoded(
         global,
         frame,
         b"input.xml",
         true,
         true,
-        |arena, log, source| {
-            let root = match XML::parse(source, log, arena, xml::Options { compact, encoding }) {
+        true,
+        |arena, log, source, source_encoding| {
+            let encoding = match source_encoding {
+                super::SourceEncoding::Bytes => xml::InputEncoding::Bytes,
+                super::SourceEncoding::Utf8Text => xml::InputEncoding::Text,
+                super::SourceEncoding::Latin1Text => xml::InputEncoding::Latin1,
+                super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
+            };
+            bun_core::analytics::Features::xml_parse_inc();
+            let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
+                // The scaffold hands the string's code units over as bytes.
+                let units: &[u16] = bytemuck::cast_slice(&source.contents);
+                XML::parse_utf16(source, units, log, arena, compact)
+            } else {
+                XML::parse(source, log, arena, xml::Options { compact, encoding })
+            };
+            let utf8;
+            let utf8_source;
+            if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {
+                // A character reference the Latin-1 result cannot hold: once
+                // more, over the same text as UTF-8.
+                utf8 = strings::allocate_latin1_into_utf8(&source.contents)
+                    .map_err(|_| JsError::OutOfMemory)?;
+                utf8_source = bun_ast::Source::init_path_string(b"input.xml", &utf8[..]);
+                *log = bun_ast::Log::init();
+                let options = xml::Options {
+                    compact,
+                    encoding: xml::InputEncoding::Text,
+                };
+                result = XML::parse(&utf8_source, log, arena, options);
+            }
+            let root = match result {
                 Ok(root) => root,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
@@ -82,7 +105,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            super::expr_to_js(root, global)
+            root.to_js(global)
+                .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
         },
     )
 }

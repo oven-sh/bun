@@ -50,41 +50,27 @@ describe("Bun.build compile", () => {
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
   });
-  test("compile with relative outfile paths", async () => {
-    using dir = tempDir("build-compile-relative-paths", {
-      "app.js": `console.log("Testing relative paths");`,
-    });
 
-    // Test 1: Nested forward slash path
-    const result1 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "output/nested/app1"),
-      },
-    });
-    expect(result1.success).toBe(true);
-    expect(result1.outputs[0].path).toContain(join("output", "nested", isWindows ? "app1.exe" : "app1"));
+  // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),
+  // which by itself takes a good part of the default per-test timeout.
+  test.each(["output/nested/app1", "app2", "a/b/c/d/app3"])(
+    "compile writes the executable to outfile %s",
+    async relativeOutfile => {
+      using dir = tempDir("build-compile-outfile", {
+        "app.js": `console.log("Testing outfile paths");`,
+      });
+      const outfile = join(String(dir), relativeOutfile);
 
-    // Test 2: Current directory relative path
-    const result2 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "app2"),
-      },
-    });
-    expect(result2.success).toBe(true);
-    expect(result2.outputs[0].path).toEndWith(isWindows ? "app2.exe" : "app2");
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: { outfile },
+      });
 
-    // Test 3: Deeply nested path
-    const result3 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "a/b/c/d/app3"),
-      },
-    });
-    expect(result3.success).toBe(true);
-    expect(result3.outputs[0].path).toContain(join("a", "b", "c", "d", isWindows ? "app3.exe" : "app3"));
-  });
+      expect(result.success).toBe(true);
+      expect(result.outputs.map(output => output.path)).toEqual([isWindows ? `${outfile}.exe` : outfile]);
+      expect(await Bun.file(result.outputs[0].path).exists()).toBe(true);
+    },
+  );
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {

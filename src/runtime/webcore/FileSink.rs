@@ -789,17 +789,10 @@ impl FileSink {
         self.run_pending_later.has.set(true);
         if let EventLoopHandle::Js { owner } = self.event_loop() {
             self.ref_();
-            // The type→tag
-            // map lives in `crate::dispatch`; the resolved tag for
-            // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
             // Ptr identity only — `run_from_js_thread` recovers `*mut FileSink`
             // via `from_field_ptr!` and never forms `&mut FileSink`.
-            let task = bun_event_loop::Task::new(
-                bun_event_loop::task_tag::FlushPendingFileSinkTask,
-                core::ptr::from_ref(&self.run_pending_later)
-                    .cast_mut()
-                    .cast::<()>(),
-            );
+            let task =
+                bun_event_loop::Task::init(core::ptr::from_ref(&self.run_pending_later).cast_mut());
             owner.enqueue_task(task);
         }
     }
@@ -1296,9 +1289,8 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     const HAS_GET_FD: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::FileSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
+    crate::impl_js_sink_forwarders!();
+
     fn finalize(&mut self) {
         Self::finalize(self)
     }
@@ -1307,29 +1299,8 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {
-        Self::end(self, err)
-    }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: streams::Start) -> sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut streams::SourceHandle> {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
@@ -1460,6 +1431,20 @@ impl FileSink {
 #[derive(Default)]
 pub struct FlushPendingTask {
     pub(crate) has: Cell<bool>,
+}
+
+impl bun_event_loop::Taskable for FlushPendingTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
+    /// The embedded "flush later" flag of a `FileSink` that took a ref for the
+    /// hop: clear it and drop that ref without flushing.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `this` is `FileSink.run_pending_later`.
+        unsafe {
+            (*this).has.set(false);
+            let sink: *mut FileSink = bun_core::from_field_ptr!(FileSink, run_pending_later, this);
+            drop(FileSinkRef::adopt(sink));
+        }
+    }
 }
 
 impl FlushPendingTask {

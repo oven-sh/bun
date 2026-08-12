@@ -2107,8 +2107,10 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
+        /// The `WindowsLoop` of the thread that called [`init`] (uws keeps one
+        /// per thread). `BackRef` invariant (pointee outlives holder) holds as
+        /// long as that thread does; the only user, the bundle thread, never
+        /// exits once it holds a waker. `None`
         /// only between [`placeholder`] and [`init`]; every dispatch path
         /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
         /// raw null anyway.
@@ -2130,7 +2132,9 @@ pub mod waker {
             Self { loop_: None }
         }
 
-        pub fn init() -> crate::Result<Self> {
+        /// Binds the calling thread's loop, so call it on the thread that will
+        /// `wait()`. Same signature as the POSIX wakers; cannot fail today.
+        pub fn init() -> crate::error::Result<Self> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())

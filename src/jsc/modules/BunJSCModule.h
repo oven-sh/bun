@@ -46,8 +46,6 @@
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
-#include "StrongRootBlock.h"
-#include "BunClientData.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -275,18 +273,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     };
 
     JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
-
-    // bun_jsc::Strong handles live in StrongRootBlock cells instead of the
-    // HandleSet, so merge those slots into the protected counts.
-    TypeCountSet protectedTypeCounts = vm.heap.protectedObjectTypeCounts();
-    size_t strongRootCount = 0;
-    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next()) {
-        block->forEachOccupiedCell([&](JSC::JSCell* cell) {
-            protectedTypeCounts.add(cell->classInfo()->className);
-            ++strongRootCount;
-        });
-    }
-    JSValue protectedCounts = createdSortedTypeCounts(WTF::move(protectedTypeCounts));
+    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -304,7 +291,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     object->putDirect(vm, Identifier::fromString(vm, "objectCount"_s),
         jsNumber(vm.heap.objectCount()));
     object->putDirect(vm, Identifier::fromString(vm, "protectedObjectCount"_s),
-        jsNumber(vm.heap.protectedObjectCount() + strongRootCount));
+        jsNumber(vm.heap.protectedObjectCount()));
     object->putDirect(vm, Identifier::fromString(vm, "globalObjectCount"_s),
         jsNumber(vm.heap.globalObjectCount()));
     object->putDirect(vm,
@@ -614,12 +601,9 @@ JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
 JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto& vm = globalObject->vm();
     MarkedArgumentBuffer list;
-    vm.heap.forEachProtectedCell(
+    globalObject->vm().heap.forEachProtectedCell(
         [&](JSCell* cell) { list.append(cell); });
-    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
-        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));

@@ -58,7 +58,6 @@ public:
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };
-    IsoSubspace* m_subspaceForStrongRootBlock { nullptr };
     IsoSubspace* m_subspaceForNapiTypeTag { nullptr };
     IsoSubspace* m_subspaceForNativePromiseContext { nullptr };
     IsoSubspace* m_subspaceForObjectTemplate { nullptr };

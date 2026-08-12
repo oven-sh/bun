@@ -10,7 +10,6 @@
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IsoHeapCellType.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/CachedTypes.h>
@@ -28,7 +27,6 @@
 #include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
-#include "StrongRootBlock.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -129,50 +127,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 
     vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
-
-    // Root the StrongRootBlock list from the VM instead of any one global.
-    //
-    // JSC's collector alternates Fixpoint (world stopped: mutator suspended via
-    // finishChangingPhase / stopTheMutator; see worldShouldBeSuspended in
-    // CollectorPhase.cpp) with Concurrent (mutator running) phases. The
-    // constraint set is solved only during Fixpoint, so the lambda below never
-    // races the mutator's writes to m_strongRootBlockHead/Free.
-    //
-    // `GreyedByExecution` puts this in the "root" bucket
-    // (MarkingConstraintSet::didStartMarking tags it as an unexecuted root for
-    // iteration 1 and re-evaluates it on every return to Fixpoint after a
-    // mutator resumption), mirroring the "Sh" strong-handle constraint in
-    // Heap::addCoreConstraints: anything the mutator linked onto the list while
-    // running is picked up on the next Fixpoint.
-    //
-    // Eden vs. full: `appendUnbarriered` early-returns when `isMarked()`; eden
-    // keeps the previous full GC's `m_markingVersion`
-    // (MarkedSpace::beginMarking), so an old-gen head reads as marked and its
-    // `visitChildren` does not run on eden. Slots written into such a block
-    // since the last GC already fired `WriteBarrier::set` on the block cell
-    // (Heap::writeBarrierSlowPath -> addToRememberedSet -> m_mutatorMarkStack),
-    // and Fixpoint drains that stack to visit the dirtied block. A full GC
-    // bumps `m_markingVersion`, every cell reads unmarked, and the constraint
-    // seeds the whole `m_next` chain. Net: this body is O(1) per collection.
-    //
-    // `Concurrent` here means the constraint may run on a GC helper thread via
-    // MarkingConstraintSolver::runExecutionThread (MarkingConstraintSet still
-    // runs each constraint once per fixpoint iteration, gated by `m_executed`);
-    // it does not mean concurrent with the mutator. The lambda only reads three
-    // pointers and appends to the per-thread visitor, so helper-thread
-    // execution is safe. `clientData` outlives the Heap
-    // (~VM -> lastChanceToFinalize -> delete clientData), so the capture stays
-    // valid for every collection.
-    vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
-        "Srb", "Bun StrongRootBlocks",
-        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
-            JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
-            visitor.appendUnbarriered(clientData->m_strongRootBlockHead);
-            visitor.appendUnbarriered(clientData->m_strongRootBlockFree);
-            visitor.appendUnbarriered(clientData->m_strongRootBlockStructure);
-        })),
-        JSC::ConstraintVolatility::GreyedByExecution));
-
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
 }

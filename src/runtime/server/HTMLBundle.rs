@@ -497,7 +497,14 @@ impl Route {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
             config.jsx.development = true;
         }
-        config.source_map = bundler_options::SourceMapOption::Linked;
+        // Production defaults to no sourcemaps so original sources are not served publicly.
+        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
+            bundler_options::SourceMapOption::from_api(Some(mode))
+        } else if is_development {
+            bundler_options::SourceMapOption::Linked
+        } else {
+            bundler_options::SourceMapOption::None
+        };
 
         let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.

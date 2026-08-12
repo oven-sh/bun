@@ -362,8 +362,7 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      // Node's onParserExecuteCommon: the error carries the offending bytes, then the shared
-      // socketOnError emits 'clientError' (or writes the raw error response) and destroys.
+      // Node's onParserExecuteCommon.
       prepareError(ret, parser, data);
       socketOnError.$call(socket, ret);
       return;
@@ -421,11 +420,7 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("close", freeHttp1Parser);
 }
 
-// Node's checkConnections, run from the server's connectionsCheckingInterval sweep in
-// _http_server.ts. expired() measures from the current request's first byte (or from accept, for
-// a connection that has not sent one yet): headersTimeout while the head is incomplete,
-// requestTimeout until kOnMessageComplete. It also drops what it reports from the active set, so
-// a request times out once even if the 'clientError' listener keeps the connection open.
+// Node's checkConnections, run from _http_server.ts's connectionsCheckingInterval sweep.
 function checkHttp1Connections(server, headersTimeout, requestTimeout) {
   const connections = server[kHttp1Connections];
   if (!connections) return;

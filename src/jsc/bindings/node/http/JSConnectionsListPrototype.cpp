@@ -90,8 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_expired, (JSGlobalObject * globalObje
     JSValue headersTimeoutValue = callFrame->argument(0);
     JSValue requestTimeoutValue = callFrame->argument(1);
 
-    // Milliseconds to uv_hrtime() nanoseconds; widen before multiplying, a uint32_t product wraps
-    // for anything above 4294ms (node: static_cast<uint64_t>(...) * 1000000).
+    // ms to uv_hrtime() ns; a uint32_t product would wrap above 4294ms.
     uint64_t headersTimeout = static_cast<uint64_t>(headersTimeoutValue.toUInt32(globalObject)) * 1000000;
     RETURN_IF_EXCEPTION(scope, {});
     uint64_t requestTimeout = static_cast<uint64_t>(requestTimeoutValue.toUInt32(globalObject)) * 1000000;

@@ -6793,8 +6793,7 @@ class Http2SecureServer extends tls.Server {
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
-      // As in node, the HTTP/1 connections get http.Server's option set (connectionListenerHTTP1
-      // reads it off the server) and its headersTimeout / requestTimeout sweep while listening.
+      // As in node, the HTTP/1 side is configured and swept like an http.Server.
       const { storeHTTPOptions, setupConnectionsTracking } = require("node:_http_server");
       const http1Options = { ...options, ...options.http1Options };
       storeHTTPOptions.$call(this, http1Options);

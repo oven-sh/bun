@@ -433,11 +433,9 @@ function emitErrorNt(msg, err, callback) {
   }
 }
 
-// Server-side connection error handling shared by the native http.Server connections
-// (_http_server.ts) and the connections parsed in JS (internal/http1_server_fallback.ts:
-// http2 allowHTTP1 and server.emit("connection", socket)).
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError, onRequestTimeout)
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
 const requestTimeoutResponse = Buffer.from(`HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n`, "latin1");
 const requestHeaderFieldsTooLargeResponse = Buffer.from(

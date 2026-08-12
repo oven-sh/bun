@@ -443,8 +443,7 @@ function rethrowUncaught(err) {
 
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
-// timeout machinery) and destroys the previous one. Registered by http.Server
-// and, like in Node, by http2's Http2SecureServer when it allows HTTP/1.
+// timeout machinery) and destroys the previous one.
 function setupConnectionsTracking(this: any) {
   if (this[kConnectionsCheckingInterval]) {
     clearInterval(this[kConnectionsCheckingInterval]);
@@ -456,9 +455,7 @@ function setupConnectionsTracking(this: any) {
 
 // Node.js's checkConnections sweep: every connectionsCheckingInterval, expire
 // connections whose in-flight request exceeded headersTimeout/requestTimeout.
-// Connections parsed in JS keep their timing in the server's ConnectionsList
-// like Node's; for the natively parsed ones it lives on the socket handle, so
-// each tracked connection is asked whether it expired.
+// The natively parsed connections keep their timing on the socket handle.
 function checkConnections(this: Server) {
   const headersTimeout = this.headersTimeout;
   const requestTimeout = this.requestTimeout;

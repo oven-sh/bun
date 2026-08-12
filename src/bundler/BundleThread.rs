@@ -354,8 +354,6 @@ pub mod singleton {
 
     use super::*;
 
-    /// The leaked `BundleThread<C>`, type-erased (see module comment). A raw
-    /// pointer because the bundle thread mutates it concurrently.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
     // `'static`; cross-thread access is mediated entirely through
@@ -364,10 +362,8 @@ pub mod singleton {
 
     static INSTANCE: bun_threading::Guarded<Option<Instance>> = bun_threading::Guarded::new(None);
 
-    /// Starts the bundle thread on first use; only `BundleThread::enqueue` may
-    /// be used on the returned pointer. A failed spawn (an OS limit) leaves the
-    /// slot empty, so the next build tries again; the lock is held across the
-    /// attempt, so concurrent first callers wait for it instead of racing it.
+    /// Starts the bundle thread on first use; a failed spawn leaves the slot empty
+    /// for the next build to retry.
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
@@ -406,8 +402,7 @@ pub mod singleton {
         errno.unwrap_or(SystemErrno::EAGAIN)
     }
 
-    /// Hands `completion` to the bundle thread, or fails it right here if that
-    /// thread cannot be started; either way its owner gets exactly one completion.
+    /// The owner gets exactly one completion, even if the bundle thread cannot be started.
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // Validate the caller's pointer at the public boundary so the unsafe
         // path below never receives null.

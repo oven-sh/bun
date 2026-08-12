@@ -131,7 +131,15 @@ test("CompletionStruct takes the task by pointer in every method", async () => {
 });
 
 test("BundleThread.rs never reborrows the dequeued task", async () => {
-  expect(reborrows(await stripped("src/bundler/BundleThread.rs"))).toEqual([]);
+  const source = await stripped("src/bundler/BundleThread.rs");
+  // `reborrows` is coupled to the binding name. Pin it where the task is
+  // dequeued and where the build runs under it (as a pointer), so a rename
+  // fails here instead of making the scan below vacuous.
+  expect({
+    dequeued_as: /\blet (\w+) = unsafe \{ \(\*instance\)\.queue\.pop\(\) \};/.exec(source)?.[1],
+    build_runs_under: /\bfn generate_in_new_thread\(\s*(\w+): ([^,]+),/.exec(source)?.slice(1),
+  }).toEqual({ dequeued_as: "completion", build_runs_under: ["completion", "*mut C"] });
+  expect(reborrows(source)).toEqual([]);
 });
 
 test("create_and_schedule_completion_task does not touch the task after enqueuing it", async () => {

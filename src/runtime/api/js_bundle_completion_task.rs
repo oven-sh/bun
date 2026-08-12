@@ -1070,7 +1070,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         // teardown, written by neither; `config` is ours until the hand-back
         // (see `create_and_configure_transpiler`), and the `&'a FileMap` /
         // entry-point slices borrowed out of it below are only used by this
-        // bundle, which `bv2` ends before this returns.
+        // bundle, which `bv2` ends before this returns. Shared, not `&mut`:
+        // `transpiler.options.optimize_imports` still points into `config`
+        // (`configure_bundler`), and a `&mut` retag here would invalidate it.
         let (config, plugins) = unsafe { (&(*this).config, (*this).plugins) };
         bv2.plugins = plugins;
         bv2.completion = Some(dispatch::CompletionHandle {
@@ -1109,6 +1111,10 @@ impl CompletionStruct for JSBundleCompletionTask {
 /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
 /// (everything after `transpiler.* = try Transpiler.init(...)`), applying
 /// `config` to the freshly initialized `transpiler`.
+///
+/// `config` is `&mut` because the standalone-HTML case clears
+/// `config.compile`, which `on_complete` reads to decide whether to run
+/// `do_compilation`.
 fn configure_bundler(
     config: &mut JSBundlerConfig,
     transpiler: &mut Transpiler<'_>,
@@ -1270,8 +1276,10 @@ fn configure_bundler(
         Box::from(config.metafile_markdown_path.list.as_slice());
     if config.optimize_imports.count() > 0 {
         // SAFETY: `config` lives in the completion task, which outlives the
-        // transpiler (`bump`), and nothing writes `optimize_imports` during
-        // the bundle; a bump.alloc'd clone would leak (arena never runs Drop).
+        // transpiler (`bump`), and until the build is over `config` is only
+        // borrowed shared again (`init_and_run`) and never written, so this
+        // reference stays valid; a bump.alloc'd clone would leak (arena never
+        // runs Drop).
         transpiler.options.optimize_imports =
             Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
     }

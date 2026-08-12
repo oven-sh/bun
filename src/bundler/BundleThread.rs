@@ -334,8 +334,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         //
         // SAFETY: both pointers are the unique `&'a mut` slots returned by
         // `bump.alloc(...)` above; nothing else holds a reference to either
-        // past `init_and_run` (`set_transpiler` was cleared by
-        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
+        // past `init_and_run` (the `BundleV2` that borrowed the transpiler
+        // went away inside it, `pop()` restored the AST-allocator
         // thread-local). The arena bytes themselves are bulk-freed afterwards
         // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
         // global-heap* state, so there is no double free.

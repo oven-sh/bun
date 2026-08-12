@@ -998,8 +998,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req._dumpAndCloseReadable();
         }
 
-        // Like Node's parserOnIncoming (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js):
-        // an accepted upgrade or a missing-Host rejection never counts against maxRequestsPerSocket.
+        // Node's parserOnIncoming never counts an accepted upgrade or a missing-Host 400 against maxRequestsPerSocket.
         let rejectMissingHost = false;
         let reachedRequestsLimit = false;
         if (!is_upgrade) {
@@ -1010,8 +1009,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.httpVersionMajor === 1 &&
             http_req.httpVersionMinor >= 1
           ) {
-            // The native parser lets Upgrade requests past its Host check so they can reach
-            // 'upgrade'; one that dispatches as a normal request still needs the header.
+            // The native parser skips its Host check for Upgrade requests; one dispatched normally still needs it.
             rejectMissingHost = true;
           } else if (typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
             const requestCount = (socket._requestCount || 0) + 1;

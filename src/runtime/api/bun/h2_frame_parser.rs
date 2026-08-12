@@ -3382,35 +3382,38 @@ impl H2FrameParser {
         handler.close(bun_uws::CloseCode::Normal);
     }
 
+    /// The latched send was delivered by a later flush after all, and frames corked since
+    /// then are waiting on this same auto-flush registration (cork() does not add a second
+    /// one): clears the latch so on_auto_flush flushes them instead of releasing the
+    /// registration, which would leave them in the still-owned cork slot for good.
+    fn fatal_send_recovered_with_corked_frames(&self) -> bool {
+        if self.has_backpressure() || CORKED_H2.with(|c| c.get()) != Some(self.as_ctx_ptr()) {
+            return false;
+        }
+        self.transport_write_fatal.set(false);
+        true
+    }
+
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
-        if self.transport_write_fatal.get() {
+        if self.transport_write_fatal.get() && !self.fatal_send_recovered_with_corked_frames() {
+            // Returning `false` makes DeferredTaskQueue::run remove the entry
+            // itself, so only the registration's flag and ref are released here
+            // - never a re-entrant map mutation from inside run(). The flag is
+            // cleared before the close so the teardown paths the close re-enters
+            // (detach -> unregister_auto_flush) see an unregistered flusher and
+            // early-return instead of removing a map entry run() still owns.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            // An empty write buffer here means a later write in the same flush()
+            // cycle already drained the bytes the failing send left behind (racy
+            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
             if self.has_backpressure() {
-                // Returning `false` makes DeferredTaskQueue::run remove the entry
-                // itself, so only the registration's flag and ref are released here
-                // - never a re-entrant map mutation from inside run(). The flag is
-                // cleared before the close so the teardown paths the close re-enters
-                // (detach -> unregister_auto_flush) see an unregistered flusher and
-                // early-return instead of removing a map entry run() still owns.
-                self.auto_flusher.get().registered.set(false);
-                self.deref();
                 self.close_transport_after_fatal_write();
-                return false;
+            } else {
+                self.transport_write_fatal.set(false);
             }
-            // An empty write buffer here means a later write already drained the bytes the
-            // failing send left behind (racy one-off errnos, e.g. macOS EPROTOTYPE) - the
-            // transport recovered.
-            self.transport_write_fatal.set(false);
-            if CORKED_H2.with(|c| c.get()) != Some(self.as_ctx_ptr()) {
-                self.auto_flusher.get().registered.set(false);
-                self.deref();
-                return false;
-            }
-            // Frames corked since the failing send are waiting on this same registration
-            // (cork() found it registered and did not add another). Releasing it here would
-            // leave them in the cork slot for good: the slot stays owned, so every later
-            // cork() is a no-op and nothing written afterwards reaches the socket until
-            // something calls flush() explicitly. Flush them like any other corked batch.
+            return false;
         }
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
@@ -3735,13 +3738,9 @@ impl Payload {
 
 /// Trait to abstract over TLSSocket / TCPSocket for `generic_flush`/`generic_write`.
 ///
-/// Returns -1 without touching the fd while the socket is still connecting: a client
-/// session attaches to its `net.Socket` handle before the connect has completed and
-/// writes the connection preface right away, and a send() on a connecting fd is
-/// platform-dependent (EAGAIN on Linux, ENOTCONN on macOS and Windows, which the socket
-/// layer reports as a fatal peer-gone write). -1 is the same "not writable yet" answer a
-/// detached handle gives, so the bytes wait in `write_buffer` for the connect callback's
-/// `setNativeSocket()` flush.
+/// A still-connecting socket (the client session attaches before its connect completes)
+/// answers -1 like a detached one: send() on a connecting fd is ENOTCONN on macOS and
+/// Windows, which the socket layer reports as a fatal peer-gone write.
 pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }

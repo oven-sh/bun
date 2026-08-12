@@ -43,7 +43,9 @@ const tracked: Set<string> | null = (() => {
 // `bun_sys::darwin::EV::ERROR`, ...
 const CONSTANT = String.raw`(?:\w+::)*EV(?:_ERROR|::ERROR)\b`;
 // `x & EV_ERROR`: the bit test. `(?<!&)&(?!&)` keeps `&&` out of it.
-const BIT_TEST = new RegExp(String.raw`(?<!&)&(?!&)\s*${CONSTANT}`);
+const BIT_TEST = new RegExp(String.raw`(?<!&)&(?!&)\s*${CONSTANT}`, "g");
+// `(x & EV_ERROR) == EV_ERROR`: the same test spelled as a masked compare.
+const MASKED_COMPARE = new RegExp(String.raw`(?<!&)&(?!&)\s*${CONSTANT}\s*\)\s*(?:==|!=)\s*${CONSTANT}`, "g");
 // The constant as either operand of `==` / `!=`, optionally parenthesized.
 const COMPARED = new RegExp(String.raw`(?:==|!=)\s*\(?\s*${CONSTANT}|\b${CONSTANT}\s*\)?\s*(?:==|!=)`);
 
@@ -52,15 +54,21 @@ const COMPARED = new RegExp(String.raw`(?:==|!=)\s*\(?\s*${CONSTANT}|\b${CONSTAN
 // swallow everything up to some distant `*/`, silently blinding the lint to
 // whatever is in between. Rust has no `/* */` comments in the kqueue code and
 // a prose mention in one would fail loudly here, which is the better failure.
-function classify(line: string): "bit-test" | "compared" | null {
-  const code = line.replace(/\/\/.*$/, "");
-  // A line that masks with the constant is not comparing the whole word
-  // against it, whatever else it does: `(flags & EV_ERROR) == EV_ERROR` is a
-  // (verbose) bit test, and so is Rust's `flags & EV_ERROR == 0`, since `&`
-  // binds tighter than `==` there.
-  if (BIT_TEST.test(code)) return "bit-test";
-  if (COMPARED.test(code)) return "compared";
-  return null;
+function code(line: string): string {
+  return line.replace(/\/\/.*$/, "");
+}
+
+function hasBitTest(line: string): boolean {
+  BIT_TEST.lastIndex = 0;
+  return BIT_TEST.test(code(line));
+}
+
+// Erase the bit tests first (the masked-compare spelling as a whole, then the
+// bare `& EV_ERROR`, which also takes care of Rust's `flags & EV_ERROR == 0`
+// since `&` binds tighter than `==` there); whatever is still compared against
+// the constant after that is a whole flags word.
+function comparesWholeWord(line: string): boolean {
+  return COMPARED.test(code(line).replace(MASKED_COMPARE, "").replace(BIT_TEST, ""));
 }
 
 const offenders: string[] = [];
@@ -76,14 +84,8 @@ for (const abs of rustSources) {
   const content = await file(abs).text();
   if (!content.includes("EV_ERROR") && !content.includes("EV::ERROR")) continue;
   for (const [index, line] of content.split("\n").entries()) {
-    switch (classify(line)) {
-      case "bit-test":
-        filesWithBitTests.add(source);
-        break;
-      case "compared":
-        offenders.push(`${source}:${index + 1}: ${line.trim()}`);
-        break;
-    }
+    if (hasBitTest(line)) filesWithBitTests.add(source);
+    if (comparesWholeWord(line)) offenders.push(`${source}:${index + 1}: ${line.trim()}`);
   }
 }
 
@@ -96,9 +98,10 @@ test("scans a non-empty set of tracked Rust sources", () => {
 test("the scan still sees the bit tests that are known to be in the tree", () => {
   // Named files rather than a count: if the file set or the comment handling
   // ever stops seeing one of these, the ban below would be vacuous for it.
-  // FilePoll's register/unregister and the process reaper's kevent loop.
+  // The io request loop's event dispatch, FilePoll's register/unregister and
+  // the process reaper's kevent loop.
   expect([...filesWithBitTests].sort()).toEqual(
-    expect.arrayContaining(["src/io/posix_event_loop.rs", "src/spawn/process.rs"]),
+    expect.arrayContaining(["src/io/lib.rs", "src/io/posix_event_loop.rs", "src/spawn/process.rs"]),
   );
 });
 
@@ -110,21 +113,30 @@ test("the pattern recognizes the spellings it claims to", () => {
     "if libc::EV_ERROR == event.flags {",
     "let failed = event.flags == (EV::ERROR);",
     "if event.flags == EV_ERROR && event.data != 0 {",
+    // A bit test elsewhere on the line does not excuse a whole-word compare.
+    "if (event.flags & libc::EV_ERROR) != 0 && event.flags == libc::EV_ERROR {",
+    "let whole = flags == EV::ERROR || (flags & EV::ERROR) == EV::ERROR;",
   ];
-  const allowed = [
+  // Bit tests: allowed, and what the liveness check above counts.
+  const bitTests = [
     "if (event.flags & libc::EV_ERROR) != 0 {",
     "if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {",
     "if (changelist[i].flags & EV::ERROR) == 0 || changelist[i].data == 0 {",
     "if (event.flags & EV_ERROR) == EV_ERROR {",
+    "if (event.flags & libc::EV_ERROR) != libc::EV_ERROR {",
     "if r.flags & libc::EV_ERROR == 0 || r.data == 0 {",
     "if event.data != 0 && event.flags & EV_ERROR != 0 {",
     "let is_error = event.flags & EV::ERROR != 0;",
-    "pub const ERROR: u16 = libc::EV_ERROR;",
-    "    // xnu ORs EV_ERROR in, so `flags == EV_ERROR` is the bug this comment is about",
     "let rejected = (kev.flags & EV::ERROR) != 0; // not kev.flags == EV::ERROR",
   ];
-  expect(banned.filter(s => classify(s) !== "compared")).toEqual([]);
-  expect(allowed.filter(s => classify(s) === "compared")).toEqual([]);
+  // Neither: mentions of the constant that are not tests of a flags word.
+  const neither = [
+    "pub const ERROR: u16 = libc::EV_ERROR;",
+    "    // xnu ORs EV_ERROR in, so `flags == EV_ERROR` is the bug this comment is about",
+  ];
+  expect(banned.filter(s => !comparesWholeWord(s))).toEqual([]);
+  expect(bitTests.filter(s => !hasBitTest(s) || comparesWholeWord(s))).toEqual([]);
+  expect(neither.filter(s => hasBitTest(s) || comparesWholeWord(s))).toEqual([]);
 });
 
 test("kevent EV_ERROR is tested as a bit, never compared against the whole flags word", () => {

@@ -1135,17 +1135,8 @@ impl IoRequestLoop {
                             if close.poll.flags.contains(Flags::PollReadable)
                                 || close.poll.flags.contains(Flags::PollWritable)
                             {
-                                Poll::apply_kqueue(
-                                    ApplyAction::Cancel,
-                                    close.poll,
-                                    close.fd,
-                                    add_one(&mut events_list),
-                                );
+                                close.poll.unregister_kqueue(self.pollfd(), close.fd);
                             }
-                            // From here on another thread may finish and free
-                            // the owner, before the kevent() below has even
-                            // submitted the cancel; safe only because the cancel
-                            // addresses nobody (see `ApplyAction::Cancel`).
                             (close.on_done)(close.ctx);
                         }
                     }
@@ -1159,9 +1150,7 @@ impl IoRequestLoop {
                 self.pollfd().native(),
                 events_list.as_ptr(),
                 c_int::try_from(change_count).expect("int cast"),
-                // The same array may be used for the changelist and eventlist;
-                // a rejected change comes back through it as an EV_ERROR entry
-                // (see `on_update_kqueue`) instead of failing the call.
+                // The same array may be used for the changelist and eventlist.
                 events_list.as_mut_ptr(),
                 c_int::try_from(capacity).expect("int cast"),
                 core::ptr::null(),
@@ -1354,8 +1343,6 @@ pub struct FileAction<'a> {
     pub on_error: fn(*mut (), &sys::Error),
 }
 
-/// No [`PollableTag`], unlike [`FileAction`]: `on_done` hands the owner to
-/// another thread, so nothing a close submits may dispatch back into it.
 pub struct CloseAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
@@ -1498,15 +1485,10 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ApplyAction {
-    /// One-shot `EV_ADD`; its event, or the `EV_ERROR` entry if the add is
-    /// rejected, dispatches to the owner the tag names.
+    /// One-shot `EV_ADD` whose events dispatch to the owner the tag names.
     Readable(PollableTag),
     Writable(PollableTag),
-    /// `EV_DELETE` of whatever the poll still has armed, submitted with
-    /// `udata = 0` so that `on_update_kqueue` drops its reply like the waker's.
-    /// The reply is the rule, not the exception (the one-shot knote is usually
-    /// gone already: ENOENT; or the owner closed the fd first: EBADF), and by
-    /// the time it arrives `tick_kqueue` has handed the owner to another thread.
+    /// `EV_DELETE` of whatever the poll still has armed; dispatches to nobody.
     Cancel,
 }
 
@@ -1618,6 +1600,25 @@ impl Poll {
         self.flags.remove(Flags::Registered);
     }
 
+    /// Applied on the spot rather than with the next batch: the caller hands
+    /// the owner to another thread as soon as this returns.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub(crate) fn unregister_kqueue(&mut self, watcher_fd: Fd, fd: Fd) {
+        let mut change: KEvent = bun_core::ffi::zeroed();
+        Poll::apply_kqueue(ApplyAction::Cancel, self, fd, &mut change);
+        // With nevents = 0 the call returns as soon as the change is applied.
+        // It fails with ENOENT once the one-shot registration has fired and
+        // with EBADF once the fd is closed; either way nothing is left to remove.
+        let _ = kevent_call(
+            watcher_fd.native(),
+            &raw const change,
+            1,
+            core::ptr::null_mut(),
+            0,
+            core::ptr::null(),
+        );
+    }
+
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_update_kqueue(event: KEvent) {
         #[cfg(target_os = "macos")]
@@ -1627,9 +1628,8 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        // udata=0 → tag=.empty is both the waker (registered only to unblock
-        // kevent() so the pending queue drains) and the EV_ERROR reply to an
-        // `ApplyAction::Cancel`, whose owner may already be gone.
+        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
+        // only to unblock kevent() so the pending queue drains.
         if tag == PollableTag::Empty {
             return;
         }
@@ -1638,9 +1638,8 @@ impl Poll {
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
         //
-        // A rejected change comes back with EV_ERROR set in `flags`; xnu ORs it
-        // into the bits we submitted (EV_ADD|EV_ONESHOT|EV_ERROR) while FreeBSD
-        // replaces them, so test the bit rather than the whole word.
+        // xnu ORs EV_ERROR into the flags of a rejected change (EV_ADD|EV_ONESHOT
+        // |EV_ERROR); FreeBSD replaces them. Only the bit is common to both.
         if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time

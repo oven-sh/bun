@@ -4601,6 +4601,42 @@ it("http2 allowHTTP1 takes http.Server's options and checks connections while li
   }
 });
 
+it("http2 allowHTTP1 fallback does not write the default clientError 400 into a response that is already on the wire", async () => {
+  // Node's socketOnError only writes its raw 400 while no in-flight response
+  // has reached the wire; here it must just drop the connection.
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.writeHead(200, { "Content-Length": "10" });
+    res.write("hello");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    let received = "";
+    let sentGarbage = false;
+    socket.on("data", chunk => {
+      received += chunk;
+      if (!sentGarbage && received.endsWith("\r\n\r\nhello")) {
+        sentGarbage = true;
+        socket.write("GARBAGE\r\n\r\n");
+      }
+    });
+    // The server destroys the connection without a TLS close_notify, which the
+    // client may report as an error before 'close'; 'close' is what we wait for.
+    socket.on("error", () => {});
+    socket.on("close", () => onClose(received));
+    const raw = await closed;
+    expect(sentGarbage).toBe(true);
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("hello");
+  } finally {
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

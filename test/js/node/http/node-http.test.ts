@@ -4655,3 +4655,88 @@ it("a 'clientError' listener that keeps an emitted connection open does not pile
     server.close();
   }
 });
+
+describe("default 'clientError' reply on a connection served through server.emit('connection')", () => {
+  // Node's socketOnError answers a parse error with a raw 400 only while no
+  // in-flight response has put bytes on the wire ("Caution must be taken to
+  // avoid corrupting the remote peer"); the connection is destroyed either way.
+  const rawBadRequest = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+  const bodyOf = (raw: string) => raw.slice(raw.indexOf("\r\n\r\n") + 4);
+
+  function serveOneConnection(onRequest: (req: IncomingMessage, res: ServerResponse) => void) {
+    const server = createServer(onRequest);
+    const [clientSide, serverSide] = duplexPair();
+    let received = "";
+    const { promise: bodyArrived, resolve: onBodyArrived } = Promise.withResolvers<void>();
+    clientSide.on("data", chunk => {
+      received += chunk;
+      if (bodyOf(received) === "hello") onBodyArrived();
+    });
+    // The server destroys its own half; wait for that rather than for
+    // duplexPair to propagate it to the client half (Node's never does).
+    const closed = new Promise<string>(resolve => serverSide.on("close", () => resolve(received)));
+    server.emit("connection", serverSide);
+    return { clientSide, serverSide, closed, bodyArrived };
+  }
+
+  function writeHeadAndHalfTheBody(req: IncomingMessage, res: ServerResponse) {
+    res.writeHead(200, { "Content-Length": "10" });
+    res.write("hello");
+  }
+
+  // Let the duplex finish the response writes before the connection goes bad,
+  // so anything the server writes next is pushed to the client immediately
+  // rather than left buffered (and discarded) when it destroys the socket:
+  // a wrongly appended 400 must be observable.
+  const settleWrites = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  it("does not write the raw 400 into a response whose head is already on the wire", async () => {
+    const { clientSide, serverSide, closed, bodyArrived } = serveOneConnection(writeHeadAndHalfTheBody);
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await bodyArrived;
+    await settleWrites();
+    clientSide.write("GARBAGE\r\n\r\n");
+    const received = await closed;
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(bodyOf(received)).toBe("hello");
+    expect(serverSide.destroyed).toBe(true);
+  });
+
+  it("does not write the raw 400 when the peer ends mid request body while the response is on the wire", async () => {
+    // socket 'end' -> parser.finish() reports the truncated body as a parse
+    // error, reaching the same default handler as garbage bytes do.
+    const { clientSide, serverSide, closed, bodyArrived } = serveOneConnection(writeHeadAndHalfTheBody);
+    clientSide.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    await bodyArrived;
+    await settleWrites();
+    clientSide.end();
+    const received = await closed;
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(bodyOf(received)).toBe("hello");
+    expect(serverSide.destroyed).toBe(true);
+  });
+
+  it("still writes the raw 400 when the in-flight response has only called writeHead()", async () => {
+    // writeHead() puts nothing on the wire until the first write/end/flushHeaders
+    // (Node checks _headerSent, not headersSent), so the reply is still safe.
+    const { promise: headAssigned, resolve: onHeadAssigned } = Promise.withResolvers<void>();
+    const { clientSide, serverSide, closed } = serveOneConnection((req, res) => {
+      res.writeHead(200, { "Content-Length": "10" });
+      onHeadAssigned();
+    });
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await headAssigned;
+    clientSide.write("GARBAGE\r\n\r\n");
+    expect(await closed).toBe(rawBadRequest);
+    expect(serverSide.destroyed).toBe(true);
+  });
+
+  it("still writes the raw 400 when no response is in flight", async () => {
+    const onRequest = mock(() => {});
+    const { clientSide, serverSide, closed } = serveOneConnection(onRequest);
+    clientSide.write("GARBAGE\r\n\r\n");
+    expect(await closed).toBe(rawBadRequest);
+    expect(serverSide.destroyed).toBe(true);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+});

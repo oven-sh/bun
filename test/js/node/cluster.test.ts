@@ -451,11 +451,12 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
-// Windows cannot let two workers accept() on copies of one listening socket: the worker that loses
-// the race for a connection blocks inside accept() and its event loop never runs again, so it stops
-// answering IPC and never exits. TCP listens under SCHED_NONE go through the primary there instead.
+// Two workers accepting on copies of one Windows listening socket race each other for every
+// connection, and the loser blocks inside accept(): its event loop never runs again, so it stops
+// answering IPC and never exits. Each connection below is one such race; the primary pings both
+// workers after every one. TCP listens under SCHED_NONE are served by the primary on Windows instead.
 test.skipIf(!isWindows)(
-  "SCHED_NONE: two workers on one port stay responsive and exit after bursts of connections",
+  "SCHED_NONE: two workers sharing one port keep answering IPC while connections arrive, then exit",
   async () => {
     using dir = tempDir("cluster-shared-accept-race", {
       "main.ts": `
@@ -464,20 +465,22 @@ const net = require("node:net");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
 
 if (cluster.isPrimary) {
-  const BURSTS = 8;
-  const PER_BURST = 16;
+  const CONNECTIONS = 100;
   const workers = [cluster.fork(), cluster.fork()];
   const ports = new Set();
   const exits = [];
   let listening = 0;
 
+  function fail(message) {
+    console.log(message);
+    for (const worker of workers) worker.process.kill();
+    process.exit(1);
+  }
+
   cluster.on("listening", (worker, address) => {
     ports.add(address.port);
     if (++listening !== workers.length) return;
-    run(address.port).catch(err => {
-      console.log("error:", err.message);
-      process.exit(1);
-    });
+    run(address.port).catch(err => fail("error: " + err.message));
   });
 
   cluster.on("exit", (worker, code, signal) => {
@@ -496,14 +499,11 @@ if (cluster.isPrimary) {
     });
   }
 
-  function pingWorkers(burst) {
+  function pingWorkers(connection) {
     return Promise.all(
       workers.map(worker => {
         return new Promise(resolve => {
-          const stuck = setTimeout(() => {
-            console.log("worker " + worker.id + " stopped answering after burst " + burst);
-            process.exit(1);
-          }, 10_000);
+          const stuck = setTimeout(() => fail("worker " + worker.id + " stopped answering after connection " + connection), 10_000);
           worker.once("message", () => {
             clearTimeout(stuck);
             resolve();
@@ -515,13 +515,11 @@ if (cluster.isPrimary) {
   }
 
   async function run(port) {
-    for (let burst = 1; burst <= BURSTS; burst++) {
-      const connections = [];
-      for (let i = 0; i < PER_BURST; i++) connections.push(connectOnce(port));
-      await Promise.all(connections);
-      await pingWorkers(burst);
+    for (let connection = 1; connection <= CONNECTIONS; connection++) {
+      await connectOnce(port);
+      await pingWorkers(connection);
     }
-    console.log("served:", BURSTS * PER_BURST, "ports:", ports.size);
+    console.log("served:", CONNECTIONS, "ports:", ports.size);
     for (const worker of workers) worker.disconnect();
   }
 } else {
@@ -541,7 +539,7 @@ if (cluster.isPrimary) {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "served: 128 ports: 1\nexits: 0,0\n",
+      stdout: "served: 100 ports: 1\nexits: 0,0\n",
       stderr: expect.any(String),
       exitCode: 0,
     });

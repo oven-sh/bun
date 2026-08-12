@@ -220,11 +220,11 @@ function exitedAfterDisconnect(worker, message) {
 // worker accepts on its own copy of one socket. UDP has no connections to hand out, and a TLS
 // server accepts natively, so both always share.
 //
-// On Windows a TCP listener is served by the primary even under SCHED_NONE. accept() on a
-// duplicated listener blocks the worker's event loop when another worker takes the connection first
-// (mswsock checks for a pending connection, then waits for one), and libuv's exclusive AFD polls on
-// one socket from two processes cancel each other in a loop. Node shares listeners there through
-// AcceptEx, which Bun's listen sockets do not use.
+// On Windows a TCP listener is served by the primary even under SCHED_NONE. When two workers poll
+// copies of one listening socket, the worker that loses the race for a connection blocks inside
+// accept() (the copy is non-blocking, Winsock waits anyway) and its event loop stops, and libuv's
+// exclusive AFD polls on the same socket from two processes cancel each other in a loop. Node shares
+// listeners there through AcceptEx, which Bun's listen sockets do not use.
 function usesRoundRobinHandle(message) {
   if (message.sharedOnly === true || message.addressType === "udp4" || message.addressType === "udp6") return false;
   if (schedulingPolicy === SCHED_RR) return true;

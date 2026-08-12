@@ -24,19 +24,16 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  canTraceOrderFile,
   downloadArtifacts,
   inheritOrderFile,
   isCI,
-  mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
   printEnvironment,
   regenerateOrderFile,
-  reportOrderFileBootstrap,
-  reportOrderFileCannotTrace,
   reportOrderFileFailure,
+  reportOrderFileNotInherited,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
   startGroup,
@@ -159,15 +156,14 @@ async function main(): Promise<void> {
 
     await startGroup("Build", () => runNinja());
 
-    // Trace and relink when we are a release, when a commit asked for it, or when
-    // there was nothing to inherit. A failed trace is not fatal: the order file is
-    // an optimization, and a flaky workload must not kill a release 40 minutes in.
-    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
-      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
+    // Trace and relink when we are a release or when a commit asked for it. A
+    // failed trace is not fatal: the order file is an optimization, and a flaky
+    // workload must not kill a release 40 minutes in.
+    if (shouldGenerateOrderFile(result.cfg, orderCtx)) {
       let traced = true;
       await startGroup("Generate symbol order file", () => {
         try {
-          regenerateOrderFile(result.cfg, orderCtx);
+          regenerateOrderFile(result.cfg);
         } catch (error) {
           traced = false;
           reportOrderFileFailure(error as Error);
@@ -178,10 +174,13 @@ async function main(): Promise<void> {
         // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
         if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
       }
-    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      // Inherited: a stale file is a slower binary, not a broken one.
-      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
-      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+    } else if (orderFileEligible(result.cfg, orderCtx)) {
+      if (!inherited) {
+        reportOrderFileNotInherited(result.cfg);
+      } else if (result.output.exe) {
+        // Inherited: a stale file is a slower binary, not a broken one.
+        verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+      }
     }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.

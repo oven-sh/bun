@@ -250,9 +250,10 @@ pub fn user_kill_signal_delivered() -> bool {
 static USER_KILL_SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
 
 /// SIGHUP/SIGINT/SIGQUIT/SIGTERM on every supported platform, plus the
-/// Windows CRT's SIGBREAK.
+/// Windows CRT's SIGBREAK (21 is SIGTTIN on POSIX, which is job control,
+/// not kill intent).
 fn is_kill_intent_signal(number: i32) -> bool {
-    matches!(number, 1 | 2 | 3 | 15 | 21)
+    matches!(number, 1 | 2 | 3 | 15) || (cfg!(windows) && number == 21)
 }
 
 /// Both signal-delivery paths note the signal before emitting: POSIX in
@@ -290,6 +291,17 @@ impl PosixSignalTask {
         {
             bun_core::Output::flush();
             bun_core::Global::exit(0);
+        }
+        // A kill signal while the watcher is parked after a watch exit: the
+        // run is over and nothing deferred from the handler may fire there,
+        // so end the watcher now with the completed run's exit code.
+        if user_kill_signal_delivered() {
+            let vm = global_object.bun_vm().as_mut();
+            if vm.watch_exit_requested {
+                bun_core::Output::flush();
+                vm.on_exit();
+                vm.global_exit();
+            }
         }
     }
 }

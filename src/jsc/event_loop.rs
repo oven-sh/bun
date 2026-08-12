@@ -993,8 +993,8 @@ impl EventLoop {
 
     /// Any thread: make the thread running this loop return from its poll. A no-op before
     /// `ensure_waker` has run (the first tick drains whatever was queued). Only the loop pointer
-    /// is read here: the loop's thread may be inside `tick_with_timeout` holding
-    /// `platform_loop_opt()`'s `&mut`, so the loop is only touched through `uws::Loop::wakeup`.
+    /// is read here: the loop's thread may be parked in one of the `&mut self` tick methods on
+    /// the loop, so it is only touched through `uws::Loop::wakeup`.
     pub fn wakeup(&self) {
         #[cfg(windows)]
         let loop_ = self.uws_loop.map(NonNull::as_ptr);

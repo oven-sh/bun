@@ -544,7 +544,9 @@ devTest("error report endpoint tolerates a browser url whose normalized origin i
 async function expectErrorPage(response: Promise<Response>, ...messages: string[]) {
   const res = await response;
   const text = await res.text();
-  const payload = JSON.parse(/<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text)![1]);
+  const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
+  if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
+  const payload = JSON.parse(match[1]);
   expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
   expect(res.status).toBe(500);
 }

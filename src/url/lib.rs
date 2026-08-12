@@ -52,9 +52,7 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // Getters are `safe fn` over `&URL`: C++ (BunString.cpp) only reads, and `URL` is a ZST,
-    // so any non-null pointer is a valid `&URL`. `URL__deinit` (`delete`) and
-    // `URL__originLength` (raw slice pair) stay `unsafe fn`.
+    // Getters are `safe fn`: C++ only reads, and `&URL` (a ZST) is valid for any non-null pointer.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
@@ -143,12 +141,10 @@ pub mod whatwg {
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
-        /// `delete`s the WTF::URL. Takes a pointer, not `&mut self`: a reference to this ZST
-        /// proves neither ownership nor liveness.
-        ///
         /// # Safety
-        /// `this` came from `from_string`/`from_utf8`, has not been destroyed, and is not
-        /// used afterwards.
+        /// `this` must be a live handle from `from_string`/`from_utf8`; it is `delete`d here
+        /// and must not be used afterwards. (A `&mut URL` to this ZST would prove neither,
+        /// hence the pointer.)
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: fn contract.
             unsafe { URL__deinit(this) }

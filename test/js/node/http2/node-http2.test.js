@@ -4075,7 +4075,7 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
 // element, like an array value in the object form (node: buildNgHeaderString treats both forms the
 // same). Every assertion below is on the flat list the peer decoded from the wire, so it sees one
 // name/value pair per field; the expected values were checked against node v26.3.0.
-describe.concurrent("http2 raw-headers arrays with array values", () => {
+describe("http2 raw-headers arrays with array values", () => {
   function nonPseudoFields(rawHeaders) {
     const fields = [];
     for (let i = 0; i < rawHeaders.length; i += 2) {

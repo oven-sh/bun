@@ -1201,17 +1201,13 @@ pub mod bv2_impl {
                 pub was_file: bool,
                 /// Defer may only be called once (JS thread).
                 pub called_defer: bool,
-                /// `.defer()`ed and neither drained nor answered yet: its
-                /// scan-counter unit sits in `Graph::deferred_pending` instead of
-                /// `pending_items` (bundle thread only).
+                /// Its scan-counter unit currently sits in `Graph::deferred_pending`
+                /// (bundle thread only).
                 pub(crate) deferred: bool,
-                /// Intrusive Mini-loop queue node carrying the onLoad answer to
-                /// the bundle thread (`on_load_async`).
+                /// Mini-loop queue node for the onLoad answer (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
-                /// Same, for the `.defer()` notification (`on_defer_async`). A
-                /// separate node because a plugin may answer right after
-                /// deferring, while this one is still queued; `called_defer`
-                /// guarantees it is enqueued at most once.
+                /// Mini-loop queue node for the `.defer()` notification
+                /// (`on_defer_async`), which may still be queued when the answer is posted.
                 pub(crate) defer_task:
                     bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// Links in `Graph::outstanding_loads`; bundle thread only.
@@ -4315,17 +4311,12 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Plugin host's thread: hand a plugin request back to the loop that
-        /// *owns* `BundleV2`. For `Bun.build` this is a Mini loop running on
-        /// the bundler thread, so the callback must land there — not on the JS
-        /// plugin loop — or it will mutate `graph` / allocate from `graph.heap`
-        /// off-thread.
+        /// Plugin host's thread: run a callback on the loop that owns this pass
+        /// (for `Bun.build`, the bundle thread's Mini loop; `graph` is only touched there).
         ///
         /// # Safety
-        /// `task_offset` is `offset_of!(C, <field>)` of an
-        /// `AnyTaskWithExtraContext` field of `*request` that no other hop has
-        /// queued (a node may sit in the Mini queue once), and `*request`
-        /// outlives the hop (arena-owned by this pass).
+        /// `task_offset` locates an `AnyTaskWithExtraContext` field of `*request` that is
+        /// not queued anywhere else, and `*request` outlives the hop.
         unsafe fn post_to_own_loop<C>(
             &mut self,
             request: *mut C,
@@ -4351,8 +4342,7 @@ pub mod bv2_impl {
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: fn contract; the mini loop dispatches `on_mini_loop`
-                    // on the bundler thread with this `BundleV2` as the extra ctx.
+                    // SAFETY: fn contract; the tick passes this `BundleV2` as the extra ctx.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<C, BundleV2<'static>>(
                             request,
@@ -4366,8 +4356,8 @@ pub mod bv2_impl {
 
         /// The onLoad answer is in `load.value`; run `on_load` on the owning loop.
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-            // SAFETY: `task` is only ever queued by this hop, which the plugin
-            // glue runs once per load; `load` is arena-owned by this pass.
+            // SAFETY: the plugin glue answers a load once, so `task` is queued once;
+            // `load` is arena-owned by this pass.
             unsafe {
                 self.post_to_own_loop(
                     std::ptr::from_mut(load),
@@ -4378,13 +4368,11 @@ pub mod bv2_impl {
             }
         }
 
-        /// The onLoad callback called `.defer()`; run `on_notify_defer` on the
-        /// owning loop. Same queue as the load's answer, so it arrives before
-        /// the answer exactly when it was issued before it.
+        /// The onLoad callback called `.defer()`; run `on_notify_defer` on the owning
+        /// loop. Shares the answer's queue, so the two arrive in the order they were issued.
         pub fn on_defer_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-            // SAFETY: `defer_task` is only ever queued by this hop, which
-            // `Load::called_defer` limits to once per load; `load` is
-            // arena-owned by this pass.
+            // SAFETY: `called_defer` allows one `.defer()`, so `defer_task` is queued once;
+            // `load` is arena-owned by this pass.
             unsafe {
                 self.post_to_own_loop(
                     std::ptr::from_mut(load),
@@ -4455,9 +4443,7 @@ pub mod bv2_impl {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             this.graph.outstanding_loads.unlink(load);
             if load.deferred {
-                // Answered (or failed) without waiting for its `.defer()`
-                // promise: bring the unit back so the answer below can hand it
-                // to the parse task or consume it like any other load's.
+                // Answered before the drain: the paths below expect the unit in `pending_items`.
                 load.deferred = false;
                 this.graph.deferred_pending -= 1;
                 this.increment_scan_counter();
@@ -6982,15 +6968,11 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// Owning loop: `load`'s onLoad callback called `.defer()`. Park the
-        /// load's scan-counter unit in `deferred_pending` so the scan can reach
-        /// zero without it; `drain_deferred_tasks` moves it back when it does.
+        /// Owning loop: `load`'s onLoad callback called `.defer()`, so its scan-counter
+        /// unit moves to `deferred_pending` until `drain_deferred_tasks` (or `on_load`).
         pub(crate) fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             this.thread_lock.assert_locked();
-            // A `.defer()` issued after the callback already answered (or after
-            // `fail_outstanding_plugin_requests`) arrives after `on_load`, which
-            // disposed of the unit; the promise still settles with the next
-            // drain, if any.
+            // `.defer()` called after answering: `on_load` already disposed of the unit.
             if !load.outstanding.is_linked() {
                 return;
             }

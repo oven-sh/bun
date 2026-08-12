@@ -1408,11 +1408,12 @@ pub mod js_bundler {
     ///
     /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
-    /// `…__addError`) stay safe at the call site. `bv2` is the back-reference
-    /// set in `Resolve::init`/`Load::init`; the `BundleV2` heap allocation
-    /// outlives every plugin callback (owner-creates-child, single-JS-thread).
-    /// The `BundleV2` storage is heap-disjoint from `Resolve`/`Load`, so the
-    /// returned `&mut` does not alias the caller's `&mut Resolve`/`&mut Load`.
+    /// `…__addError`) stay safe at the call site. `bv2`
+    /// is the back-reference set in `Resolve::init`/`Load::init`; the
+    /// `BundleV2` heap allocation outlives every plugin callback (owner-
+    /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
+    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
+    /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
     fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
         // SAFETY: see fn doc — live backref (owner-creates-child), single
@@ -1501,9 +1502,7 @@ pub mod js_bundler {
                 bstr::BStr::new(&self.path)
             );
 
-            // Parks this load's scan-counter unit on the loop that owns the
-            // bundle (`BundleV2::on_notify_defer`); the promise is settled by
-            // `DeferredBatchTask` once the rest of the scan has drained.
+            // Read before posting: the owning loop may write to the `Load` once it has it.
             let bv2 = self.bv2;
             bv2_mut(bv2).on_defer_async(self);
             Ok(bv2_plugin(bv2).append_defer_promise())

@@ -53,10 +53,8 @@ pub struct Graph<'a> {
     /// is "moved" into this counter (pending_items -= 1; deferred_pending += 1)
     ///
     /// When `pending_items` hits zero and there are deferred pending tasks, those
-    /// tasks will be run, and the count is "moved" back to `pending_items`
-    /// (`drain_deferred_tasks`). A load that is answered before then takes its
-    /// own count back (`BundleV2::on_load`). `Load::deferred` marks whose
-    /// counts are in here.
+    /// tasks will be run, and the count is "moved" back to `pending_items`;
+    /// a load answered before then moves its own back (`BundleV2::on_load`).
     pub(crate) deferred_pending: u32,
 
     /// onResolve / onLoad requests a plugin currently holds (dispatched to its

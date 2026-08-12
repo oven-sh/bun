@@ -1401,9 +1401,7 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"[");
                         self.add_for_new_line(1);
 
-                        // `indent` and `quote_strings` must be restored even when
-                        // `get_direct_index` / `Tag::get` / `format` throw. Wrap the fallible
-                        // body in a closure and restore unconditionally afterward.
+                        // Closure so `indent`/`quote_strings` are restored if an element throws.
                         let inner: JsResult<()> = (|| {
                             for i in 0..len {
                                 if i > 0 {
@@ -1413,12 +1411,10 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                // pretty-format prints a hole as a bare comma, so a hole and
-                                // an explicit `undefined` stay distinguishable in diffs/snapshots.
-                                // Own indices only, like Bun__deepEquals: an index inherited
-                                // from the prototype is a hole here too.
+                                // Own indices only, the same view Bun__deepEquals compares.
                                 let element = value.get_direct_index(self.global_this, i)?;
                                 if element.is_empty() {
+                                    // A hole is just the comma, as in pretty-format.
                                     continue;
                                 }
                                 let tag = Tag::get(element, self.global_this)?;

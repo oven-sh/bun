@@ -2524,9 +2524,7 @@ impl JSValue {
         }
         JSBuffer__isBuffer(global, self)
     }
-    /// `JSValue.getDirectIndex` — read the `i`th indexed own property (no
-    /// prototype walk). Returns the empty value for holes. An own accessor at
-    /// that index is invoked, so this can throw. `self` must be an object.
+    /// Own element `i` or empty for a hole; no prototype walk. May run an accessor and throw.
     pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn JSC__JSValue__getDirectIndex(

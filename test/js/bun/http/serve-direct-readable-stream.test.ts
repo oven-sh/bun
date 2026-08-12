@@ -617,6 +617,40 @@ describe("end() under transport backpressure over h3", () => {
     const res = await h3fetch(server);
     expect(await res.text()).toBe("hey");
   });
+
+  // close() must park the same pending flush as end(). It used to leave the
+  // tail to the auto-flusher instead, and when that try_end hit backpressure
+  // nothing was parked for the request to wait on, so the sink was torn down
+  // and the body came back empty even from an async pull().
+  test("async pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+
+  test("sync pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
 });
 
 // The controller's detach() used to skip the close callback when it was
@@ -728,4 +762,57 @@ test("close() with unflushed data writes the chunked terminator exactly once", a
   const afterTerminator = data.slice(data.indexOf("0\r\n\r\n") + 5);
   expect(afterTerminator.slice(0, 12)).toBe("HTTP/1.1 200");
   expect(afterTerminator).toEndWith("ok");
+});
+
+// close() with bytes still buffered below the high-water mark left them for
+// the auto-flusher. A pull() that closes synchronously never gets there: the
+// request finalizes the sink as soon as pull() returns, so the buffered tail
+// was dropped and the client got Content-Length: 0 (or, after a mid-stream
+// flush(), a chunked body missing its tail). end() in the same position sent
+// everything; close() must too.
+describe("buffered bytes are sent when the controller finishes", () => {
+  type Framing = { body: string; contentLength: string | null; transferEncoding: string | null };
+  const unflushed: Framing = { body: "helloworld", contentLength: "10", transferEncoding: null };
+  const flushedMidway: Framing = { body: "helloworld", contentLength: null, transferEncoding: "chunked" };
+
+  // The writes stay below the sink's high-water mark, so whatever follows the
+  // last flush() is still buffered when the controller is finished.
+  const writeThen = (finish: "close" | "end", flushMidway: boolean) => (c: any) => {
+    c.write("hello");
+    if (flushMidway) c.flush();
+    c.write("world");
+    c[finish]();
+  };
+
+  const cases: [name: string, pull: (c: any) => unknown, expected: Framing][] = [
+    ["sync pull, close()", writeThen("close", false), unflushed],
+    ["sync pull, end()", writeThen("end", false), unflushed],
+    ["sync pull, flush() midway, close()", writeThen("close", true), flushedMidway],
+    ["sync pull, flush() midway, end()", writeThen("end", true), flushedMidway],
+    ["async pull, close()", async c => writeThen("close", false)(c), unflushed],
+    ["async pull, flush() midway, close()", async c => writeThen("close", true)(c), flushedMidway],
+    [
+      "sync pull, single write, close()",
+      c => {
+        c.write("helloworld");
+        c.close();
+      },
+      unflushed,
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, pull, expected) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ type: "direct", pull } as any)),
+    });
+
+    const response = await fetch(server.url);
+    expect({
+      body: await response.text(),
+      contentLength: response.headers.get("content-length"),
+      transferEncoding: response.headers.get("transfer-encoding"),
+    }).toEqual(expected);
+    expect(response.status).toBe(200);
+  });
 });

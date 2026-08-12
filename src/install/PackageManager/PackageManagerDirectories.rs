@@ -378,21 +378,34 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 }
 
 /// `<cache>/.id`: 16 random bytes created once per cache directory; npm cache
-/// entry fingerprints are keyed with it. A truncated file is replaced (its
-/// fingerprinted entries are then fetched again); if the file cannot be read
-/// or created at all, a per-process random key is used and this run does not
-/// reuse fingerprinted entries.
+/// entry fingerprints are keyed with it. A file left empty or truncated gets a
+/// fresh key written into it (its fingerprinted entries are then fetched
+/// again); if the file cannot be read or created at all, a per-process random
+/// key is used and this run does not reuse fingerprinted entries.
 fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
     let name = bun_core::zstr!(".id");
     let mut id: integrity::CacheDirId = [0; 16];
-    for _ in 0..3 {
+    for attempt in 0..3 {
         match File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0) {
             Ok(file) => match file.read_all(&mut id) {
                 Ok(len) if len == id.len() => return id,
-                // just created by a concurrent install that has not written it yet
-                Ok(0) => continue,
+                // empty: another install may be between creating and writing it
+                Ok(0) if attempt < 2 => continue,
+                // still empty, or a wrong length: write a fresh key in place
                 Ok(_) => {
-                    let _ = sys::unlinkat(cache_dir.fd(), name);
+                    bun_boringssl_sys::rand_bytes(&mut id);
+                    if File::openat(
+                        cache_dir.fd(),
+                        name.as_bytes(),
+                        sys::O::WRONLY | sys::O::TRUNC,
+                        0,
+                    )
+                    .and_then(|file| file.write_all(&id))
+                    .is_ok()
+                    {
+                        return id;
+                    }
+                    break;
                 }
                 Err(_) => break,
             },

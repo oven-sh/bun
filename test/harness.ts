@@ -2050,10 +2050,16 @@ export function installCacheFolderName(
   let folder = `${name}@${version}${registryHost ? "@@" + registryHost : ""}@@@2`;
   if (!integrity) return folder;
   const match = /^(sha1|sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(integrity);
+  if (!match) {
+    throw new Error(`installCacheFolderName: expected "<sha1|sha256|sha384|sha512>-<base64>", got ${integrity}`);
+  }
   const digestLengths = { sha1: 20, sha256: 32, sha384: 48, sha512: 64 };
-  const digest = match && Buffer.from(match[2], "base64");
-  if (!match || !digest || digest.length !== digestLengths[match[1] as keyof typeof digestLengths]) {
-    throw new Error(`installCacheFolderName: not a supported integrity value: ${integrity}`);
+  const digest = Buffer.from(match[2], "base64");
+  const expectedLength = digestLengths[match[1] as keyof typeof digestLengths];
+  if (digest.length !== expectedLength) {
+    throw new Error(
+      `installCacheFolderName: ${match[1]} digest decodes to ${digest.length} bytes, expected ${expectedLength}: ${integrity}`,
+    );
   }
   // same NAME_MAX rule as `bun install`: no fingerprint when it and a
   // `_patch_hash=<16 hex>` suffix would not fit in a 255-byte component

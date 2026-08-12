@@ -24,6 +24,8 @@ public:
     {
     }
 
+    static WTF::String defaultLanguage();
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

@@ -2,16 +2,31 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "BunGlobalScope.h"
+#include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/VMTraps.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
+#include <unicode/utypes.h>
+
+// Apple's SDK has no <unicode/uloc.h>; utypes.h supplies U_CAPI + renaming.
+U_CAPI const char* U_EXPORT2 uloc_getDefault(void);
 
 namespace Bun {
 
 using namespace JSC;
+
+// Ports V8's Isolate::DefaultLocale(). A null hook falls through WTF::platformUserPreferredLanguages() to "en-US".
+String GlobalScope::defaultLanguage()
+{
+    const char* localeID = uloc_getDefault();
+    if (!strcmp(localeID, "en_US_POSIX") || !strcmp(localeID, "c") || !strcmp(localeID, "C"))
+        return "en-US"_s;
+    String tag = JSC::languageTagForLocaleID(localeID);
+    return tag.isEmpty() ? "und"_s : tag;
+}
 
 void GlobalScope::finishCreation(JSC::VM& vm)
 {

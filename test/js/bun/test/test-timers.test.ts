@@ -18,7 +18,7 @@ test("we can go back in time", () => {
     expect(DateBeforeMocked.now).toBe(Date.now);
 
     // Jest doesn't property mock new Intl.DateTimeFormat().format()
-    expect(new Intl.DateTimeFormat().format()).toBe("12/19/1995");
+    expect(new Intl.DateTimeFormat("en-US").format()).toBe("12/19/1995");
   } else {
     expect(DateBeforeMocked).not.toBe(Date);
     expect(DateBeforeMocked.now).not.toBe(Date.now);

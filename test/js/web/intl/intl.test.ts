@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against (Linux); macOS uses Apple's libicucore and
@@ -305,5 +305,91 @@ describe("exhaustive locale sweep (every compressed item)", () => {
       const b = new Intl.DisplayNames(loc, { type: "region" }).of("US");
       expect(a).toBe(b);
     }
+  });
+});
+
+// DefaultLocale (https://tc39.es/ecma402/#sec-defaultlocale)
+// https://github.com/oven-sh/bun/issues/8480, https://github.com/oven-sh/bun/issues/24851
+// On Windows ICU ignores LC_*/LANG and reads the system locale (Node behaves the same).
+describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () => {
+  const scrubbed = (localeEnv: Record<string, string>) => {
+    const env = { ...bunEnv };
+    delete env.LC_ALL;
+    delete env.LC_MESSAGES;
+    delete env.LANG;
+    return { ...env, ...localeEnv };
+  };
+  const resolveDefaultLocale = async (localeEnv: Record<string, string>) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(JSON.stringify([
+           Intl.DateTimeFormat().resolvedOptions().locale,
+           Intl.NumberFormat().resolvedOptions().locale,
+           Intl.Collator().resolvedOptions().locale,
+         ]));`,
+      ],
+      env: scrubbed(localeEnv),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout) as [string, string, string];
+  };
+
+  test.each([
+    ["zh_CN.UTF-8", "zh-CN"],
+    ["fr_FR.UTF-8", "fr-FR"],
+    ["en_IN.UTF-8", "en-IN"],
+    ["ja_JP", "ja-JP"],
+    ["sv_SE.ISO8859-1", "sv-SE"],
+  ])("LANG=%s → %s", async (raw, expected) => {
+    expect(await resolveDefaultLocale({ LANG: raw })).toEqual([expected, expected, expected]);
+  });
+
+  test("LC_ALL overrides LC_MESSAGES and LANG", async () => {
+    expect(
+      await resolveDefaultLocale({ LC_ALL: "de_DE.UTF-8", LC_MESSAGES: "fr_FR.UTF-8", LANG: "ja_JP.UTF-8" }),
+    ).toEqual(["de-DE", "de-DE", "de-DE"]);
+  });
+
+  test("LC_MESSAGES overrides LANG", async () => {
+    expect(await resolveDefaultLocale({ LC_MESSAGES: "de_DE.UTF-8", LANG: "fr_FR.UTF-8" })).toEqual([
+      "de-DE",
+      "de-DE",
+      "de-DE",
+    ]);
+  });
+
+  test.each(["C", "C.UTF-8"])("LC_ALL=%s masks a real LANG with en-US", async raw => {
+    expect(await resolveDefaultLocale({ LC_ALL: raw, LANG: "de_DE.UTF-8" })).toEqual(["en-US", "en-US", "en-US"]);
+  });
+
+  test("unset locale falls back to en-US", async () => {
+    expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US"]);
+  });
+
+  // Apple's libicucore handles getenv("LC_ALL")=="" differently from the upstream ICU Bun bundles on Linux.
+  test.skipIf(!isLinux)('set-but-empty LC_ALL="" resolves to und (matches Node.js)', async () => {
+    expect(await resolveDefaultLocale({ LC_ALL: "", LANG: "de_DE.UTF-8" })).toEqual(["und", "und", "und"]);
+  });
+
+  // `-p` runs under Zig::EvalGlobalObject; `vm.runInNewContext` runs under NodeVMGlobalObject.
+  test("EvalGlobalObject (bun -p) and NodeVMGlobalObject (node:vm) see the same default", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-p",
+        `require("node:vm").runInNewContext("Intl.DateTimeFormat().resolvedOptions().locale") + " " + (1234567.89).toLocaleString()`,
+      ],
+      env: scrubbed({ LC_ALL: "de_DE.UTF-8" }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("de-DE 1.234.567,89\n");
+    expect(exitCode).toBe(0);
   });
 });

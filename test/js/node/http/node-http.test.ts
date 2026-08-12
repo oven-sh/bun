@@ -4323,13 +4323,22 @@ describe("connectionListener requireHostHeader", () => {
 });
 
 describe("connectionListener header assembly", () => {
-  // One kept-alive connection served through server.emit("connection", ...).
+  // One connection served through server.emit("connection", ...) that the server is expected to
+  // keep alive: `failed` rejects (with everything received so far) if it errors or ends instead.
   function keepAliveConnection(server: Server) {
     const [clientSide, serverSide] = duplexPair();
     let received = "";
+    const { promise: failed, reject } = Promise.withResolvers<never>();
+    failed.catch(() => {});
+    const fail = (what: string) => reject(new Error(`${what}; received: ${JSON.stringify(received)}`));
     clientSide.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    clientSide.on("end", () => fail("server ended the connection"));
+    clientSide.on("error", err => reject(err));
+    serverSide.on("error", err => reject(err));
+    serverSide.on("close", () => fail("server destroyed the connection"));
     server.emit("connection", serverSide);
     return {
+      failed,
       write(rawRequest: string) {
         clientSide.write(rawRequest);
       },
@@ -4362,7 +4371,7 @@ describe("connectionListener header assembly", () => {
       async serve(connection: ReturnType<typeof keepAliveConnection>, rawRequest: string) {
         responseClosed = Promise.withResolvers<void>();
         connection.write(rawRequest);
-        await responseClosed.promise;
+        await Promise.race([responseClosed.promise, connection.failed]);
       },
     };
   }

@@ -5,7 +5,7 @@ let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
-const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
+const { UV_EINVAL } = process.binding("uv");
 
 const ArrayIsArray = Array.isArray;
 
@@ -102,7 +102,7 @@ export default class RoundRobinHandle {
     this.server.once("listening", done);
     this.server.once("error", err => {
       const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
-      send(raw != null ? uvTranslateSysError(raw) : einvalErrorCode(), null, null);
+      send(raw != null ? uvTranslateSysError(raw) : UV_EINVAL, null, null);
     });
   }
 

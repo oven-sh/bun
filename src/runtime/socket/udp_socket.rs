@@ -404,7 +404,7 @@ impl UDPSocketConfig {
         };
 
         let shared_fd = options
-            .get_truthy(global_this, "$sharedFd")?
+            .fast_get(global_this, bun_jsc::BuiltinName::sharedFd)?
             .is_some_and(|v| v.to_boolean());
 
         let mut config = Self {

@@ -107,7 +107,7 @@ pub(crate) fn do_send(
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
         if options_
-            .get(global_object, "$internal")?
+            .fast_get(global_object, bun_jsc::BuiltinName::internal)?
             .is_some_and(|v| v.to_boolean())
         {
             is_internal = IsInternal::Internal;

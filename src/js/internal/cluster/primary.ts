@@ -7,8 +7,7 @@ const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
-const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
+const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
 
@@ -233,11 +232,7 @@ function queryServer(worker, message) {
     "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
     "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
-    send(
-      worker,
-      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
-      null,
-    );
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
   if (
@@ -249,11 +244,7 @@ function queryServer(worker, message) {
     message.addressType !== "udp4" &&
     message.addressType !== "udp6"
   ) {
-    send(
-      worker,
-      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
-      null,
-    );
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
 
@@ -311,7 +302,7 @@ function queryServer(worker, message) {
       serverHandle,
     );
     if (sent === null && serverHandle !== null && serverHandle !== undefined) {
-      send(worker, { errno: enobufsErrorCode(), key, ack: message.seq, data }, null);
+      send(worker, { errno: UV_ENOBUFS, key, ack: message.seq, data }, null);
       // The worker never got the handle, so it will never send act:close for it.
       if (handle.remove(worker) && handles.get(key) === handle) handles.delete(key);
     }

@@ -695,7 +695,7 @@ function bindServerHandle(self, options, errCb) {
     state.sharedHandle = handle;
     // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
     handle.adopted = true;
-    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd, "$sharedFd": true }, handle);
+    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd }, handle);
   });
 }
 
@@ -711,7 +711,7 @@ function releaseSharedHandle(state, handle) {
 // 'listening' fires.
 function startBunSocket(self, state, createOptions, sharedHandle?) {
   try {
-    Bun.udpSocket({
+    const udpOptions: any = {
       ...createOptions,
       socket: {
         data: (_socket, data, port, address, flags) => {
@@ -749,7 +749,10 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
           self.emit("error", error);
         },
       },
-    }).$then(
+    };
+    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
+    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {
           // Closed while the bind was in flight.

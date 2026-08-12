@@ -5293,6 +5293,9 @@ enum class BuiltinNamesMap : uint8_t {
     type,
     signal,
     cmd,
+    // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
+    internal,
+    sharedFd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5371,6 +5374,12 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::cmd: {
         return clientData->builtinNames().cmdPublicName();
+    }
+    case BuiltinNamesMap::internal: {
+        return clientData->builtinNames().internalPrivateName();
+    }
+    case BuiltinNamesMap::sharedFd: {
+        return clientData->builtinNames().sharedFdPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();

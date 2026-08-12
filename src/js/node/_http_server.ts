@@ -18,7 +18,7 @@ const {
   validateFunction,
   validateOneOf,
 } = require("internal/validators");
-const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -110,7 +110,6 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const kClusterSendOptions = { __proto__: null, "$internal": true };
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -680,7 +679,7 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      process.send(message, undefined, kClusterSendOptions);
+      process.send(message, undefined, kInternalSendOptions);
     });
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);

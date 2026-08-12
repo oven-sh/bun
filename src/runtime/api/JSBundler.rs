@@ -1789,9 +1789,7 @@ pub mod js_bundler {
         }
     }
 
-    /// Owns a cell from [`PluginJscExt::create`]; `Drop` is its one
-    /// [`PluginJscExt::destroy`]. The cell is a protected JSCell, not a heap
-    /// allocation, so nothing else (a `Box<Plugin>` included) releases it. JS thread only.
+    /// A [`PluginJscExt::create`] cell; dropping it is its [`PluginJscExt::destroy`]. JS thread only.
     pub struct OwnedPlugin(core::ptr::NonNull<Plugin>);
 
     impl OwnedPlugin {

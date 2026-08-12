@@ -92,8 +92,7 @@ pub struct JSBundleCompletionTask {
 pub(crate) enum BuildPlugins {
     /// `Bun.build({ plugins })`: created for this one build.
     Owned(OwnedPlugin),
-    /// HTML route build: owned by the server's `ServePlugins`, which outlives
-    /// the build like the route's own server back-reference does.
+    /// HTML route build: owned by the server's `ServePlugins`.
     Borrowed(NonNull<Plugin>),
 }
 

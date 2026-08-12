@@ -1032,12 +1032,11 @@ enum WaitError {
 // `run_queue` header it reads immediately after. With the default `repr(Rust)`
 // the compiler is free to reorder fields (the 4-byte `Event` invites it),
 // which profiled ~43% hotter on the steal traversal.
-//
-// Stolen from by other workers once registered, so every method takes `&self`.
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
-    /// Work-stealing cursor into the pool's `threads` stack; owner-private.
+    /// Steal cursor into the pool's `threads` stack. A `Cell` because other
+    /// workers are stealing from this struct while `pop` runs, so `pop` takes `&self`.
     target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
@@ -1195,7 +1194,7 @@ impl Thread {
         // SAFETY: self_ptr is our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
 
-        // Published now, so our own view is shared too (see the note on `Thread`).
+        // Published now: from here on this thread, like the stealers, only borrows it shared.
         let this: &Thread = &self_;
         let stats = stats_enabled();
         let mut is_waking = false;

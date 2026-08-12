@@ -245,10 +245,8 @@ impl PosixLoop {
 
     /// Make the poll in progress on this loop (or the next one) return. Any thread.
     ///
-    /// Takes `this: *mut Self` (not `&mut self`): callers are typically other threads (or a
-    /// signal handler) waking a loop whose own thread is inside `tick*`/`run`, holding a
-    /// `&mut Loop` across the blocking call, and `us_wakeup_loop` writes to `pending_wakeups`.
-    /// A `&mut self` receiver would be a second `&mut` over those bytes, live at the same time.
+    /// Raw pointer, not `&mut self`: the loop's own thread holds `&mut Loop` across `tick*`/`run`
+    /// while other threads call this, and `us_wakeup_loop` writes `pending_wakeups`.
     ///
     /// # Safety
     /// `this` must be a live loop returned by `create`/`get` and not yet destroyed.
@@ -448,14 +446,13 @@ impl WindowsLoop {
         self.uv().is_active()
     }
 
-    /// Make the poll in progress on this loop (or the next one) return. Any thread. See
-    /// `PosixLoop::wakeup` for why this takes the raw pointer rather than `&mut self`.
+    /// See `PosixLoop::wakeup`. Any thread.
     ///
     /// # Safety
     /// `this` must be a live loop returned by `create`/`get` and not yet destroyed.
     pub unsafe fn wakeup(this: *mut Self) {
-        // SAFETY: `this` is a live loop per fn contract; `us_wakeup_loop` (`uv_async_send`)
-        // is thread-safe.
+        // SAFETY: `this` is a live loop per fn contract; `us_wakeup_loop` (`uv_async_send`) is
+        // thread-safe.
         unsafe { c::us_wakeup_loop(this) };
     }
 
@@ -648,9 +645,8 @@ mod c {
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Re-exported raw for bun_io's `WindowsWaker::wait`, which parks its thread inside it while
-// other threads call `Loop::wakeup` on the same loop; going through the `&mut self` `run` would
-// hold a `&mut Loop` across the park (see the noalias warning on `mod c` above).
+// For bun_io's `WindowsWaker::wait`, which must not hold the `&mut Loop` that `run` would take
+// across the park (see there).
 pub use c::us_loop_run;
 
 unsafe extern "C" {

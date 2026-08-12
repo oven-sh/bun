@@ -85,9 +85,8 @@ impl AnyEventLoop {
     }
 
     /// Make the poll in progress on this loop (or the next one) return. Any
-    /// thread (`PackageManager::wake_raw` calls it from task threads while the
-    /// owning thread is inside `tick_raw`), hence `&self`; neither arm forms a
-    /// reference to the uws loop itself.
+    /// thread: `PackageManager::wake_raw` calls it from task threads while the
+    /// owning thread is inside `tick_raw`.
     pub fn wakeup(&self) {
         match self {
             AnyEventLoop::Js { owner } => owner.wakeup(),

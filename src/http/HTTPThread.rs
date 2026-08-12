@@ -392,9 +392,9 @@ impl HttpThread {
     /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
     /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
     /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and passes the
-    /// raw pointer to `uws::Loop::wakeup` instead. Centralises the raw
-    /// `&mut *self.uws_loop` upgrade repeated in `process_events`.
+    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
+    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
+    /// upgrade repeated in `process_events`.
     #[inline]
     fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
         // SAFETY: see INVARIANT above.

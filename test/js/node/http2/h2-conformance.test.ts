@@ -983,28 +983,34 @@ describe("request()/pushStream() run no user code between taking a stream id and
     });
   });
 
-  // 'http2.client.stream.created' is published once the outer request is on the wire (node does
-  // the same), so a request made by a subscriber comes second.
-  test("a request() made from a 'http2.client.stream.created' subscriber is sent second, on the higher id", async () => {
-    let requestInner: (() => void) | null = null;
-    const subscriber = ({ headers }: any) => {
-      if (headers[":path"] !== "/outer" || requestInner === null) return;
-      const fn = requestInner;
-      requestInner = null;
-      fn();
-    };
-    diagnosticsChannel.subscribe("http2.client.stream.created", subscriber);
-    try {
-      expect(
-        await clientHeadersOrder((client, inner) => {
-          requestInner = inner;
-          return client.request({ ":path": "/outer" });
-        }),
-      ).toEqual({ wireOrder: [1, 3], ids: { outer: 1, inner: 3 } });
-    } finally {
-      diagnosticsChannel.unsubscribe("http2.client.stream.created", subscriber);
-    }
-  });
+  // 'http2.client.stream.created' is published once the outer request is on the wire, or queued
+  // (node does the same), so a request made by a subscriber comes second either way.
+  test.each([
+    ["connected", false],
+    ["still connecting", true],
+  ])(
+    "a request() made from a 'http2.client.stream.created' subscriber on a %s session is sent second, on the higher id",
+    async (_, requestBeforeConnect) => {
+      let requestInner: (() => void) | null = null;
+      const subscriber = ({ headers }: any) => {
+        if (headers[":path"] !== "/outer" || requestInner === null) return;
+        const fn = requestInner;
+        requestInner = null;
+        fn();
+      };
+      diagnosticsChannel.subscribe("http2.client.stream.created", subscriber);
+      try {
+        expect(
+          await clientHeadersOrder((client, inner) => {
+            requestInner = inner;
+            return client.request({ ":path": "/outer" });
+          }, requestBeforeConnect),
+        ).toEqual({ wireOrder: [1, 3], ids: { outer: 1, inner: 3 } });
+      } finally {
+        diagnosticsChannel.unsubscribe("http2.client.stream.created", subscriber);
+      }
+    },
+  );
 
   // End to end against a real peer: with the blocks encoded in wire order, both requests are
   // answered and each one carries its own headers.

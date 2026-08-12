@@ -6442,9 +6442,6 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        if (onClientStreamCreatedChannel.hasSubscribers) {
-          onClientStreamCreatedChannel.publish({ stream: req, headers });
-        }
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
@@ -6454,6 +6451,10 @@ class ClientHttp2Session extends Http2Session {
         req.cork();
         process.nextTick(uncorkNT, req);
         setupRequestEndAndSignal(req, options, signal);
+        // Last, as in node: a request made by a subscriber from here is queued behind this one.
+        if (onClientStreamCreatedChannel.hasSubscribers) {
+          onClientStreamCreatedChannel.publish({ stream: req, headers });
+        }
         return req;
       }
 

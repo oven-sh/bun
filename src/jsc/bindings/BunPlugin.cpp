@@ -528,6 +528,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 
 struct ExportBinding {
     JSC::AbstractModuleRecord* record = nullptr;
+    // The binding's own name inside `record`; differs from the export name across `export { a as b }`.
+    JSC::Identifier localName;
     // Empty for a lazy builtin export nothing has materialized yet (see SyntheticModuleRecord::materializeLazyExport).
     JSC::JSValue value;
 };
@@ -552,7 +554,26 @@ static std::optional<ExportBinding> readExportBinding(JSC::JSGlobalObject* globa
     JSC::ScopeOffset offset = iter->value.scopeOffset();
     if (!environment->isValidScopeOffset(offset))
         return std::nullopt;
-    return ExportBinding { resolution.moduleRecord, environment->variableAt(offset).get() };
+    return ExportBinding { resolution.moduleRecord, resolution.localName, environment->variableAt(offset).get() };
+}
+
+// esmLazyOriginals entry: where mock.restore() reads an export that was still lazy when it was mocked.
+static JSObject* createLazyOriginal(JSC::JSGlobalObject* globalObject, JSObject* source, const JSC::Identifier& localName)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* entry = constructEmptyObject(globalObject);
+    entry->putDirect(vm, vm.propertyNames->source, source);
+    entry->putDirect(vm, vm.propertyNames->name, identifierToJSValue(vm, localName));
+    return entry;
+}
+
+static JSValue readLazyOriginal(JSC::JSGlobalObject* globalObject, JSObject* entry)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto localName = asString(entry->getDirect(vm, vm.propertyNames->name))->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, asObject(entry->getDirect(vm, vm.propertyNames->source))->get(globalObject, localName));
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
@@ -777,7 +798,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 lazy = constructEmptyObject(globalObject);
                                 mock->esmLazyOriginals.set(vm, mock, lazy);
                             }
-                            lazy->putDirect(vm, name, sourceObject);
+                            lazy->putDirect(vm, name, createLazyOriginal(globalObject, sourceObject, binding->localName));
                         };
 
                         if (object) {
@@ -871,8 +892,8 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
 
-// Writes each snapshotted export back. A lazy snapshot stores the object to read the export from instead of the value.
-static void replayExports(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* ns, JSObject* snapshot, bool snapshotHoldsSources)
+// Writes each snapshotted export back. Lazy snapshots hold createLazyOriginal() entries instead of values.
+static void replayExports(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* ns, JSObject* snapshot, bool snapshotIsLazy)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -883,8 +904,8 @@ static void replayExports(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamesp
         JSValue value = snapshot->getDirect(vm, name);
         if (!value)
             continue;
-        if (snapshotHoldsSources) {
-            value = asObject(value)->get(globalObject, name);
+        if (snapshotIsLazy) {
+            value = readLazyOriginal(globalObject, asObject(value));
             RETURN_IF_EXCEPTION(scope, void());
         }
         ns->overrideExportValue(globalObject, name, value);
@@ -906,8 +927,6 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         auto* moduleMock = dynamicDowncast<JSModuleMock>(entry.value.get());
         if (!moduleMock || moduleMock->installedDuringPreload)
             continue;
-
-        toReplace.append({ entry.key, JSC::Strong<JSC::JSObject> { vm, moduleMock->priorVirtualModuleEntry.get() } });
 
         auto* ns = moduleMock->mustEvictEsm ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
         if (ns) {
@@ -938,9 +957,11 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
             if (scope.exception()) [[unlikely]]
                 break;
         }
+
+        toReplace.append({ entry.key, JSC::Strong<JSC::JSObject> { vm, moduleMock->priorVirtualModuleEntry.get() } });
     }
 
-    // On exception: visited entries still leave the map, unvisited ones stay for a retry.
+    // Every step above is idempotent, so an entry whose restore threw stays in the map for the next restore().
     for (auto& [key, prior] : toReplace) {
         if (prior)
             virtualModules->set(key, std::move(prior));

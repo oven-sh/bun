@@ -437,6 +437,66 @@ test.concurrent('"bun": mock.module replaces a binding without constructing the 
   expect(exitCode).toBe(0);
 });
 
+test.concurrent('"bun": mock.restore() restores a renamed re-export by its own name', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as reexported from "./reexport.mjs";
+        import { constructed } from "./native-helper.mjs";
+
+        test("RenamedGlob", () => {
+          expect(constructed()).toEqual([]);
+          mock.module("./reexport.mjs", () => ({ RenamedGlob: "mocked" }));
+          expect(reexported.RenamedGlob).toBe("mocked");
+          expect(constructed()).toEqual([]);
+          mock.restore();
+          expect(reexported.RenamedGlob).toBe(Bun.Glob);
+          expect(constructed()).toEqual(["Glob"]);
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the mock for a retry', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as reexported from "./reexport.mjs";
+
+        test("redis", () => {
+          expect(reexported.Glob).toBe(Bun.Glob); // materialized: snapshotted by value
+          mock.module("./reexport.mjs", () => ({ Glob: "mocked glob", redis: "mocked redis" }));
+          expect(reexported.Glob).toBe("mocked glob");
+          expect(reexported.redis).toBe("mocked redis");
+
+          // Reading Bun.redis throws (invalid REDIS_URL), so restoring the redis binding fails after Glob was put back.
+          expect(() => mock.restore()).toThrow(/URL/);
+          expect(reexported.Glob).toBe(Bun.Glob);
+          expect(reexported.redis).toBe("mocked redis");
+
+          // The module is still registered as mocked, so a retry attempts (and fails) the restore again.
+          expect(() => mock.restore()).toThrow(/URL/);
+          expect(reexported.redis).toBe("mocked redis");
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+    { REDIS_URL: "http://[::1" },
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("node:process: linking constructs the linked bindings, not the stdio streams", async () => {
   const result = await runEntry(`
     import proc, { on, release } from "node:process";

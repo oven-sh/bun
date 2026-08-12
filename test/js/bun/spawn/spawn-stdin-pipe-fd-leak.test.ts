@@ -102,11 +102,9 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
 // ref on itself while the write is in flight. When the child closed its stdin
 // before the write finished, the failed write (EPIPE) tore the writer down
 // without releasing that ref, leaking one writer per such spawn. The fixture
-// counts live writers via bun:internal-for-testing; it runs with memfd
-// disabled because on Linux a Buffer stdin otherwise bypasses the writer.
-//
-// Timeout: the fixture starts five bun processes in total, and each of them
-// pays a debug build's startup and module-load cost.
+// counts live writers via bun:internal-for-testing. It is a separate bun
+// process because the process that spawns the children is the one that must
+// have memfd disabled: on Linux a Buffer stdin otherwise bypasses the writer.
 test("Buffer stdin does not leak its native writer when the child closes stdin or drains it", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "spawn-stdin-buffer-writer-leak-fixture.ts")],
@@ -118,7 +116,7 @@ test("Buffer stdin does not leak its native writer when the child closes stdin o
   // If the fixture itself blew up, stdout is empty; report its stderr instead.
   expect(stdout.trim() || stderr).toBe('{"leakedWhenWriteFails":0,"leakedWhenWriteDrains":0}');
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.

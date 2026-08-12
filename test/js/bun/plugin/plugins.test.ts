@@ -808,9 +808,14 @@ it.concurrent("plugins run for file imports whose query string contains a dot (#
   using dir = tempDir("plugin-query-string-dot", {
     "plain.ts": `export const source = "disk";`,
     "entry.ts": `
+      const resolvedQueries = new Set();
       Bun.plugin({
         name: "query-string-dot",
         setup(build) {
+          build.onResolve({ filter: /plain\\.ts/ }, args => {
+            resolvedQueries.add(args.path.slice(args.path.indexOf("?")));
+            return undefined;
+          });
           build.onLoad({ filter: /plain\\.ts/ }, () => ({
             contents: "export const source = 'plugin'",
             loader: "ts",
@@ -819,12 +824,12 @@ it.concurrent("plugins run for file imports whose query string contains a dot (#
       });
 
       const queries = ["?v=123", "?v=123.456", "?v=.456", "?v=123.", "?v=1.2.3", "?mtime=1786494961337.0317"];
-      const results = {};
+      const sources = {};
       for (const q of queries) {
         const mod = await import("./plain.ts" + q).catch(err => ({ source: "error: " + err.message }));
-        results[q] = mod.source;
+        sources[q] = mod.source;
       }
-      console.log(JSON.stringify(results));
+      console.log(JSON.stringify({ sources, onResolveQueries: [...resolvedQueries].sort() }));
     `,
   });
 
@@ -837,12 +842,22 @@ it.concurrent("plugins run for file imports whose query string contains a dot (#
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
-    "?v=123": "plugin",
-    "?v=123.456": "plugin",
-    "?v=.456": "plugin",
-    "?v=123.": "plugin",
-    "?v=1.2.3": "plugin",
-    "?mtime=1786494961337.0317": "plugin",
+    sources: {
+      "?v=123": "plugin",
+      "?v=123.456": "plugin",
+      "?v=.456": "plugin",
+      "?v=123.": "plugin",
+      "?v=1.2.3": "plugin",
+      "?mtime=1786494961337.0317": "plugin",
+    },
+    onResolveQueries: [
+      "?mtime=1786494961337.0317",
+      "?v=.456",
+      "?v=1.2.3",
+      "?v=123",
+      "?v=123.",
+      "?v=123.456",
+    ],
   });
   expect(exitCode).toBe(0);
 });

@@ -1653,11 +1653,9 @@ impl Poll {
             return;
         }
         let poll = poll.as_ptr();
-        // EPOLLERR carries no errno (the events word is a bitmask); like
-        // EPOLLHUP it means the owner's next read()/write() will fail with the
-        // real one (EPIPE for a pipe whose readers are gone), so it is
-        // readiness. Registration failures are reported from `tick_epoll`
-        // through `FileAction::on_error`.
+        // EPOLLERR, like EPOLLHUP, is readiness: the errno comes out of the
+        // owner's next read()/write(). (`epoll_ctl` failures go through
+        // `FileAction::on_error` in `tick_epoll`.)
         let events = event.events;
         log!("ready(events = {:#x})", events);
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time

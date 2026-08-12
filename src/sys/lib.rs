@@ -1711,11 +1711,8 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        // The `_DARWIN_UNLIMITED_SELECT` variant of select(2) (same
-        // `$DARWIN_EXTSN` scheme as `realpath` in `posix_impl`). libsyscall
-        // maps it straight onto the syscall, so there is no FD_SETSIZE check
-        // and each set is a bitmap of ceil(nfds / 32) 32-bit words rather
-        // than a `libc::fd_set`; hence the word pointers.
+        // `_DARWIN_UNLIMITED_SELECT`: no FD_SETSIZE check, and each set is
+        // ceil(nfds / 32) 32-bit words rather than a `libc::fd_set`.
         #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
         pub(crate) fn select(
             nfds: c_int,
@@ -7623,38 +7620,24 @@ pub fn kevent(
     }
 }
 
-/// Whether `stat` describes a named pipe, i.e. a FIFO vnode (created with
-/// mkfifo and opened by path, or inherited that way), as opposed to a
-/// `pipe(2)` pipe. Both report `S_IFIFO`; a FIFO carries the device number of
-/// the filesystem it lives on, while XNU's `pipe_stat` leaves `st_dev` 0.
-///
-/// Only FIFO vnodes need [`block_until_writable`], and this errs in the
-/// direction that stays correct: a `pipe(2)` pipe taken for a named pipe
-/// merely waits on the calling thread instead of the io thread, whereas a
-/// named pipe taken for a `pipe(2)` pipe would be parked in kqueue and hang.
-/// That is also why it keys off `st_dev` rather than something like
-/// `F_GETPATH`, which can fail for a FIFO that was unlinked after being
-/// opened.
+/// A FIFO vnode, which needs [`block_until_writable`], as opposed to a
+/// `pipe(2)` pipe, which is also `S_IFIFO` but gets `st_dev` 0 from XNU's
+/// `pipe_stat`. A false positive only moves a wait onto the calling thread;
+/// a false negative would hang.
 #[cfg(target_os = "macos")]
 pub fn is_named_pipe(stat: &Stat) -> bool {
     S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
 }
 
-/// Blocks the calling thread in `select(2)` until a `write(2)` to `fd` would
-/// not block, either because buffer space became available or because the
-/// other end went away, in which case the write that follows reports it
-/// (EPIPE). Retries on EINTR.
+/// `select(2)` until a `write(2)` to `fd` would not block, including because
+/// the reader is gone (the write then fails with EPIPE). Retries on EINTR.
 ///
-/// This is how a named pipe (see [`is_named_pipe`]) has to be waited on under
-/// macOS. XNU attaches kqueue `EVFILT_WRITE` filters for a FIFO to its vnode,
-/// where they only fire while the pipe has free space
-/// (`vnode_writable_space_count`); the last reader closing posts nothing to
-/// the vnode, and a full pipe nobody reads from never gains free space again,
-/// so a writer parked in kqueue, or in `poll(2)`, which XNU implements on top
-/// of kqueue, waits forever. `select(2)` instead goes through `fifo_select` to
-/// the FIFO's underlying socket, whose writability includes the
-/// `SS_CANTSENDMORE` state that the last reader's close sets. `pipe(2)` pipes
-/// are not affected: their own kqueue filter reports `EV_EOF`.
+/// Needed for FIFO vnodes on macOS: their kqueue `EVFILT_WRITE` filter (and
+/// `poll(2)`, which is built on it) is XNU's vnode filter, which only fires
+/// on free space (`vnode_writable_space_count`) and is never posted to when
+/// the last reader closes, so a full pipe whose reader left never wakes it.
+/// `select(2)` goes through `fifo_select` to the FIFO's socket, whose
+/// writability includes the `SS_CANTSENDMORE` that the close sets.
 #[cfg(target_os = "macos")]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     debug_assert!(fd.is_valid());

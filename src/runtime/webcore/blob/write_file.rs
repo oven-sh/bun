@@ -91,10 +91,8 @@ pub struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
-    /// The destination is a named pipe (`bun_sys::is_named_pipe`). kqueue never
-    /// reports its reader going away, so its waits happen in
-    /// `bun_sys::block_until_writable` on the pool thread instead of going
-    /// through the io thread.
+    /// `bun_sys::is_named_pipe`: waits in `block_until_writable` on the pool
+    /// thread instead of on the io thread.
     #[cfg(target_os = "macos")]
     pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
@@ -235,10 +233,8 @@ impl WriteFile {
         }
     }
 
-    /// The named-pipe counterpart of `wait_for_writable`: waits right here on
-    /// the pool thread, after which the caller retries the write. Returns
-    /// `false` when the wait itself failed, with the error recorded for
-    /// `then()`.
+    /// Inline `wait_for_writable` for a named pipe; the caller retries the
+    /// write. `false`: the wait failed and the error is recorded.
     #[cfg(target_os = "macos")]
     fn block_until_writable(&mut self) -> bool {
         bun_output::scoped_log!(WriteFile, "WriteFile.blockUntilWritable()");
@@ -252,12 +248,9 @@ impl WriteFile {
         }
     }
 
-    /// Whether to poll the fd before each write, so that a full pipe is handed
-    /// to the io thread without collecting an EAGAIN from it first. A named
-    /// pipe on macOS waits inline instead and must not be polled: `poll(2)` is
-    /// as blind as kqueue to its reader going away (see
-    /// `bun_sys::block_until_writable`), so it would report a dead pipe as not
-    /// writable forever, whereas the `write(2)` itself fails with EPIPE.
+    /// Not for a named pipe: `poll(2)` is as blind as kqueue to its reader
+    /// being gone (`bun_sys::block_until_writable`) and would say "not
+    /// writable" forever, whereas the `write(2)` itself fails with EPIPE.
     #[cfg(not(windows))]
     fn polls_before_writing(&self) -> bool {
         #[cfg(target_os = "macos")]
@@ -477,7 +470,6 @@ impl WriteFile {
             false
         };
 
-        // Regular files, the common case, are never stat'ed for this.
         #[cfg(target_os = "macos")]
         {
             self.is_named_pipe = self.could_block

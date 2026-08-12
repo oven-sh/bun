@@ -51,33 +51,24 @@ pub(crate) struct BundleThread<C: Node> {
     pub(crate) generation: bun_core::Generation,
 }
 
-/// Trait capturing the interface a completion task must satisfy.
-///
-/// The trait keeps the generic `BundleThread<C>` layout-agnostic; the one
-/// impl is `bun_runtime`'s `JSBundleCompletionTask`.
-///
-/// Every method takes the task by pointer, never by reference. From `enqueue`
-/// until the post in `complete_on_bundle_thread` the owner's thread still
-/// reaches into the task through its own pointer (to cancel it, or to release
-/// it while it is still queued), and the bundler writes the task's log through
-/// the pointer `create_and_configure_transpiler` hands it for the whole build.
-/// A reference argument is protected for the duration of its call, so a
-/// `&mut self` receiver (`init_and_run`'s would span the entire build) would
-/// make every one of those accesses UB; the impl projects the fields it needs
-/// out of `this` instead.
+/// The bundle thread's view of a queued build (`bun_runtime`'s
+/// `JSBundleCompletionTask`), by pointer: until `complete_on_bundle_thread`
+/// posts it back, the owning thread still cancels (or releases) the task
+/// through its own pointer and the bundler writes the task's log through the
+/// one `create_and_configure_transpiler` hands it, so no method may hold a
+/// reference to the whole task (a `&mut self` here is protected for the call,
+/// and `init_and_run`'s call is the whole build).
 ///
 /// # Safety
-/// For every method: `this` is the task `BundleThread` popped off its queue,
-/// live until `complete_on_bundle_thread` posts it back (or
-/// `free_released_unstarted` frees it); bundle thread only.
+/// `this` was popped off the queue and is live until `complete_on_bundle_thread`
+/// posts it back or `free_released_unstarted` frees it; bundle thread only.
 pub trait CompletionStruct: Node + Send + 'static {
-    /// On dequeue: `false` if the owner released this build while it was
-    /// still queued (`free_released_unstarted` then frees it).
+    /// `false` if the owner released this build while it was still queued
+    /// (`free_released_unstarted` then frees it).
     unsafe fn try_start(this: *mut Self) -> bool;
-    /// Frees a task `try_start` returned `false` for; the owner is done with it.
     unsafe fn free_released_unstarted(this: *mut Self);
-    /// Hands the task back to its owner. The bundle thread's last touch of
-    /// it: the owner may free it as soon as this posts.
+    /// The bundle thread's last touch: the owner may free the task as soon as
+    /// this posts it.
     unsafe fn complete_on_bundle_thread(this: *mut Self);
     unsafe fn set_result(this: *mut Self, result: BundleV2Result);
     unsafe fn set_log(this: *mut Self, log: bun_ast::Log);

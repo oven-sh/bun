@@ -61,8 +61,7 @@ pub struct JSBundleCompletionTask {
     promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub(crate) env: *mut bun_dotenv::Loader,
-    /// The bundler's log for the whole build (`Transpiler::init` is handed a
-    /// pointer to it); read by the owner once the build is handed back.
+    /// Written by the bundler through a raw pointer for the whole build.
     pub(crate) log: bun_ast::Log,
     /// Set by the owner giving up on the result (HTMLBundle route torn down)
     /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
@@ -77,8 +76,7 @@ pub struct JSBundleCompletionTask {
     /// is still queued itself instead of waiting behind other VMs' builds.
     pub(crate) stage: core::sync::atomic::AtomicU8,
 
-    /// The route whose HTML this build is for ([`Deliver::HtmlRoute`]); it
-    /// holds a ref on itself until `on_complete` hands it the result.
+    /// [`Deliver::HtmlRoute`]; the route refs itself until `on_complete`.
     html_build_task: Option<NonNull<html_bundle::Route>>,
 
     pub(crate) result: BundleV2Result,
@@ -86,18 +84,17 @@ pub struct JSBundleCompletionTask {
     /// intrusive queue link (UnboundedQueue)
     pub(crate) next: bun_threading::Link<JSBundleCompletionTask>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
-    /// When the build was scheduled; only an HTML route reports it.
+    /// Only an HTML route reports it.
     started_at_ns: u64,
 }
 
-/// Who gets the result when the build comes back. Fixed at construction: once
-/// the task is on the bundle thread's queue the JS thread no longer writes
-/// to it (see [`create_and_schedule_completion_task`]).
+/// Who gets the result. Fixed at construction: nothing writes to the task
+/// from the JS thread once it is enqueued (see [`CompletionStruct`]).
 pub(crate) enum Deliver {
     /// `Bun.build()`: settle this promise.
     Promise(jsc::JSPromiseStrong),
-    /// `Bun.serve` HTML route: `Route::on_complete`. The route must stay
-    /// alive until then (it refs itself while the build runs).
+    /// `Bun.serve` HTML route: `Route::on_complete` (the route refs itself
+    /// while the build runs).
     HtmlRoute(NonNull<html_bundle::Route>),
 }
 
@@ -156,12 +153,9 @@ unsafe impl Send for JSBundleCompletionTask {}
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
 ///
-/// Everything the owner wants in the task arrives through `deliver`, and the
-/// enqueue is the last thing the JS thread does to the task: from then until
-/// the bundle thread posts it back (`on_complete_anytask`) the JS thread only
-/// goes near it to cancel it (`stop_for_vm_teardown`, `HTMLBundle::State::
-/// deinit`), which is all the returned pointer is for. `CompletionStruct`'s
-/// doc has the aliasing argument behind this.
+/// The enqueue is the JS thread's last write to the task (`CompletionStruct`
+/// says why); the returned pointer is for cancelling it (`stop_for_vm_teardown`,
+/// `HTMLBundle::State::deinit`) until `on_complete_anytask` gets it back.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
@@ -869,10 +863,8 @@ bun_jsc::jsc_abi_extern! {
 // `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
 // struct layout stays in `bun_runtime`.
 
-/// The owner pointer `init_and_run` put in the handle: the task itself. The
-/// thunks project single fields out of it (see `CompletionStruct`); the task
-/// is live for every dispatch because the bundle it belongs to is still
-/// running.
+/// The handle's owner is the task itself (`init_and_run`), live while its
+/// bundle runs; the thunks project single fields out of it (`CompletionStruct`).
 #[inline]
 fn task_of(c: NonNull<Bv2OpaqueCompletion>) -> *mut JSBundleCompletionTask {
     c.as_ptr().cast::<JSBundleCompletionTask>()
@@ -907,12 +899,8 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 };
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
-// What the bundle thread does with the task, without exposing the layout.
-// Every method projects the fields it needs out of `this` and never forms a
-// reference to the whole task: `stop_for_vm_teardown` / `State::deinit` reach
-// into it from the JS thread while these run, and the bundler writes `log`
-// through the pointer `create_and_configure_transpiler` hands it (see the
-// trait's doc).
+// Field projections out of `this` only, never a reference to the whole task;
+// the trait doc says why.
 //
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
 unsafe impl bun_threading::Linked for JSBundleCompletionTask {
@@ -958,10 +946,9 @@ impl CompletionStruct for JSBundleCompletionTask {
     unsafe fn complete_on_bundle_thread(this: *mut Self) {
         // The bundle thread's last touch of this task and of the VM's memory:
         // hand it back (always queued — the VM waits for it) and stop counting.
-        // SAFETY: trait contract. The post transfers the task to the VM's
-        // queue, which may run `on_complete_anytask` (and free it) at once, so
-        // the handle is cloned out first and nothing reads `this` after the
-        // post.
+        // SAFETY: trait contract. The VM may free the task as soon as it is
+        // posted, so the handle is cloned out first and nothing reads `this`
+        // afterwards.
         let handle = unsafe {
             (*this)
                 .bundle_loop
@@ -989,11 +976,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         this: *mut Self,
         bump: &'a Arena,
     ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
-        // SAFETY: trait contract. Field projections only: `config` is the
-        // bundle thread's until the hand-back (the JS side does not touch it
-        // after enqueue), and `log` is handed to the bundler as a pointer and
-        // written through it from here until `set_log`, so no reference to it
-        // is formed.
+        // SAFETY: trait contract. `config` is ours until the hand-back; `log`
+        // stays a raw pointer because the bundler writes through it from here
+        // until `set_log`.
         let (config, log, env) =
             unsafe { (&mut (*this).config, &raw mut (*this).log, (*this).env) };
         let opts = api::TransformOptions {
@@ -1066,13 +1051,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
-        // SAFETY: trait contract. `plugins` is read here and by the VM's
-        // teardown, written by neither; `config` is ours until the hand-back
-        // (see `create_and_configure_transpiler`), and the `&'a FileMap` /
-        // entry-point slices borrowed out of it below are only used by this
-        // bundle, which `bv2` ends before this returns. Shared, not `&mut`:
-        // `transpiler.options.optimize_imports` still points into `config`
-        // (`configure_bundler`), and a `&mut` retag here would invalidate it.
+        // SAFETY: trait contract. `plugins` is only read (here and by the VM's
+        // teardown); `config` is ours until the hand-back and the borrows taken
+        // out of it below end with `bv2`. Shared, not `&mut`: the transpiler
+        // still holds `configure_bundler`'s `&config.optimize_imports`.
         let (config, plugins) = unsafe { (&(*this).config, (*this).plugins) };
         bv2.plugins = plugins;
         bv2.completion = Some(dispatch::CompletionHandle {
@@ -1109,12 +1091,8 @@ impl CompletionStruct for JSBundleCompletionTask {
 }
 
 /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
-/// (everything after `transpiler.* = try Transpiler.init(...)`), applying
-/// `config` to the freshly initialized `transpiler`.
-///
-/// `config` is `&mut` because the standalone-HTML case clears
-/// `config.compile`, which `on_complete` reads to decide whether to run
-/// `do_compilation`.
+/// (everything after `transpiler.* = try Transpiler.init(...)`). `&mut` because
+/// the standalone-HTML case clears `config.compile`, which `on_complete` reads.
 fn configure_bundler(
     config: &mut JSBundlerConfig,
     transpiler: &mut Transpiler<'_>,
@@ -1275,11 +1253,9 @@ fn configure_bundler(
     transpiler.options.metafile_markdown_path =
         Box::from(config.metafile_markdown_path.list.as_slice());
     if config.optimize_imports.count() > 0 {
-        // SAFETY: `config` lives in the completion task, which outlives the
-        // transpiler (`bump`), and until the build is over `config` is only
-        // borrowed shared again (`init_and_run`) and never written, so this
-        // reference stays valid; a bump.alloc'd clone would leak (arena never
-        // runs Drop).
+        // SAFETY: the task (and so `config`) outlives the transpiler, and until
+        // the build is over `config` is only borrowed shared again
+        // (`init_and_run`); a bump.alloc'd clone would leak (no Drop in arenas).
         transpiler.options.optimize_imports =
             Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
     }

@@ -97,6 +97,22 @@
 | `test/cli/run/garbage-env.test.ts` | openharmony 平台下 binary-sign-tool 签名 | 上游改该测试时检查 |
 | `test/js/bun/spawn/spawn-ohos-node-userinfo.test.ts` | OHOS 专属测试 | 保留 |
 
+### 六-1、全量测试收集逻辑差异（OHOS 脚本 vs 上游 CI）——2026-08-12 记录
+
+**结论：全量脚本 `run-all-official-progress-optimized.sh` 只跑 ~2025 个文件，而上游 CI 跑 5848 个，二者定义不同，非 bug。差异几乎全部来自 Node 官方测试目录。**
+
+| 维度 | 全量脚本（OHOS） | 上游 CI（`scripts/runner.node.mjs`） |
+|---|---|---|
+| 收集方式 | `find` 扩展名白名单 | 递归扫描 + 目录特判 |
+| 匹配规则 | 仅 `*.test.ts/js/tsx/jsx/mjs/cjs/mts/cts` + `*.spec.ts/tsx/js/cjs/mjs/cts` | `isJavaScript`（`.js/.ts/.jsx/.tsx/.mjs/.cjs/.mts/.cts`）+ 文件名含 `.test` 或 `spec.`，**或** `isNodeTest`，**或** `isClusterTest` |
+| node 官方测试目录 | ❌ **不收** | ✅ **整个目录都收**：`js/node/test/parallel/`（3658 个）、`js/node/test/sequential/`（85 个）、`js/bun/test/parallel/`（83 个） |
+| 默认排除 | 无 | `integration/bun-types`（22 个）+ `internal/source-lints` |
+| 文件数 | **2025** | **5848**（CI 实际运行 5826） |
+
+**原因**：Node 官方测试用 `test-*.js` 命名（无 `.test` 后缀），find 白名单永远匹配不到。OHOS 上测试比 Linux 慢 5-10x（7/21 全量：1868 files / 01:31:24 / 92 timeouts），加入 3658 个 node parallel 测试将使时长增至 5-6 小时且大量已知失败，故**有意排除**。
+
+**若需完全对齐 CI**：把 3 个 node 目录加入 find（`-path "test/js/node/test/parallel/*"` 等），但 OHOS 上显著变慢。
+
 ---
 
 ## 七、merge 上游时的检查清单（按优先级）

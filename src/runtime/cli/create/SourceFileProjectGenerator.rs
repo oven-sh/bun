@@ -36,9 +36,9 @@ pub(crate) fn generate(
             b"\n\
               Please add an export to your file. For example:\n\
               \n\
-              \x20  export default function MyApp() {{\n\
+              \x20  export default function MyApp() {\n\
               \x20    return <div>Hello World</div>;\n\
-              \x20  }};\n\
+              \x20  }\n\
               \n",
         )?;
 

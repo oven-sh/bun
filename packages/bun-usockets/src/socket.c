@@ -704,6 +704,20 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 }
 #endif
 
+/* The owner learned out-of-band (e.g. waitpid) that the peer process is dead,
+ * but the socket's final readable/hangup event has not been dispatched yet.
+ * Closing the socket now would discard whatever the peer wrote before dying,
+ * so run the hangup dispatch synchronously: it drains the kernel receive
+ * buffer through on_data/on_fd and then ends + closes the socket exactly like
+ * the real event would. No-op when there is nothing left to deliver (closed /
+ * EOF already seen) or the owner paused reading. */
+void us_socket_drain_hangup(struct us_socket_t *s) {
+    if (us_socket_is_closed(s) || s->read_eof || s->flags.is_paused) {
+        return;
+    }
+    us_internal_dispatch_ready_poll(&s->p, 0, 1, LIBUS_SOCKET_READABLE);
+}
+
 __attribute__((always_inline)) void *us_socket_ext(struct us_socket_t *s) {
     return s + 1;
 }

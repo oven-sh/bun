@@ -346,6 +346,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// The peer process is known dead but the socket's final readable/hangup
+    /// event has not been dispatched yet: run that dispatch synchronously so
+    /// data still queued in the kernel buffer is delivered before the socket
+    /// is ended and closed. May re-enter the socket's handlers and close it.
+    /// No-op for non-uSockets transports.
+    pub fn drain_hangup(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).drain_hangup();
+        }
+    }
+
     /// The JS wrapper that owns this socket is being finalized: whatever the
     /// close below unwinds must not reach back into JS objects.
     pub fn prepare_for_finalize(&self) {

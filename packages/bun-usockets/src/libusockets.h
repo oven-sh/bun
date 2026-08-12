@@ -738,6 +738,11 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* Synchronously dispatch a hangup readable event: delivers data still queued
+ * in the kernel buffer (on_data / on_fd), then ends and closes the socket as
+ * the real hangup event would. For when the peer process is known dead but
+ * its final event has not been dispatched yet. */
+void us_socket_drain_hangup(us_socket_r s) nonnull_fn_decl;
 
 #ifdef __cplusplus
 }

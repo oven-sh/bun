@@ -1188,6 +1188,13 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
+        // The exit can reach the loop before the IPC socket's readable event
+        // (waiter-thread path): deliver anything the child wrote before it
+        // exited, or the deferred close below drops it (#37849).
+        #[cfg(not(windows))]
+        if let Some(ipc_data) = self.ipc() {
+            ipc_data.drain_after_peer_exit();
+        }
         self.disconnect_ipc(true);
         self.deref();
     }

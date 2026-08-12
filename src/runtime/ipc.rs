@@ -1260,6 +1260,20 @@ impl SendQueue {
         let _ = unsafe { bun_core::heap::take(windows) };
     }
 
+    /// The peer process exited, reported out-of-band (waitpid / the waiter
+    /// thread) rather than through this socket's own readable event. Bytes
+    /// the peer wrote right before exiting may still sit unread in the kernel
+    /// buffer, and the exit path's deferred close would discard them; deliver
+    /// them now, like node reads the channel to EOF before tearing it down.
+    /// Dispatches on_data/on_fd and, at EOF, the normal end/close handlers.
+    #[cfg(not(windows))]
+    pub fn drain_after_peer_exit(&self) {
+        if let SocketUnion::Open(socket) = *self.socket.get() {
+            log!("SendQueue#drainAfterPeerExit");
+            socket.drain_hangup();
+        }
+    }
+
     pub fn close_socket_next_tick(&self, next_tick: bool) {
         log!("SendQueue#closeSocketNextTick");
         if !self.socket_is_open() {

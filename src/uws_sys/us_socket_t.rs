@@ -90,6 +90,20 @@ impl us_socket_t {
         c::us_socket_shutdown(self);
     }
 
+    /// The peer process is known dead but its final readable/hangup event has
+    /// not been dispatched yet: run that dispatch synchronously so data still
+    /// queued in the kernel buffer is delivered (on_data / on_fd) before the
+    /// socket is ended and closed. May re-enter the socket's handlers and
+    /// close `self`.
+    pub fn drain_hangup(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_drain_hangup({:p})", self);
+        unsafe {
+            // SAFETY: self is a live us_socket_t; a close inside the dispatch
+            // defers the free to the loop's closed-sockets sweep.
+            c::us_socket_drain_hangup(self);
+        }
+    }
+
     pub(crate) fn shutdown_read(&mut self) {
         c::us_socket_shutdown_read(self);
     }
@@ -554,6 +568,7 @@ mod c {
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
+        pub(super) fn us_socket_drain_hangup(s: *mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
             s: &us_socket_t,

@@ -4254,10 +4254,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
     }
 }
 
-/// Heap-promotes a Blob whose wrapper the bindings build from the returned pointer
-/// (the generated constructor, `Blob__create`, `WebCore::Blob`) rather than via
-/// `BlobExt::to_js`. `Blob__estimatedSize` only reads the cached size (it also
-/// runs on the GC thread), so it is computed here, once every field is final.
+/// The bindings wrap the returned pointer themselves; `Blob__estimatedSize` only reads the cache.
 fn new_for_bindings(blob: Blob) -> *mut Blob {
     blob.calculate_estimated_byte_size();
     Blob::new(blob)

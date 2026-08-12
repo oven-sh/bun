@@ -91,6 +91,11 @@ pub struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// A FIFO vnode as opposed to a `pipe(2)` pipe. kqueue never reports its
+    /// reader going away, so its waits happen in `bun_sys::block_until_writable`
+    /// on the pool thread instead of going through the io thread.
+    #[cfg(target_os = "macos")]
+    pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
 }
@@ -229,6 +234,38 @@ impl WriteFile {
         }
     }
 
+    /// The named-pipe counterpart of `wait_for_writable`: waits right here on
+    /// the pool thread, after which the caller retries the write. Returns
+    /// `false` when the wait itself failed, with the error recorded for
+    /// `then()`.
+    #[cfg(target_os = "macos")]
+    fn block_until_writable(&mut self) -> bool {
+        bun_output::scoped_log!(WriteFile, "WriteFile.blockUntilWritable()");
+        match bun_sys::block_until_writable(self.opened_fd) {
+            Ok(()) => true,
+            Err(err) => {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                false
+            }
+        }
+    }
+
+    /// Whether to poll the fd before each write, so that a full pipe is handed
+    /// to the io thread without collecting an EAGAIN from it first. A named
+    /// pipe on macOS waits inline instead and must not be polled: `poll(2)` is
+    /// as blind as kqueue to its reader going away (see
+    /// `bun_sys::block_until_writable`), so it would report a dead pipe as not
+    /// writable forever, whereas the `write(2)` itself fails with EPIPE.
+    #[cfg(not(windows))]
+    fn polls_before_writing(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.is_named_pipe {
+            return false;
+        }
+        self.could_block
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn create_with_ctx(
         file_blob: Blob,
@@ -255,6 +292,8 @@ impl WriteFile {
             on_complete_callback,
             total_written: 0,
             could_block: false,
+            #[cfg(target_os = "macos")]
+            is_named_pipe: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
@@ -291,15 +330,15 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
+            // We do not use pwrite() because the file may not be
+            // seekable (such as stdout)
+            //
+            // On macOS, it is an error to use pwrite() on a
+            // non-seekable file.
+            let result: bun_sys::Result<usize> =
+                sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
+
             match &result {
                 bun_sys::Result::Ok(res) => {
                     *wrote = *res;
@@ -311,6 +350,13 @@ impl WriteFile {
                             // regular files cannot use epoll.
                             // this is fine on kqueue, but not on epoll.
                             continue;
+                        }
+                        #[cfg(target_os = "macos")]
+                        if self.is_named_pipe {
+                            if self.block_until_writable() {
+                                continue;
+                            }
+                            return false;
                         }
                         self.wait_for_writable();
                         return false;
@@ -430,6 +476,18 @@ impl WriteFile {
             false
         };
 
+        #[cfg(target_os = "macos")]
+        {
+            // `pipe(2)` pipes are S_IFIFO too; XNU's pipe_stat leaves their
+            // st_dev 0, whereas a FIFO on a filesystem carries its volume's
+            // device number.
+            self.is_named_pipe = self.could_block
+                && matches!(
+                    sys::fstat(fd),
+                    Ok(stat) if bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
+                );
+        }
+
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
         // with splice, sendfile, and the other cases.
@@ -447,7 +505,8 @@ impl WriteFile {
         //     }
         // }
 
-        if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
+        if self.polls_before_writing() && bun_core::is_writable(fd) == bun_core::Pollable::NotReady
+        {
             self.wait_for_writable();
             return;
         }
@@ -522,7 +581,7 @@ impl WriteFile {
                 }
 
                 // Do not immediately attempt to write again if it's not a regular file.
-                if self.could_block
+                if self.polls_before_writing()
                     && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
                 {
                     self.wait_for_writable();

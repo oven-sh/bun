@@ -11,6 +11,7 @@ import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
+import { createHash, randomBytes } from "node:crypto";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -2048,7 +2049,10 @@ export function installCacheFolderName(
 ): string {
   let folder = `${name}@${version}${registryHost ? "@@" + registryHost : ""}@@@2`;
   const match = integrity && /^(sha1|sha256|sha384|sha512)-([A-Za-z0-9+/=]+)$/.exec(integrity);
-  if (!match) return folder;
+  // same NAME_MAX rule as `bun install`: no fingerprint when it and a
+  // `_patch_hash=<16 hex>` suffix would not fit in a 255-byte component
+  const component = folder.slice(folder.lastIndexOf("/") + 1);
+  if (!match || Buffer.byteLength(component) + 1 + 13 + "_patch_hash=".length + 16 > 255) return folder;
   const idPath = join(cacheDir, ".id");
   let id: Buffer;
   try {
@@ -2056,7 +2060,7 @@ export function installCacheFolderName(
     if (id.length !== 16) throw new Error("short");
   } catch {
     fs.mkdirSync(cacheDir, { recursive: true });
-    id = require("node:crypto").randomBytes(16);
+    id = randomBytes(16);
     try {
       fs.writeFileSync(idPath, id, { flag: "wx", mode: 0o600 });
     } catch {
@@ -2065,8 +2069,7 @@ export function installCacheFolderName(
   }
   const tag = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 }[match[1] as "sha1" | "sha256" | "sha384" | "sha512"];
   const digest = Buffer.from(match[2], "base64");
-  const bits = require("node:crypto")
-    .createHash("sha256")
+  const bits = createHash("sha256")
     .update(id)
     .update(Buffer.from([tag]))
     .update(digest)

@@ -6125,18 +6125,11 @@ pub unsafe extern "C" fn Blob__implReadBytes(
     callback: BlobReadBytesCallback,
 ) {
     let handler = bun_core::heap::into_raw(Box::new(ClipboardBlobReadHandler { ctx, callback }));
-    // SAFETY: `handler` is freshly leaked and exclusively owned by the read
-    // dispatch until `on_read_bytes` reclaims it.
-    if unsafe { blob.read_bytes_to_handler(handler, global) }.is_err() {
-        // The read was never armed (VM terminating), so `on_read_bytes` will
-        // not run: reclaim the handler and report the failure ourselves.
-        // SAFETY: sole owner again per the line above.
-        let boxed = unsafe { bun_core::heap::take(handler) };
-        boxed.finish(ReadBytesResult::Err(Box::new(bun_jsc::SystemError {
-            message: BunString::static_(b"The VM is terminating.").into(),
-            ..Default::default()
-        })));
-    }
+    // SAFETY: `handler` is freshly leaked and not used again here; the read
+    // dispatch hands it to `on_read_bytes` exactly once, also when it returns
+    // `Err` (a termination hit while delivering synchronously, i.e. after the
+    // handler has already run the callback), so there is nothing to report.
+    let _ = unsafe { blob.read_bytes_to_handler(handler, global) };
 }
 
 /// Clears the File-specific fields so a dupe of a File surfaces as a plain

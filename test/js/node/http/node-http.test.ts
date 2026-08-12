@@ -4139,3 +4139,171 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+describe("connectionListener closes the connection like Node's resOnFinish", () => {
+  // A connection is ended after a response when the request forbade reuse, the
+  // response itself did, or (httpAllowHalfOpen) the peer half-closed while the
+  // response was in flight: Node's res._last. The server.emit("connection") path
+  // used to go by the parser's keep-alive flag alone, so an HTTP/1.0 request
+  // asking for keep-alive kept being served on a connection whose every response
+  // said Connection: close, and none of the response-level reasons closed anything.
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+  type Outcome = { connection: string | undefined; responses: number; ended: boolean; served: string[] };
+  type Case = {
+    name: string;
+    version?: string;
+    requestHeaders?: string;
+    handler?: Handler;
+    // httpAllowHalfOpen server; the client half-closes right after its request.
+    peerEndsFirst?: boolean;
+    expected: Outcome;
+  };
+
+  async function serve({
+    version = "1.1",
+    requestHeaders = "",
+    handler = endBody,
+    peerEndsFirst = false,
+  }: Case): Promise<Outcome> {
+    const requestFor = (path: string) => `GET ${path} HTTP/${version}\r\nHost: x\r\n${requestHeaders}\r\n`;
+    const served: string[] = [];
+    const server = createServer((req, res) => {
+      served.push(req.url!);
+      handler(req, res);
+    });
+    if (peerEndsFirst) server.httpAllowHalfOpen = true;
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      let wire = "";
+      let responses = 0;
+      let ended = false;
+      let firstResponseSeen = false;
+      clientSide.on("error", reject);
+      clientSide.on("end", () => {
+        ended = true;
+        resolve();
+      });
+      clientSide.on("data", chunk => {
+        wire += chunk;
+        responses = wire.match(/HTTP\/1\.1 \d{3} /g)?.length ?? 0;
+        if (responses >= 2) {
+          resolve();
+        } else if (responses === 1 && !firstResponseSeen) {
+          firstResponseSeen = true;
+          // A server that ends the connection does so as the first response
+          // finishes, so its 'end' settles this before the immediate runs. One
+          // that keeps it open is sent a second request and answers it (or, once
+          // the client has half-closed, is simply observed to still be open).
+          setImmediate(() => {
+            if (ended) return;
+            if (peerEndsFirst) resolve();
+            else clientSide.write(requestFor("/2"));
+          });
+        }
+      });
+      if (peerEndsFirst) clientSide.end(requestFor("/1"));
+      else clientSide.write(requestFor("/1"));
+      await promise;
+      return { connection: wire.match(/^connection: ([^\r\n]*)/im)?.[1], responses, ended, served };
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  function endBody(_req: IncomingMessage, res: ServerResponse) {
+    res.end("served");
+  }
+  const closes: Outcome = { connection: "close", responses: 1, ended: true, served: ["/1"] };
+  const closesAdvertisingKeepAlive: Outcome = { ...closes, connection: "keep-alive" };
+  let manyOtherHeaders = "";
+  for (let i = 0; i < 40; i++) manyOtherHeaders += `X-Filler-${i}: ${i}\r\n`;
+
+  const cases: Case[] = [
+    {
+      name: "ends it after answering an HTTP/1.0 request that asked for keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      expected: closes,
+    },
+    { name: "ends it after answering an HTTP/1.0 request", version: "1.0", expected: closes },
+    {
+      name: "ends it after answering an HTTP/1.1 request that sent Connection: close",
+      requestHeaders: "Connection: close\r\n",
+      expected: closes,
+    },
+    {
+      // The parser's verdict must drive both the header and the close: req.headers
+      // does not necessarily retain every header field of a large request.
+      name: "ends it after answering a Connection: close request that carried many other headers",
+      requestHeaders: "Connection: close\r\n" + manyOtherHeaders,
+      expected: closes,
+    },
+    {
+      name: "ends it after a response the handler gave a Connection: close header",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "close");
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      name: "ends it after a response the handler cleared shouldKeepAlive on",
+      handler: (_req, res) => {
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      // Node's _removedConnection branch: nothing advertised, still the last response.
+      name: "ends it after a response with shouldKeepAlive cleared and the Connection header removed",
+      handler: (_req, res) => {
+        res.removeHeader("Connection");
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: { ...closes, connection: undefined },
+    },
+    {
+      name: "ends it after a 204 response carrying a Transfer-Encoding header",
+      handler: (_req, res) => {
+        res.writeHead(204, { "Transfer-Encoding": "chunked" });
+        res.end();
+      },
+      expected: closes,
+    },
+    {
+      // This server never reuses an HTTP/1.0 connection (same as its native
+      // listener), whatever Connection header the handler writes itself.
+      name: "ends an HTTP/1.0 connection even when the handler advertised keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "keep-alive");
+        res.end("served");
+      },
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "ends it after the response when the peer half-closed before the handler answered (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      handler: (req, res) => req.socket.once("end", () => res.end("served")),
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "ends it after a synchronous response to a request that arrived together with the peer's FIN (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "keeps a kept-alive HTTP/1.1 connection open for the next request",
+      expected: { connection: "keep-alive", responses: 2, ended: false, served: ["/1", "/2"] },
+    },
+  ];
+  it.each(cases)("$name", async testCase => {
+    expect(await serve(testCase)).toEqual(testCase.expected);
+  });
+});

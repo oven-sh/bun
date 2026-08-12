@@ -28,9 +28,9 @@ const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeSlice = Array.prototype.slice;
 
 const kHeaders = Symbol("kHeaders");
-// Cache slot for the server dispatcher's keep-alive decision (stamped once
-// per request in _http_server.ts); declared in the constructor so the stamp
-// never shape-transitions the request.
+// Cache slot for the server dispatchers' keep-alive decision (stamped once
+// per request in _http_server.ts / http1_server_fallback.ts); declared in the
+// constructor so the stamp never shape-transitions the request.
 const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");

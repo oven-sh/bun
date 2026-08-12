@@ -4024,4 +4024,5 @@ export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
+  kMustCloseConnection,
 };

@@ -234,6 +234,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // 'request' with http.IncomingMessage/ServerResponse, like Node's httpConnectionListener routing.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
+  const { kMustCloseConnection } = require("node:_http_server");
+  const { kReqShouldKeepAlive } = require("node:_http_incoming");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
@@ -292,6 +294,11 @@ function connectionListenerHTTP1(server, socket, options) {
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
     req._addHeaderLines(rawHeaders, rawHeaders.length);
+    // Same stamp as the native dispatcher (renderNativeHeaders derives the Connection header
+    // from it): this server never keeps HTTP/1.0 alive; otherwise llhttp's verdict, which
+    // unlike req.headers saw every header field.
+    const keepAlive = versionMajor === 1 && versionMinor === 0 ? false : shouldKeepAlive;
+    req[kReqShouldKeepAlive] = keepAlive;
 
     // Node's parserOnIncoming: upgrade only sticks for CONNECT or when an 'upgrade' listener
     // exists; otherwise fall through to normal dispatch. Returning 2 makes llhttp stop after
@@ -318,20 +325,23 @@ function connectionListenerHTTP1(server, socket, options) {
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
+    // Node's res._last; renderNativeHeaders and onHttp1SocketEnd set it too.
+    if (!keepAlive) res[kMustCloseConnection] = true;
+    const handle = createHttp1FallbackResponseHandle(socket, keepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
-      if (!shouldKeepAlive && !socket.destroyed) {
-        socket.end();
-      }
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
     // node's resOnFinish: release the socket once the response completes so the next
     // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned), and end
+    // the connection after its last response.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
+      if (this[kMustCloseConnection] && !socket.destroyed) {
+        socket.end();
+      }
     });
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
@@ -434,7 +444,7 @@ function connectionListenerHTTP1(server, socket, options) {
     }
     const httpMessage = socket._httpMessage;
     if (httpMessage) {
-      httpMessage._last = true;
+      httpMessage[kMustCloseConnection] = true;
     } else if (socket.writable) {
       socket.end();
     }

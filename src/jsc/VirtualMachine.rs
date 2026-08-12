@@ -1340,9 +1340,6 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
-    /// Clears the sticky termination exception a `--watch` `process.exit()`
-    /// left pending, so the event loop can keep ticking while the watcher
-    /// waits. `watch_exit_requested` stays set until the re-exec.
     /// `process.exit()` under [`Self::watch_exit_keepalive`]: unwind the run
     /// via a JSC termination and leave the watcher alive. Inverse:
     /// [`Self::clear_watch_exit_termination`].
@@ -1354,6 +1351,9 @@ impl VirtualMachine {
         self.jsc_vm().notify_need_termination();
     }
 
+    /// Clears the sticky termination exception a `--watch` `process.exit()`
+    /// left pending, so the event loop can keep ticking while the watcher
+    /// waits. `watch_exit_requested` stays set until the re-exec.
     pub fn clear_watch_exit_termination(&mut self) {
         if self.watch_exit_requested {
             self.global().clear_termination_exception();

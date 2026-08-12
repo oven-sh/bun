@@ -159,7 +159,15 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    replaceModules(modules);
+    try {
+      await replaceModules(modules);
+    } catch (err) {
+      // The dev server does not observe the promise this function returns, so
+      // a module (or one of its hot callbacks) throwing while the update is
+      // applied would otherwise be an unhandled rejection that ends the
+      // process. The module stays failed until it is saved again.
+      console.error(err);
+    }
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

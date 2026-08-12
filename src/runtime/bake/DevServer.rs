@@ -4295,7 +4295,10 @@ pub(super) fn finalize_bundle(
                 ir.client_components_removed.as_slice(),
             )
         };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
+        // `registerUpdate` is async. The runtime (hmr-runtime-server.ts) reports
+        // a module that throws while the update is applied, so the promise
+        // returned here is not observed.
+        if let Err(err) = dev.server_register_update_callback.get().unwrap().call(
             global,
             global.to_js_value(),
             &[
@@ -4304,17 +4307,13 @@ pub(super) fn finalize_bundle(
                 dev.make_array_for_server_components_patch(global, removed)?,
             ],
         ) {
-            Ok(v) => v,
-            Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                dev.vm_mut()
-                    .print_error_like_object_to_console(global.take_exception(err));
-                panic!(
-                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
-                );
-            }
-        };
-        let _ = errors; // TODO:
+            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+            dev.vm_mut()
+                .print_error_like_object_to_console(global.take_exception(err));
+            panic!(
+                "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
+            );
+        }
     }
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;

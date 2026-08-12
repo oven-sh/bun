@@ -228,7 +228,30 @@ export class Dev extends EventEmitter {
     this.output.on("panic", () => {
       this.panicked = true;
     });
+    this.devProcess.exited.then(() => this.emit("exit"));
     this.nodeEnv = nodeEnv;
+  }
+
+  /**
+   * A dev server that dies while a change is applied never sends the watch
+   * synchronization messages `write()` and friends wait for. Rejecting those
+   * waits when the process exits fails the test at the call that killed the
+   * dev server instead of at the test timeout.
+   */
+  #rejectOnExit<T>(promise: Promise<T>, waitingFor: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const onExit = () => {
+        const { exitCode, signalCode } = this.devProcess;
+        const how = exitCode !== null ? `code ${exitCode}` : `signal ${signalCode}`;
+        reject(new Error(`Dev server exited with ${how} while waiting for ${waitingFor}`));
+      };
+      if (this.devProcess.exitCode !== null || this.devProcess.signalCode !== null) {
+        onExit();
+      } else {
+        this.once("exit", onExit);
+      }
+      promise.then(resolve, reject).finally(() => this.off("exit", onExit));
+    });
   }
 
   connectSocket() {
@@ -267,7 +290,7 @@ export class Dev extends EventEmitter {
   }
 
   #waitForSyncEvent(event: WatchSynchronization) {
-    return new Promise<void>((resolve, reject) => {
+    const received = new Promise<void>(resolve => {
       let dev = this;
       function handle(kind: WatchSynchronization) {
         if (kind === event) {
@@ -277,6 +300,7 @@ export class Dev extends EventEmitter {
       }
       dev.on("watch_synchronization", handle);
     });
+    return this.#rejectOnExit(received, "watch synchronization event " + WatchSynchronization[event]);
   }
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
@@ -319,10 +343,8 @@ export class Dev extends EventEmitter {
     const b = {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
-        if (wantsHmrEvent && interactive) {
-          await seenFiles.promise;
-        } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise]);
+        if (wantsHmrEvent) {
+          await this.#rejectOnExit(seenFiles.promise, "the dev server to see the changed files");
         }
         // One Bun.write can surface as several watcher events (notably on
         // Windows); let them coalesce so releasing the batch bundles once.
@@ -331,7 +353,7 @@ export class Dev extends EventEmitter {
         dev.off("watch_synchronization", onSeenFiles);
 
         this.socket!.send("H");
-        await wait;
+        await this.#rejectOnExit(wait, "the hot reload");
 
         let errors = options.errors;
         if (errors !== null) {

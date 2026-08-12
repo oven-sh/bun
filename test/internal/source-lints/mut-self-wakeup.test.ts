@@ -48,6 +48,19 @@ const tracked: Set<string> | null = (() => {
 // shapes above, nor the `extern "C" fn wakeup(loop_: *mut Loop)` trampolines.
 const BANNED = /\bfn\s+wakeup\s*\(\s*&\s*(?:'\w+\s+)?mut\s+self\b/g;
 
+/** `line: matched text` for every banned definition in one file's source. */
+function findBanned(content: string): string[] {
+  // Strip full-line comments so prose mentions don't count. `[ \t]*`, not
+  // `\s*`: `\s` crosses newlines and would shift the reported line numbers.
+  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
+  const hits: string[] = [];
+  for (const m of stripped.matchAll(BANNED)) {
+    const line = stripped.slice(0, m.index).split("\n").length;
+    hits.push(`${line}: ${m[0].replace(/\s+/g, " ")}`);
+  }
+  return hits;
+}
+
 const offenders: string[] = [];
 let scanned = 0;
 for (const abs of rustSources) {
@@ -57,15 +70,24 @@ for (const abs of rustSources) {
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
-  const content = await file(abs).text();
-  // Strip full-line comments so prose mentions don't count. `[ \t]*`, not
-  // `\s*`: `\s` crosses newlines and would shift the reported line numbers.
-  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const m of stripped.matchAll(BANNED)) {
-    const line = stripped.slice(0, m.index).split("\n").length;
-    offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
+  for (const hit of findBanned(await file(abs).text())) {
+    offenders.push(`${source}:${hit}`);
   }
 }
+
+test("the matcher recognizes the banned receiver shapes and nothing else", () => {
+  // The tree is expected to contain zero matches, so the ban below would also
+  // pass if the pattern silently stopped matching; pin it on literal snippets.
+  expect(findBanned("impl PosixLoop {\n    pub fn wakeup(&mut self) {}\n}\n")).toEqual(["2: fn wakeup(&mut self"]);
+  expect(findBanned("pub(crate) fn wakeup(&'a mut self, n: u32) {}")).toEqual(["1: fn wakeup(&'a mut self"]);
+  expect(findBanned("pub unsafe fn wakeup(\n    &mut self,\n    reason: Reason,\n) {}")).toEqual([
+    "1: fn wakeup( &mut self",
+  ]);
+  expect(findBanned("// was `fn wakeup(&mut self)` before\npub fn wakeup(&self) {}")).toEqual([]);
+  expect(findBanned("pub unsafe fn wakeup(this: *mut Self) {}")).toEqual([]);
+  expect(findBanned('extern "C" fn wakeup(_loop: *mut uws::Loop) {}')).toEqual([]);
+  expect(findBanned("fn wakeup_all(&mut self) {}")).toEqual([]);
+});
 
 test("scans a non-empty set of tracked Rust sources", () => {
   // Guards against the tracked/realpath filters above over-firing and leaving

@@ -25,9 +25,14 @@ const skip = !isLinux || !cc;
 // while armed.
 const BUNDLE_THREAD_STACK_SIZE = 2 * 1024 * 1024;
 
+// The highest value Linux reserves for errnos; far beyond the ones bun names.
+// Stands in for what Windows produces for most failed thread creations: an OS
+// code with no errno equivalent.
+const UNNAMED_ERRNO = 4095;
+
 // BUNDLE_THREAD_SPAWN_PLAN has one letter per such attempt: 'f' fails it with
-// EAGAIN (a thread limit), 'n' with ENOMEM, 's' lets it through; the last
-// letter repeats.
+// EAGAIN (a thread limit), 'n' with ENOMEM, 'u' with a code bun has no errno
+// name for, 's' lets it through; the last letter repeats.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -60,6 +65,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
     switch (plan[i < plan_len ? i : plan_len - 1]) {
       case 'f': return EAGAIN;
       case 'n': return ENOMEM;
+      case 'u': return ${UNNAMED_ERRNO};
     }
   }
   return real_pthread_create(thread, attr, start, arg);
@@ -130,6 +136,22 @@ console.log(JSON.stringify({ first: first.status, second: second.status }));
 server.stop(true);
 `;
 
+// Exits while the failed build's completion is still queued. Run with
+// BUN_DESTRUCT_VM_ON_EXIT, the exit tears the VM down the way a finished
+// Worker's is, which has to release that completion like any other build's
+// instead of hanging on it or freeing it twice.
+const EXIT_FIXTURE = /* js */ `
+${ARM_HELPERS}
+arm();
+try {
+  Bun.build({ entrypoints: [import.meta.dirname + "/entry.js"], throw: false });
+} finally {
+  disarm();
+}
+console.log(JSON.stringify({ exiting: true }));
+process.exit(0);
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 let shimPath: string;
 
@@ -141,6 +163,7 @@ beforeAll(async () => {
     "a.js": `export const a = 1;\n`,
     "build.js": BUILD_FIXTURE,
     "serve.js": SERVE_FIXTURE,
+    "exit.js": EXIT_FIXTURE,
     "index.html": `<!doctype html><script type="module" src="./entry.js"></script>`,
   });
   shimPath = join(String(dir), "shim.so");
@@ -162,7 +185,7 @@ afterAll(() => {
 
 let runs = 0;
 
-async function runWithPlan(plan: string, ...args: string[]) {
+async function runWithPlan(plan: string, args: string[], env: Record<string, string> = {}) {
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -173,9 +196,14 @@ async function runWithPlan(plan: string, ...args: string[]) {
       BUNDLE_THREAD_SPAWN_PLAN: plan,
       // Per run: a fixture that crashes while armed must not arm the others.
       BUNDLE_THREAD_SPAWN_ARMED_FILE: join(String(dir), `armed-${runs++}`),
+      ...env,
     },
     stdout: "pipe",
     stderr: "pipe",
+    // A teardown that waits for a completion that never comes hangs the fixture;
+    // turn that into a failure the concurrent tests do not leave behind.
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
@@ -192,7 +220,7 @@ async function runWithPlan(plan: string, ...args: string[]) {
 
 describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", () => {
   test.concurrent("rejects with the error in the AggregateError", async () => {
-    expect(await runWithPlan("f", "build.js", "throw", "1")).toEqual({
+    expect(await runWithPlan("f", ["build.js", "throw", "1"])).toEqual({
       results: [
         {
           settled: "rejected",
@@ -209,7 +237,7 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
   });
 
   test.concurrent("resolves with success: false and the error in the logs under throw: false", async () => {
-    expect(await runWithPlan("f", "build.js", "nothrow", "1")).toEqual({
+    expect(await runWithPlan("f", ["build.js", "nothrow", "1"])).toEqual({
       results: [{ settled: "resolved", success: false, logs: [EXPECTED_ERROR], onEnd: false }],
       stderr: "",
       exitCode: 0,
@@ -218,7 +246,7 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
   });
 
   test.concurrent("reports other errors without the thread-limit hint", async () => {
-    expect(await runWithPlan("n", "build.js", "nothrow", "1")).toEqual({
+    expect(await runWithPlan("n", ["build.js", "nothrow", "1"])).toEqual({
       results: [
         { settled: "resolved", success: false, logs: ["Failed to start the bundler thread: ENOMEM."], onEnd: false },
       ],
@@ -228,8 +256,29 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
     });
   });
 
+  test.concurrent("reports an error bun has no errno name for as the OS describes it", async () => {
+    expect(await runWithPlan("u", ["build.js", "nothrow", "1"])).toEqual({
+      results: [
+        {
+          settled: "resolved",
+          success: false,
+          // The text is the libc's; glibc and musl word it differently.
+          logs: [
+            expect.stringMatching(
+              new RegExp(String.raw`^Failed to start the bundler thread: .+ \(os error ${UNNAMED_ERRNO}\)$`),
+            ),
+          ],
+          onEnd: false,
+        },
+      ],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test.concurrent("the next build starts the thread again", async () => {
-    expect(await runWithPlan("fs", "build.js", "nothrow", "2")).toEqual({
+    expect(await runWithPlan("fs", ["build.js", "nothrow", "2"])).toEqual({
       results: [
         { settled: "resolved", success: false, logs: [EXPECTED_ERROR], onEnd: false },
         { settled: "resolved", success: true, logs: [], onEnd: true },
@@ -241,7 +290,7 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
   });
 
   test.concurrent("every build fails while the thread keeps failing to start", async () => {
-    expect(await runWithPlan("f", "build.js", "nothrow", "2")).toEqual({
+    expect(await runWithPlan("f", ["build.js", "nothrow", "2"])).toEqual({
       results: [
         { settled: "resolved", success: false, logs: [EXPECTED_ERROR], onEnd: false },
         { settled: "resolved", success: false, logs: [EXPECTED_ERROR], onEnd: false },
@@ -252,8 +301,17 @@ describe.skipIf(skip)("Bun.build() when the bundle thread cannot be started", ()
     });
   });
 
+  test.concurrent("a VM torn down before the failed build's completion ran releases it", async () => {
+    expect(await runWithPlan("f", ["exit.js"], { BUN_DESTRUCT_VM_ON_EXIT: "1" })).toEqual({
+      results: [{ exiting: true }],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test.concurrent("an HTML route in Bun.serve answers 500, then builds once the thread starts", async () => {
-    const { stderr, ...rest } = await runWithPlan("fs", "serve.js");
+    const { stderr, ...rest } = await runWithPlan("fs", ["serve.js"]);
     expect({ ...rest, stderrLines: stderr.split("\n") }).toEqual({
       results: [{ first: 500, second: 200 }],
       // The failed first build's log, then the second request's bundle timing.

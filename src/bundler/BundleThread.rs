@@ -370,7 +370,7 @@ pub mod singleton {
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
     /// type-erased.
-    pub(crate) fn get<C: CompletionStruct>() -> Result<*mut BundleThread<C>, SystemErrno> {
+    pub(crate) fn get<C: CompletionStruct>() -> std::io::Result<*mut BundleThread<C>> {
         let mut instance = INSTANCE.lock();
         if let Some(instance) = &*instance {
             return Ok(instance.0.as_ptr().cast::<BundleThread<C>>());
@@ -386,7 +386,7 @@ pub mod singleton {
             Err(err) => {
                 // SAFETY: `spawn` started nothing, so this is still the sole owner.
                 unsafe { bun_core::heap::destroy(bundle_thread.as_ptr()) };
-                return Err(SystemErrno::from_io_error(&err).unwrap_or(SystemErrno::EAGAIN));
+                return Err(err);
             }
         }
         *instance = Some(Instance(bundle_thread.cast::<()>()));
@@ -400,43 +400,56 @@ pub mod singleton {
         let completion = NonNull::new(completion).unwrap_or_else(|| {
             Output::panic(format_args!("BundleThread enqueue: null completion"))
         });
-        let errno = match get::<C>() {
+        let err = match get::<C>() {
             Ok(instance) => {
                 // SAFETY: `get()` returned the leaked 'static singleton whose bundle thread is
                 // running; `BundleThread::enqueue` only performs raw-ptr field projections.
                 unsafe { BundleThread::enqueue(instance, completion.as_ptr()) };
                 return;
             }
-            Err(errno) => errno,
+            Err(err) => err,
         };
 
         // SAFETY: the task is live, and until this returns nothing else uses it:
         // it never reached the queue. The borrow ends before the caller goes on
         // setting it up.
         let completion = unsafe { &mut *completion.as_ptr() };
-        // Started, so a VM torn down before the completion below runs waits for
-        // it (as for a build that failed on the bundle thread) instead of
-        // releasing the task itself.
+        // A VM torn down before the posted completion runs then treats this like
+        // any started build (the completion is released with the queue); left
+        // queued, the teardown would instead release it itself and finish the
+        // embedded work a second time.
         let started = completion.try_start();
         assert!(
             started,
             "a build that was never queued cannot have been released"
         );
-        // EAGAIN is what a thread limit produces; Windows reports ENOMEM, where
-        // the advice below would be wrong.
-        let hint = if errno == SystemErrno::EAGAIN {
-            " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
-        } else {
-            ""
-        };
+        let errno = SystemErrno::from_io_error(&err);
         let mut log = bun_ast::Log::init();
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!("Failed to start the bundler thread: {errno}.{hint}"),
-        );
+        match errno {
+            Some(errno) => {
+                // Unix reports an exhausted thread or pid limit as EAGAIN.
+                let hint = if cfg!(not(windows)) && errno == SystemErrno::EAGAIN {
+                    " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
+                } else {
+                    ""
+                };
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Failed to start the bundler thread: {errno}.{hint}"),
+                );
+            }
+            // An OS code bun has no errno for: report it the way the OS describes it.
+            None => log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("Failed to start the bundler thread: {err}"),
+            ),
+        }
         completion.set_log(log);
-        completion.set_result(BundleV2Result::Err(errno.into()));
+        completion.set_result(BundleV2Result::Err(
+            errno.map_or(crate::Error::BuildFailed, crate::Error::Sys),
+        ));
         completion.complete_on_bundle_thread();
     }
 }

@@ -927,6 +927,17 @@ enum Step {
     Done,
 }
 
+/// The task holds one event-loop reference from `start_with_ctx` until it is dropped, and its
+/// libuv request is cleaned up with it; the store reference (and, for a read that never
+/// completed, the completion, which cancels itself) are released by the field drops.
+#[cfg(windows)]
+impl Drop for ReadFileUV<'_> {
+    fn drop(&mut self) {
+        self.req.deinit();
+        self.event_loop.unref_keep_alive();
+    }
+}
+
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
     const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
@@ -1001,9 +1012,11 @@ impl<'a> ReadFileUV<'a> {
         log!("ReadFileUV.start");
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
-        // async op, which additionally holds a keep-alive on it below.
+        // async op, which additionally holds a keep-alive on it.
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
+        // Balanced by `Drop`.
+        event_loop.ref_keep_alive();
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
             // `&VirtualMachine`.
@@ -1027,8 +1040,6 @@ impl<'a> ReadFileUV<'a> {
             is_regular_file: false,
             req: bun_core::ffi::zeroed(),
         });
-        // Keep the event loop alive while the async operation is pending
-        event_loop.ref_keep_alive();
         let this: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: `this` was allocated just above and nothing else holds it; `get_fd` does not
         // free it.
@@ -1096,59 +1107,40 @@ impl<'a> ReadFileUV<'a> {
         unsafe { Self::finish(this, step) };
     }
 
-    /// Takes `*mut Self`, not `&mut self`: a finished read frees the task here, and a
-    /// `&mut self` argument would have to stay dereferenceable until this returned.
+    /// Takes `*mut Self`, not `&mut self`: a finished read turns the pointer back into the
+    /// `Box` that `start_with_ctx` leaked and drops it here, and a `&mut self` argument would
+    /// have to stay dereferenceable until this returned.
     ///
     /// # Safety
     /// `this` must be the live task allocated in `start_with_ctx`, with no borrow of it
     /// outstanding. If `step` is [`Step::Done`], `*this` is freed before this returns.
     unsafe fn finish(this: *mut Self, step: Step) {
-        if let Step::Done = step {
-            // SAFETY: caller contract.
-            unsafe { Self::finalize(this) };
-        }
-    }
-
-    /// Delivers the outcome to the completion and frees the task.
-    ///
-    /// # Safety
-    /// `this` must be the live task allocated in `start_with_ctx`, with no borrow of it
-    /// outstanding; it is freed before this returns.
-    unsafe fn finalize(this: *mut Self) {
+        let Step::Done = step else { return };
         log!("ReadFileUV.finalize");
-        // SAFETY: caller contract — `this` is the allocation from `start_with_ctx`; we reclaim
-        // ownership here.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
-        let event_loop = this_box.event_loop;
+        // SAFETY: caller contract — `this` is the allocation `start_with_ctx` leaked, and
+        // nothing borrows it: the step that reported `Done` has returned.
+        let mut task = unsafe { bun_core::heap::take(this) };
 
-        let completion = this_box
-            .completion
-            .take()
-            .expect("a ReadFileUV completes once");
+        let completion = task.completion.take().expect("a ReadFileUV completes once");
 
-        let result = if let Some(err) = this_box.system_error.take() {
+        let result = if let Some(err) = task.system_error.take() {
             ReadFileResultType::Err(err)
         } else {
-            // Move byte_store out so dropping `this_box` below does not free the
+            // Move byte_store out so dropping `task` below does not free the
             // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
             // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
             // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
-            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
+            let boxed = core::mem::take(&mut task.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
             })
         };
 
-        // The completion must run BEFORE the cleanup below (store deref / req.deinit /
-        // box drop / event_loop.unref) — it may inspect store.
+        // The completion may inspect the store, so it runs before `task` (which holds the
+        // store reference, the request and the loop reference) is dropped.
         completion.complete(result);
-
-        // store.deref runs via StoreRef's Drop when the Box drops.
-        this_box.req.deinit();
-        drop(this_box);
-        // Release the event loop reference now that we're done
-        event_loop.unref_keep_alive();
+        drop(task);
         log!("ReadFileUV.finalize destroy");
     }
 

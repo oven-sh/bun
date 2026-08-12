@@ -1181,9 +1181,11 @@ impl<'a> CopyFileWindows<'a> {
     }
 }
 
+/// Closes the descriptors `prepare_pathlike` opened (a `Bun.file(fd)` store's own descriptor is
+/// left alone); `read_buf` frees itself.
 #[cfg(windows)]
-impl ReadWriteLoop {
-    pub fn close(&mut self) {
+impl Drop for ReadWriteLoop {
+    fn drop(&mut self) {
         if self.must_close_source_fd {
             match self.source_fd.make_libuv_owned() {
                 Ok(fd) => {
@@ -1193,8 +1195,6 @@ impl ReadWriteLoop {
                     self.source_fd.close();
                 }
             }
-            self.must_close_source_fd = false;
-            self.source_fd = Fd::INVALID;
         }
 
         if self.must_close_destination_fd {
@@ -1206,11 +1206,19 @@ impl ReadWriteLoop {
                     self.destination_fd.close();
                 }
             }
-            self.must_close_destination_fd = false;
-            self.destination_fd = Fd::INVALID;
         }
+    }
+}
 
-        self.read_buf = Vec::new(); // clearAndFree()
+/// The task holds one event-loop reference from `init` until it is dropped (every return to
+/// the loop while it exists has a request or pool task in flight), and its libuv request is
+/// cleaned up with it. `read_write_loop` closes its descriptors and the store references are
+/// released by the field drops.
+#[cfg(windows)]
+impl Drop for CopyFileWindows<'_> {
+    fn drop(&mut self) {
+        self.io_request.deinit();
+        self.event_loop.unref_keep_alive();
     }
 }
 
@@ -1383,8 +1391,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn on_read_write_loop_complete(&mut self) -> Step {
-        self.event_loop.unref_keep_alive();
-
         if let Some(err) = self.err.take() {
             return Step::Done(Err(err));
         }
@@ -1407,6 +1413,8 @@ impl<'a> CopyFileWindows<'a> {
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
+        // Balanced by `Drop`.
+        event_loop.ref_keep_alive();
         let this = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
@@ -1509,10 +1517,7 @@ impl<'a> CopyFileWindows<'a> {
 
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => Step::Done(Err(err)),
-            bun_sys::Result::Ok(()) => {
-                self.event_loop.ref_keep_alive();
-                Step::Pending
-            }
+            bun_sys::Result::Ok(()) => Step::Pending,
         }
     }
 
@@ -1653,12 +1658,10 @@ impl<'a> CopyFileWindows<'a> {
                 ..Default::default()
             }));
         }
-        self.event_loop.ref_keep_alive();
         Step::Pending
     }
 
     fn on_copyfile_complete(&mut self) -> Step {
-        self.event_loop.unref_keep_alive();
         let rc = self.io_request.result;
 
         bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
@@ -1776,7 +1779,6 @@ impl<'a> CopyFileWindows<'a> {
                     }
                     return Step::Done(Err(err));
                 }
-                self.event_loop.ref_keep_alive();
                 return Step::Pending;
             }
         }
@@ -1785,8 +1787,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn on_chmod_complete(&mut self) -> Step {
-        self.event_loop.unref_keep_alive();
-
         let rc = self.io_request.result;
         if let Some(errno) = rc.err_enum_e() {
             let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
@@ -1800,8 +1800,9 @@ impl<'a> CopyFileWindows<'a> {
         Step::Done(Ok(self.written_bytes))
     }
 
-    /// Takes `*mut Self`, not `&mut self`: a finished copy frees the task here, and a
-    /// `&mut self` argument would have to stay dereferenceable until this returned.
+    /// Takes `*mut Self`, not `&mut self`: a finished copy turns the pointer back into the
+    /// `Box` that `init` leaked and drops it here, and a `&mut self` argument would have to
+    /// stay dereferenceable until this returned.
     ///
     /// # Safety
     /// `this` must be the live task allocated in `init`, with no borrow of it outstanding.
@@ -1809,13 +1810,15 @@ impl<'a> CopyFileWindows<'a> {
     unsafe fn finish(this: *mut Self, step: Step) {
         let Step::Done(result) = step else { return };
 
-        // SAFETY: caller contract — `this` is live. `swap()` hands back the GC-owned promise
-        // cell, which is not inside `*this`, so it stays usable after `destroy` below.
-        let (event_loop, promise) = unsafe { ((*this).event_loop, (*this).promise.swap()) };
+        // SAFETY: caller contract — `this` is the allocation `init` leaked, and nothing
+        // borrows it: the step that reported `Done` has returned.
+        let mut task = unsafe { bun_core::heap::take(this) };
+        let event_loop = task.event_loop;
+        let mut promise = task.promise.take();
         let global_this = event_loop.global_ref();
         let settled = match result {
             Ok(written) => Ok(JSValue::js_number_from_uint64(written as u64)),
-            Err(err) => Err(err.to_js_with_async_stack(global_this, promise)),
+            Err(err) => Err(err.to_js_with_async_stack(global_this, promise.get())),
         };
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
@@ -1823,10 +1826,9 @@ impl<'a> CopyFileWindows<'a> {
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut())
         };
-        // SAFETY: caller contract — `this` is the heap allocation from `init` and nothing
-        // borrows it: the step that produced `result` has returned and everything needed
-        // below was copied out above.
-        unsafe { Self::destroy(this) };
+        // Descriptors are closed and the loop reference is released before script can observe
+        // the settled promise.
+        drop(task);
         let _ = match settled {
             Ok(written) => promise.resolve(global_this, written),
             Err(err) => promise.reject(global_this, err),
@@ -1846,19 +1848,6 @@ impl<'a> CopyFileWindows<'a> {
             },
             node_fs::Flavor::Sync,
         );
-    }
-
-    /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
-    /// not yet destroyed. After this call `this` is dangling.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `heap::alloc`-ed pointer.
-        unsafe {
-            (*this).read_write_loop.close();
-            // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
-            // promise.deinit() — handled by JscStrong's Drop on Box drop
-            (*this).io_request.deinit();
-            drop(bun_core::heap::take(this));
-        }
     }
 
     fn mkdirp(&mut self) -> Step {
@@ -1885,7 +1874,6 @@ impl<'a> CopyFileWindows<'a> {
                 .unwrap_or(path_slice) as *const [u8]
         };
 
-        self.event_loop.ref_keep_alive();
         node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
@@ -1896,8 +1884,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn on_mkdirp_complete(&mut self) -> Step {
-        self.event_loop.unref_keep_alive();
-
         if let Some(err) = self.err.take() {
             return Step::Done(Err(err));
         }

@@ -204,7 +204,7 @@ if (cluster.isPrimary) {
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("tls listen error code: EINVAL");
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
-});
+}, 30_000);
 
 test("cluster pipe listen error carries no port suffix", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -451,18 +451,26 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
-// Two workers accepting on copies of one Windows listening socket race each other for every
-// connection, and the loser blocks inside accept(): its event loop never runs again, so it stops
-// answering IPC and never exits. Each connection below is one such race; the primary pings both
-// workers after every one. TCP listens under SCHED_NONE are served by the primary on Windows instead.
-test.skipIf(!isWindows)(
-  "SCHED_NONE: two workers sharing one port keep answering IPC while connections arrive, then exit",
-  async () => {
-    using dir = tempDir("cluster-shared-accept-race", {
-      "main.ts": `
+// Every connection below is one chance for a worker to stop answering IPC; the primary pings both
+// workers after each one and the workers must still disconnect cleanly at the end.
+//
+// SCHED_NONE: two workers accepting on copies of one Windows listening socket race each other for
+// every connection, and the loser blocked inside accept(), so its event loop never ran again. TCP
+// listens under SCHED_NONE are served by the primary on Windows now.
+//
+// SCHED_RR: the primary sends each connection as a handle message. On Windows the worker's ack for
+// it could be read before libuv reported the write itself complete; the primary then dropped the ack
+// and waited for it forever, and every later message to that worker (pings, disconnect) sat behind
+// it. This ordering needs a busy machine, so before the fix this variant only failed under load.
+for (const policy of ["SCHED_NONE", "SCHED_RR"]) {
+  test.skipIf(!isWindows)(
+    `${policy}: two workers on one port keep answering IPC while connections arrive, then exit`,
+    async () => {
+      using dir = tempDir("cluster-worker-responsiveness", {
+        "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
-cluster.schedulingPolicy = cluster.SCHED_NONE;
+cluster.schedulingPolicy = cluster.${policy};
 
 if (cluster.isPrimary) {
   const CONNECTIONS = 100;
@@ -529,23 +537,24 @@ if (cluster.isPrimary) {
   });
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "served: 100 ports: 1\nexits: 0,0\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  },
-  30_000,
-);
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "served: 100 ports: 1\nexits: 0,0\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+}
 
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
@@ -958,7 +967,9 @@ test.skipIf(!isWindows)(
     const dir = tempDirWithFiles("bun-test", netWorkerAfterTlsWorkerFixture);
     const { stdout } = await bunRun(joinP(dir, "main.ts"), { NODE_CLUSTER_SCHED_POLICY: "none" });
     expect(stdout).toContain("net listen error code: EINVAL");
-    expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+    expect(stdout).toContain(
+      "TLS and non-TLS cluster workers cannot share the same address:port while the primary distributes its connections",
+    );
   },
   30_000,
 );

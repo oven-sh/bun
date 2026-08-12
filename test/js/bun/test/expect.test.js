@@ -3357,7 +3357,9 @@ describe("expect()", () => {
       expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers() });
       expect({ h: new Headers() }).not.toMatchObject({ h: new Headers({ a: "1" }) });
 
-      expect({ res: { headers: new Headers({ a: "1" }) } }).toMatchObject({ res: { headers: new Headers({ a: "1" }) } });
+      expect({ res: { headers: new Headers({ a: "1" }) } }).toMatchObject({
+        res: { headers: new Headers({ a: "1" }) },
+      });
       expect({ res: { headers: new Headers({ a: "1" }) } }).not.toMatchObject({
         res: { headers: new Headers({ a: "2" }) },
       });
@@ -3379,7 +3381,9 @@ describe("expect()", () => {
       expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&b=2") });
       expect({ p: new URLSearchParams("a=1&b=2") }).not.toMatchObject({ p: new URLSearchParams("a=1") });
 
-      expect({ req: { query: new URLSearchParams("a=1") } }).toMatchObject({ req: { query: new URLSearchParams("a=1") } });
+      expect({ req: { query: new URLSearchParams("a=1") } }).toMatchObject({
+        req: { query: new URLSearchParams("a=1") },
+      });
       expect({ req: { query: new URLSearchParams("a=1") } }).not.toMatchObject({
         req: { query: new URLSearchParams("a=2") },
       });

@@ -386,18 +386,23 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 /// which only means fingerprinted entries are fetched again.
 fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
     let name = bun_core::zstr!(".id");
-    let read = |id: &mut integrity::CacheDirId| -> bool {
-        File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0)
-            .and_then(|file| file.read_all(id))
-            .is_ok_and(|len| len == id.len())
-    };
     let mut id: integrity::CacheDirId = [0; 16];
-    for _ in 0..2 {
-        if read(&mut id) {
-            return id;
+    for attempt in 0..3 {
+        match File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0) {
+            Ok(file) => {
+                if file.read_all(&mut id).is_ok_and(|len| len == id.len()) {
+                    return id;
+                }
+                if attempt < 2 {
+                    // possibly being written by a concurrent install; read again
+                    continue;
+                }
+                let _ = sys::unlinkat(cache_dir.fd(), name);
+            }
+            Err(err) if err.get_errno() != sys::E::ENOENT => break,
+            Err(_) => {}
         }
         bun_boringssl_sys::rand_bytes(&mut id);
-        let _ = sys::unlinkat(cache_dir.fd(), name);
         match File::openat(
             cache_dir.fd(),
             name.as_bytes(),
@@ -405,9 +410,11 @@ fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
             0o600,
         ) {
             Ok(file) if file.write_all(&id).is_ok() => return id,
-            _ => continue,
+            // created concurrently by another install: read theirs
+            _ => {}
         }
     }
+    bun_boringssl_sys::rand_bytes(&mut id);
     id
 }
 

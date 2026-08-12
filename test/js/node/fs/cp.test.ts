@@ -594,9 +594,10 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 );
 
 // An empty destination has to fail the way node's walker fails it: mkdir("")
-// -> ENOENT, with nothing created. (node's cpSync alone reports EINVAL, and
-// only because its C++ copy starts with std::filesystem::create_directories("");
-// given a filter it walks in JS and reports ENOENT/mkdir like its async forms.)
+// -> ENOENT, with nothing created. (node's cpSync alone reports whatever
+// std::filesystem::create_directories("") says in its C++ copy, EINVAL on Linux
+// and ESRCH on Windows; given a filter it walks in JS and reports ENOENT/mkdir
+// like its async forms do everywhere.)
 // On macOS a directory source takes the native recursive copy, which rebuilds
 // its destination from a stack buffer; an empty operand used to be returned
 // without ever being copied into that buffer, so the tree was copied to
@@ -637,8 +638,9 @@ test("empty destination is rejected with ENOENT and creates nothing", async () =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { results, cwd } = JSON.parse(stdout);
-  // Single-file copies report the syscall that hit "" (mkdir of its parent on
-  // Linux, copyfile on macOS), so only the code is pinned for them.
+  // Single-file copies report whichever syscall hit "" on that platform (mkdir
+  // of its parent on Linux, copyfile on Windows), so only the code is pinned
+  // for them.
   expect({ ...results, cwd: cwd.map((entry: string) => entry.replaceAll("\\", "/")).sort() }).toEqual({
     "cpSync(d)": { code: "ENOENT", syscall: "mkdir" },
     "promises.cp(d)": { code: "ENOENT", syscall: "mkdir" },

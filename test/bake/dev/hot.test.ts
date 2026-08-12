@@ -493,9 +493,16 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    // Both replaced modules bubble up to the same boundary. It is evaluated
-    // again once, so it is disposed of once (disposing of it twice used to
-    // throw, since its dispose list is cleared by the first pass).
+    // Both replaced modules bubble up to the same boundary. Every module is
+    // disposed of once and evaluated once per update:
+    // - the boundary is reached from both replaced modules (disposing of it
+    //   twice used to throw, since its dispose list is cleared by the first
+    //   pass)
+    // - the boundary is reloaded before whichever replaced module the update
+    //   listed second, and imports it. Marking that module stale before its
+    //   own reload would make the boundary's reload evaluate it, and its own
+    //   reload evaluate it again, which would also register its dispose
+    //   callback twice (hence the second round).
     "index.ts": `
       import "./d";
       import "./e";
@@ -507,12 +514,14 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
     `,
     "d.ts": `
       export const d = "d1";
+      console.log("evaluated " + d);
       import.meta.hot.dispose(() => {
         console.log("disposed " + d);
       });
     `,
     "e.ts": `
       export const e = "e1";
+      console.log("evaluated " + e);
       import.meta.hot.dispose(() => {
         console.log("disposed " + e);
       });
@@ -520,15 +529,35 @@ devTest("import.meta.hot.dispose runs once per module when one update replaces s
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("index evaluated");
+    await c.expectMessage("evaluated d1", "evaluated e1", "index evaluated");
+    // The order the modules of one update are processed in is not specified;
+    // the dispose-before-evaluate ordering is covered by the tests above.
     {
       await using batch = await dev.batchChanges();
       await dev.patch("d.ts", { find: "d1", replace: "d2" });
       await dev.patch("e.ts", { find: "e1", replace: "e2" });
     }
-    // The replaced modules are disposed of in the order they appear in the
-    // update, which is not specified.
-    await c.expectMessageInAnyOrder("disposed d1", "disposed e1", "index disposed", "index evaluated");
+    await c.expectMessageInAnyOrder(
+      "disposed d1",
+      "disposed e1",
+      "index disposed",
+      "evaluated d2",
+      "evaluated e2",
+      "index evaluated",
+    );
+    {
+      await using batch = await dev.batchChanges();
+      await dev.patch("d.ts", { find: "d2", replace: "d3" });
+      await dev.patch("e.ts", { find: "e2", replace: "e3" });
+    }
+    await c.expectMessageInAnyOrder(
+      "disposed d2",
+      "disposed e2",
+      "index disposed",
+      "evaluated d3",
+      "evaluated e3",
+      "index evaluated",
+    );
   },
 });
 devTest("import.meta.hot.on listeners of a module accepted by its importer are removed when it is replaced", {

@@ -337,10 +337,7 @@ function connectionListenerHTTP1(server, socket, options) {
       this.detachSocket(socket);
     });
 
-    // Node's parserOnIncoming request limit: the upgrades handed off above are never counted and,
-    // like the Expect routing below, only HTTP/1.1 requests are. maxRequestsOnConnectionReached
-    // makes renderNativeHeaders advertise Connection: close on the response that reaches the limit
-    // and on every 503 past it; as in Node, nothing here closes the connection itself.
+    // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
     if (
       versionMajor === 1 &&
       versionMinor === 1 &&

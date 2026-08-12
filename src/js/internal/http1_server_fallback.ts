@@ -441,9 +441,8 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("close", freeHttp1Parser);
 }
 
-// Node's Server#closeIdleConnections. idle() is the parsers between messages (a parser is busy
-// from initialize() and from each message's first byte until kOnMessageComplete).
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js
+// Node's Server#closeIdleConnections; a parser is busy from initialize() and from each message's
+// first byte until kOnMessageComplete, so idle() is the connections sitting between requests.
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;

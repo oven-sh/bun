@@ -4139,3 +4139,38 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("closing the server right after res.end() still delivers the body on an emit('connection') socket", async () => {
+  // On a socket served through server.emit("connection", ...) the response is written piecewise,
+  // and a duplexPair side (like a TLS socket) completes each write asynchronously, so when the
+  // handler sweeps idle connections in the same tick the body is still queued in the socket's
+  // Writable. The sweep has to flush it rather than drop it, whether the connection is keep-alive
+  // (the sweep ends the socket) or Connection: close (the response already ended it).
+  for (const [closeServer, connection] of [
+    [(server: Server) => server.closeIdleConnections(), "keep-alive"],
+    [(server: Server) => server.close(), "close"],
+  ] as const) {
+    const server = createServer((req, res) => {
+      res.end("BODY");
+      closeServer(server);
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => (data += chunk));
+        // A connection destroyed with the body still queued aborts the response after the head:
+        // report whatever body did arrive so the assertion below shows the truncation.
+        res.on("error", () => resolve(data));
+        res.on("end", () => resolve(data));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect({ connection, body }).toEqual({ connection, body: "BODY" });
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});

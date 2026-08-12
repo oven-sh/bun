@@ -4304,6 +4304,82 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// Serves one HTTP/1.1 request whose handler runs `respond(res)` and then server.close() in the
+// same tick. close() sweeps the idle allowHTTP1 connections while the response bytes are still
+// queued in the TLS socket (each write completes a tick later), which used to destroy the socket
+// with only the head sent. Resolves with the raw bytes after the head once the server has closed.
+async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
+  const serverClosed = Promise.withResolvers();
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    respond(res);
+    server.close(serverClosed.resolve);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write(requestHead),
+  );
+  const chunks = [];
+  socket.on("error", reject);
+  socket.on("data", chunk => chunks.push(chunk));
+  socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+  const raw = await promise;
+  await serverClosed.promise;
+  expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+  return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+}
+
+it("http2 allowHTTP1 fallback delivers the body when the handler closes the server right after res.end()", async () => {
+  const body = await bodyReceivedWhenHandlerClosesServer("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", res =>
+    res.end("BODY"),
+  );
+  expect(body).toBe("BODY");
+});
+
+it("http2 allowHTTP1 fallback delivers a Connection: close body when the handler closes the server right after res.end()", async () => {
+  // The response already ended the socket itself when close() sweeps it.
+  const body = await bodyReceivedWhenHandlerClosesServer(
+    "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    res => res.end("BODY"),
+  );
+  expect(body).toBe("BODY");
+});
+
+it("http2 allowHTTP1 fallback delivers every chunk and the terminator when the handler closes the server right after res.end()", async () => {
+  const body = await bodyReceivedWhenHandlerClosesServer("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", res => {
+    res.write("BO");
+    res.end("DY");
+  });
+  expect(body).toBe("2\r\nBO\r\n2\r\nDY\r\n0\r\n\r\n");
+});
+
+it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose response was already delivered", async () => {
+  let serverSocket;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    serverSocket = req.socket;
+    res.end("BODY");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  );
+  const chunks = [];
+  socket.on("error", reject);
+  socket.on("data", chunk => {
+    chunks.push(chunk);
+    if (Buffer.concat(chunks).toString().endsWith("\r\n\r\nBODY")) resolve();
+  });
+  const closed = new Promise(resolveClosed => socket.on("close", resolveClosed));
+  await promise;
+  // Nothing is left to flush, so close() tears the idle connection down synchronously, like Node.
+  const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));
+  expect(serverSocket.destroyed).toBe(true);
+  await Promise.all([serverClosed, closed]);
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

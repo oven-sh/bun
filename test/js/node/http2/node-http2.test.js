@@ -1904,10 +1904,11 @@ it("http2 client and server sessions validate goaway() arguments identically", a
   }
 });
 
-// node only type-checks the code: any number is accepted and converted to a uint32 on the way
-// out, and destroy(error, code) hands its code to the same path. node v26.3.0 produces exactly
-// this table from either side. The server session used to throw ERR_OUT_OF_RANGE on all four of
-// its rows, which for destroy() also left the session half torn down with destroyed === false.
+// node's Http2Session#goaway (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js)
+// only type-checks the code: any number is accepted and converted to a uint32 on the way out, and
+// destroy(error, code) hands its code to the same path. node v26.3.0 produces exactly this table
+// from either side. The server session used to throw ERR_OUT_OF_RANGE on all four of its rows,
+// which for destroy() also left the session half torn down with destroyed === false.
 it("http2 session.goaway() and destroy() accept any numeric code like node and send it as a uint32", async () => {
   const server = http2.createServer();
   server.on("sessionError", () => {});

@@ -2183,8 +2183,6 @@ function validateWindowSize(windowSize) {
 }
 hideFromStack(validateWindowSize);
 
-// Same checks, in the same order, as Http2Session#goaway (validateNumber, not a range check):
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js
 function validateGoawayArguments(code, lastStreamID, opaqueData) {
   if (opaqueData !== undefined) {
     validateBuffer(opaqueData, "opaqueData");

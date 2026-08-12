@@ -383,22 +383,17 @@ impl MiniEventLoop {
         }
     }
 
-    /// Any thread. `task` must outlive the queued work item; ownership of the
-    /// intrusive node stays with the caller until the callback runs.
-    ///
-    /// Takes `&self` like [`wakeup`](Self::wakeup): other threads post through
-    /// this while the owning thread is inside `tick*`, and the body needs only
-    /// the MPSC push and the thread-safe wakeup. Callers hold a shared borrow
-    /// (`BackRef` deref); none of them may form a `&mut MiniEventLoop` to post.
+    /// Any thread (the owning thread is usually inside `tick*` meanwhile, hence
+    /// `&self`, as for [`wakeup`](Self::wakeup)). `task` must outlive the queued
+    /// work item; ownership of the intrusive node stays with the caller until
+    /// the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
         self.wakeup();
     }
 
-    /// Any thread; see [`enqueue_task_concurrent`](Self::enqueue_task_concurrent)
-    /// for the receiver. The caller supplies
-    /// `field_offset = core::mem::offset_of!(C, <field>)` of the embedded
-    /// `AnyTaskWithExtraContext`.
+    /// Any thread. The caller supplies `field_offset = core::mem::offset_of!(C, <field>)`
+    /// of the embedded `AnyTaskWithExtraContext`.
     ///
     /// # Safety
     /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,

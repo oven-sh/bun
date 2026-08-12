@@ -2826,9 +2826,7 @@ pub mod parse_worker {
         drop(core::mem::take(&mut this.jsx));
 
         // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-        // of `linker.r#loop` is centralised in `LinkerContext::any_loop`, which
-        // is shared because this runs on a worker thread while the bundle
-        // thread ticks the loop (and other workers post to it).
+        // of `linker.r#loop` is centralised in `LinkerContext::any_loop`.
         //
         // The loop is effectively non-optional — `BundleV2::init`
         // always sets `linker.r#loop` before scheduling any ParseTask. Running

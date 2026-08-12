@@ -599,8 +599,7 @@ pub enum ConcurrentPoster {
     /// Erased handle of the JS loop's VM (obtained from the `EventLoopHandle`
     /// itself, so it is correct whichever thread constructs the poster).
     Js(bun_event_loop::JsPoster),
-    /// Shared (not `Mut`): posting only needs `MiniEventLoop`'s `&self`
-    /// entry points, and the owning thread is ticking the loop while we post.
+    /// Shared: posting needs only the loop's `&self` entry points.
     Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
 }
 
@@ -645,8 +644,7 @@ impl ConcurrentPoster {
         }
     }
 
-    /// Post a mini-loop task (always accepted; the mini loop outlives its work,
-    /// which is the `BackRef` invariant the deref below relies on).
+    /// Post a mini-loop task (always accepted; the mini loop outlives its work).
     pub fn post_mini(
         &self,
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,

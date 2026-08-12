@@ -1405,31 +1405,21 @@ pub mod js_bundler {
         Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
     };
 
-    /// `&BundleV2` for the live backref stored on `Resolve`/`Load`.
-    ///
-    /// Centralises the deref for the answer thunks on the plugin host's thread
-    /// (`JSBundlerPlugin__onResolveAsync`, `…__onLoadAsync`, `…__addError`,
-    /// `on_defer`, [`bv2_plugin`]): they read `plugins` and post to the
-    /// bundle's own loop, nothing more. For `Bun.build` the `BundleV2` belongs
-    /// to the bundle thread, which is running it while these execute, so they
-    /// must not form a `&mut` to it. `bv2` is the back-reference set in
-    /// `Resolve::init`/`Load::init`; the `BundleV2` heap allocation outlives
-    /// every plugin callback (owner-creates-child) and is disjoint from the
-    /// `Resolve`/`Load` the callers hold `&mut` to.
+    /// `&BundleV2` for the backref stored on `Resolve`/`Load` (set in their
+    /// `init`; the bundle outlives every plugin callback). For the thunks on
+    /// the plugin host's thread, which only read `plugins` and post: during
+    /// `Bun.build` the bundle thread owns the `BundleV2`, so no `&mut` here.
     #[inline]
     fn bv2_ref<'a>(bv2: *mut BundleV2<'static>) -> &'a BundleV2<'static> {
-        // SAFETY: see fn doc — live backref (owner-creates-child), shared
-        // access only, disjoint heap from the `Resolve`/`Load` callers borrow.
+        // SAFETY: live backref (see fn doc), shared access only.
         unsafe { &*bv2 }
     }
 
-    /// `&mut BundleV2` for the same backref, for [`on_notify_defer_raw`] only:
-    /// that is a task running on the loop that owns the bundle, where it is
-    /// ours to mutate. The plugin host's own thunks use [`bv2_ref`].
+    /// `&mut BundleV2` for the same backref, for [`on_notify_defer_raw`], which
+    /// runs as a task on the loop that owns the bundle.
     #[inline]
     fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
-        // SAFETY: see fn doc — live backref (owner-creates-child), called on
-        // the bundle's owning loop between its tasks.
+        // SAFETY: live backref (see `bv2_ref`), on the bundle's owning loop.
         unsafe { &mut *bv2 }
     }
 
@@ -1519,13 +1509,10 @@ pub mod js_bundler {
             // counter. Must land on `BundleV2::any_loop()` (the loop running
             // BundleV2), which is distinct from `js_loop_for_plugins()` (the
             // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop. In that case the bundle thread is ticking
-            // that loop right now, so like `on_load_async` this only takes
-            // shared borrows of the `BundleV2` and its loop (`ParentRef` deref).
+            // own Mini event loop.
             let ctx = self.parse_task.ctx.expect("ParseTask.ctx unset");
-            // Read before posting: once the bundle thread has the `Load` it
-            // writes to it (`on_notify_defer_mini`), so `self` is not touched
-            // again below.
+            // Read before posting: the bundle thread writes to the `Load`
+            // (`on_notify_defer_mini`) once it has it.
             let bv2 = self.bv2;
             match ctx.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
@@ -1543,9 +1530,8 @@ pub mod js_bundler {
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `self` is the intrusive `Load` (arena-owned by the
-                    // bundle pass, which outlives this request) and `task` is its
-                    // `AnyTaskWithExtraContext` field.
+                    // SAFETY: `self` is the arena-owned `Load`, which outlives this
+                    // request; `task` is its `AnyTaskWithExtraContext` field.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),

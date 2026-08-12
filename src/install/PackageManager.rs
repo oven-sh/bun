@@ -858,20 +858,15 @@ impl PackageManager {
         }
     }
 
-    /// Raw-pointer wake for concurrent task-thread callers (see
-    /// `isolated_install::Installer::Task::callback`). Never materializes
-    /// `&mut PackageManager`, nor `&mut` to anything in it: the installing
-    /// thread is ticking `event_loop` while task threads (any number at once)
-    /// come through here, so `on_wake` is read through `addr_of!` and the wake
-    /// goes through `AnyEventLoop::wakeup(&self)`, the loop's cross-thread
-    /// entry point. The handler receives the raw `*mut`.
+    /// Wake from a task thread (see `isolated_install::Installer::Task::callback`)
+    /// while the installing thread is ticking `event_loop`: forms no `&mut` to
+    /// the `PackageManager` or anything in it. The handler receives the raw `*mut`.
     ///
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub(crate) unsafe fn wake_raw(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form shared field borrows via `addr_of!` (no whole-struct borrow)
-        // and `wakeup()` is the loop's thread-safe `&self` entry point.
+        // SAFETY: caller guarantees `this` points to a live `PackageManager`;
+        // only shared field borrows are formed, and `wakeup` is `&self`.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {

@@ -237,19 +237,14 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Shared projection of the `r#loop` BACKREF, for posting completions to
-    /// the loop that owns this bundle. The posters are parse workers
-    /// (`ParseTask` / `ServerComponentParseTask`) and the plugin host's JS
-    /// thread (`BundleV2::on_load_async` / `on_resolve_async`, `Load::on_defer`),
-    /// any number at once, all while the bundle thread is ticking the loop, so
-    /// this must never hand out `&mut`: the mini arm's
-    /// `enqueue_task_concurrent_with_extra_ctx` takes `&self` and the JS arm
-    /// posts through `BundleV2::js_poster`. The bundle thread's own exclusive
-    /// access is `BundleV2::own_loop_mut`.
+    /// the loop that owns this bundle. Parse workers and the plugin host's
+    /// thread use it concurrently while the bundle thread ticks the loop, so it
+    /// hands out `&` only; the bundle thread's exclusive access is
+    /// `BundleV2::own_loop_mut`.
     #[inline]
     pub(crate) fn any_loop(&self) -> Option<&bun_event_loop::AnyEventLoop> {
         // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`. Only
-        // shared borrows are formed through it (see fn doc).
+        // outlives the bundle pass; the pointee is disjoint from `*self`.
         self.r#loop.map(|p| unsafe { &*p.as_ptr() })
     }
 

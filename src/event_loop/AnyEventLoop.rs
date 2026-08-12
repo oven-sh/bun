@@ -197,14 +197,13 @@ impl AnyEventLoop {
         bun_io::uws_to_native(self.r#loop())
     }
 
-    /// Any thread (`bun_install`'s task threads wake the installing thread
-    /// through this while it is ticking), so it takes `&self` and never forms
-    /// a `&mut` to either loop; see `MiniEventLoop::wakeup`.
+    /// Any thread (install task threads wake the ticking installer thread
+    /// through this), hence `&self`; see `MiniEventLoop::wakeup`.
     #[inline]
     pub fn wakeup(&self) {
         match self {
             // SAFETY: `uws_loop()` is the VM's live uws loop; `us_wakeup_loop`
-            // is thread-safe and takes the raw pointer (no `&mut Loop` formed).
+            // is thread-safe and takes the raw pointer.
             AnyEventLoop::Js { owner } => unsafe { bun_uws::us_wakeup_loop(owner.uws_loop()) },
             AnyEventLoop::Mini(mini) => mini.wakeup(),
         }

@@ -172,8 +172,7 @@ impl<'a> BundleV2<'a> {
     }
 
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it. Any thread;
-    /// see `LinkerContext::any_loop` for why posters only get `&`.
+    /// `AnyEventLoop` that owns this bundle pass and outlives it. Any thread.
     #[inline]
     pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop {
         self.linker
@@ -181,19 +180,16 @@ impl<'a> BundleV2<'a> {
             .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
-    /// Bundle thread only: exclusive access to the loop this pass runs on, for
-    /// the owner-side work `is_done` does between ticks (`run_ready`). Posters
-    /// on other threads go through [`Self::any_loop`].
+    /// Bundle thread only, from `is_done` (i.e. between ticks): the loop this
+    /// pass runs on. Other threads post through [`Self::any_loop`].
     #[inline]
     pub(crate) fn own_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
         let r#loop = self
             .linker
             .r#loop
             .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — the loop outlives the pass (`LinkerContext::any_loop`).
-        // This runs on the bundle thread from `tick_raw`'s `is_done` callback,
-        // where `tick_raw` holds no borrow of the loop; it is the same exclusive
-        // access `tick_raw` itself takes for `tick_once` between `is_done` calls.
+        // SAFETY: BACKREF outliving the pass; between ticks `tick_raw` holds no
+        // borrow of the loop, so this is the access it takes for `tick_once`.
         unsafe { &mut *r#loop.as_ptr() }
     }
 
@@ -4331,8 +4327,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Plugin host's JS thread. Posts only, hence `&self`: for `Bun.build`
-        /// the bundle thread owns `self` and is ticking its loop right now.
+        /// Plugin host's thread, while the bundle thread may own `self`: `&self`.
         pub fn on_load_async(&self, load: &mut jsc_api::JSBundler::Load) {
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
@@ -4370,7 +4365,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Plugin host's JS thread; see [`Self::on_load_async`].
+        /// Plugin host's thread; as [`Self::on_load_async`].
         pub fn on_resolve_async(&self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop() {

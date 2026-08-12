@@ -5367,11 +5367,8 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // A CSS file that failed to bundle has no parts and must
-                                // not become a CSS chunk. The record keeps its source
-                                // index: the HTML rewriter and the HMR import conversion
-                                // use it to recognize the import as a stylesheet, and the
-                                // importer's output stays cached after the CSS recovers.
+                                // No chunk for failed CSS, but keep the record's source index:
+                                // the HTML rewriter and HMR import conversion key on it.
                                 if parts[record.source_index.get() as usize].len() == 0 {
                                     continue;
                                 }

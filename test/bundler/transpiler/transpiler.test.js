@@ -139,6 +139,124 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out when the array item is an optional chain", () => {
+      // Folding `[a?.b][0]` to `a?.b` is unsafe when the result lands as the
+      // target of a surrounding optional-chain continuation: the two chains
+      // would be spliced into one. `[[a?.b]][0]?.[0].c` must not become
+      // `a?.b.c`, which short-circuits to `undefined` for `a == null` instead
+      // of throwing on the trailing `.c`.
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0].c", "x = [a?.b]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0]()", "x = [a?.b]?.[0]()");
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0][c]", "x = [a?.b]?.[0][c]");
+      ts.expectPrintedMin_("x = ({ f: [a?.b] }).f?.[0].c", "x = [a?.b]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.[b]]][0]?.[0].c", "x = [a?.[b]]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.()]][0]?.[0].c", "x = [a?.()]?.[0].c");
+      // Continuation (not Start) on the inlined item's outermost node:
+      ts.expectPrintedMin_("x = [[a?.b.c]][0]?.[0].d", "x = [a?.b.c]?.[0].d");
+      ts.expectPrintedMin_("x = [[a?.b[c]]][0]?.[0].d", "x = [a?.b[c]]?.[0].d");
+      ts.expectPrintedMin_("x = [[a?.b()]][0]?.[0].d", "x = [a?.b()]?.[0].d");
+      // Multi-item path (expr_can_be_removed_if_unused): a @__PURE__ optional
+      // call is removable, so the second fold arm sees it.
+      ts.expectPrintedMin_("x = [[0, /* @__PURE__ */ a?.()]][0]?.[1].c", "x = [0, a?.()]?.[1].c");
+      ts.expectPrintedMin_("x = [0, /* @__PURE__ */ a?.()][1]", "x = [0, a?.()][1]");
+
+      // The outer `?.` on an array literal is dropped at parse time, so these
+      // reach the fold with `optional_chain == None` on the index and the
+      // printer adds the `(a?.b)` wrapper itself. Keep bailing on the fold so
+      // the wrapper isn't load-bearing.
+      ts.expectPrintedMin_("x = [a?.b][0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = [a?.b]?.[0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = [a?.b][0].c", "x = [a?.b][0].c");
+      ts.expectPrintedMin_("x = [a?.b]?.[0].c", "x = [a?.b][0].c");
+      ts.expectPrintedMin_("x = [a?.b][0]()", "x = [a?.b][0]()");
+
+      // Same bailout protects LHS / delete / new / tagged-template positions
+      // from becoming `a?.b = v` / `delete a?.b` / `new a?.b()`.
+      ts.expectPrintedMin_("[a?.b][0] = v", "[a?.b][0] = v");
+      ts.expectPrintedMin_("delete [a?.b][0]", "delete [a?.b][0]");
+      ts.expectPrintedMin_("x = new [a?.b][0]()", "x = new [a?.b][0]");
+      ts.expectPrintedMin_("[a?.b][0]`x`", "[a?.b][0]`x`");
+
+      // Same predicate on the sibling `{f: x}.f -> x` fold: `new a?.b` /
+      // `a?.b`x`` are syntax errors, so bail there too.
+      ts.expectPrintedMin_("x = new ({f: a?.b}).f()", "x = new { f: a?.b }.f");
+      ts.expectPrintedMin_("x = new ({f: a?.[b]}).f()", "x = new { f: a?.[b] }.f");
+      ts.expectPrintedMin_("x = new ({f: a?.b.c}).f()", "x = new { f: a?.b.c }.f");
+      ts.expectPrintedMin_("({f: a?.b}).f`x`", "({ f: a?.b }).f`x`");
+      ts.expectPrintedMin_("x = ({f: a?.b}).f", "x = { f: a?.b }.f");
+
+      // Non-chain items are still inlined.
+      ts.expectPrintedMin_("x = [[y]][0]?.[0].c", "x = y.c");
+      ts.expectPrintedMin_("x = [a.b][0].c", "x = a.b.c");
+      ts.expectPrintedMin_("x = [(a?.b)][0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
+      ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
+    });
+    it("bails out or strips `this` when the index is a call/assignment target", () => {
+      // `[obj.m][0]()` calls through a Reference into the temporary array,
+      // so `this` is the array; inlining to `obj.m()` would bind `this` to
+      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+      ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
+      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+
+      // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
+      ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");
+      ts.expectPrintedMin_("[obj.p][0] += 5", "[obj.p][0] += 5");
+      ts.expectPrintedMin_("[obj.p][0]++", "[obj.p][0]++");
+      ts.expectPrintedMin_("[x][0] = 1", "[x][0] = 1");
+      ts.expectPrintedMin_("[,][0] = 1", "[,][0] = 1");
+      ts.expectPrintedMin_('"foo"[2] = 1', '"foo"[2] = 1');
+      ts.expectPrintedMin_('["a", "b"][1] = 1', '["a", "b"][1] = 1');
+      ts.expectPrintedMin_("({ a: [obj.p][0] } = {})", "({ a: [obj.p][0] } = {})");
+    });
+    it("preserves runtime semantics when inlining from a literal index", async () => {
+      const src = `
+        var a = null;
+        function check(label, fn, expected) {
+          var got;
+          try { got = "=> " + fn(); } catch (e) { got = e.constructor.name; }
+          console.log(label + ": " + (got === expected ? "ok" : got + " (want " + expected + ")"));
+        }
+        check("chain .c",   () => [[a?.b]][0]?.[0].c, "TypeError");
+        check("chain ()",   () => [[a?.b]][0]?.[0](), "TypeError");
+        check("chain [0]",  () => [[a?.b]][0]?.[0][0], "TypeError");
+        check("chain obj",  () => ({ f: [a?.b] }).f?.[0].c, "TypeError");
+        check("chain flat", () => [a?.b][0].c, "TypeError");
+        check("chain ?.[", () => [a?.b]?.[0].c, "TypeError");
+        check("chain cont", () => [[a?.b.c]][0]?.[0].d, "TypeError");
+        check("chain pure", () => [[0, /* @__PURE__ */ a?.()]][0]?.[1].c, "TypeError");
+        var obj = { n: "obj", m() { return this === obj; } };
+        check("this",       () => [obj.m][0](), "=> false");
+        var o2 = { p: 1 };
+        check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
+        var ab = { b: class {} };
+        check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        "chain .c: ok",
+        "chain (): ok",
+        "chain [0]: ok",
+        "chain obj: ok",
+        "chain flat: ok",
+        "chain ?.[: ok",
+        "chain cont: ok",
+        "chain pure: ok",
+        "this: ok",
+        "assign: ok",
+        "new obj: ok",
+      ]);
+      expect(exitCode).toBe(0);
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);
@@ -2363,6 +2481,29 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("JSX tag names containing '-' or ':' are string tags regardless of case", () => {
+    // Matches esbuild/Babel/TypeScript: a dashed (custom element) or namespaced
+    // name is never a component reference, even when it starts uppercase.
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+    for (const [tag, expected] of [
+      ["Foo-Bar", `"Foo-Bar"`],
+      ["Ns:Comp", `"Ns:Comp"`],
+      ["my-el", `"my-el"`],
+      ["svg:path", `"svg:path"`],
+      ["Foo", `Foo`],
+      ["div", `"div"`],
+    ]) {
+      expect(bun.transformSync(`export var foo = <${tag} />`)).toBe(
+        `export var foo = jsxDEV_7x81h0kn(${expected}, {}, undefined, false, undefined, this);\n`,
+      );
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/30958
   // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
   // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
@@ -4281,6 +4422,58 @@ console.log(foo, array);
 
       expect(out.includes("keepSecondArgument")).toBe(false);
       expect(out.includes("otherNamesStillWork")).toBe(true);
+    });
+
+    it("a macro that runs a nested transformSync macro and then requires a module leaves the importing file intact", async () => {
+      const otherLines = [];
+      for (let i = 0; i < 300; i++) {
+        otherLines.push(`const v${i} = { a: [${i}, "s${i}"], b: (${i} + 1) * 2, c: String(${i}).length };`);
+      }
+      otherLines.push(`module.exports = { value: v299.b + v0.c };`);
+
+      using dir = tempDir("macro-nested-transform-sync", {
+        "inner-macro.ts": `export function inner() { return "inner-value"; }`,
+        "outer-macro.ts": `
+          import { join } from "node:path";
+          export function outer() {
+            const source =
+              "import { inner } from " +
+              JSON.stringify(join(import.meta.dir, "inner-macro.ts")) +
+              ' with { type: "macro" };\\nexport const v = inner();\\n';
+            const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+            const expanded = code.includes('"inner-value"') && !code.includes("inner(");
+            const other = import.meta.require("./other.cjs");
+            return "expanded=" + expanded + " other=" + other.value;
+          }
+        `,
+        "other.cjs": otherLines.join("\n"),
+        "index.ts": `
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { inner } from "./inner-macro.ts" with { type: "macro" };
+          import { outer } from "./outer-macro.ts" with { type: "macro" };
+          const pre = inner();
+          const res = outer();
+          const tail = { list: [1, 2, 3].map(n => n * 2), label: ["a", "b"].join("-") };
+          writeFileSync(join(import.meta.dir, "out.json"), JSON.stringify({ pre, res, tail }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
+        JSON.stringify({
+          pre: "inner-value",
+          res: "expanded=true other=601",
+          tail: { list: [2, 4, 6], label: "a-b" },
+        }),
+      );
     });
 
     it("special identifier in import statement", () => {

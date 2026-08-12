@@ -74,6 +74,12 @@ let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
+const runnerStartedAt = Date.now();
+const jobBudgetMs = () => {
+  const minutes = parseInt(process.env.BUILDKITE_TIMEOUT || "", 10);
+  if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
+  return minutes * 60_000 - (Date.now() - runnerStartedAt);
+};
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -91,6 +97,12 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
+  // test-fs-read-stream-pos.js exit condition is a pure timing race (writer must append
+  // between two consecutive ReadStream preads) with a 90s upstream safety timer; solo
+  // runtimes are ~1s on linux-x64 but 1-40s on Windows since #34834 raised its timer
+  // resolution, and aarch64 CI retries running alone have exceeded 20s (builds 85866,
+  // 85400). 120s lets the safety timer fire.
+  if (testPath.includes("test-fs-read-stream-pos")) return 120_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -360,6 +372,7 @@ const skipsForLeaksan = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
@@ -628,7 +641,14 @@ async function runTests() {
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
-    return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
+    if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
+    // test-fs-read-stream-pos.js arms a common.mustCallAtLeast per stream; under
+    // I/O-heavy neighbours (e.g. test-fs-read-stream-fd-leak) the 1ms append
+    // interval is starved long enough for a stream to catch cur == EOF and get
+    // zero 'data' events, failing the mustCallAtLeast check on exit. Run it in
+    // the serial phase so the writer keeps its 1ms cadence.
+    if (p.endsWith("test-fs-read-stream-pos.js")) return false;
+    return true;
   };
   console.log("parallel-safe width", parallelSafeWidth);
   const validationApplies = basename(execPath).includes("asan") || !isCI;
@@ -981,7 +1001,11 @@ async function runTests() {
             ...bucketFiles.map(t => join(testsPath, t)),
           ],
           cwd,
-          timeout: Math.max(10 * 60_000, bucketFiles.length * 5_000),
+          timeout: Math.max(
+            60_000,
+            Math.min(Math.max(10 * 60_000, bucketFiles.length * 5_000), jobBudgetMs() - 5 * 60_000),
+          ),
+          idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
           stdout: chunk => pipeTestStdout(process.stdout, chunk),
@@ -1440,9 +1464,12 @@ async function spawnSafe(options) {
   let spawnError;
   let timestamp;
   let timedOut = false;
+  let idledOut = false;
   let duration;
   let subprocess;
   let timer;
+  let idleTimer;
+  let armIdleTimer;
   let buffer = "";
   let doneCalls = 0;
   const beforeDone = resolve => {
@@ -1455,6 +1482,7 @@ async function spawnSafe(options) {
     if (timer) {
       clearTimeout(timer);
     }
+    clearTimeout(idleTimer);
     subprocess.stderr.unref();
     subprocess.stdout.unref();
     subprocess.unref();
@@ -1496,8 +1524,9 @@ async function spawnSafe(options) {
       });
       subprocess.on("spawn", () => {
         timestamp = Date.now();
-        timer = setTimeout(() => {
+        const expire = () => {
           timedOut = true;
+          clearTimeout(idleTimer);
           if (options.gracefulTimeout && !isWindows) {
             subprocess.kill("SIGTERM");
             timer = setTimeout(() => {
@@ -1507,7 +1536,18 @@ async function spawnSafe(options) {
             return;
           }
           done(resolve);
-        }, timeout);
+        };
+        timer = setTimeout(expire, timeout);
+        if (options.idleTimeout) {
+          armIdleTimer = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              idledOut = true;
+              expire();
+            }, options.idleTimeout);
+          };
+          armIdleTimer();
+        }
       });
       subprocess.on("error", error => {
         spawnError = error;
@@ -1527,11 +1567,13 @@ async function spawnSafe(options) {
         beforeDone(resolve);
       });
       subprocess.stdout.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stdout?.(text);
         buffer += text;
       });
       subprocess.stderr.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
@@ -1674,7 +1716,8 @@ async function spawnSafe(options) {
     }
     error = `code ${exitCode}`;
   }
-  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error))) error = "timeout";
+  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error)))
+    error = idledOut ? "stalled" : "timeout";
   return {
     ok: exitCode === 0 && !signalCode && !spawnError,
     error,
@@ -1724,7 +1767,7 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, stdout, stderr }) {
+async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1741,6 +1784,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, st
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
+    BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
@@ -1779,6 +1823,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, st
       cwd,
       timeout,
       gracefulTimeout,
+      idleTimeout,
       env: bunEnv,
       stdout,
       stderr,
@@ -2164,7 +2209,15 @@ async function spawnBunInstall(execPath, options) {
     args: ["install"],
     timeout: testTimeout,
     ...options,
-    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
+    env: {
+      // A puppeteer postinstall reached through these installs would download
+      // Chrome into the agent's shared ~/.cache; a half-extracted download left
+      // there on a persistent agent fails every later job's install. Tests that
+      // need a browser install one into a per-run cache (getPuppeteerInstallEnv).
+      PUPPETEER_SKIP_DOWNLOAD: "1",
+      ...options.env,
+      ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }),
+    },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2650,7 +2703,8 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
     }

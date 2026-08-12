@@ -8,7 +8,17 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateOrderFile } from "../orderfile/generate.ts";
@@ -16,6 +26,7 @@ import { generateOrderFile } from "../orderfile/generate.ts";
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
+import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
@@ -274,6 +285,12 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     upload(depPaths, cfg.buildDir);
   }
 
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    console.log("Uploading testFFI...");
+    upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
+  }
+
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
   // (sources already compiled into the archive), obj/ (.o files archived),
@@ -323,6 +340,7 @@ function upload(paths: string[], cwd: string): void {
 //   ${bunTriplet}-profile.zip   (plain release)
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
+//           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linux/mac non-asan)
 //           ├── bun-profile.pdb          (windows)
@@ -359,14 +377,14 @@ export function computeBunTriplet(cfg: Config): string {
 }
 
 /**
- * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * Post-link packaging and upload for the modes that link in CI. Runs
  * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
+  if (!isBuildkite) return;
 
   const exe = output.exe;
   if (exe === undefined) {
@@ -405,6 +423,11 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    chmodSync(testFFI, 0o755);
+    files.push(testFFI);
+  }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
@@ -699,7 +722,7 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
+  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */

@@ -556,6 +556,13 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it.each([undefined, null])("zstdCompress accepts explicit %p options", async opts => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    zlib.zstdCompress(inputString, opts, (err, out) => (err ? reject(err) : resolve(out)));
+    const compressed = await promise;
+    expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
     expect(compressed.toString("base64")).toEqual(compressedString);

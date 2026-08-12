@@ -354,6 +354,9 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return new SQLiteQueryHandle(sql, values ?? []);
   }
   escapeIdentifier(str: string) {
+    if (str.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
+    }
     return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
   }
   connectionClosedError() {
@@ -565,8 +568,4 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
 export default {
   SQLiteAdapter,
-  SQLCommand,
-  commandToString,
-  parseSQLQuery,
-  SQLiteQueryHandle,
 };

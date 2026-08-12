@@ -31,13 +31,13 @@ pub const EVP_MAX_MD_SIZE: c_int = 64;
 pub const RIPEMD160_DIGEST_LENGTH: c_int = 20;
 
 /// `#define NID_commonName 13`
-pub const NID_commonName: c_int = 13;
+pub(crate) const NID_commonName: c_int = 13;
 /// `#define NID_subject_alt_name 85`
-pub const NID_subject_alt_name: c_int = 85;
+pub(crate) const NID_subject_alt_name: c_int = 85;
 
-pub const GEN_DNS: c_int = 2;
-pub const GEN_URI: c_int = 6;
-pub const GEN_IPADD: c_int = 7;
+pub(crate) const GEN_DNS: c_int = 2;
+pub(crate) const GEN_URI: c_int = 6;
+pub(crate) const GEN_IPADD: c_int = 7;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ASN.1 string types
@@ -47,9 +47,9 @@ pub const GEN_IPADD: c_int = 7;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct asn1_string_st {
-    pub length: c_int,
+    pub(crate) length: c_int,
     pub r#type: c_int,
-    pub data: *mut u8,
+    pub(crate) data: *mut u8,
     pub flags: c_long,
 }
 
@@ -236,15 +236,15 @@ pub union GENERAL_NAME_d {
     pub ptr: *mut c_char,
     pub otherName: *mut OTHERNAME,
     pub rfc822Name: *mut ASN1_IA5STRING,
-    pub dNSName: *mut ASN1_IA5STRING,
+    pub(crate) dNSName: *mut ASN1_IA5STRING,
     pub x400Address: *mut ASN1_STRING,
     pub directoryName: *mut X509_NAME,
     pub ediPartyName: *mut c_void,
-    pub uniformResourceIdentifier: *mut ASN1_IA5STRING,
+    pub(crate) uniformResourceIdentifier: *mut ASN1_IA5STRING,
     pub iPAddress: *mut ASN1_OCTET_STRING,
     pub registeredID: *mut ASN1_OBJECT,
     // OpenSSL convenience aliases:
-    pub ip: *mut ASN1_OCTET_STRING,
+    pub(crate) ip: *mut ASN1_OCTET_STRING,
     pub dirn: *mut X509_NAME,
     pub ia5: *mut ASN1_IA5STRING,
     pub rid: *mut ASN1_OBJECT,
@@ -256,23 +256,22 @@ pub union GENERAL_NAME_d {
 #[derive(Copy, Clone)]
 pub struct GENERAL_NAME {
     /// One of the `GEN_*` discriminants.
-    pub name_type: c_int,
-    pub d: GENERAL_NAME_d,
+    pub(crate) name_type: c_int,
+    pub(crate) d: GENERAL_NAME_d,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OPENSSL_STACK low-level ABI (used by the typed `sk_*` inline wrappers)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
-pub(crate) type OPENSSL_sk_call_free_func =
-    Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
+type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
+type OPENSSL_sk_call_free_func = Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
 pub(crate) type OPENSSL_sk_cmp_func =
     Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>;
 
 /// `struct stack_st` / `OPENSSL_STACK`.
 #[repr(C)]
-pub(crate) struct OPENSSL_STACK {
+struct OPENSSL_STACK {
     pub num: usize,
     pub data: *mut *mut c_void,
     pub sorted: c_int,
@@ -323,11 +322,11 @@ impl GeneralNames {
     ///
     /// # Safety
     /// `raw` must be null or a stack the caller owns and does not free itself.
-    pub unsafe fn from_raw(raw: *mut c_void) -> Option<Self> {
+    pub(crate) unsafe fn from_raw(raw: *mut c_void) -> Option<Self> {
         core::ptr::NonNull::new(raw.cast::<struct_stack_st_GENERAL_NAME>()).map(Self)
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         // SAFETY: we own a live stack; `sk_num` takes it as `const OPENSSL_STACK`.
         unsafe { sk_num(self.0.as_ptr().cast::<OPENSSL_STACK>()) }
     }
@@ -337,7 +336,7 @@ impl GeneralNames {
     }
 
     /// Borrows the `i`th entry; `None` past the end.
-    pub fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
+    pub(crate) fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
         if i >= self.len() {
             return None;
         }
@@ -350,7 +349,7 @@ impl GeneralNames {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &GENERAL_NAME> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &GENERAL_NAME> {
         (0..self.len()).filter_map(|i| self.get(i))
     }
 }
@@ -439,23 +438,48 @@ impl X509 {
     }
 }
 
-/// Borrowing iterator over a certificate's Subject Common Names.
+/// An `ASN1_STRING_to_UTF8`-transcoded name. `OPENSSL_free`s on drop.
+pub struct Utf8Name {
+    ptr: core::ptr::NonNull<u8>,
+    len: usize,
+}
+
+impl core::ops::Deref for Utf8Name {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `ASN1_STRING_to_UTF8` allocated `len` readable bytes at `ptr`
+        // and this struct owns them until `Drop`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for Utf8Name {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` was returned by `ASN1_STRING_to_UTF8` (OPENSSL_malloc).
+        unsafe { OPENSSL_free(self.ptr.as_ptr().cast()) }
+    }
+}
+
+/// Iterator over a certificate's Subject Common Names, transcoded to UTF-8 via
+/// `ASN1_STRING_to_UTF8` (so BMPString / UniversalString CNs compare like
+/// OpenSSL `X509_check_host`'s `do_check_string`).
 pub struct CommonNames<'a> {
     subject: *mut X509_NAME,
     last: c_int,
     _cert: core::marker::PhantomData<&'a mut X509>,
 }
 
-impl<'a> Iterator for CommonNames<'a> {
-    type Item = &'a [u8];
+impl Iterator for CommonNames<'_> {
+    type Item = Utf8Name;
 
-    fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<Utf8Name> {
         if self.subject.is_null() {
             return None;
         }
         // SAFETY: the subject and its entries are owned by the certificate
         // borrowed for `'a`; every accessor is guarded against null returns
-        // and non-positive lengths.
+        // and non-positive lengths. `ASN1_STRING_to_UTF8` allocates a fresh
+        // buffer that `Utf8Name` owns.
         unsafe {
             loop {
                 let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
@@ -471,15 +495,16 @@ impl<'a> Iterator for CommonNames<'a> {
                 if data.is_null() {
                     continue;
                 }
-                let cn_ptr = ASN1_STRING_get0_data(data);
-                let cn_len = ASN1_STRING_length(data);
-                if cn_ptr.is_null() || cn_len <= 0 {
+                let mut out: *mut u8 = core::ptr::null_mut();
+                let len = ASN1_STRING_to_UTF8(&raw mut out, data);
+                let Some(ptr) = core::ptr::NonNull::new(out) else {
                     continue;
-                }
-                return Some(core::slice::from_raw_parts(
-                    cn_ptr,
-                    usize::try_from(cn_len).expect("int cast"),
-                ));
+                };
+                let Ok(len) = usize::try_from(len) else {
+                    OPENSSL_free(ptr.as_ptr().cast());
+                    continue;
+                };
+                return Some(Utf8Name { ptr, len });
             }
         }
     }
@@ -551,8 +576,7 @@ unsafe extern "C" {
     pub safe fn OpenSSL_add_all_algorithms();
 
     // ── ASN1 ──────────────────────────────────────────────────────────────
-    pub fn ASN1_STRING_get0_data(str: *const ASN1_STRING) -> *const u8;
-    pub fn ASN1_STRING_length(str: *const ASN1_STRING) -> c_int;
+    pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
     pub safe fn EVP_md4() -> *const EVP_MD;
@@ -670,12 +694,12 @@ unsafe extern "C" {
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
-    pub fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
+    fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_NAME_get_entry(name: *const X509_NAME, loc: c_int) -> *mut X509_NAME_ENTRY;
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
     pub fn X509V3_EXT_d2i(ext: *mut X509_EXTENSION) -> *mut c_void;
-    pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
-    pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
+    fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
+    safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -849,9 +873,6 @@ pub(crate) type pem_password_cb =
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── SSL_METHOD ───────────────────────────────────────────────────────
-    pub safe fn TLS_with_buffers_method() -> *const SSL_METHOD;
-
     // ── ENGINE ───────────────────────────────────────────────────────────
     pub safe fn ENGINE_new() -> *mut ENGINE;
     pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
@@ -959,7 +980,6 @@ unsafe extern "C" {
     pub fn BIO_free(bio: *mut BIO) -> c_int;
     pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-    pub fn BIO_ctrl(bio: *mut BIO, cmd: c_int, larg: c_long, parg: *mut c_void) -> c_long;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;

@@ -24,10 +24,15 @@
 
 *.lockb binary diff=lockb
 
+# XML loader fixtures in specific byte encodings (BOMs, UTF-16, ISO-8859-1);
+# any newline or encoding normalization would change what they test.
+test/js/bun/resolve/xml/xml-utf16le-bom.xml -text
+test/js/bun/resolve/xml/xml-utf16be-bom.xml -text
+test/js/bun/resolve/xml/xml-utf8-bom.xml -text
+test/js/bun/resolve/xml/xml-latin1.xml -text
+
 .vscode/launch.json linguist-generated
-src/api/schema.d.ts linguist-generated
 fixture.*.c linguist-generated
-src/api/schema.js linguist-generated
 *-fixture* linguist-generated
 src/jsc/bindings/ZigGeneratedCode.h linguist-generated
 src/jsc/bindings/ZigGeneratedCode.cpp linguist-generated

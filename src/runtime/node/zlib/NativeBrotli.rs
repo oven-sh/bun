@@ -9,30 +9,30 @@ type Op = c::BrotliEncoderOperation;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union LastResult {
-    pub e: c_int,
+    pub(crate) e: c_int,
     pub d: c::BrotliDecoderResult,
 }
 
 pub struct Context {
-    pub mode: bun_zlib::NodeMode,
-    pub state: Option<NonNull<c_void>>,
+    pub(crate) mode: bun_zlib::NodeMode,
+    pub(crate) state: Option<NonNull<c_void>>,
 
-    pub next_in: *const u8,
-    pub next_out: *mut u8,
+    pub(crate) next_in: *const u8,
+    pub(crate) next_out: *mut u8,
     pub avail_in: usize,
     pub avail_out: usize,
 
     pub flush: Op,
 
-    pub last_result: LastResult,
-    pub error: c::BrotliDecoderErrorCode2,
+    pub(crate) last_result: LastResult,
+    pub(crate) error: c::BrotliDecoderErrorCode2,
 
     /// Owned copy of the dictionary bytes. The prepared dictionary (encode) and
     /// the decoder (decode) borrow this buffer, so it must outlive both; it is
     /// only cleared by `deinit_dictionary`, after the borrower is destroyed.
     pub dictionary: Vec<u8>,
     /// Encode-mode only: the prepared dictionary attached to the encoder.
-    pub prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
+    pub(crate) prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
 }
 
 impl Default for Context {
@@ -81,10 +81,12 @@ mod _impl {
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::destroy_on_zero)]
     pub struct NativeBrotli {
-        pub ref_count: Cell<u32>,
+        pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the pool thread delivers a finished write to the VM.
+        pub loop_handle: bun_jsc::LoopHandle,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
@@ -100,7 +102,7 @@ mod _impl {
         /// immutable field because `estimated_size` runs on the concurrent GC
         /// marking thread, where reading `self.stream` through the `JsCell`
         /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
-        pub estimated_external_size: usize,
+        pub(crate) estimated_external_size: usize,
     }
 
     // write / runFromJSThread / writeSync / reset / close / setOnError /
@@ -112,7 +114,7 @@ mod _impl {
         // a bare `constructor(...)` which cannot resolve inside an `impl` block.
         // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
         // calls `<Self>::constructor(__g, __f)`.
-        pub fn constructor(
+        pub(crate) fn constructor(
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<Box<Self>> {
@@ -146,8 +148,8 @@ mod _impl {
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global_this),
+                loop_handle: global_this.bun_vm().loop_handle(),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
@@ -176,12 +178,12 @@ mod _impl {
 
         /// Called from any thread (concurrent GC marking). Reads only the
         /// immutable `estimated_external_size` field, never `self.stream`.
-        pub fn estimated_size(&self) -> usize {
+        pub(crate) fn estimated_size(&self) -> usize {
             core::mem::size_of::<Self>() + self.estimated_external_size
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn init(
+        pub(crate) fn init(
             &self,
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
@@ -305,7 +307,7 @@ mod _impl {
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn params(
+        pub(crate) fn params(
             &self,
             _global_this: &JSGlobalObject,
             _callframe: &CallFrame,
@@ -343,7 +345,7 @@ mod _impl {
     }
 
     impl Context {
-        pub fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
+        pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
             // Mirrors node's Init(): free the previous instance and dictionary
             // before building new ones. `init` is JS-reachable twice on one
             // handle, and ResetStream() lands here with no dictionary.
@@ -475,7 +477,7 @@ mod _impl {
             self.dictionary = Vec::new();
         }
 
-        pub fn set_params(&mut self, key: c_uint, value: u32) -> Error {
+        pub(crate) fn set_params(&mut self, key: c_uint, value: u32) -> Error {
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     if c::BrotliEncoderSetParameter(self.encoder_mut(), key, value) == 0 {
@@ -537,6 +539,10 @@ mod _impl {
                     self.next_out = ptr::null_mut();
                 }
             }
+        }
+
+        pub fn flush_value_is_valid(flush: u32) -> bool {
+            flush <= 3
         }
 
         pub fn set_flush(&mut self, flush: c_int) {

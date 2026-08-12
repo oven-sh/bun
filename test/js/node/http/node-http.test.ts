@@ -4145,35 +4145,51 @@ it("closing the server right after res.end() still delivers the body on an emit(
   // and a duplexPair side (like a TLS socket) completes each write asynchronously, so when the
   // handler sweeps idle connections in the same tick the body is still queued in the socket's
   // Writable. The sweep has to flush it rather than drop it, whether the connection is keep-alive
-  // (the sweep ends the socket) or Connection: close (the response already ended it).
-  for (const [closeServer, connection] of [
-    [(server: Server) => server.closeIdleConnections(), "keep-alive"],
-    [(server: Server) => server.close(), "close"],
-  ] as const) {
-    const server = createServer((req, res) => {
-      res.end("BODY");
-      closeServer(server);
-    });
-    const [clientSide, serverSide] = duplexPair();
-    try {
-      server.emit("connection", serverSide);
-      const body = await new Promise<string>((resolve, reject) => {
-        const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", chunk => (data += chunk));
-          // A connection destroyed with the body still queued aborts the response after the head:
-          // report whatever body did arrive so the assertion below shows the truncation.
-          res.on("error", () => resolve(data));
-          res.on("end", () => resolve(data));
-        });
-        req.on("error", reject);
-        req.end();
+  // (the sweep ends the socket) or Connection: close (the response already ended it). Shutdown code
+  // commonly calls closeIdleConnections() repeatedly; a connection still flushing must not pick up
+  // another 'finish' listener (and a MaxListenersExceededWarning) on every call.
+  const warnings: string[] = [];
+  const onWarning = (warning: Error) => {
+    if (warning.name === "MaxListenersExceededWarning") warnings.push(warning.message);
+  };
+  process.on("warning", onWarning);
+  try {
+    for (const [closeServer, connection] of [
+      [
+        (server: Server) => {
+          for (let i = 0; i < 12; i++) server.closeIdleConnections();
+        },
+        "keep-alive",
+      ],
+      [(server: Server) => server.close(), "close"],
+    ] as const) {
+      const server = createServer((req, res) => {
+        res.end("BODY");
+        closeServer(server);
       });
-      expect({ connection, body }).toEqual({ connection, body: "BODY" });
-    } finally {
-      clientSide.destroy();
-      serverSide.destroy();
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        const body = await new Promise<string>((resolve, reject) => {
+          const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
+            let data = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (data += chunk));
+            // A connection destroyed with the body still queued aborts the response after the head:
+            // report whatever body did arrive so the assertion below shows the truncation.
+            res.on("error", () => resolve(data));
+            res.on("end", () => resolve(data));
+          });
+          req.on("error", reject);
+          req.end();
+        });
+        expect({ connection, body, warnings }).toEqual({ connection, body: "BODY", warnings: [] });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
     }
+  } finally {
+    process.off("warning", onWarning);
   }
 });

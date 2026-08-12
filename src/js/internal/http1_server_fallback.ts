@@ -6,6 +6,7 @@ const { SafeSet } = require("internal/primordials");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+const kHttp1Draining = Symbol("http1Draining");
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -454,11 +455,15 @@ function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
   for (const socket of connections) {
-    if (socket[kHttp1ActiveRequests] || socket.destroyed) continue;
+    if (socket[kHttp1ActiveRequests] || socket.destroyed || socket[kHttp1Draining]) continue;
+    if (!socket.writableLength) {
+      socket.destroy();
+      continue;
+    }
     // Unlike Node's OutgoingMessage, the handle above hands the response to the transport one
     // write at a time (a tick apart on TLS), so a response ended this tick may still be queued here.
-    if (socket.writableLength) destroySoon(socket);
-    else socket.destroy();
+    socket[kHttp1Draining] = true;
+    destroySoon(socket);
   }
 }
 

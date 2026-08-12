@@ -4308,6 +4308,8 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
 // same tick. close() sweeps the idle allowHTTP1 connections while the response bytes are still
 // queued in the TLS socket (each write completes a tick later), which used to destroy the socket
 // with only the head sent. Resolves with the raw bytes after the head once the server has closed.
+// The client keeps its own side open after the server's EOF, so close() only completes if the
+// server destroys the connection once the response has been flushed, rather than waiting on the peer.
 async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
   const serverClosed = Promise.withResolvers();
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
@@ -4317,7 +4319,13 @@ async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
   await new Promise(resolve => server.listen(0, resolve));
   const { promise, resolve, reject } = Promise.withResolvers();
   const socket = tls.connect(
-    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    {
+      host: "localhost",
+      port: server.address().port,
+      ca: TLS_CERT.cert,
+      ALPNProtocols: ["http/1.1"],
+      allowHalfOpen: true,
+    },
     () => socket.write(requestHead),
   );
   try {
@@ -4383,6 +4391,7 @@ it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose res
     const closed = new Promise(resolveClosed => socket.on("close", resolveClosed));
     socket.on("close", () => reject(new Error("connection closed before the response arrived")));
     await promise;
+    expect(serverSocket.destroyed).toBe(false);
     // Nothing is left to flush, so close() tears the idle connection down synchronously, like Node.
     const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));
     expect(serverSocket.destroyed).toBe(true);

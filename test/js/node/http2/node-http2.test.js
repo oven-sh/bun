@@ -4400,6 +4400,43 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
   }
 });
 
+// The server's connection list holds every fallback parser strongly, so a connection has to be
+// taken out of it when it closes (Node's freeParser), whether the peer or the server closed it.
+it("http2 allowHTTP1 connections leave the server's connection list when they close", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => res.end("ok"));
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const clients = [];
+  try {
+    const serverSockets = [];
+    for (let i = 0; i < 2; i++) {
+      const accepted = new Promise(resolve => server.once("secureConnection", resolve));
+      const client = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+      clients.push(client);
+      await new Promise((resolve, reject) => {
+        client.once("secureConnect", resolve);
+        client.once("error", reject);
+      });
+      // The connection the server destroys below may surface that as a reset here.
+      client.on("error", () => {});
+      serverSockets.push(await accepted);
+    }
+    const connectionsSymbol = Object.getOwnPropertySymbols(server).find(s => s.description === "http1Connections");
+    const connections = server[connectionsSymbol];
+    expect(connections.all().length).toBe(2);
+
+    const closed = Promise.all(serverSockets.map(socket => new Promise(resolve => socket.once("close", resolve))));
+    // One closed by the peer, one by the server.
+    clients[0].end();
+    serverSockets[1].destroy();
+    await closed;
+    expect(connections.all()).toEqual([]);
+  } finally {
+    for (const client of clients) client.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

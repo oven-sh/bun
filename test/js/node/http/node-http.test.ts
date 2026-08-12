@@ -4276,6 +4276,66 @@ it("closeIdleConnections() only destroys emitted connections that are between re
   }
 });
 
+// res.end() marks the response finished synchronously while it stays assigned to the socket until
+// 'finish' is emitted; like Node, a connection in that window is already idle.
+it("closeIdleConnections() destroys an emitted connection as soon as its response has ended", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const server = createServer((req, res) => heldResponse.resolve(res));
+  await listen(server);
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const res = await heldResponse.promise;
+
+    server.closeIdleConnections();
+    const keptWhileResponsePending = !serverSide.destroyed;
+    res.end("done");
+    server.closeIdleConnections();
+    expect({
+      keptWhileResponsePending,
+      responseStillAssigned: (serverSide as any)._httpMessage === res,
+      destroyedOnceEnded: serverSide.destroyed,
+    }).toEqual({ keptWhileResponsePending: true, responseStillAssigned: true, destroyedOnceEnded: true });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    if (server.listening) server.close();
+  }
+});
+
+// The request handler runs from the parser's headers-complete callback, i.e. while the request is
+// still being received, so a handler that responds and then sweeps idle connections (the usual
+// "shut down from a request" pattern) does not destroy its own connection; Node leaves it to the
+// keep-alive timeout. Once the request has been fully received the next sweep takes it.
+it("closeIdleConnections() run from inside the request handler keeps the handler's own connection", async () => {
+  const handled = Promise.withResolvers<boolean>();
+  const server = createServer((req, res) => {
+    res.end("body");
+    server.closeIdleConnections();
+    handled.resolve(req.socket.destroyed);
+  });
+  await listen(server);
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    const body = readResponseBody(clientSide);
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    const destroyedInsideHandler = await handled.promise;
+    expect({ destroyedInsideHandler, destroyedAfterHandler: serverSide.destroyed }).toEqual({
+      destroyedInsideHandler: false,
+      destroyedAfterHandler: false,
+    });
+    expect(await body).toBe("body");
+    server.closeIdleConnections();
+    expect(serverSide.destroyed).toBe(true);
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    if (server.listening) server.close();
+  }
+});
+
 it("closeAllConnections() destroys an emitted connection that closeIdleConnections() keeps, but not one handed to 'upgrade'", async () => {
   const upgraded = Promise.withResolvers<void>();
   const server = createServer(() => {});

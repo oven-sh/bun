@@ -423,15 +423,25 @@ impl Macro {
             // `RuntimeHooks::init_runtime_state` builds the macro VM's
             // transpiler from a fresh `TransformOptions` value rather than
             // borrowing the caller's, so there is nothing to mutate-and-restore
-            // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
-            // CLI-path macro VM uses the caller's log sink and env loader.
+            // on `resolver.opts` here. `log` *is* threaded so the CLI-path
+            // macro VM uses the caller's log sink.
 
             // JSC needs to be initialized if building from CLI
             jsc::initialize(false);
 
+            // This VM stays on the thread and serves every later build's
+            // macros too, while `env` is the current build's (Bun.build frees
+            // its copy with the build), so the VM gets a copy that lives as
+            // long as it does: it is never destroyed.
+            let env_loader = NonNull::new(env).map(|env| {
+                // SAFETY: the caller's loader, live for this call and not
+                // written to while the build's files are being parsed.
+                let copy = bun_core::handle_oom(unsafe { env.as_ref() }.clone());
+                bun_core::heap::into_raw_nn(Box::new(copy))
+            });
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),
-                env_loader: NonNull::new(env),
+                env_loader,
                 is_main_thread: false,
                 ..Default::default()
             })?;

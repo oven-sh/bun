@@ -214,4 +214,49 @@ describe.concurrent("env is copied when the build is scheduled", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // Macros run in a VM that a bundler thread creates the first time a macro
+  // runs on it and then reuses for every later build, so it must not keep
+  // reading the env of the build that created it, which is freed with that
+  // build. Two bundler threads and four builds guarantee that later builds run
+  // their macro on a thread whose VM an earlier build created.
+  test("macros in later builds reuse a VM created during an earlier build", async () => {
+    const builds = 4;
+    const env: Record<string, string> = { ...bunEnv, UV_THREADPOOL_SIZE: "2" };
+    const files: Record<string, string> = {
+      "macro.ts": /* ts */ `export function envValue(name: string) { return process.env[name]; }`,
+      "build-fixture.ts": /* ts */ `
+        for (let i = 0; i < ${builds}; i++) {
+          const result = await Bun.build({ entrypoints: ["./entry" + i + ".ts"] });
+          if (!result.success) throw new AggregateError(result.logs, "build " + i + " failed");
+          process.stdout.write(await result.outputs[0].text());
+        }
+      `,
+    };
+    for (let i = 0; i < builds; i++) {
+      // Each build reads a key no earlier build has read, so the lookup goes
+      // to the VM's env instead of an already materialized process.env entry.
+      env[`MACRO_ENV_${i}`] = `value-of-build-${i}`;
+      files[`entry${i}.ts`] = /* ts */ `
+        import { envValue } from "./macro.ts" with { type: "macro" };
+        console.log(envValue("MACRO_ENV_${i}"));
+      `;
+    }
+    using dir = tempDir("bun-build-env-macro-vm", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-fixture.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.match(/console\.log\("(value-of-build-\d)"\)/g)).toEqual(
+      Array.from({ length: builds }, (_, i) => `console.log("value-of-build-${i}")`),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

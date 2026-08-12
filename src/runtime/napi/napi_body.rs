@@ -2402,10 +2402,6 @@ extern "C" fn napi_internal_enqueue_finalizer(
 /// Ownership: the JS thread owns this allocation while the env lives and frees
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
 /// `thread_count` references, and whoever drops the last one frees it.
-///
-/// Addon threads use this object (and may free it) while the JS thread is inside
-/// `dispatch_one` / `env_teardown`, so those take `*mut Self` and borrow one
-/// field per statement; the finalize task carries that same pointer.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A

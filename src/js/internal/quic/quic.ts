@@ -244,6 +244,7 @@ const {
   buildNgHeaderString,
   assertValidPseudoHeader,
   assertValidPseudoHeaderTrailer,
+  kSingleValueFields,
 } = require("internal/quic/http2util");
 
 const kEmptyObject = { __proto__: null };
@@ -1301,8 +1302,9 @@ function validateBody(body) {
 }
 
 /**
- * Parses an alternating [name, value, name, value, ...] array from C++
- * into a plain header object. Multi-value headers become arrays.
+ * Parses an alternating [name, value, name, value, ...] array from C++ into a
+ * plain header object. Duplicate-field folding matches node's http2
+ * `toHeaderObject` (lib/internal/http2/util.js).
  * @param {string[]} pairs
  * @returns {object}
  */
@@ -1311,14 +1313,24 @@ function parseHeaderPairs(pairs) {
   assert(pairs.length % 2 === 0);
   const block = { __proto__: null };
   for (let n = 0; n + 1 < pairs.length; n += 2) {
-    if (block[pairs[n]] !== undefined) {
-      if (ArrayIsArray(block[pairs[n]])) {
-        ArrayPrototypePush(block[pairs[n]], pairs[n + 1]);
-      } else {
-        block[pairs[n]] = [block[pairs[n]], pairs[n + 1]];
+    const name = pairs[n];
+    const value = pairs[n + 1];
+    const existing = block[name];
+    if (existing === undefined) {
+      block[name] = name === "set-cookie" ? [value] : value;
+    } else if (!kSingleValueFields.has(name)) {
+      switch (name) {
+        case "cookie":
+          // RFC 9114 §4.2.1: MUST concatenate with "; " before non-h3 context.
+          block[name] = `${existing}; ${value}`;
+          break;
+        case "set-cookie":
+          ArrayPrototypePush(existing, value);
+          break;
+        default:
+          block[name] = `${existing}, ${value}`;
+          break;
       }
-    } else {
-      block[pairs[n]] = pairs[n + 1];
     }
   }
   return block;

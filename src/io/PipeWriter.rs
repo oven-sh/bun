@@ -429,7 +429,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let loop_ = self.parent_event_loop().loop_();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                self.parent_on_error(err);
+                // Same report as a failed write (the streaming writer does the
+                // same): parents expect every error to be followed by `on_close`.
+                self._on_error(err);
             }
             sys::Result::Ok(()) => {}
         }

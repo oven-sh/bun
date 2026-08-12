@@ -1013,6 +1013,39 @@ describe("request()/pushStream() run no user code between taking a stream id and
     },
   );
 
+  // A queued request's sentHeaders object is reachable until the queue drains; the block that is
+  // eventually sent is the one request() was given (node sends a snapshot taken in request() too),
+  // so a value added to sentHeaders in the meantime is never coerced, let alone sent.
+  test("the block of a request queued before connect is fixed when request() is made", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const outer = client.request({ ":path": "/outer", "x-plain": "given to request()" });
+      outer.on("error", () => {});
+      outer.end();
+      let coercions = 0;
+      outer.sentHeaders["x-late"] = valueThatReenters(() => {
+        coercions++;
+        const inner = client.request({ ":path": "/inner" });
+        inner.on("error", () => {});
+        inner.end();
+      });
+      await raw.waitFor(f => f.type === FrameType.HEADERS);
+      // PING as a barrier: its ACK arrives after anything else the connect flush wrote.
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect({
+        headersStreamIds: raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId),
+        coercions,
+      }).toEqual({ headersStreamIds: [1], coercions: 0 });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
   // End to end against a real peer: with the blocks encoded in wire order, both requests are
   // answered and each one carries its own headers.
   test("both the nested and the outer request are answered by an http2 server", async () => {

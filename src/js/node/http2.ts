@@ -6451,7 +6451,14 @@ class ClientHttp2Session extends Http2Session {
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
-        this.#pendingRequests.push({ req, headers, wireHeaders, sensitiveNames, options });
+        this.#pendingRequests.push({
+          req,
+          headers,
+          // Reachable as sentHeaders while queued: snapshot it, as node does.
+          wireHeaders: wireHeaders === headers ? { ...headers } : wireHeaders,
+          sensitiveNames,
+          options,
+        });
         // node corks every Http2Stream until its native handle is assigned; same here so
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();

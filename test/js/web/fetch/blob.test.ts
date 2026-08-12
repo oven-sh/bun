@@ -427,8 +427,7 @@ describe("new File([blob], name) names only the new File", () => {
   // as a zero-copy view. Renaming through the shared store freed the bytes that
   // view pointed at, so the multipart body read freed memory. Spawned so that
   // the ASAN report for that read fails this test instead of taking down the
-  // test run; symbolizing that report in a debug build takes the child several
-  // seconds (the passing run is well under a second), hence the timeout.
+  // test run.
   test("wrapping a File does not disturb a FormData entry made from it", async () => {
     const name = "source-" + Buffer.alloc(64, "s").toString() + ".txt";
     const script = `
@@ -461,7 +460,7 @@ describe("new File([blob], name) names only the new File", () => {
       stderr: "",
       exitCode: 0,
     });
-  }, 30_000);
+  });
 });
 
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {

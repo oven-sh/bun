@@ -1407,16 +1407,15 @@ pub mod js_bundler {
 
     /// `&BundleV2` for the live backref stored on `Resolve`/`Load`.
     ///
-    /// Centralises the deref for what the plugin host's thread does with the
-    /// bundle (`JSBundlerPlugin__onResolveAsync`, `…__onLoadAsync`,
-    /// `…__addError`, `on_defer`, [`bv2_plugin`]): it reads `plugins` and
-    /// posts answers to the bundle's own loop, nothing more. For `Bun.build`
-    /// the `BundleV2` belongs to the bundle thread, which is running it while
-    /// these thunks execute, so this thread only ever forms `&` to it. `bv2`
-    /// is the back-reference set in `Resolve::init`/`Load::init`; the
-    /// `BundleV2` heap allocation outlives every plugin callback (owner-
-    /// creates-child) and is disjoint from the `Resolve`/`Load` the callers
-    /// hold `&mut` to.
+    /// Centralises the deref for the answer thunks on the plugin host's thread
+    /// (`JSBundlerPlugin__onResolveAsync`, `…__onLoadAsync`, `…__addError`,
+    /// `on_defer`, [`bv2_plugin`]): they read `plugins` and post to the
+    /// bundle's own loop, nothing more. For `Bun.build` the `BundleV2` belongs
+    /// to the bundle thread, which is running it while these execute, so they
+    /// must not form a `&mut` to it. `bv2` is the back-reference set in
+    /// `Resolve::init`/`Load::init`; the `BundleV2` heap allocation outlives
+    /// every plugin callback (owner-creates-child) and is disjoint from the
+    /// `Resolve`/`Load` the callers hold `&mut` to.
     #[inline]
     fn bv2_ref<'a>(bv2: *mut BundleV2<'static>) -> &'a BundleV2<'static> {
         // SAFETY: see fn doc — live backref (owner-creates-child), shared

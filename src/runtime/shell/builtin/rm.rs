@@ -582,6 +582,22 @@ pub enum EntryKindHint {
     Dir,
 }
 
+/// What a walk of a [`DirTask`] ([`ShellRmTask::remove_entry`],
+/// [`ShellRmTask::remove_entry_dir_after_children`]) leaves for the caller,
+/// which holds the task by pointer, to do with it once the walk has returned
+/// (see [`DirTask::subtask_count`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EntryOutcome {
+    /// The entry was removed, skipped or failed without anything being
+    /// enqueued under it: the task still holds its only count, which
+    /// [`DirTask::post_run`] drops.
+    Done,
+    /// Child DirTasks may have been enqueued under the directory, so it can
+    /// only be removed once they are gone: [`DirTask::drop_own_count`] drops
+    /// the count the walk held and whoever drops the last one removes it.
+    AwaitChildren,
+}
+
 /// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
 pub struct ShellRmTask {
@@ -622,9 +638,20 @@ pub struct DirTask {
     pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
     pub(crate) is_absolute: bool,
+    /// One count held by the thread working on the task plus one per child
+    /// DirTask enqueued under it. A child drops its count in
+    /// [`DirTask::post_run`]; the working thread drops its own in
+    /// [`DirTask::drop_own_count`] once its walk has returned. Whichever
+    /// thread takes the count to 0 owns the task again and removes the
+    /// now-empty directory ([`DirTask::delete_after_waiting_for_children`]);
+    /// its `post_run` then frees a child, or hands the root back to the main
+    /// thread, which frees the whole [`ShellRmTask`] (root DirTask included).
+    /// So from the moment a thread's own decrement lands, another thread may
+    /// be freeing this task and everything it points at: the functions that
+    /// decrement hold it by raw pointer only, and every frame that borrowed
+    /// it or the `ShellRmTask` (the `remove_entry*` walk, `&self` throughout)
+    /// has returned by then.
     pub(crate) subtask_count: AtomicUsize,
-    pub(crate) need_to_wait: AtomicBool,
-    pub(crate) deleting_after_waiting_for_children: AtomicBool,
     pub(crate) kind_hint: EntryKindHint,
     pub(crate) deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
@@ -639,7 +666,7 @@ pub struct DirTask {
 unsafe impl Send for ShellRmTask {}
 // SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
 // by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
-// fields are single-owner per the `need_to_wait` handoff (see
+// fields are single-owner per the `subtask_count` hand-off (see
 // `verbose_deleted`).
 unsafe impl Send for DirTask {}
 
@@ -664,8 +691,6 @@ impl ShellRmTask {
             path: ZBox::from_bytes(root_path),
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
-            need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint: EntryKindHint::Idk,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
@@ -785,7 +810,9 @@ impl ShellRmTask {
         if self.error_signal().load(Ordering::SeqCst) {
             return;
         }
-        // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
+        // SAFETY: `parent_dir` holds its own `subtask_count` until its walk
+        // (our caller) returns, so it is live; `path` is read-only after
+        // construction.
         let parent_path = unsafe { (*parent_dir).path.as_bytes() };
         let new_path = self.join(&[parent_path, path], is_absolute);
         self.enqueue_no_join(parent_dir, new_path, kind_hint);
@@ -806,8 +833,6 @@ impl ShellRmTask {
             path,
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
-            need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(self.event_loop),
@@ -836,14 +861,14 @@ impl ShellRmTask {
         }
         // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
         // Ownership starts on the worker that runs `remove_entry*` and is
-        // handed off via `subtask_count`: the parent's final append here is
-        // sequenced-before its `subtask_count.fetch_sub(SeqCst)` in
-        // `remove_entry_dir`, and the child taking the counter to 0 in
-        // `post_run` acquire-reads from that release sequence before
-        // re-entering via `delete_after_waiting_for_children`. That pair
-        // makes prior `deleted_entries` writes visible to the new owner, so
-        // this `&mut` is exclusive and race-free. The reborrow is also
-        // disjoint from every other live borrow (`&self`, `path`).
+        // handed off via `subtask_count`: the walk's final append here is
+        // sequenced-before that worker's `subtask_count.fetch_sub(SeqCst)` in
+        // `DirTask::drop_own_count`, and the thread taking the counter to 0
+        // (there or in `post_run`) acquire-reads from that release sequence
+        // before re-entering via `delete_after_waiting_for_children`.
+        // That pair makes prior `deleted_entries` writes visible to the new
+        // owner, so this `&mut` is exclusive and race-free. The reborrow is
+        // also disjoint from every other live borrow (`&self`, `path`).
         let entries = unsafe { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
@@ -901,50 +926,53 @@ impl ShellRmTask {
         e.with_path(path)
     }
 
-    /// Returns `Ok(true)` when [`remove_entry_dir`] handed `dir_task` off to
-    /// a child (its `subtask_count` slot was released without reaching 0).
-    /// Once that happens, a child finishing on another thread may run
-    /// [`DirTask::delete_after_waiting_for_children`] → `post_run` → `deinit`
-    /// (or, for the root, the main thread may free the whole
-    /// [`ShellRmTask`]). Callers must therefore treat `dir_task` as
-    /// potentially-freed when this returns `Ok(true)`. The bool is threaded
-    /// out locally instead of re-reading the atomic so the caller never
-    /// dereferences `dir_task` to find out.
-    fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
-        let mut waiting = false;
+    /// The walk of one [`DirTask`], run by the worker that holds the task's
+    /// own count ([`DirTask::run_from_thread_pool_impl`]). That count is what
+    /// keeps `dir_task`, `self` and everything they own alive for the
+    /// duration, and it is only dropped after this returns, so `&self` and
+    /// the borrows of `dir_task.path` taken below are all gone by the time
+    /// another thread can free either object. An `Err` means nothing was
+    /// enqueued under `dir_task` (a failure after children were enqueued is
+    /// recorded by [`remove_entry_dir`] itself, which still reports
+    /// [`EntryOutcome::AwaitChildren`]).
+    fn remove_entry(
+        &self,
+        dir_task: *mut DirTask,
+        is_absolute: bool,
+    ) -> bun_sys::Maybe<EntryOutcome> {
         let mut buf = bun_paths::PathBuffer::uninit();
-        // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
-        // `path` are read-only after construction.
+        // SAFETY: `dir_task` is live (see above). `kind_hint` / `path` are
+        // read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
             EntryKindHint::Idk => {
+                let mut outcome = EntryOutcome::Done;
                 let mut vtable = RemoveFileVTable {
                     task: self,
                     on_dir: OnDir::Recurse {
-                        need_to_wait_out: &mut waiting,
+                        outcome: &mut outcome,
                     },
                 };
                 self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
+                Ok(outcome)
             }
-            EntryKindHint::Dir => {
-                self.remove_entry_dir(dir_task, is_absolute, &mut buf, &mut waiting)?;
-            }
+            EntryKindHint::Dir => self.remove_entry_dir(dir_task, is_absolute, &mut buf),
         }
-        Ok(waiting)
     }
 
-    /// `need_to_wait_out` is left `true` only when the hand-off in this
-    /// function gave ownership of `dir_task` to a child; see
-    /// [`remove_entry`] for why the caller needs this on its own stack
-    /// rather than reading it back from `dir_task`.
+    /// Removes the directory `dir_task` stands for: directly when it is not
+    /// being walked (`-d`, or it turned out not to be a directory), otherwise
+    /// by unlinking its files and enqueuing a child DirTask per subdirectory,
+    /// after which removing the directory itself is left to whoever drops
+    /// its last count ([`EntryOutcome::AwaitChildren`]).
     fn remove_entry_dir(
         &self,
         dir_task: *mut DirTask,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
-        need_to_wait_out: &mut bool,
-    ) -> bun_sys::Maybe<()> {
-        // SAFETY: `dir_task` is live; this thread owns it.
+    ) -> bun_sys::Maybe<EntryOutcome> {
+        // SAFETY: `dir_task` is live and its `path` read-only for the
+        // duration of the walk (see `remove_entry`).
         let path = unsafe { (*dir_task).path.as_zstr() };
         let dirfd = self.cwd;
 
@@ -958,11 +986,12 @@ impl ShellRmTask {
             };
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => return Ok(EntryOutcome::Done),
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                return self.verbose_deleted(dir_task, path.as_bytes());
+                                self.verbose_deleted(dir_task, path.as_bytes())?;
+                                return Ok(EntryOutcome::Done);
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
                         }
@@ -970,7 +999,7 @@ impl ShellRmTask {
                             state.treat_as_dir = false;
                             self.remove_entry_file(dir_task, path, is_absolute, buf, &mut state)?;
                             if !state.treat_as_dir {
-                                return Ok(());
+                                return Ok(EntryOutcome::Done);
                             }
                         }
                         _ => return Err(self.error_with_path(&e, path.as_bytes())),
@@ -995,28 +1024,27 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
+                        self.verbose_deleted(dir_task, path.as_bytes())?;
+                        return Ok(EntryOutcome::Done);
                     }
                     return Err(self.error_with_path(&e, path.as_bytes()));
                 }
                 E::ENOTDIR => {
                     let mut dummy = DummyRemoveFile;
-                    return self.remove_entry_file(dir_task, path, is_absolute, buf, &mut dummy);
+                    self.remove_entry_file(dir_task, path, is_absolute, buf, &mut dummy)?;
+                    return Ok(EntryOutcome::Done);
                 }
                 _ => return Err(self.error_with_path(&e, path.as_bytes())),
             },
         };
 
-        // On posix we can close the fd whenever, but on Windows we need to
-        // close it BEFORE we delete.
-        let mut _close_fd = scopeguard::guard(Some(fd), |fd| {
-            if let Some(fd) = fd {
-                fd.close();
-            }
-        });
+        // Closed when this returns, which is before the caller drops the
+        // directory's count: whoever then removes the directory (on Windows
+        // that needs every handle to it closed first) finds it closed.
+        let _close_fd = scopeguard::guard(fd, |fd| fd.close());
 
         if self.error_signal().load(Ordering::SeqCst) {
-            return Ok(());
+            return Ok(EntryOutcome::Done);
         }
 
         let mut iterator = dir_iterator::iterate(fd);
@@ -1027,11 +1055,12 @@ impl ShellRmTask {
 
         // The loop may have already enqueued child DirTasks (bumping
         // `dir_task.subtask_count`) when a readdir/unlink error or an
-        // `error_signal` from another worker aborts it. Returning from
-        // inside the loop would skip the `need_to_wait` hand-off below,
-        // so the last child's `post_run` would never drive
-        // `delete_after_waiting_for_children` on this dir and the owning
-        // `ShellRmTask` would never be freed.
+        // `error_signal` from another worker aborts it. Returning `Err` from
+        // inside the loop would make the caller treat the directory as
+        // `Done` and skip the hand-off, so the last child's `post_run` would
+        // never drive `delete_after_waiting_for_children` on this dir and
+        // the owning `ShellRmTask` would never be freed; the error is
+        // recorded below instead.
         let mut i: usize = 0;
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
@@ -1074,78 +1103,27 @@ impl ShellRmTask {
             }
         };
 
-        // Stash any loop error before the hand-off — once `need_to_wait`
-        // is published `self` may be freed, and `handle_err` takes a
-        // mutex so it must not sit inside the hand-off below. The
-        // `error_signal` check afterwards covers the no-children early-out.
         if let Err(e) = loop_result {
             self.handle_err(e);
         }
-
-        // Hand off to children. Publish `need_to_wait` first, then release
-        // this task's own slot on `subtask_count` with the same `fetch_sub`
-        // the children use: whoever takes the counter to 0 owns the rmdir.
-        // A load-then-store here had a lost-wakeup window where the last
-        // child could decrement and read `need_to_wait == false` between
-        // the two operations, stranding `dir_task` forever.
-        //
-        // SAFETY: `dir_task` is live until `subtask_count` drains to 0, and
-        // we still hold one count. Atomics through a short-lived `&DirTask`
-        // — interior mutability.
-        unsafe {
-            let dt = &*dir_task;
-            *need_to_wait_out = true;
-            dt.need_to_wait.store(true, Ordering::SeqCst);
-            if dt.subtask_count.fetch_sub(1, Ordering::SeqCst) != 1 {
-                // A child still holds a count. It (or a later child) will
-                // take the counter to 0 and drive
-                // `delete_after_waiting_for_children`; nothing after this
-                // may dereference `dir_task`. The directory fd is closed by
-                // the `close_fd` scopeguard on return — that touches only a
-                // stack local, not `dir_task`.
-                return Ok(());
-            }
-            // Every child already released its count (each saw the counter
-            // > 1 and so did not take ownership). `dir_task` is exclusively
-            // ours again: restore the invariants `post_run` expects and
-            // fall through to delete inline.
-            dt.subtask_count.store(1, Ordering::SeqCst);
-            dt.need_to_wait.store(false, Ordering::SeqCst);
-            *need_to_wait_out = false;
-        }
-
-        if self.error_signal().load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        #[cfg(windows)]
-        {
-            // Close BEFORE deleting on Windows.
-            if let Some(f) = _close_fd.take() {
-                f.close();
-            }
-        }
-
-        match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
-            Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
-            Err(e) => match e.get_errno() {
-                E::ENOENT => {
-                    if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
-                    }
-                    Err(self.error_with_path(&e, path.as_bytes()))
-                }
-                _ => Err(e),
-            },
-        }
+        Ok(EntryOutcome::AwaitChildren)
     }
 
-    /// Returns `Ok(true)` if the
-    /// directory was deleted (or force-ignored), `Ok(false)` if a subtask was
-    /// enqueued and the caller should not run `post_run` yet.
-    fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<bool> {
+    /// Removes the directory itself once
+    /// [`DirTask::delete_after_waiting_for_children`] has established that
+    /// everything under it is gone. Like [`remove_entry`], runs while the
+    /// caller holds the task's own count and returns before that count is
+    /// dropped. On non-Linux systems the entry may turn out to have been
+    /// replaced by a directory that is not empty, in which case a fresh
+    /// child DirTask is enqueued for it and the directory has to be waited
+    /// for again ([`EntryOutcome::AwaitChildren`]).
+    fn remove_entry_dir_after_children(
+        &self,
+        dir_task: *mut DirTask,
+    ) -> bun_sys::Maybe<EntryOutcome> {
         let dirfd = self.cwd;
-        // SAFETY: `dir_task` is live; this thread owns it.
+        // SAFETY: `dir_task` is live (see above); `path` / `is_absolute` are
+        // not written once the walk has started.
         let (path, is_abs) = unsafe { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
         let mut state = RemoveFileParent {
             treat_as_dir: true,
@@ -1157,14 +1135,14 @@ impl ShellRmTask {
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => {
-                        let _ = self.verbose_deleted(dir_task, path.as_bytes());
-                        return Ok(true);
+                        self.verbose_deleted(dir_task, path.as_bytes())?;
+                        return Ok(EntryOutcome::Done);
                     }
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                let _ = self.verbose_deleted(dir_task, path.as_bytes());
-                                return Ok(true);
+                                self.verbose_deleted(dir_task, path.as_bytes())?;
+                                return Ok(EntryOutcome::Done);
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
                         }
@@ -1179,12 +1157,12 @@ impl ShellRmTask {
                 let mut buf = bun_paths::PathBuffer::uninit();
                 self.remove_entry_file(dir_task, path, is_abs, &mut buf, &mut state)?;
                 if state.enqueued {
-                    return Ok(false);
+                    return Ok(EntryOutcome::AwaitChildren);
                 }
                 if state.treat_as_dir {
                     continue;
                 }
-                return Ok(true);
+                return Ok(EntryOutcome::Done);
             }
         }
     }
@@ -1282,6 +1260,16 @@ impl ShellRmTask {
             self.error_signal().store(true, Ordering::SeqCst);
         }
     }
+
+    /// Records a failed walk step's error. Both steps ([`remove_entry`],
+    /// [`remove_entry_dir_after_children`]) only fail before enqueuing
+    /// anything, so a failed one leaves the task [`EntryOutcome::Done`].
+    fn record_outcome(&self, step: bun_sys::Maybe<EntryOutcome>) -> EntryOutcome {
+        step.unwrap_or_else(|err| {
+            self.handle_err(err);
+            EntryOutcome::Done
+        })
+    }
 }
 
 impl Drop for ShellRmTask {
@@ -1304,65 +1292,72 @@ impl DirTask {
         };
     }
 
+    /// Walks the task's directory, then drops the count the task holds on
+    /// itself. Holds the task and its [`ShellRmTask`] by pointer only: the
+    /// walk borrows them inside [`ShellRmTask::remove_entry`], which has
+    /// returned before the count is dropped, and dropping it is what lets
+    /// another thread free them (see [`DirTask::subtask_count`]).
+    ///
     /// # Safety
-    /// `this` is a live DirTask (root or heap child); the calling worker
-    /// thread has exclusive access to its non-atomic fields.
+    /// `this` is a live DirTask (root or heap child) holding its own count;
+    /// the calling worker thread has exclusive access to its non-atomic
+    /// fields.
     unsafe fn run_from_thread_pool_impl(this: *mut DirTask) {
-        // Stay on the raw pointer throughout: `remove_entry` re-derives
-        // `&mut *this` internally (via `verbose_deleted` / `remove_entry_dir`)
-        // and schedules child DirTasks that concurrently touch our atomics, so
-        // holding a long-lived `&mut *this` across that call would alias under
-        // Stacked Borrows.
-        //
-        // SAFETY: caller contract — `this` is a live DirTask; this worker
-        // thread has exclusive access to its non-atomic fields (`task_manager`
-        // / `parent_task` / `path` / `is_absolute`). `tm_ptr` is live until
-        // `pending_main_callbacks` hits 0.
-        let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
-            let tm_ptr = (*this).task_manager;
+        // SAFETY: caller contract. `task_manager` outlives the task's whole
+        // tree (it is freed by the main thread after the root's `post_run`),
+        // so it is live for as long as this thread holds the count.
+        let (tm, is_absolute): (*mut ShellRmTask, bool) = unsafe {
+            let tm = (*this).task_manager;
             let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
             (*this).is_absolute = abs;
-            (tm_ptr, abs)
+            (tm, abs)
         };
+        // SAFETY: as above; the `&ShellRmTask` borrows last for these two
+        // calls, which return before the count is dropped.
+        let outcome = unsafe { (*tm).record_outcome((*tm).remove_entry(this, is_absolute)) };
+        // SAFETY: this thread holds the task's own count and, per the
+        // contract of `drop_own_count`, touches neither object afterwards.
+        unsafe { Self::drop_own_count(this, outcome) };
+    }
 
-        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
-        // `root_task` lives in a separate allocation, so this borrow does not
-        // overlap any DirTask and the field-level `&mut` taken inside
-        // `verbose_deleted` cannot pop its tag under Stacked Borrows.
-        let tm = unsafe { &*tm_ptr };
-        let waiting = match tm.remove_entry(this, is_absolute) {
-            Ok(waiting) => waiting,
-            Err(err) => {
-                tm.handle_err(err);
-                // `need_to_wait` is only stored on the `Ok(())` return path
-                // of `remove_entry_dir`, so an `Err` return guarantees
-                // ownership of `this` was not handed off.
-                false
+    /// Drops the count the calling thread holds on `this` (see
+    /// [`subtask_count`](DirTask::subtask_count)), now that the walk that
+    /// produced `outcome` has returned.
+    ///
+    /// # Safety
+    /// `this` is a live DirTask and the calling thread holds its own count,
+    /// which this drops: the caller must not touch `this` or its
+    /// `task_manager` afterwards, as either may be freed by another thread
+    /// (or, for the root, the main thread) by the time this returns.
+    unsafe fn drop_own_count(this: *mut DirTask, outcome: EntryOutcome) {
+        match outcome {
+            // SAFETY: fn contract.
+            EntryOutcome::Done => unsafe { Self::post_run(this) },
+            EntryOutcome::AwaitChildren => {
+                // The same `fetch_sub` the children use in `post_run`:
+                // whoever takes the counter to 0 removes the directory. If
+                // that is a child, it may be freeing `this` (and, cascading
+                // up to the root, the whole `ShellRmTask`) as soon as this
+                // decrement lands; only the atomic is borrowed here, and
+                // only for the decrement.
+                // SAFETY: fn contract.
+                if unsafe { (*this).subtask_count.fetch_sub(1, Ordering::SeqCst) } == 1 {
+                    // SAFETY: we dropped the last count, so `this` is ours
+                    // again and no other thread references it.
+                    unsafe { Self::delete_after_waiting_for_children(this) };
+                }
             }
-        };
-
-        // Re-reading `this` here to decide whether to skip `post_run` would
-        // be a use-after-free race: once `remove_entry_dir` publishes
-        // `need_to_wait = true`, the last child may run
-        // `delete_after_waiting_for_children(this)` → `post_run` → `deinit`
-        // (or, for the root, the main thread may drop the whole
-        // `ShellRmTask`) before we get here. So the hand-off is threaded out
-        // as a stack-local bool via `remove_entry`'s return value and `this`
-        // is never touched again when set. When `waiting` is false the
-        // hand-off never happened, so `deleting_after_waiting_for_children`
-        // (only ever stored by a child that observed `need_to_wait == true`)
-        // is necessarily false and `post_run` is both safe and required.
-        if !waiting {
-            // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
-            // so no other thread can have driven `delete_after_waiting_for_children`
-            // / `deinit` on `this`; it is still live and owned by this worker.
-            unsafe { Self::post_run(this) };
         }
     }
 
+    /// The task is finished (nothing is enqueued under it): drops its last
+    /// count, flushes or frees it, and releases the count it holds on its
+    /// parent (or, for the root, hands the rm back to the main thread).
+    ///
     /// # Safety
-    /// `this` is a live DirTask; called from a worker thread that just
-    /// finished its body.
+    /// `this` is a live DirTask; the calling worker thread holds its own
+    /// count on it and nothing else does (`EntryOutcome::Done`), and does
+    /// not touch `this` or its `task_manager` after this returns.
     unsafe fn post_run(this: *mut DirTask) {
         // SAFETY: caller contract — `this` is a live DirTask owned by the
         // calling worker thread. `me` is held only over atomic / read-only
@@ -1374,94 +1369,81 @@ impl DirTask {
         // reclaims `this`'s Box; `finish_concurrently` may free the root.
         unsafe {
             let me = &*this;
-            // This is true if the directory has subdirectories that need to be deleted.
-            if me.need_to_wait.load(Ordering::SeqCst) {
+            let previous = me.subtask_count.fetch_sub(1, Ordering::SeqCst);
+            debug_assert_eq!(previous, 1, "post_run with child DirTasks still counted");
+            if previous != 1 {
                 return;
             }
-            // We have executed all the children of this task.
-            if me.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
-                let tm = &*me.task_manager;
-                // If a verbose write will be queued, take a pending count on the
-                // ShellRmTask now — before decrementing the parent (children) or
-                // calling finish_concurrently (root) — so the main thread can't
-                // free it out from under write_verbose.
-                let will_queue_verbose = tm.opts.verbose && !me.deleted_entries.is_empty();
-                if will_queue_verbose {
-                    tm.pending_main_callbacks.fetch_add(1, Ordering::SeqCst);
-                }
-
-                // The verbose hop is posted while the rm task is still counted
-                // work of its VM — i.e. before anything below can let the root
-                // `finish_concurrently` (which releases that count) run: our
-                // parent decrement can cascade into it, and for the root it is
-                // the next statement. `this` may be freed by the JS thread once
-                // posted, so what we still need is captured first.
-                let (parent_task, task_manager) = (me.parent_task, me.task_manager);
-                if will_queue_verbose {
-                    Self::queue_for_write(this);
-                } else if !parent_task.is_null() {
-                    Self::deinit(this);
-                }
-
-                // If we have a parent and we are the last child, now we can delete the parent.
-                if !parent_task.is_null() {
-                    let p = &*parent_task;
-                    // The parent releases its own slot on this counter in
-                    // `remove_entry_dir`; whoever takes it to 0 owns the
-                    // parent's rmdir. The parent's `fetch_sub` is sequenced
-                    // after its final `deleted_entries` write and its
-                    // `need_to_wait.store(true)`, and every decrement is a
-                    // SeqCst RMW, so reading 1 here synchronizes-with the
-                    // parent's release and makes those writes visible to
-                    // `delete_after_waiting_for_children`.
-                    if p.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
-                        Self::delete_after_waiting_for_children(parent_task);
-                    }
-                    return;
-                }
-
-                // Root task: hand it back. It may be freed at any time after
-                // this unless the verbose hop's pending count keeps it.
-                ShellRmTask::finish_concurrently(task_manager);
+            let tm = &*me.task_manager;
+            // If a verbose write will be queued, take a pending count on the
+            // ShellRmTask now — before decrementing the parent (children) or
+            // calling finish_concurrently (root) — so the main thread can't
+            // free it out from under write_verbose.
+            let will_queue_verbose = tm.opts.verbose && !me.deleted_entries.is_empty();
+            if will_queue_verbose {
+                tm.pending_main_callbacks.fetch_add(1, Ordering::SeqCst);
             }
+
+            // The verbose hop is posted while the rm task is still counted
+            // work of its VM — i.e. before anything below can let the root
+            // `finish_concurrently` (which releases that count) run: our
+            // parent decrement can cascade into it, and for the root it is
+            // the next statement. `this` may be freed by the JS thread once
+            // posted, so what we still need is captured first.
+            let (parent_task, task_manager) = (me.parent_task, me.task_manager);
+            if will_queue_verbose {
+                Self::queue_for_write(this);
+            } else if !parent_task.is_null() {
+                Self::deinit(this);
+            }
+
+            // If we have a parent and we are the last child, now we can delete the parent.
+            if !parent_task.is_null() {
+                // The parent dropped its own count in `drop_own_count`, after
+                // its walk's last `deleted_entries` write; every decrement is
+                // a SeqCst RMW, so reading 1 here synchronizes-with the
+                // parent's release and makes those writes visible to
+                // `delete_after_waiting_for_children`. If this is not the
+                // last count, whoever drops it may free the parent at once.
+                if (*parent_task).subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    Self::delete_after_waiting_for_children(parent_task);
+                }
+                return;
+            }
+
+            // Root task: hand it back. It may be freed at any time after
+            // this unless the verbose hop's pending count keeps it.
+            ShellRmTask::finish_concurrently(task_manager);
         }
-        // Otherwise need to wait.
     }
 
+    /// Runs on whichever thread dropped the last count on `this` (a child
+    /// finishing in [`post_run`], or the directory's own walk in
+    /// [`drop_own_count`] when the children were already gone): everything
+    /// under the directory has been dealt with, so remove the directory
+    /// itself.
+    ///
     /// # Safety
-    /// `this` is a live DirTask; called from a worker thread.
+    /// `this` is a live DirTask whose `subtask_count` the calling thread just
+    /// took to 0, so no other thread references it; the caller does not touch
+    /// `this` or its `task_manager` after this returns.
     unsafe fn delete_after_waiting_for_children(this: *mut DirTask) {
-        // SAFETY: caller contract. Stay on raw `this` —
-        // `remove_entry_dir_after_children` reborrows `(*this).deleted_entries`
-        // mutably (via `verbose_deleted`), so we never materialise a
-        // long-lived `&DirTask` covering that field. The two atomic stores
-        // and the `task_manager` read use raw place projection only.
-        // `task_manager` lives in a separate allocation, so `tm: &ShellRmTask`
-        // does not overlap any DirTask borrow.
+        // SAFETY: caller contract. Re-taking the count makes this step look
+        // like the walk did to `drop_own_count`: the thread working on the
+        // task holds a count on it, and a re-enqueued child holds another.
+        // The `&ShellRmTask` borrows last for the calls they are formed for,
+        // which return before the count is dropped; `task_manager` is live
+        // for as long as this thread holds the count (see
+        // `run_from_thread_pool_impl`).
         unsafe {
-            // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
-            (*this)
-                .deleting_after_waiting_for_children
-                .store(true, Ordering::SeqCst);
-            (*this).need_to_wait.store(false, Ordering::SeqCst);
-            // The caller just took `subtask_count` to 0; restore the slot
-            // `post_run`'s own decrement expects.
             (*this).subtask_count.store(1, Ordering::SeqCst);
-            let tm = &*(*this).task_manager;
-            let mut do_post_run = true;
-            if !tm.error_signal().load(Ordering::SeqCst) {
-                match tm.remove_entry_dir_after_children(this) {
-                    Err(e) => tm.handle_err(e),
-                    Ok(deleted) => {
-                        if !deleted {
-                            do_post_run = false;
-                        }
-                    }
-                }
-            }
-            if do_post_run {
-                Self::post_run(this);
-            }
+            let tm = (*this).task_manager;
+            let outcome = if (*tm).error_signal().load(Ordering::SeqCst) {
+                EntryOutcome::Done
+            } else {
+                (*tm).record_outcome((*tm).remove_entry_dir_after_children(this))
+            };
+            Self::drop_own_count(this, outcome);
         }
     }
 
@@ -1602,10 +1584,10 @@ enum OnDir<'a> {
     /// ([`ShellRmTask::remove_entry_dir`]): enqueue it as its own [`DirTask`].
     Enqueue,
     /// The entry is the [`DirTask`] itself ([`ShellRmTask::remove_entry`]):
-    /// recurse into [`ShellRmTask::remove_entry_dir`] here. The out-param lets
-    /// `remove_entry` learn that `need_to_wait` was published without
-    /// re-reading the (possibly already-freed) DirTask.
-    Recurse { need_to_wait_out: &'a mut bool },
+    /// recurse into [`ShellRmTask::remove_entry_dir`] here and report its
+    /// outcome through the out-param, since the [`RemoveFileHandler`]
+    /// signatures have no room for it.
+    Recurse { outcome: &'a mut EntryOutcome },
 }
 
 impl RemoveFileVTable<'_> {
@@ -1625,9 +1607,9 @@ impl RemoveFileVTable<'_> {
                 );
                 Ok(())
             }
-            OnDir::Recurse { need_to_wait_out } => {
-                self.task
-                    .remove_entry_dir(parent, is_absolute, buf, need_to_wait_out)
+            OnDir::Recurse { outcome } => {
+                **outcome = self.task.remove_entry_dir(parent, is_absolute, buf)?;
+                Ok(())
             }
         }
     }

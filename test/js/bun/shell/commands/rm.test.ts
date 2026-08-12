@@ -145,12 +145,69 @@ foo/
     }
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
-  // stranding the parent DirTask forever. A directory with exactly one
-  // subdirectory is the minimal trigger; the window is a few instructions
-  // so this is a stress probe rather than a deterministic repro.
+  // Every directory, including an empty one, is removed by whichever thread
+  // drops its last `subtask_count` after its walk has returned, and reports
+  // itself once; files are reported by the directory walk that unlinked them.
+  test.each([
+    ["-rv", true],
+    ["-r", false],
+  ])("recursive rm %s removes a tree of nested, empty and leaf directories", async (flag, verbose) => {
+    using tempdir = tempDir("rm-tree", {
+      "tree/f0": "",
+      "tree/f1": "",
+      "tree/empty": {},
+      "tree/a/f": "",
+      "tree/a/empty": {},
+      "tree/a/b/f": "",
+      "tree/a/b/c/f": "",
+      "tree/a/b/c/g": "",
+      "tree/a/b/c/d": {},
+      "tree/x/f": "",
+      "tree/y/z/f": "",
+    });
+    const root = path.join(String(tempdir), "tree");
+    const entries = [
+      "",
+      "f0",
+      "f1",
+      "empty",
+      "a",
+      "a/f",
+      "a/empty",
+      "a/b",
+      "a/b/f",
+      "a/b/c",
+      "a/b/c/f",
+      "a/b/c/g",
+      "a/b/c/d",
+      "x",
+      "x/f",
+      "y",
+      "y/z",
+      "y/z/f",
+    ].map(rel => path.join(root, rel));
+
+    const { stdout, stderr, exitCode } = await $`rm ${flag} ${root}`;
+    expect({
+      stdout: sortedShellOutput(stdout.toString()),
+      stderr: stderr.toString(),
+      exitCode,
+      remains: existsSync(root),
+    }).toEqual({
+      stdout: verbose ? entries.sort() : [],
+      stderr: "",
+      exitCode: 0,
+      remains: false,
+    });
+  });
+
+  // A directory's walk (`DirTask::drop_own_count`) and its last child
+  // (`DirTask::post_run`) race to drop the directory's final `subtask_count`;
+  // whichever wins has to remove the directory, or the rm never resolves
+  // (#34032 was a lost wakeup in an earlier, load-then-store version of this
+  // hand-off). A directory with exactly one subdirectory is the minimal
+  // trigger; the window is a few instructions wide, so this is a stress probe
+  // rather than a deterministic repro.
   test("recursive rm never hangs on the DirTask hand-off", async () => {
     using base = tempDir("rm-handoff", {});
     const fixture = /* ts */ `

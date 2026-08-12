@@ -612,7 +612,7 @@ for (let [gcTick, label] of [
         });
 
         it.concurrent("should allow reading stdout after a few milliseconds", async () => {
-          for (let i = 0; i < 50; i++) {
+          async function readLate() {
             const proc = Bun.spawn({
               cmd: ["git", "--version"],
               stdout: "pipe",
@@ -623,6 +623,10 @@ for (let [gcTick, label] of [
             const out = await proc.stdout.text();
             expect(out).toStartWith("git version");
             expect(await proc.exited).toBe(0);
+          }
+          // 50 iterations, 10 at a time (git is ~25ms per spawn on Windows).
+          for (let batch = 0; batch < 5; batch++) {
+            await Promise.all(Array.from({ length: 10 }, readLate));
           }
         });
       });
@@ -663,8 +667,17 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
   192_000,
 );
 
+// A child that exits on its own after `seconds`. The loops below spawn a few
+// hundred of them: a shell costs ~1ms on POSIX, but pwsh needs ~250ms of CPU just
+// to start, which made these loops most of the Windows lane's time for this file.
+// A bun child starts in a few ms there (and POSIX keeps the shell so the ASAN lane
+// does not pay bun's startup instead).
+function sleepingChild(seconds: number) {
+  return isWindows ? [bunExe(), "-e", `Bun.sleepSync(${seconds * 1000})`] : [shellExe(), "-c", `sleep ${seconds}`];
+}
+
 describe("spawn unref and kill should not hang", () => {
-  const cmd = [shellExe(), "-c", "sleep 0.001"];
+  const cmd = sleepingChild(0.001);
 
   it.concurrent("kill and await exited", async () => {
     const promises = new Array(10);
@@ -746,7 +759,7 @@ describe("spawn unref and kill should not hang", () => {
   });
 });
 
-async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
+async function runTest(sleep: number, order = ["sleep", "kill", "unref", "exited"]) {
   console.log("running", order.join(","), "x 100");
   const total = isWindows ? 10 : 100;
   // Iterations are independent; run a few at a time instead of strictly
@@ -755,7 +768,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
 
   async function runOne() {
     const proc = spawn({
-      cmd: [shellExe(), "-c", `sleep ${sleep}`],
+      cmd: sleepingChild(sleep),
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
@@ -796,7 +809,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
 }
 
 describe("should not hang", () => {
-  for (let sleep of ["0", "0.1"]) {
+  for (let sleep of [0, 0.1]) {
     it(
       "sleep " + sleep,
       async () => {

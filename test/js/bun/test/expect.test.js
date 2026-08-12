@@ -569,6 +569,9 @@ describe("expect()", () => {
       expect(withIndexGetter("got")).not.toStrictEqual(withIndexGetter("other"));
       expect(withIndexGetter("got")).not.toEqual([1, ,]);
       expect(withIndexGetter("got")).not.toStrictEqual([1, ,]);
+      // The getter sits past the end of the shorter array.
+      expect([1]).not.toEqual(withIndexGetter("got"));
+      expect([1]).not.toStrictEqual(withIndexGetter("got"));
     });
 
     test("an accessor is not a hole even when the getter returns undefined", () => {

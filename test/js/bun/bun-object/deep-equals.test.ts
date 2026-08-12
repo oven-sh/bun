@@ -168,6 +168,29 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p) and array index a
     expect(() => deepEquals([1, 2], throwing)).toThrow("index getter threw");
   });
 
+  // Strict mode rejects on length first. Loose mode walks the longer array's extra indexes
+  // and tolerates undefined there, as it does for ["asdf"] vs ["asdf", undefined] above.
+  it("reads a getter past the end of the shorter array", () => {
+    let calls = 0;
+    const longer = withIndexGetter(() => (calls++, "got"));
+    expect(deepEquals([1], longer)).toBe(false);
+    expect(calls).toBe(strict ? 0 : 1);
+
+    const returnsUndefined = withIndexGetter(() => undefined);
+    const hidden = withIndexGetter(() => 2, false);
+    expect(deepEquals([1], returnsUndefined)).toBe(!strict);
+    expect(deepEquals([1], hidden)).toBe(!strict);
+
+    const throwing = withIndexGetter(() => {
+      throw new Error("index getter threw");
+    });
+    if (strict) {
+      expect(deepEquals([1], throwing)).toBe(false);
+    } else {
+      expect(() => deepEquals([1], throwing)).toThrow("index getter threw");
+    }
+  });
+
   it("ignores non-enumerable indexes, accessor or data", () => {
     const hiddenGetter = withIndexGetter(() => 2, false);
     expect(deepEquals(hiddenGetter, [1, 2])).toBe(false);

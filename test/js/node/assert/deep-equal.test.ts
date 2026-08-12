@@ -636,9 +636,16 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
-  // node reads indexes with a[i], so enumerability does not matter to it. Strict mode has
-  // its own entry point and does the same; assert.deepEqual is Bun.deepEquals, which like
-  // jest only sees enumerable indexes.
+  {
+    name: "a shorter array and an array whose extra index is a getter",
+    a: () => [1],
+    b: () => withIndexGetter(() => 2),
+    strict: false,
+    loose: false,
+  },
+  // node reads dense indexes with a[i], enumerable or not. Strict mode has its own entry
+  // point and does the same; assert.deepEqual is Bun.deepEquals, which like jest only sees
+  // enumerable indexes.
   {
     name: "an array with a non-enumerable index getter and a plain array",
     a: () => withIndexGetter(() => 2, false),
@@ -770,6 +777,7 @@ describe("util.isDeepStrictEqual", () => {
     expect(calls).toBe(2);
   });
 
+  // Like the symbol test above, the count is Bun's own guarantee; node reads a[i] more than once.
   test("reads an array's index getter once per side", () => {
     const calls = { a: 0, b: 0 };
     const a = withIndexGetter(() => (calls.a++, 2));
@@ -783,7 +791,7 @@ describe("util.isDeepStrictEqual", () => {
     const hiddenThree = withIndexGetter(() => 3, false);
     expect(util.isDeepStrictEqual(hiddenTwo, [1, 2])).toBe(true);
     expect(util.isDeepStrictEqual(hiddenThree, [1, 2])).toBe(false);
-    expect(util.isDeepStrictEqual(hiddenTwo, [1, ,])).toBe(false);
+    expect(util.isDeepStrictEqual([1, ,], hiddenTwo)).toBe(false);
   });
 
   test("propagates an index getter that throws", () => {

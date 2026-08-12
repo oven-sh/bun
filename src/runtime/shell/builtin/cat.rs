@@ -220,20 +220,15 @@ impl Cat {
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Clone the `Arc<IOReader>`
-                // out of `stdin` so we hold no borrow of `interp` across
-                // `start()` (which may re-enter via the raw interp backref).
+                // Clone the `Arc<IOReader>` out of `stdin` so no borrow of the
+                // builtin is held while the reader is started.
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => Arc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
                 reader.set_interp(interp_ptr);
-                reader.add_reader(ReaderChildPtr {
-                    node: cmd,
-                    tag: ReaderTag::Cat,
-                });
-                reader.start()
+                Self::start_reader(interp, cmd, &reader)
             }
             Branch::FileArg { args_start, idx } => {
                 let argc = Builtin::of(interp, cmd).args_slice().len();
@@ -291,14 +286,29 @@ impl Cat {
                     *errno = 0;
                     *slot = Some(Arc::clone(&reader));
                 }
-                reader.add_reader(ReaderChildPtr {
-                    node: cmd,
-                    tag: ReaderTag::Cat,
-                });
-                reader.start()
+                Self::start_reader(interp, cmd, &reader)
             }
             Branch::WaitingErr => Yield::failed(),
         }
+    }
+
+    /// A reader that cannot be started is finished right here, in tail
+    /// position, so the completion is returned to the trampoline instead of
+    /// running from inside `start()` (see `IOReader::start`).
+    fn start_reader(interp: &Interpreter, cmd: NodeId, reader: &IOReader) -> Yield {
+        reader.add_reader(ReaderChildPtr {
+            node: cmd,
+            tag: ReaderTag::Cat,
+        });
+        match reader.start() {
+            Ok(()) => Yield::suspended(),
+            Err(e) => Self::finish_input(interp, cmd, e.get_errno() as ExitCode),
+        }
+    }
+
+    fn finish_input(interp: &Interpreter, cmd: NodeId, errno: ExitCode) -> Yield {
+        let step = Self::state_mut(interp, cmd).state.reader_done(errno);
+        Self::take_step(interp, cmd, step)
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -384,8 +394,7 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
-        let step = Self::state_mut(interp, cmd).state.reader_done(errno);
-        Self::take_step(interp, cmd, step)
+        Self::finish_input(interp, cmd, errno)
     }
 }
 

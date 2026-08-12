@@ -25,6 +25,9 @@ function spawnReport(command: string, options: { quiet?: boolean; stdin?: number
         const r = await $\`${command}\`${options.quiet ? ".quiet()" : ""}.nothrow();
         console.log(JSON.stringify({ exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }));
       `,
+      // Should the child crash, make the panic line the failure instead of a
+      // slow symbolized backtrace.
+      "--debug-crash-handler-use-trace-string",
     ],
     env: builtinEnv,
     cwd: options.cwd,
@@ -98,20 +101,59 @@ describe.concurrent("cat (builtin)", () => {
     expect(exitCode).toBe(0);
   });
 
-  // File-argument state. A directory opens but cannot be read (Linux already
-  // refuses to register it with epoll), so the reader fails before anything is
-  // queued. With stdout on an fd this used to suspend forever too: finishing
-  // was gated on a flag that only a completed chunk could set.
-  test.skipIf(!isPosix)("unreadable file argument exits with the errno instead of hanging", async () => {
-    using dir = tempDir("shell-cat-dir-arg", { "sub/.keep": "" });
-    await using proc = spawnReport("cat sub", { cwd: String(dir) });
+  // The master hands 8 KiB back as three reads (4095, 4095, 2 bytes) in the
+  // same wake as the error, so three chunks are queued when the error lands
+  // and each of their completions has to be counted.
+  test.skipIf(!isLinux)("read error with several chunks queued: flushes all of them", async () => {
+    const payload = Buffer.alloc(8192, "x").toString();
+    const master = openptyMasterWithClosedSlave(payload);
+    await using proc = spawnReport("cat", { stdin: master });
+    closeSync(master);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const parsed = JSON.parse(stdout);
+    expect({ stdout, stderr }).toEqual({ stdout: payload + report(EIO, payload), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // File-argument state, failing before anything is queued: a directory opens
+  // but cannot be read (Linux refuses to even register it with epoll, so the
+  // failure is reported from inside the start call itself). With stdout on an
+  // fd this used to suspend forever: finishing was gated on a flag only a
+  // completed chunk could set. The pipeline and sequence forms check that the
+  // command finishes through its own trampoline frame: completing it from
+  // inside the start call tore down the pipeline node the trampoline was still
+  // holding, and nested one trampoline per statement otherwise.
+  async function runWithUnreadableArg(command: string, quiet = false) {
+    using dir = tempDir("shell-cat-dir-arg", { "sub/.keep": "" });
+    await using proc = spawnReport(command, { cwd: String(dir), quiet });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.skipIf(!isPosix).each([
+    ["cat sub", false],
+    ["cat sub | cat sub", false],
+    ["true | cat sub", true],
+  ])("unreadable file argument exits with the errno instead of hanging: %s", async (command, quiet) => {
+    const { stdout, stderr, exitCode } = await runWithUnreadableArg(command, quiet);
+    // Nothing but the report reaches stdout, so it parses as a whole; on a
+    // crash the raw output (and stderr) shows up in the diff instead.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      parsed = stdout;
+    }
     expect({ parsed, stderr }).toEqual({
       parsed: { exitCode: expect.any(Number), stdout: "", stderr: "" },
       stderr: "",
     });
-    expect(parsed.exitCode).toBeGreaterThan(0);
+    expect((parsed as { exitCode: number }).exitCode).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isPosix)("unreadable file arguments in consecutive statements", async () => {
+    const { stdout, stderr, exitCode } = await runWithUnreadableArg("cat sub; cat sub; cat sub; cat sub; echo after");
+    expect({ stdout, stderr }).toEqual({ stdout: "after\n" + report(0, "after\n"), stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

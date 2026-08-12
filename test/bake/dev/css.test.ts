@@ -5,9 +5,9 @@
 // the browser), while the server state the cases assert on (served HTML, the
 // stylesheet chunks, build failures) is read over plain HTTP. Build errors are
 // reported to every connected client, so cases that produce errors run with no
-// other client connected and clean up after themselves. Cases whose bug depends
-// on the exact contents of the server (the asset table layout, a bunfig plugin)
-// keep a server to themselves.
+// other client connected and clean up after themselves. Cases that cannot share
+// a server (the asset table layout, a bunfig plugin, a nested HTML file; see
+// their comments) keep one to themselves.
 //
 // By default every write made while a client is connected ends with the
 // harness checking that client for an error overlay, which costs a second when
@@ -628,13 +628,6 @@ devTest("stylesheets created after the server starts, changing html link tags", 
         <div>HELLO</div>
       `,
     }),
-    // css import before create project relative
-    "html/index.html": emptyHtmlFile({
-      styles: ["/style/styles.css"],
-      body: `
-        <div>HELLO</div>
-      `,
-    }),
     // changing html file with link tag works
     "relink.html": emptyHtmlFile({ styles: ["relink.css"] }),
     "relink.css": `
@@ -645,8 +638,6 @@ devTest("stylesheets created after the server starts, changing html link tags", 
     `,
   },
   async test(dev) {
-    dev.mkdir("style"); // (See DevServer.zig "BUN-10968")
-
     // css import before create
     {
       await using c = await dev.client("/before", {
@@ -672,51 +663,6 @@ devTest("stylesheets created after the server starts, changing html link tags", 
       assert(backgroundImage);
       await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
       await dev.fetch("/before").expect.toContain("HELLO");
-    }
-
-    // css import before create project relative
-    {
-      await using c = await dev.client("/html", {
-        errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
-      });
-      await expectBuildFailed(dev, "/html");
-      await dev.write(
-        "style/styles.css",
-        `
-          body {
-            background-image: url(/assets/bun.png);
-          }
-        `,
-        {
-          errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
-        },
-      );
-      // Unlike the HTML's "/style/styles.css" link, an absolute url() in CSS is
-      // not resolved against the project root, so creating that file is not a
-      // change the stylesheet depends on.
-      await c.expectNoWebSocketActivity(async () => {
-        await dev.write("assets/bun.png", imageFixtures.bun, { errors: null });
-        await dev.delete("assets/bun.png", { errors: null });
-      });
-      await expectBuildFailed(dev, "/html");
-      await dev.write(
-        "style/styles.css",
-        `
-          body {
-            background-image: url(../assets/bun.png);
-          }
-        `,
-        {
-          errors: ['style/styles.css:2:21: error: Could not resolve: "../assets/bun.png"'],
-        },
-      );
-      await c.expectReload(async () => {
-        await dev.write("assets/bun.png", imageFixtures.bun);
-      });
-      const backgroundImage = await c.style("body").backgroundImage;
-      assert(backgroundImage);
-      await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
-      await dev.fetch("/html").expect.toContain("HELLO");
     }
 
     // changing html file with link tag works
@@ -789,6 +735,65 @@ devTest("stylesheets created after the server starts, changing html link tags", 
       const chunks = await Promise.all(urls.map(url => fetchCss(dev, url)));
       expect(chunks.sort()).toEqual([otherCss, testCss].sort());
     }
+  },
+});
+
+devTest("css import before create project relative", {
+  // The HTML file has to live in a subdirectory for the "/style/..." link to
+  // tell project-relative resolution apart from HTML-relative resolution, and
+  // the harness only registers nested HTML files correctly on Windows when they
+  // are the server's single (catch-all) route, so this case keeps its own server.
+  files: {
+    "html/index.html": emptyHtmlFile({
+      styles: ["/style/styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+  },
+  async test(dev) {
+    dev.mkdir("style"); // (See DevServer.zig "BUN-10968")
+    await using c = await dev.client("/", {
+      errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
+    });
+    await expectBuildFailed(dev, "/");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(/assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
+      },
+    );
+    // Unlike the HTML's "/style/styles.css" link, an absolute url() in CSS is
+    // not resolved against the project root, so creating that file is not a
+    // change the stylesheet depends on.
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun, { errors: null });
+      await dev.delete("assets/bun.png", { errors: null });
+    });
+    await expectBuildFailed(dev, "/");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(../assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "../assets/bun.png"'],
+      },
+    );
+    await c.expectReload(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun);
+    });
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    await dev.fetch("/").expect.toContain("HELLO");
   },
 });
 

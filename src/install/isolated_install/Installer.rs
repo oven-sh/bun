@@ -166,9 +166,13 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
+        // `Task::callback` recovers the whole `Task` from the pool task
+        // pointer, so project it out of the task's address, not the field.
+        let task = std::ptr::from_mut(task);
+        // SAFETY: `task` is the live `tasks[entry_id]` slot borrowed above.
         manager
             .thread_pool
-            .schedule(thread_pool::Batch::from(&raw mut task.task));
+            .schedule(thread_pool::Batch::from(unsafe { &raw mut (*task).task }));
     }
 
     pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {

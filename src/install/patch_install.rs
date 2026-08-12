@@ -707,8 +707,15 @@ impl PatchTask {
         Some(hasher.final_())
     }
 
-    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(&raw mut self.task));
+    /// Takes the task's pointer rather than `&mut self`: `run_from_thread_pool`
+    /// recovers the whole `PatchTask` from the `task` pointer the pool hands
+    /// back, so that pointer has to be projected out of the task's pointer.
+    ///
+    /// # Safety
+    /// `this` must be the live heap `PatchTask` handed out by `enqueue_patch_task`.
+    pub(crate) unsafe fn schedule(this: *mut Self, batch: &mut Batch) {
+        // SAFETY: `this` is live per the fn contract; only a field projection is formed.
+        batch.push(Batch::from(unsafe { &raw mut (*this).task }));
     }
 
     pub(crate) fn new_calc_patch_hash(

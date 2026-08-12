@@ -36,6 +36,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
+use bun_ptr::OwnedRef;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
@@ -142,13 +143,14 @@ use bun_uws::MaybeAnySocket as SocketUnion;
 type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 
 impl WebSocketProxyTunnel {
-    /// Initialize a new proxy tunnel with all required parameters
+    /// Initialize a new proxy tunnel with all required parameters. The
+    /// returned value holds the tunnel's only ref.
     pub(crate) fn init<const SSL: bool>(
         upgrade_client: *mut NewHttpUpgradeClient<SSL>,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
-    ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
+    ) -> Result<OwnedRef<WebSocketProxyTunnel>, bun_alloc::AllocError> {
         // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
         // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
@@ -165,7 +167,7 @@ impl WebSocketProxyTunnel {
             )
         };
 
-        let boxed = Box::new(WebSocketProxyTunnel {
+        Ok(OwnedRef::new(WebSocketProxyTunnel {
             ref_count: Cell::new(1),
             upgrade_client,
             connected_websocket: ptr::null_mut(),
@@ -175,10 +177,7 @@ impl WebSocketProxyTunnel {
             ssl: None,
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
-        });
-        // ref_count initialized to 1; caller owns the Box allocation via the
-        // returned raw pointer (paired with `heap::take` in `deref()`).
-        Ok(bun_core::heap::into_raw_nn(boxed))
+        }))
     }
 
     /// Start TLS handshake inside the tunnel

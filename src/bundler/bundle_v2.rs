@@ -5883,6 +5883,27 @@ pub mod bv2_impl {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
+                // With a separate SSR graph, a "use client" file is parsed for
+                // the browser even when a server file imported it (see
+                // `ParseTask`), so its resolution failures were reported to the
+                // client graph. The server-side half of the boundary is only
+                // created on success (`on_parse_task_complete`), so tell the
+                // dev server now; otherwise the server importers have nothing
+                // to attach to and the failure is unreachable from their routes.
+                if let Some(dev) = this.dev_server {
+                    if result.use_directive == crate::UseDirective::Client
+                        && target == Target::Browser
+                        && this
+                            .framework
+                            .as_ref()
+                            .and_then(|framework| framework.server_components.as_ref())
+                            .is_some_and(|sc| sc.separate_ssr_graph)
+                    {
+                        dev.handle_client_component_boundary_failure(result.source.path.text)
+                            .expect("oom");
+                    }
+                }
+
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this
                 // same file can still dereference

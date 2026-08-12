@@ -865,3 +865,160 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+const separateSSRGraphFramework = {
+  ...minimalFramework,
+  serverComponents: {
+    ...minimalFramework.serverComponents!,
+    separateSSRGraph: true,
+  },
+};
+
+/** The response for a framework route whose bundle has errors. */
+async function expectBuildFailed(response: Promise<Response>, error: string) {
+  const res = await response;
+  const html = await res.text();
+  expect(html.match(/<title>(.*)<\/title>/)?.[1]).toBe("Bun - Build Failed");
+  // The page embeds the serialized failures as base64; the messages are
+  // stored as plain text inside of it.
+  const serializedFailures = atob(html.match(/atob\("([^"]*)"\)/)![1]);
+  expect(serializedFailures).toContain(error);
+  expect(res.status).toBe(500);
+}
+
+// A "use client" file with a separate SSR graph is bundled for the browser
+// even when a server file imports it, so its errors are owned by the client
+// graph. The route importing it still has to be associated with them: both
+// right away and after unrelated hot updates, and regardless of whether the
+// route is re-bundled on request (BUN_ASSUME_PERFECT_INCREMENTAL=0) or the
+// graph is trusted (=1). Before the fix, the first hot update made the route
+// run against a server module that was never emitted ("Failed to load bundled
+// module 'components/Sibling.ts'").
+for (const mode of ["0", "1"]) {
+  devTest(`route importing a failing "use client" file (BUN_ASSUME_PERFECT_INCREMENTAL=${mode})`, {
+    framework: separateSSRGraphFramework,
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: mode },
+    files: {
+      "routes/index.ts": `
+        import { good } from '../good';
+        import '../components/Sibling';
+        export default function (req, meta) {
+          return new Response('page: ' + good);
+        }
+      `,
+      "good.ts": `export const good = "v1";`,
+      "components/Sibling.ts": `
+        "use client";
+        import './sibling-missing';
+        export const sibling = 1;
+      `,
+    },
+    async test(dev) {
+      const error = `Could not resolve: "./sibling-missing"`;
+      await expectBuildFailed(dev.fetch("/"), error);
+      await expectBuildFailed(dev.fetch("/"), error);
+
+      await dev.write("good.ts", `export const good = "v2";`, { errors: null });
+      await expectBuildFailed(dev.fetch("/"), error);
+
+      // Creating the missing file re-bundles Sibling.ts through the
+      // directory watcher, this time as a working client component.
+      await dev.write("components/sibling-missing.ts", `export {};`, { errors: null });
+      await dev.fetch("/").equals("page: v2");
+
+      // The same thing for a component that has already been bundled once.
+      const otherError = `Could not resolve: "./other-missing"`;
+      await dev.write(
+        "components/Sibling.ts",
+        `
+          "use client";
+          import './other-missing';
+          export const sibling = 2;
+        `,
+        { errors: null },
+      );
+      await expectBuildFailed(dev.fetch("/"), otherError);
+      await dev.write("good.ts", `export const good = "v3";`, { errors: null });
+      await expectBuildFailed(dev.fetch("/"), otherError);
+      await dev.write("components/other-missing.ts", `export {};`, { errors: null });
+      await dev.fetch("/").equals("page: v3");
+    },
+  });
+}
+// Here the failing file is only reachable through another client component.
+// Both boundaries end up in `client_components_affected`, and tracing them in
+// `finalize_bundle` appends to that list while it is being walked; walking it
+// through a slice read the list's old buffer after it grew (fails under ASAN).
+devTest('"use client" file that fails to bundle, imported from another "use client" file', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import './Sibling';
+      export const comp = 1;
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    const error = `Could not resolve: "./sibling-missing"`;
+    await expectBuildFailed(dev.fetch("/"), error);
+    await dev.patch("routes/index.ts", { find: "'page'", replace: "'page2'", errors: null });
+    await expectBuildFailed(dev.fetch("/"), error);
+    await dev.write("components/sibling-missing.ts", `export {};`, { errors: null });
+    await dev.fetch("/").equals("page2");
+  },
+});
+// `checkRouteFailures` collects the errors reachable from a route into the
+// list that also holds the previous bundle's new errors. Without clearing it
+// first, a route that was marked as possibly failing by an earlier bundle
+// reports whatever the most recent bundle failed on, even when it does not
+// import any of it. (With BUN_ASSUME_PERFECT_INCREMENTAL=0 the stale entries
+// only cause a needless rebuild of the route.)
+devTest("route marked by an earlier failure does not report another route's errors", {
+  framework: minimalFramework,
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "routes/a.ts": `
+      import { shared } from '../shared';
+      import { a } from '../a';
+      export default function (req, meta) {
+        return new Response('a: ' + shared + a);
+      }
+    `,
+    "routes/b.ts": `
+      import { shared } from '../shared';
+      export default function (req, meta) {
+        return new Response('b: ' + shared);
+      }
+    `,
+    "shared.ts": `export const shared = "s";`,
+    "a.ts": `export const a = "a";`,
+  },
+  async test(dev) {
+    await dev.fetch("/a").equals("a: sa");
+    await dev.fetch("/b").equals("b: s");
+
+    // Both routes import shared.ts, so both get marked as possibly failing.
+    await dev.write("shared.ts", `import './missing'; export const shared = "s";`, { errors: null });
+    await expectBuildFailed(dev.fetch("/a"), `shared.ts`);
+    await expectBuildFailed(dev.fetch("/b"), `shared.ts`);
+
+    // Fixing it does not revisit the routes; they stay marked until requested.
+    await dev.write("shared.ts", `export const shared = "s";`, { errors: null });
+    // Only /a imports a.ts.
+    await dev.write("a.ts", `import './missing'; export const a = "a";`, { errors: null });
+
+    await dev.fetch("/b").equals("b: s");
+    await expectBuildFailed(dev.fetch("/a"), `a.ts`);
+  },
+});

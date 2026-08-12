@@ -235,7 +235,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, headerStateSymbol, NodeHTTPHeaderState } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
@@ -372,7 +372,16 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's socketOnError does before destroying.
     prepareError(err, parser, rawPacket);
     if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
+      // Node only replies while the in-flight response has not reached the wire
+      // (_httpMessage._headerSent), or the reply would land inside its body.
+      // `sent` is that state here; headersSent is already true after a bare
+      // writeHead(), which this handle does not write out yet.
+      const message = socket._httpMessage;
+      if (
+        socket.writable &&
+        !socket.destroyed &&
+        (!message || message[headerStateSymbol] !== NodeHTTPHeaderState.sent)
+      ) {
         const code = err?.code;
         socket.write(
           code === "HPE_HEADER_OVERFLOW"

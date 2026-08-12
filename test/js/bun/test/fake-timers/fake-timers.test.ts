@@ -283,7 +283,7 @@ describe("runtime timeouts are not fake timers", () => {
   // Outlives the 50ms timeout by a wide margin but still exits on its own, so a
   // timeout that never fires shows up as a normal exit instead of a hang.
   const sleepingChild = () => ({
-    cmd: [bunExe(), "exec", "sleep 3"],
+    cmd: [bunExe(), "-e", "await Bun.sleep(3000)"],
     env: bunEnv,
     stdout: "ignore" as const,
     stderr: "ignore" as const,

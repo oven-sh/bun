@@ -120,11 +120,6 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 /// timer is gone. Released only once the `FakeTimers` borrow has ended: these
 /// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
 /// `Timeout` deinit → `timer_remove`).
-///
-/// Every tag that [`EventLoopTimerTag::allow_fake_timers`] admits to the fake
-/// heap needs an entry here: popping a node only unlinks it, and an owner that
-/// is not told keeps believing it is armed (holding its event-loop ref, never
-/// firing).
 #[derive(Default)]
 #[must_use]
 struct ClearedTimers {
@@ -138,8 +133,7 @@ struct ClearedTimers {
     /// pins an observed signal's wrapper for as long as that is set. Only the
     /// signal's `cancelTimer()` clears it (and frees the box).
     signal_timeouts: Vec<*mut AbortSignalTimeout>,
-    /// A `Bun.cron()` job holds the event loop open until it is stopped; with
-    /// its timer gone it would do so forever without ever firing.
+    /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
     cron_jobs: Vec<*mut CronJob>,
 }
 
@@ -216,8 +210,6 @@ impl FakeTimers {
                     EventLoopTimerTag::CronJob => {
                         cleared.cron_jobs.push(CronJob::from_timer_ptr(timer));
                     }
-                    // `All::insert` only routes `allow_fake_timers()` tags here,
-                    // and each of those has an arm above.
                     tag => debug_assert!(
                         false,
                         "{} timer in the fake heap has no release path",

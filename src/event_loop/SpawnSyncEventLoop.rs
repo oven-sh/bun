@@ -381,9 +381,7 @@ impl SpawnSyncEventLoop {
     /// Tick the isolated event loop with an optional timeout
     /// This is similar to the main event loop's tick but completely isolated
     ///
-    /// `timeout` is an absolute deadline on the real monotonic clock. Fake
-    /// timers cannot advance while the caller blocks in here, so the mocked
-    /// clock is never consulted.
+    /// `timeout` is an absolute deadline on the real (never mocked) clock.
     pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>) -> TickState {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {

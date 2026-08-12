@@ -1889,10 +1889,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 //
-                // Under `jest.useFakeTimers()` the signal's timer sits in the
-                // fake heap with a deadline on the mocked clock, which cannot
-                // advance while this call blocks, so it can never fire here;
-                // only a real-heap deadline is comparable with `now`.
+                // A fake-heap deadline is on the mocked clock, which cannot
+                // advance while this call blocks; only a real-heap one is
+                // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
                     && abort_signal_timeout.event_loop_timer.in_heap

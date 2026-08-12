@@ -1640,15 +1640,13 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
-    /// The fake timer heap dropped this job's timer (`jest.useRealTimers()` /
-    /// `jest.clearAllTimers()`), so it can never fire again: finish stopping
-    /// it like `stop()` would, instead of leaving it holding the event loop
-    /// open. The node is already unlinked, which `stop_internal` tolerates.
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
     ///
     /// # Safety
-    /// `this` was recovered from a node just popped off the fake heap; a
-    /// scheduled job is kept alive by its JS wrapper, and no JS has run since
-    /// the pop.
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
     pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
         Self::self_stop(this, VirtualMachine::get());
     }

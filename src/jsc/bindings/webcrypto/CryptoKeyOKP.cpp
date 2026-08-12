@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmRegistry.h"
 #include "JsonWebKey.h"
+#include <wtf/CryptographicUtilities.h>
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -66,10 +67,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, 
     if (bytesExpectedInternal == -1)
         return nullptr;
 
-    if (platformKey.size() != bytesExpectedInternal) {
-        if (type != CryptoKeyType::Private || curve != NamedCurve::Ed25519)
-            return nullptr;
-
+    if (type == CryptoKeyType::Private && curve == NamedCurve::Ed25519) {
         auto bytesExpectedExternal = externalKeySizeInBytesFromNamedCurve(curve);
         if (bytesExpectedExternal == -1)
             return nullptr;
@@ -77,16 +75,21 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, 
         // We need to match the internal format when importing a private key
         // Import format only consists of 32 bytes of private key
         // Internal format is private key + public key suffix
-        if (platformKey.size() == bytesExpectedExternal) {
-            auto&& privateKey = ed25519PrivateFromSeed(WTF::move(platformKey));
-            if (privateKey.size() == 0)
-                return nullptr;
+        if (platformKey.size() != bytesExpectedExternal && platformKey.size() != bytesExpectedInternal)
+            return nullptr;
 
-            return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTF::move(privateKey), extractable, usages));
-        }
+        auto privateKey = ed25519PrivateFromSeed(KeyMaterial(platformKey.span().first(bytesExpectedExternal)));
+        if (privateKey.size() != bytesExpectedInternal)
+            return nullptr;
 
-        return nullptr;
+        if (platformKey.size() == bytesExpectedInternal && constantTimeMemcmp(privateKey.span().subspan(bytesExpectedExternal), platformKey.span().subspan(bytesExpectedExternal)))
+            return nullptr;
+
+        return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTF::move(privateKey), extractable, usages));
     }
+
+    if (platformKey.size() != bytesExpectedInternal)
+        return nullptr;
 
     return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTF::move(platformKey), extractable, usages));
 }

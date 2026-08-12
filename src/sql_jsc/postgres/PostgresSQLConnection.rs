@@ -2975,13 +2975,19 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        if self
-                            .statements
-                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
-                            .is_some()
-                        {
-                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
-                            // request still holds its own ref so this cannot drop to 0.
+                        let owned_by_map = self.statements.with_mut(|m| {
+                            let name = &stmt.signature.name[..];
+                            if m.get(name)
+                                .is_some_and(|&p| core::ptr::eq(p, core::ptr::from_ref(&*stmt)))
+                            {
+                                m.remove(name).is_some()
+                            } else {
+                                false
+                            }
+                        });
+                        if owned_by_map {
+                            // SAFETY: the map entry just removed was `stmt` itself, so the map
+                            // held one ref and the request still holds another; cannot drop to 0.
                             unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
                     }

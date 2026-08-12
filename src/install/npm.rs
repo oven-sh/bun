@@ -1391,6 +1391,7 @@ pub mod package_manifest {
         pub(crate) fn load_by_file_id(
             scope: &registry::Scope,
             cache_dir: Fd,
+            name: &[u8],
             file_id: u64,
         ) -> Result<Option<PackageManifest>, Error> {
             let mut file_path_buf = [0u8; 512 + 64];
@@ -1401,8 +1402,8 @@ pub mod package_manifest {
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
-                    Ok(Some(m)) => return Ok(Some(m)),
-                    Ok(None) | Err(_) => break 'delete,
+                    Ok(Some(m)) if m.name() == name => return Ok(Some(m)),
+                    Ok(_) | Err(_) => break 'delete,
                 }
             }
 

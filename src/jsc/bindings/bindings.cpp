@@ -5992,6 +5992,11 @@ extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore:
     return abortSignal->getTimeout();
 }
 
+extern "C" void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
+{
+    abortSignal->cancelTimer();
+}
+
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
 {
     abortSignal->ref();

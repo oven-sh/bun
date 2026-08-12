@@ -706,7 +706,9 @@ impl Image {
     /// Pin the source ArrayBuffer for the duration of one off-thread task and
     /// return a slice that's safe for the worker to read. Unpinned in `then()`.
     ///
-    /// We deliberately DON'T copy: the encoded input can be tens of MB and
+    /// We DON'T copy storage a pin can hold in place (small `FastTypedArray`s
+    /// and non-shared `WebAssembly.Memory`/resizable buffers are duplicated
+    /// instead): the encoded input can be tens of MB and
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to

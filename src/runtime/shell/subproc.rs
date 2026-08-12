@@ -1573,20 +1573,15 @@ impl BufferedOutput {
         }
     }
 
+    /// JS thread only: an unpinned redirect target is read through its JS
+    /// object.
     pub(crate) fn slice(&self) -> std::borrow::Cow<'_, [u8]> {
         match self {
             BufferedOutput::Bytelist(b) => b.slice().into(),
             BufferedOutput::ArrayBuffer { buf, .. } if buf.pinned => buf.slice().into(),
             BufferedOutput::ArrayBuffer { buf, .. } => {
                 let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-                match buf
-                    .held
-                    .get()
-                    .and_then(|value| value.as_array_buffer(global))
-                {
-                    Some(live) => live.byte_slice().to_vec().into(),
-                    None => (&[][..]).into(),
-                }
+                buf.current(global).byte_slice().to_vec().into()
             }
         }
     }

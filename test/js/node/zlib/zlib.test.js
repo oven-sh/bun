@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, runParkedFixture, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -775,9 +775,10 @@ describe("async write into a resizable ArrayBuffer", () => {
   });
 });
 
-describe.concurrent("async write on views of a WebAssembly.Memory that grows mid-write", () => {
-  // Reads parked on stdin hold both pool threads, so the compression only
-  // runs once the parent answers "ready" -- after the memory has grown.
+// Reads parked on stdin hold both pool threads, so the compression only runs
+// once the parent answers "ready" -- after the memory has grown. On Windows
+// fs.read runs on libuv's pool and would not hold the compression back.
+describe.concurrent.skipIf(isWindows)("async write on views of a WebAssembly.Memory that grows mid-write", () => {
   const prologue = /* js */ `
     import fs from "node:fs";
     import zlib from "node:zlib";
@@ -798,35 +799,13 @@ describe.concurrent("async write on views of a WebAssembly.Memory that grows mid
 
   async function run(body) {
     using dir = tempDir("zlib-wasm-memory-view", { "fixture.mjs": prologue + body });
-    await using proc = Bun.spawn({
+    const { report, stderr, exitCode } = await runParkedFixture({
       cmd: [bunExe(), "fixture.mjs"],
       cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+      readyBytes: 32,
     });
-    const stderrText = proc.stderr.text();
-    let stdout = "";
-    let parked = false;
-    let released = false;
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stdout) {
-      stdout += decoder.decode(chunk, { stream: true });
-      if (!parked && stdout.includes("park\n")) {
-        parked = true;
-        proc.stdin.write(Buffer.alloc(16, "c"));
-        await proc.stdin.flush();
-      }
-      if (!released && stdout.includes("ready\n")) {
-        released = true;
-        proc.stdin.write(Buffer.alloc(32, "c"));
-        await proc.stdin.end();
-      }
-    }
-    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     expect(stderr).toBe("");
-    return { report: JSON.parse(stdout.slice(stdout.indexOf("ready\n") + "ready\n".length)), exitCode };
+    return { report, exitCode };
   }
 
   it("compresses the bytes the input view held", async () => {

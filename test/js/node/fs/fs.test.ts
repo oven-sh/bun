@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  runParkedFixture,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -5099,35 +5100,12 @@ describe.concurrent("async fs I/O on a view whose storage moves mid-operation", 
 
   async function run(op: string, move: boolean, stdinBytes: number, kind: "wasm" | "resizable" = "wasm") {
     using dir = tempDir("fs-moving-view", { "fixture.mjs": fixture });
-    await using proc = Bun.spawn({
+    const { report, stderr, exitCode } = await runParkedFixture({
       cmd: [bunExe(), "fixture.mjs", op, move ? "move" : "stay", kind],
       cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+      readyBytes: stdinBytes,
     });
-    const stderrText = proc.stderr.text();
-    let stdout = "";
-    let parked = false;
-    let released = false;
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stdout) {
-      stdout += decoder.decode(chunk, { stream: true });
-      if (!parked && stdout.includes("park\n")) {
-        parked = true;
-        proc.stdin.write(Buffer.alloc(16, "c"));
-        await proc.stdin.flush();
-      }
-      if (!released && stdout.includes("ready\n")) {
-        released = true;
-        proc.stdin.write(Buffer.alloc(stdinBytes, "c"));
-        await proc.stdin.end();
-      }
-    }
-    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     expect(stderr).toBe("");
-    const report = JSON.parse(stdout.slice(stdout.indexOf("ready\n") + "ready\n".length));
     return { report, exitCode };
   }
 
@@ -5182,6 +5160,30 @@ describe.concurrent("async fs I/O on a view whose storage moves mid-operation", 
   it("fs.readv fills resizable ArrayBuffer views when the buffer keeps its size", async () => {
     const { report, exitCode } = await run("readv", false, 32, "resizable");
     expect(report).toMatchObject({ result: 32, detached: false, memory: "cccccccccccccccccccccccccccccccc" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.readv into a resizable ArrayBuffer that shrinks completes", async () => {
+    const { report, exitCode } = await run("readv", true, 32, "resizable");
+    expect(report).toMatchObject({ result: 32, detached: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.write from a resizable ArrayBuffer that shrinks writes the bytes the view held", async () => {
+    const { report, exitCode } = await run("write", true, 32, "resizable");
+    expect(report).toMatchObject({ result: 16, detached: true, written: "aaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.write from a WebAssembly.Memory that does not grow writes its bytes", async () => {
+    const { report, exitCode } = await run("write", false, 32, "wasm");
+    expect(report).toMatchObject({ result: 16, detached: false, written: "aaaaaaaaaaaaaaaa" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("fs.writev from a resizable ArrayBuffer that keeps its size writes its bytes", async () => {
+    const { report, exitCode } = await run("writev", false, 32, "resizable");
+    expect(report).toMatchObject({ result: 32, detached: false, written: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
     expect(exitCode).toBe(0);
   });
 });

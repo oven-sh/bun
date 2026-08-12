@@ -163,6 +163,8 @@ test("deflate: reset() while an async write is in flight does not race", async (
   expect(exitCode).toBe(0);
 });
 
+// The resizable buffer is resized as soon as the write is queued: shrunk to
+// nothing when it is the input, grown in place when it is the output.
 const resizableWriteFixture = (which: "in" | "out") => /* js */ `
   const zlib = require("zlib");
   const engines = [
@@ -180,6 +182,7 @@ const resizableWriteFixture = (which: "in" | "out") => /* js */ `
     const done = new Promise(resolve => (h.cb = resolve));
     try {
       h.write(finish, input, 0, 64, output, 0, 256);
+      resizable.buffer.resize(${JSON.stringify(which)} === "in" ? 0 : 512);
       await done;
       const produced = 256 - stream._writeState[0];
       console.log(Buffer.from(decompress(output.subarray(0, produced))).toString());
@@ -189,14 +192,14 @@ const resizableWriteFixture = (which: "in" | "out") => /* js */ `
   }
 `;
 
-test("async write() fills an output buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+test("async write() fills an output buffer backed by a resizable ArrayBuffer that grows mid-write, for zlib, brotli, and zstd", async () => {
   const { stdout, exitCode } = await run(resizableWriteFixture("out"));
   const line = Buffer.alloc(64, "a").toString();
   expect(stdout.trim()).toBe([line, line, line].join("\n"));
   expect(exitCode).toBe(0);
 });
 
-test("async write() reads an input buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+test("async write() reads an input buffer backed by a resizable ArrayBuffer that shrinks mid-write, for zlib, brotli, and zstd", async () => {
   const { stdout, exitCode } = await run(resizableWriteFixture("in"));
   const line = Buffer.alloc(64, "a").toString();
   expect(stdout.trim()).toBe([line, line, line].join("\n"));

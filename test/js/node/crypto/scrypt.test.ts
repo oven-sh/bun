@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, runParkedFixture, tempDir } from "harness";
 import { scryptSync } from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
@@ -91,11 +91,12 @@ test("scryptSync reads its buffers only after every argument has been coerced", 
   expect(key).toStrictEqual(scryptSync("", "salt", 16, { N: 1024 }));
 });
 
-test.concurrent(
+// Reads parked on stdin hold both pool threads, so the derivation only runs
+// once the parent answers "ready" -- after the memory has grown. On Windows
+// fs.read runs on libuv's pool and would not hold the derivation back.
+test.concurrent.skipIf(isWindows)(
   "scrypt async derives from the bytes a WebAssembly.Memory view held when the memory grows mid-call",
   async () => {
-    // Reads parked on stdin hold both pool threads, so the derivation only runs
-    // once the parent answers "ready" -- after the memory has grown.
     using dir = tempDir("scrypt-wasm-memory-view", {
       "fixture.mjs": /* js */ `
       import fs from "node:fs";
@@ -116,35 +117,13 @@ test.concurrent(
       console.log(JSON.stringify({ detached: password.byteLength === 0, key: (await derived).toString("hex") }));
     `,
     });
-    await using proc = Bun.spawn({
+    const { report, stderr, exitCode } = await runParkedFixture({
       cmd: [bunExe(), "fixture.mjs"],
       cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+      readyBytes: 32,
     });
-    const stderrText = proc.stderr.text();
-    let stdout = "";
-    let parked = false;
-    let released = false;
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stdout) {
-      stdout += decoder.decode(chunk, { stream: true });
-      if (!parked && stdout.includes("park\n")) {
-        parked = true;
-        proc.stdin.write(Buffer.alloc(16, "c"));
-        await proc.stdin.flush();
-      }
-      if (!released && stdout.includes("ready\n")) {
-        released = true;
-        proc.stdin.write(Buffer.alloc(32, "c"));
-        await proc.stdin.end();
-      }
-    }
-    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.slice(stdout.indexOf("ready\n") + "ready\n".length))).toEqual({
+    expect(report).toEqual({
       detached: true,
       key: scryptSync(Buffer.alloc(32, "a"), "salt", 16, { N: 1024 }).toString("hex"),
     });

@@ -485,6 +485,20 @@ describe.concurrent("zlib native handle argument validation", () => {
     ).toEqual({ stdout: "aaaaaaaaaaaaaaaa", exitCode: 0 });
   });
 
+  test.concurrent("write() reads the bytes a resizable input held even if it shrinks mid-write", async () => {
+    expect(
+      await run(
+        `const d = zlib.createDeflateRaw(), h = d._handle;
+         const input = new Uint8Array(new ArrayBuffer(16, { maxByteLength: 64 })).fill(97);
+         const out = new Uint8Array(1024);
+         Object.assign(h, { buffer: input, availOutBefore: 1024, availInBefore: 16, inOff: 0, flushFlag: zlib.constants.Z_FINISH });
+         h.cb = () => console.log(zlib.inflateRawSync(out.subarray(0, 1024 - d._writeState[0])).toString(), input.byteLength);
+         try { h.write(zlib.constants.Z_FINISH, input, 0, 16, out, 0, 1024); input.buffer.resize(0); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({ stdout: "aaaaaaaaaaaaaaaa 0", exitCode: 0 });
+  });
+
   // A growable SharedArrayBuffer grows in place and never shrinks, so the
   // pointer/length captured for the threadpool write stays a valid prefix even
   // across a concurrent grow().

@@ -1366,6 +1366,7 @@ impl VectorArrayBuffer {
             return;
         }
         self.pinned = false;
+        debug_assert_eq!(self.views.len(), self.pins.len());
         for (view, pin) in self.views.drain(..).zip(self.pins.drain(..)) {
             if pin == jsc::ArrayBufferPin::Pinned {
                 view.unpin_array_buffer();
@@ -1376,20 +1377,20 @@ impl VectorArrayBuffer {
 
     /// Replace the collected spans with one private buffer holding the
     /// elements' bytes, so nothing points into storage a pin cannot hold.
-    fn stand_in_for_spans(&mut self, global: &JSGlobalObject) -> Result<(), bun_alloc::AllocError> {
+    fn stand_in_for_spans(&mut self, global: &JSGlobalObject) -> Result<(), StandInError> {
         let total = self.buffers.iter().map(bun_sys::platform_iovec_len).sum();
         #[cfg(windows)]
         if u32::try_from(total).is_err() {
-            return Err(bun_alloc::AllocError);
+            return Err(StandInError::TooLarge);
         }
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(total)
-            .map_err(|_| bun_alloc::AllocError)?;
+            .map_err(|_| StandInError::OutOfMemory)?;
         let mut lengths = Vec::new();
         lengths
             .try_reserve_exact(self.views.len())
-            .map_err(|_| bun_alloc::AllocError)?;
+            .map_err(|_| StandInError::OutOfMemory)?;
         for view in &self.views {
             let element = view.as_array_buffer(global).unwrap_or_default();
             let share = element.byte_slice().len().min(total - bytes.len());
@@ -1402,6 +1403,13 @@ impl VectorArrayBuffer {
         self.lengths = lengths;
         Ok(())
     }
+}
+
+enum StandInError {
+    OutOfMemory,
+    /// The spans add up to more than one platform I/O vector can describe.
+    #[cfg(windows)]
+    TooLarge,
 }
 
 unsafe extern "C" {
@@ -1490,28 +1498,32 @@ impl VectorArrayBuffer {
                 view.protect();
             }
         }
-        let status = if status == 0
-            && out.pins.contains(&jsc::ArrayBufferPin::MustCopy)
-            && out.stand_in_for_spans(global_object).is_err()
-        {
-            2
-        } else {
-            status
-        };
-        match status {
-            0 => Ok(out),
-            -1 => {
+        let collected =
+            match status {
+                0 if out.pins.contains(&jsc::ArrayBufferPin::MustCopy) => {
+                    match out.stand_in_for_spans(global_object) {
+                        Ok(()) => Ok(()),
+                        Err(StandInError::OutOfMemory) => Err(global_object.throw_out_of_memory()),
+                        #[cfg(windows)]
+                        Err(StandInError::TooLarge) => Err(global_object
+                            .err(
+                                jsc::ErrorCode::OUT_OF_RANGE,
+                                format_args!("The buffers are too large for one operation"),
+                            )
+                            .throw()),
+                    }
+                }
+                0 => Ok(()),
+                -1 => Err(jsc::JsError::Thrown),
+                2 => Err(global_object.throw_out_of_memory()),
+                _ => Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))),
+            };
+        match collected {
+            Ok(()) => Ok(out),
+            Err(err) => {
                 out.release();
-                Err(jsc::JsError::Thrown)
-            }
-            2 => {
-                out.release();
-                Err(global_object.throw_out_of_memory())
-            }
-            _ => {
-                out.release();
-                Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
+                Err(err)
             }
         }
     }

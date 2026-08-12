@@ -3914,6 +3914,10 @@ pub mod args {
             //     });
             //   }
             if length_float == 0.0 {
+                buffer.buffer = bun_jsc::ArrayBuffer {
+                    value: buffer_value,
+                    ..bun_jsc::ArrayBuffer::default()
+                };
                 return Ok(Read {
                     fd,
                     buffer,
@@ -6080,9 +6084,7 @@ impl NodeFS {
     }
 
     pub(crate) fn read(&mut self, args: &args::Read, _: Flavor) -> Maybe<ret::Read> {
-        let len1 = args.buffer.slice().len();
-        let len2 = args.length;
-        if len1 == 0 || len2 == 0 {
+        if args.length == 0 || args.buffer.slice().is_empty() {
             return Ok(ret::Read { bytes_read: 0 });
         }
         if args.position.is_some() {

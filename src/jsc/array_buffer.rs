@@ -713,16 +713,21 @@ impl ArrayBufferStrong {
         }))
     }
 
-    /// JS thread: for a descriptor that is not a pinned borrow, look the
-    /// held object's current storage up again (empty once detached).
-    pub fn refresh(&mut self, global: &JSGlobalObject) {
-        if !self.pinned {
-            self.array_buffer = self
-                .held
-                .get()
-                .and_then(|value| value.as_array_buffer(global))
-                .unwrap_or_default();
+    /// JS thread: the descriptor to use right now: the pinned borrow, or the
+    /// held object's current storage looked up afresh (empty once detached).
+    pub fn current(&self, global: &JSGlobalObject) -> ArrayBuffer {
+        if self.pinned {
+            return self.array_buffer;
         }
+        self.held
+            .get()
+            .and_then(|value| value.as_array_buffer(global))
+            .unwrap_or_default()
+    }
+
+    /// JS thread: bring `array_buffer` up to date with [`Self::current`].
+    pub fn refresh(&mut self, global: &JSGlobalObject) {
+        self.array_buffer = self.current(global);
     }
 
     /// Releases the pin, if `array_buffer` is a pinned borrow.

@@ -599,6 +599,55 @@ export function runWithError(cb: () => unknown): Error | undefined {
   return undefined;
 }
 
+/**
+ * Runs a fixture that parks work behind reads of its stdin, for tests that need
+ * an operation to still be pending when the fixture changes something under it.
+ *
+ * Protocol: the child prints `park\n` once it has issued reads on fd 0 that
+ * hold its thread pool (it gets `parkBytes` bytes back), then `ready\n` once the
+ * operation under test is queued and the change has been made (it gets
+ * `readyBytes` bytes and EOF), then one line of JSON. The child runs with
+ * `UV_THREADPOOL_SIZE=2` and non-fast WebAssembly memories; stdout and stderr
+ * are drained concurrently.
+ */
+export async function runParkedFixture(options: {
+  cmd: string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  parkBytes?: number;
+  readyBytes: number;
+}): Promise<{ report: any; stderr: string; exitCode: number }> {
+  await using proc = Bun.spawn({
+    cmd: options.cmd,
+    cwd: options.cwd,
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", UV_THREADPOOL_SIZE: "2", ...options.env },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = proc.stderr.text();
+  let stdout = "";
+  let parked = false;
+  let released = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (!parked && stdout.includes("park\n")) {
+      parked = true;
+      proc.stdin.write(Buffer.alloc(options.parkBytes ?? 16, "c"));
+      await proc.stdin.flush();
+    }
+    if (!released && stdout.includes("ready\n")) {
+      released = true;
+      proc.stdin.write(Buffer.alloc(options.readyBytes, "c"));
+      await proc.stdin.end();
+    }
+  }
+  const exitCode = await proc.exited;
+  const tail = stdout.slice(stdout.indexOf("ready\n") + "ready\n".length).trim();
+  return { report: tail ? JSON.parse(tail) : undefined, stderr: await stderr, exitCode };
+}
+
 export async function runWithErrorPromise(cb: () => unknown): Promise<Error | undefined> {
   try {
     await cb();

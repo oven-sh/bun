@@ -11,6 +11,8 @@
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::js_bundler::OwnedPlugin;
+
 // ─── Submodule bodies ────────────────────────────────────────────────────────
 // `bake_body.rs` carries the Framework/UserOptions/BuildConfigSubset `from_js`
 // impls plus the `init_server_runtime`/`get_hmr_runtime` host fns.
@@ -463,12 +465,32 @@ impl Framework {
     }
 }
 
+/// The plugin cell every bundle of a `DevServer` runs against, and whether
+/// the dev server is the one releasing it.
+pub(crate) enum DevServerPlugin {
+    /// `framework.plugins` / `app.plugins`: created for this dev server by
+    /// `UserOptions::from_js` and released when the dev server drops.
+    Owned(OwnedPlugin),
+    /// The server's `[serve.static]` plugins, used when the app declares
+    /// none. The cell belongs to the server's `ServePlugins`, released by the
+    /// same server that owns this dev server; `DevServer::on_plugins_resolved`
+    /// only stores the pointer.
+    Borrowed(NonNull<jsc::Plugin>),
+}
+
+impl DevServerPlugin {
+    pub(crate) fn as_non_null(&self) -> NonNull<jsc::Plugin> {
+        match self {
+            DevServerPlugin::Owned(plugin) => plugin.as_non_null(),
+            DevServerPlugin::Borrowed(plugin) => *plugin,
+        }
+    }
+}
+
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
 pub struct SplitBundlerOptions {
-    /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
-    /// goes through the C++ side. See LIFETIMES.tsv.
-    pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    pub(crate) plugin: Option<DevServerPlugin>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -561,9 +583,7 @@ impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
 impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     fn from(src: bake_body::SplitBundlerOptions) -> Self {
         Self {
-            // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
-            // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
-            plugin: src.plugin,
+            plugin: src.plugin.map(DevServerPlugin::Owned),
             client: src.client.into(),
             server: src.server.into(),
             ssr: src.ssr.into(),

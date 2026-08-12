@@ -198,8 +198,8 @@ pub enum Magic {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PluginState {
-    /// Should ask server for plugins. Once plugins are loaded, the plugin
-    /// pointer is written into `server_transpiler.options.plugin`
+    /// Should ask server for plugins (unless the app brought its own). Once
+    /// plugins are loaded, the cell is stored in `bundler_options.plugin`.
     Unknown,
     // These two states mean that `server.getOrLoadPlugins()` was called.
     Pending,
@@ -528,7 +528,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
         w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -650,8 +649,11 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `framework`/`log` were written above; reborrowing each individually via
+    // `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `bundler_options` stays in `options` until the transpilers exist: it owns
+    // the app's plugin cell, and an `Err` before `assume_init()` drops nothing
+    // that was already written into the box.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -666,7 +668,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
             arena,
@@ -719,6 +721,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bundler_framework_views, bundler_framework_views);
+        w!(bundler_options, options.bundler_options);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -2010,8 +2013,11 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
+                                        dev.bundler_options.plugin = ready.map(|plugin| {
+                                            bake::DevServerPlugin::Borrowed(
+                                                ::core::ptr::NonNull::from(plugin),
+                                            )
+                                        });
                                     }
                                 }
                             }
@@ -3217,7 +3223,11 @@ impl DevServer {
                 ssr_transpiler: unsafe {
                     ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
                 },
-                plugins: self.bundler_options.plugin,
+                plugins: self
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(bake::DevServerPlugin::as_non_null),
             }),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
@@ -6128,7 +6138,13 @@ impl DevServer {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        // Only reached when the app declared no plugins of its own
+        // (`ensure_route_is_bundled` asks the server for plugins just then),
+        // so this never replaces an `Owned` cell.
+        debug_assert!(self.bundler_options.plugin.is_none());
+        self.bundler_options.plugin = plugins
+            .and_then(::core::ptr::NonNull::new)
+            .map(bake::DevServerPlugin::Borrowed);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())

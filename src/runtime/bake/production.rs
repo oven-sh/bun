@@ -630,7 +630,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 framework: bundler_framework,
                 client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
                 ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
-                plugins: options.bundler_options.plugin,
+                plugins: options
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(|plugin| plugin.as_non_null()),
             },
             &options.arena,
             Some(NonNull::from(&mut any_loop)),

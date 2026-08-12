@@ -1219,6 +1219,63 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
   });
 });
 
+// The in-process backends with operations arriving from several pool threads
+// at once, which is how they run now that nothing queues them. Regression for
+// Windows, where two threads inside the clipboard at the same time corrupted
+// the process heap (STATUS_HEAP_CORRUPTION within a few rounds of this; the
+// backend now holds one transaction at a time per process), and evidence for
+// macOS, whose pasteboard is shared between threads here. A child process
+// keeps a crash from taking the runner down; every value read must be one
+// some write actually produced.
+describe.skipIf(!isMacOS && !isWindows)("concurrent operations", () => {
+  test("reads and writes racing each other all settle with whole values", async () => {
+    if (savedClipboard === null) return; // no reachable clipboard in this session
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          await navigator.clipboard.write([new ClipboardItem({ "text/plain": "initial", "text/html": "<b>initial</b>" })]);
+          const texts = new Set();
+          const shapes = new Set();
+          const rejections = new Set();
+          const settle = promise => promise.catch(e => rejections.add(e.name + ": " + e.message));
+          for (let round = 0; round < 10; round++) {
+            const ops = [];
+            for (let i = 0; i < 4; i++) {
+              ops.push(settle(navigator.clipboard.writeText("w" + round + "-" + i)));
+              ops.push(settle(navigator.clipboard.readText().then(text => texts.add(text))));
+              ops.push(settle(navigator.clipboard.read().then(items => shapes.add(items.map(item => [...item.types].join("+")).join(",")))));
+            }
+            await Promise.all(ops);
+          }
+          console.log(JSON.stringify({ texts: [...texts], shapes: [...shapes], rejections: [...rejections] }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`child exited with ${exitCode}\n${stderr}`);
+    const { texts, shapes, rejections } = JSON.parse(stdout) as Record<string, string[]>;
+    // NSPasteboard has no transaction: a reader can land between a writer's
+    // clearContents and its setData and see an empty pasteboard, or give up
+    // after the contents kept changing under it. The Win32 backend's
+    // transaction lock rules both out there.
+    const wholeText = isMacOS ? /^(initial|w\d+-\d+)?$/ : /^(initial|w\d+-\d+)$/;
+    const wholeItem = isMacOS ? /^(text\/plain(\+text\/html)?)?$/ : /^text\/plain(\+text\/html)?$/;
+    expect({
+      tornTexts: texts.filter(text => !wholeText.test(text)),
+      tornItems: shapes.filter(shape => !wholeItem.test(shape)),
+      sawText: texts.length > 0,
+      sawItems: shapes.length > 0,
+      rejections: rejections.filter(
+        r => !(isMacOS && r === "NotAllowedError: The system clipboard changed while it was being read."),
+      ),
+    }).toEqual({ tornTexts: [], tornItems: [], sawText: true, sawItems: true, rejections: [] });
+  });
+});
+
 // The NSPasteboard backend against the tools every macOS user has: what
 // pbcopy puts on the pasteboard is what readText() returns, and pbpaste sees
 // what writeText() put there, so the data is in the public plain-text type
@@ -1636,40 +1693,6 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     await navigator.clipboard.writeText("text again");
     expect(await readAll()).toEqual([{ types: ["text/plain"], "text/plain": "text again" }]);
     expect([raw().getRaw(CF_HTML), raw().getRaw(CF_PNG)]).toEqual([null, null]);
-  });
-
-  // Regression: with operations running on whichever pool threads pick them
-  // up, two threads inside the clipboard at once corrupted the process heap
-  // (the child died with STATUS_HEAP_CORRUPTION within a few rounds of this);
-  // the backend now holds one transaction at a time per process. The child
-  // process keeps a crash from taking the test runner down with it.
-  test("concurrent reads all complete and see the whole item", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          await navigator.clipboard.write([new ClipboardItem({ "text/plain": "shared", "text/html": "<b>shared</b>" })]);
-          const seen = new Set();
-          for (let round = 0; round < 10; round++) {
-            const reads = [];
-            for (let i = 0; i < 8; i++) reads.push(navigator.clipboard.read(), navigator.clipboard.readText());
-            for (const result of await Promise.all(reads)) {
-              seen.add(typeof result === "string" ? result : result.map(item => [...item.types].join("+")).join(","));
-            }
-          }
-          console.log(JSON.stringify([...seen].sort()));
-        `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify(["shared", "text/plain+text/html"]),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
   });
 
   test("interoperates with clip.exe and Get-Clipboard", async () => {

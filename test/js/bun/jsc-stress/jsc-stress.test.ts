@@ -117,6 +117,9 @@ const jsFixtures = [
   "dfg-exception-try-catch-in-constructor-with-inlined-throw.js",
   "dfg-call-class-constructor.js",
   "dfg-osr-entry-should-not-use-callframe-argument.js",
+  // DFG/FTL - live-at-catch locals across nested handlers (`using` disposal)
+  "using-dispose-throw-after-body-throw-in-jit.js",
+  "for-using-dispose-call-live-catch-locals-ftl-validation.js",
   // Allocation sinking / OSR / LICM
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",

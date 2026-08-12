@@ -75,17 +75,13 @@ impl Symlinker {
                                     },
                                 },
                                 // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. A directory with
-                                // contents is the `bun patch <pkg>` workspace (a
+                                // dest exists but isn't a symlink. A non-empty
+                                // directory is the `bun patch <pkg>` workspace (a
                                 // detached copy the user is editing before
-                                // `--commit`); `deleteTree` here would silently
-                                // destroy their edits, so leave it. An empty
-                                // directory holds nothing to protect (build systems
-                                // that declare `node_modules/<pkg>/...` as outputs of
-                                // the install step create it before running it), so
-                                // it is replaced, with rmdir failing on anything
-                                // non-empty telling the two apart. A regular file is
-                                // replaced.
+                                // `--commit`) and must survive. rmdir only succeeds
+                                // on an empty directory (e.g. one ninja pre-created
+                                // for a declared output), so its failure is the
+                                // signal to leave dest alone.
                                 _ => {
                                     #[cfg(windows)]
                                     let is_dir = if let Some(a) =

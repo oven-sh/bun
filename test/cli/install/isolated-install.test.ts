@@ -1518,10 +1518,11 @@ test("successfully removes and corrects symlinks", async () => {
 });
 
 describe("empty directory where a dependency symlink belongs", () => {
-  // Build systems that declare `node_modules/<pkg>/...` as outputs of the
-  // `bun install` step (ninja, make) create `node_modules/<pkg>/` before
-  // running it. Only a real directory with contents may be left in place:
-  // that is what `bun patch <pkg>` produces while the user edits it.
+  // ninja creates the directory of every declared output before running the
+  // command, and bun's own build declares `node_modules/<pkg>/package.json` as
+  // outputs of its `bun install` step, so the install finds an empty
+  // `node_modules/<pkg>/`. Only a directory with contents may be left in
+  // place: that is what `bun patch <pkg>` produces while the user edits it.
 
   test("new dependency is linked over a pre-created empty directory", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

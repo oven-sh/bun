@@ -8500,7 +8500,7 @@ impl NodeFS {
         &mut self,
         src: &ZStr,
         dest: &ZStr,
-        flags: &args::CpFlags,
+        flags: args::CpFlags,
     ) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
@@ -8768,7 +8768,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self.cp_symlink(src, dest, &args.flags);
+                        return self.cp_symlink(src, dest, args.flags);
                     }
                     return Err(err);
                 }
@@ -8940,7 +8940,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self.cp_symlink(src, dest, &args.flags);
+                        return self.cp_symlink(src, dest, args.flags);
                     }
                     return Err(err);
                 }

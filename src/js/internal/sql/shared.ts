@@ -1779,6 +1779,10 @@ function parseOptions(
   let path: string;
   let prepare: boolean = true;
 
+  // In postgres.js configs `socket` is a function that creates a custom socket;
+  // only a string is the unix socket path alias.
+  const socketOption = typeof options.socket === "string" ? options.socket : undefined;
+
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
   }
@@ -1817,7 +1821,7 @@ function parseOptions(
     }
     query = query.trim();
 
-    path ||= pathParam || socketParam || options.path || options.socket || (url.hostname ? "" : url.pathname);
+    path ||= pathParam || socketParam || options.path || socketOption || (url.hostname ? "" : url.pathname);
   }
 
   switch (adapter) {
@@ -1850,7 +1854,7 @@ function parseOptions(
     }
   }
 
-  path ||= options.path || options.socket || "";
+  path ||= options.path || socketOption || "";
 
   if (adapter === "postgres") {
     // add /.s.PGSQL.${port} if the unix domain socket is listening on that path

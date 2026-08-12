@@ -485,6 +485,17 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.path).toBe(join(String(dir), "a.sock"));
       });
 
+      // postgres.js uses `socket` for a custom socket factory; configs carrying
+      // one must keep connecting over TCP instead of being read as a path.
+      test.each(adapters)("%s: a non-string `socket` is ignored", adapter => {
+        // @ts-expect-error deliberately not a string
+        const options = new SQL({ adapter, hostname: "dbhost", socket: () => null });
+        expect({ hostname: options.options.hostname, path: options.options.path }).toEqual({
+          hostname: "dbhost",
+          path: undefined,
+        });
+      });
+
       test.each([
         ["?path=A&socket=B", (a: string, b: string) => `?path=${a}&socket=${b}`],
         ["?socket=B&path=A", (a: string, b: string) => `?socket=${b}&path=${a}`],

@@ -3109,6 +3109,62 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
+describe("stdin redirect whose pipe is closed after the command has exited", () => {
+  // `< ${buf}` streams the bytes into the child over a pipe. A child that
+  // exits without reading its stdin leaves that write pending, and it only
+  // fails (and the stdin side of the command only closes) once the pipe's
+  // read end is gone. The child below hands its stdin to a helper process
+  // that outlives it without reading from it, so the exit code and the
+  // stdout/stderr EOFs are always processed first and the stdin close is
+  // what has to complete the command.
+  const SIZE = 1 << 20; // bigger than any pipe buffer: the write never drains
+  const childCode = `
+    const holder = Bun.spawn({
+      cmd: [process.execPath, "-e", "setTimeout(() => {}, 500)"],
+      stdin: "inherit",
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+    });
+    holder.unref();
+    console.log("child stdout");
+    console.error("child stderr");
+    process.exitCode = 3;
+  `;
+  const cases: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, input) => {
+    const result = await $`${BUN} -e ${childCode} < ${input()}`.quiet();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "child stdout\n", stderr: "child stderr\n", exitCode: 3 });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const upper = "process.stdout.write((await Bun.stdin.text()).toUpperCase())";
+    const result = await $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} | ${BUN} -e ${upper}`.quiet();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "CHILD STDOUT\n", stderr: "child stderr\n", exitCode: 0 });
+  });
+
+  test.concurrent("as the left side of ||", async () => {
+    const result = await $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} || echo failed`.quiet();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "child stdout\nfailed\n", stderr: "child stderr\n", exitCode: 0 });
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop

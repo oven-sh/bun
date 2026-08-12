@@ -299,15 +299,27 @@ impl ShellSubprocess {
         unsafe { &mut *self.process }
     }
 
+    /// Signal the owning `Cmd` that buffered stdin has closed and drive the
+    /// resulting `Yield`: when the exit and the stdout/stderr closes were
+    /// processed first, this is what finishes the command (mirrors
+    /// `PipeReader::finish_after_state_set` for the outputs). The trampoline
+    /// may reach `Cmd::deinit`, which frees `self`, so the caller must not
+    /// touch `self` afterwards and nothing here does either.
     pub(crate) fn on_static_pipe_writer_done(&mut self) {
         log!(
             "Subproc(0x{:x}) onStaticPipeWriterDone(cmd={})",
             std::ptr::from_mut(self) as usize,
             self.cmd_parent.id
         );
-        // SAFETY: cmd_parent backref resolves to the owning Cmd which outlives
-        // the subprocess (freed only in `Cmd::deinit` after all stdio closes).
-        unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
+        let handle = self.cmd_parent;
+        // SAFETY: cmd_parent backref resolves to the owning Cmd, which outlives
+        // the subprocess (the subprocess is freed by that Cmd's `deinit`). The
+        // `&mut Cmd` ends before the trampoline below re-enters the arena.
+        let y = unsafe { handle.cmd_mut() }.buffered_input_close();
+        // `ParentRef: Deref<Target = Interpreter>`; the interpreter owns the
+        // Cmd that owns `self`, so it outlives this callback. `&mut self` is
+        // dead by NLL here — `run` may free `self` via `Cmd::deinit`.
+        y.run(&handle.interp);
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -403,9 +415,10 @@ impl ShellSubprocess {
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {
-                    self.on_static_pipe_writer_done();
                     // RefPtr has no Drop — move it out before reassigning so the
-                    // create ref is actually released.
+                    // create ref is actually released. This does not free the
+                    // writer we are being called from: `start()`'s ref is only
+                    // released after this callback returns.
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
@@ -413,6 +426,8 @@ impl ShellSubprocess {
                         unsafe { buffer_mut(&buffer) }.source.detach();
                         buffer.deref();
                     }
+                    // Last: this may finish the Cmd, whose `deinit` frees `self`.
+                    self.on_static_pipe_writer_done();
                 }
                 _ => {}
             },

@@ -673,14 +673,16 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
     /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
     /// pick their own deref mode without aliasing UB) then runs `$body`. The
-    /// 1-arg form is the plain `on_poll(size_or_offset, hup)` call that
-    /// covers most tags.
+    /// 1-arg form is the plain `PosixPipeWriter::on_poll` call that covers the
+    /// pipe writers.
     macro_rules! poll_arm {
         ($Ty:ty) => {
             poll_arm!($Ty, |h| {
                 // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                // `FilePoll::init` and the owner outlives this dispatch (caller contract).
-                unsafe { (*h).on_poll(size_or_offset as isize, hup) }
+                // `FilePoll::init` and is live on entry. Passed raw: the drain
+                // report may free the object embedding the writer (see
+                // `PosixPipeWriter::on_poll`).
+                unsafe { <$Ty>::on_poll(h, size_or_offset as isize, hup) }
             })
         };
         ($Ty:ty, |$h:ident| $body:expr) => {{
@@ -732,8 +734,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         // `bun.shell.Interpreter.IOWriter.Poll`
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-            // set at `FilePoll::init`; exclusive for this dispatch.
-            unsafe { crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup) }
+            // set at `FilePoll::init`. Passed raw: the entry's keepalive may be
+            // the last ref to the `IOWriter` embedding it (see that fn).
+            unsafe { crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::DNS_RESOLVER => {
             // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and

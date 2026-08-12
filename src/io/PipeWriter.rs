@@ -3,7 +3,7 @@ use core::mem;
 
 use bun_collections::ByteVecExt;
 use bun_core::OOM;
-use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
+use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for the writers that launder
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -50,11 +50,26 @@ pub enum WriteStatus {
 pub trait PosixPipeWriter {
     fn get_fd(&self) -> Fd;
     fn get_buffer(&self) -> &[u8];
-    fn on_write(&mut self, written: usize, status: WriteStatus);
+    /// Reports the outcome of a poll-driven drain to the parent.
+    ///
+    /// Raw rather than `&mut self` because the writer is a field of its parent
+    /// and a `Drained` report may free the parent (`StaticPipeWriter::on_write`
+    /// releases its last ref there): freeing an allocation while a reference to
+    /// it is a live argument of some frame is rejected by both aliasing models,
+    /// so every frame between the poll dispatch and that release holds the
+    /// writer as a raw pointer.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer. After a `Drained` or `EndOfFile`
+    /// report the caller must not touch `this` again; a `Pending` report leaves
+    /// the writer alive (see the `*WriterParent::on_write` contracts).
+    unsafe fn on_write(this: *mut Self, written: usize, status: WriteStatus);
     /// Optional. Implement as no-op when not needed and set
     /// `HAS_REGISTER_POLL = false`.
     fn register_poll(&mut self);
     const HAS_REGISTER_POLL: bool = true;
+    /// The parent's error handler may end or detach the writer but must leave
+    /// it alive: the writer closes itself right after reporting.
     fn on_error(&mut self, err: sys::Error);
     fn get_file_type(&self) -> FileType;
     fn get_force_sync(&self) -> bool;
@@ -119,8 +134,52 @@ pub trait PosixPipeWriter {
         WriteResult::Wrote(offset)
     }
 
-    fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
-        // reshaped for borrowck — capture buffer.len() before further &mut self calls.
+    /// Poll-dispatch entry (`__bun_run_file_poll`). Raw for the reason given on
+    /// [`on_write`](Self::on_write): the `&mut` work is confined to
+    /// [`drain_on_poll`](Self::drain_on_poll), and the reports below run with
+    /// no borrow of `*this` live.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer registered as the poll's owner.
+    unsafe fn on_poll(this: *mut Self, size_hint: isize, received_hup: bool) {
+        // SAFETY: caller contract; the borrow ends when `drain_on_poll` returns.
+        let Some(result) = (unsafe { (*this).drain_on_poll(size_hint, received_hup) }) else {
+            return;
+        };
+
+        match result {
+            WriteResult::Pending(wrote) => {
+                // Bytes are still buffered, so the parent keeps the writer
+                // alive and it gets re-armed.
+                if wrote > 0 {
+                    // SAFETY: caller contract.
+                    unsafe { Self::on_write(this, wrote, WriteStatus::Pending) };
+                }
+
+                if Self::HAS_REGISTER_POLL {
+                    // SAFETY: caller contract, plus the `Pending` contract on
+                    // `on_write`; the borrow is scoped to the call.
+                    unsafe { (*this).register_poll() };
+                }
+            }
+            // `Drained`: the buffer was fully written before the report. If
+            // the parent buffers more data via `write()`, that path already
+            // calls `register_poll()`.
+            // SAFETY: caller contract. Last use of `this`: the parent may free
+            // the object embedding the writer from inside this report.
+            WriteResult::Wrote(amt) => unsafe { Self::on_write(this, amt, WriteStatus::Drained) },
+            // SAFETY: as for `Drained`; the writer closes itself (and so may be
+            // freed by its parent's `on_close`) before this returns.
+            WriteResult::Done(amt) => unsafe { Self::on_write(this, amt, WriteStatus::EndOfFile) },
+            // SAFETY: caller contract; the error report leaves the writer
+            // alive (see `on_error`) and this is the last use of `this`.
+            WriteResult::Err(err) => unsafe { (*this).on_error(err) },
+        }
+    }
+
+    /// The `&mut` half of [`on_poll`](Self::on_poll): attempts the write and
+    /// returns what to report, or `None` when there is nothing to do.
+    fn drain_on_poll(&mut self, size_hint: isize, received_hup: bool) -> Option<WriteResult> {
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
@@ -137,7 +196,7 @@ pub trait PosixPipeWriter {
                     poll.is_registered()
                 );
             }
-            return;
+            return None;
         }
 
         let max_write = if size_hint > 0 && self.get_file_type().is_blocking() {
@@ -146,33 +205,7 @@ pub trait PosixPipeWriter {
             usize::MAX
         };
 
-        match self.drain_buffered_data(max_write, received_hup) {
-            WriteResult::Pending(wrote) => {
-                if wrote > 0 {
-                    self.on_write(wrote, WriteStatus::Pending);
-                }
-
-                if Self::HAS_REGISTER_POLL {
-                    self.register_poll();
-                }
-            }
-            WriteResult::Wrote(amt) => {
-                // `.drained`: the buffer was fully written before the
-                // callback. If the callback buffers more data via
-                // `write()`, that path already calls `register_poll()`.
-                // Don't touch `self` after the callback returns — the
-                // `.drained` callback is allowed to close/free the writer
-                // (e.g. `FileSink.onWrite` → `writer.end()` → `onClose`
-                // may drop the last ref).
-                self.on_write(amt, WriteStatus::Drained);
-            }
-            WriteResult::Err(err) => {
-                self.on_error(err);
-            }
-            WriteResult::Done(amt) => {
-                self.on_write(amt, WriteStatus::EndOfFile);
-            }
-        }
+        Some(self.drain_buffered_data(max_write, received_hup))
     }
 
     /// Re-derives the slice from `self.get_buffer()` each iteration.
@@ -258,9 +291,22 @@ pub trait PosixBufferedWriterParent {
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
+    /// Dispatched with no borrow of the writer live. On `Drained` the parent
+    /// may release its last ref and free itself (the writer with it); the
+    /// writer touches nothing afterwards. On `Pending` the writer re-arms its
+    /// poll afterwards, so the parent must stay alive. On `EndOfFile` the
+    /// writer has already closed the fd and delivers `on_close` (again with no
+    /// borrow live, and as its last access) once this returns, so the parent
+    /// must stay alive through the report itself and may free itself from that
+    /// `on_close`.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// Must leave `*this` alive: the writer closes itself right after this
+    /// returns (and, on a partially drained buffer, still reports the drained
+    /// bytes through `on_write`).
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
@@ -307,8 +353,9 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     fn get_buffer(&self) -> &[u8] {
         self.get_buffer_internal()
     }
-    fn on_write(&mut self, written: usize, status: WriteStatus) {
-        self._on_write(written, status);
+    unsafe fn on_write(this: *mut Self, written: usize, status: WriteStatus) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::_on_write(this, written, status) }
     }
     fn register_poll(&mut self) {
         Self::register_poll(self);
@@ -325,13 +372,6 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     fn handle(&self) -> &PollOrFd {
         &self.handle
     }
-}
-
-// SAFETY: writer is an intrusive field of `Parent`; `Parent::on_write`
-// re-entry writes `is_done`/`handle` but never frees it; single JS thread.
-unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf
-    for PosixBufferedWriter<Parent>
-{
 }
 
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
@@ -403,33 +443,56 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.close();
     }
 
-    fn _on_write(&mut self, written: usize, status: WriteStatus) {
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `Parent::on_write` (e.g. `IOWriter::on_write`) re-enters via a fresh
-        // `&mut Self` from the parent's intrusive `writer` field and may write
-        // `self.handle` / `self.is_done`. ASM-verified PROVEN_CACHED in the
-        // `IOWriter` monomorphization: `self.handle.{tag,poll,fd}` were loaded
-        // once, spilled to `[rbp-48/-120/-44]`, and reused by the trailing
-        // `self.close()` without reload. Launder so post-call accesses see
-        // fresh state.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let was_done = Self::r(this).is_done;
-        let parent = Self::r(this).parent();
+    /// Raw (not `&mut self`): `Parent::on_write` re-enters this writer through
+    /// the parent's field (`close()`, `register_poll()`), and the parent may
+    /// free itself, and `*this` inside it, from a `Drained` report or from the
+    /// `on_close` that follows an `EndOfFile` one; see the contract on
+    /// [`PosixBufferedWriterParent::on_write`]. Every borrow of `*this` here is
+    /// scoped to one statement, and none is live across either dispatch.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer.
+    unsafe fn _on_write(this: *mut Self, written: usize, status: WriteStatus) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        let (parent, eof) = unsafe {
+            let eof = status == WriteStatus::EndOfFile && !(*this).is_done;
+            if eof {
+                (*this).close_without_reporting();
+            }
+            ((*this).parent(), eof)
+        };
 
-        if status == WriteStatus::EndOfFile && !was_done {
-            Self::r(this).close_without_reporting();
-        }
-
-        // SAFETY: parent BACKREF valid.
+        // SAFETY: parent BACKREF valid; no borrow of `*this` is live.
         unsafe { Parent::on_write(parent, written, status) };
-        // Re-escape so the trailing `close()` cannot reuse the spilled
-        // `self.handle` from before `on_write`.
-        core::hint::black_box(this);
-        if status == WriteStatus::EndOfFile && !was_done {
-            // `close()` reads `is_done`/`handle` which may have been written
-            // re-entrantly above; `r()` reborrows fresh from the laundered ptr.
-            Self::r(this).close();
+        if eof {
+            // SAFETY: the `EndOfFile` contract on `PosixBufferedWriterParent::
+            // on_write` keeps `*this` alive until here.
+            unsafe { Self::report_close(this) };
         }
+    }
+
+    /// Delivers the `on_close` that [`close_without_reporting`](Self::
+    /// close_without_reporting) deferred, unless the parent's `on_write` already
+    /// had it delivered by calling [`close`](Self::close) itself. Raw like
+    /// [`_on_write`](Self::_on_write): the parent may release its last ref from
+    /// `on_close` and free itself, `*this` with it, so the dispatch holds no
+    /// borrow of `*this` and is the last use of `this`.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer.
+    unsafe fn report_close(this: *mut Self) {
+        if !Parent::HAS_ON_CLOSE {
+            return;
+        }
+        // SAFETY: caller contract; borrows end at each `;`.
+        let parent = unsafe {
+            if !mem::replace(&mut (*this).closed_without_reporting, false) {
+                return;
+            }
+            (*this).parent()
+        };
+        // SAFETY: parent BACKREF valid; no borrow of `*this` is live.
+        unsafe { Parent::on_close(parent) };
     }
 
     pub fn register_poll(&mut self) {
@@ -572,9 +635,21 @@ pub trait PosixStreamingWriterParent {
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
+    /// From the poll (`PosixPipeWriter::on_poll`) this is dispatched with no
+    /// borrow of the writer live, and a `Drained` or `EndOfFile` report is the
+    /// writer's last access to itself, so the parent may release its last ref
+    /// there (e.g. `FileSink::on_write` ending the sink) and free itself, the
+    /// writer with it. After a `Pending` report the writer re-arms its poll, so
+    /// the parent must stay alive. Reports made from the parent's own `write()`
+    /// calls run while the parent is on the stack and may be followed by a
+    /// re-arm as well.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    /// Must leave `*this` alive: the writer closes itself right after this
+    /// returns.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
@@ -625,8 +700,9 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     fn get_buffer(&self) -> &[u8] {
         self.outgoing.slice()
     }
-    fn on_write(&mut self, written: usize, status: WriteStatus) {
-        self._on_write(written, status);
+    unsafe fn on_write(this: *mut Self, written: usize, status: WriteStatus) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::_on_write(this, written, status) }
     }
     fn register_poll(&mut self) {
         Self::register_poll(self);
@@ -645,7 +721,10 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     }
 }
 
-// SAFETY: see `PosixBufferedWriter`'s `LaunderedSelf` impl — identical shape.
+// SAFETY: writer is an intrusive field of `Parent`. The one laundered site is
+// `register_poll`'s error arm, and the `Parent::on_error` it spans may end the
+// writer but must leave it alive (`PosixStreamingWriterParent::on_error`);
+// single JS thread.
 unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
     for PosixStreamingWriter<Parent>
 {
@@ -669,24 +748,32 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.parent
     }
 
-    /// Single nonnull-asref dispatch for the set-once `parent` backref.
+    /// Records what is about to be reported and returns the parent to report
+    /// it to.
     ///
     /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
     /// [`set_parent`](Self::set_parent) before any write path is reached, and
     /// the writer is an intrusive field of `*parent` so the pointee strictly
-    /// outlives `self`. Collapses the N identical
-    /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
-    /// `WriteResult` arm) into one. `on_write` may re-enter via the parent's
-    /// intrusive `writer` field; callers that read `self` afterwards must
-    /// launder (R-2 noalias) — the existing laundered sites in `_on_write` /
-    /// `register_poll` keep their raw-pointer dispatch and do **not** route
-    /// through this accessor.
+    /// outlives `self`.
     #[inline]
-    fn parent_on_write(&self, amount: usize, status: WriteStatus) {
+    fn report_target(&self, status: WriteStatus) -> *mut Parent {
         // on_write may re-enter write(); record first so re-entry leaves the newer value.
         self.backed_up.set(status == WriteStatus::Pending);
-        // SAFETY: type invariant — set-once parent backref outlives writer.
-        unsafe { Parent::on_write(self.parent(), amount, status) }
+        self.parent()
+    }
+
+    /// `Parent::on_write` for the synchronous `write*()` paths, whose caller is
+    /// the parent itself (so it is alive for the duration; see the contract on
+    /// [`PosixStreamingWriterParent::on_write`]). The poll path reports through
+    /// [`_on_write`](Self::_on_write) instead, which holds no borrow of the
+    /// writer across the report. Collapses the N identical
+    /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
+    /// `WriteResult` arm) into one.
+    #[inline]
+    fn parent_on_write(&self, amount: usize, status: WriteStatus) {
+        let parent = self.report_target(status);
+        // SAFETY: `report_target`'s type invariant.
+        unsafe { Parent::on_write(parent, amount, status) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -742,7 +829,24 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.close();
     }
 
-    fn _on_write(&mut self, written: usize, status: WriteStatus) {
+    /// Poll-path report. Raw (not `&mut self`): per the contract on
+    /// [`PosixStreamingWriterParent::on_write`] the report may free the parent,
+    /// and `*this` inside it, so the bookkeeping borrow ends in
+    /// [`consume_written`](Self::consume_written) and nothing here touches
+    /// `this` once the parent has been called.
+    ///
+    /// # Safety
+    /// `this` must point to the live writer.
+    unsafe fn _on_write(this: *mut Self, written: usize, status: WriteStatus) {
+        // SAFETY: caller contract; the borrow ends when `consume_written` returns.
+        let parent = unsafe { (*this).consume_written(written, status) };
+        // SAFETY: `report_target`'s type invariant; no borrow of `*this` is
+        // live, and this is the last use of `this`.
+        unsafe { Parent::on_write(parent, written, status) };
+    }
+
+    /// Bookkeeping for bytes the poll wrote; returns the parent to report to.
+    fn consume_written(&mut self, written: usize, status: WriteStatus) -> *mut Parent {
         self.outgoing.wrote(written);
 
         if status == WriteStatus::EndOfFile && !self.is_done {
@@ -757,7 +861,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             self.outgoing.list.clear();
         }
 
-        self.parent_on_write(written, status);
+        self.report_target(status)
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -2562,24 +2666,33 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // (POSIX + WindowsWriterParent + Windows{Streaming,Buffered}WriterParent),
 // differing only in:
 //   (a) the inherent-method names the vtable forwards to,
-//   (b) how the callback is dispatched off `*mut Self` — as `&mut`, `&`, or
-//       a raw-ptr method call (re-entrancy under Stacked/Tree Borrows — see
+//   (b) how the callback is dispatched off `*mut Self` — as `&` or as a
+//       raw-ptr call (re-entrancy under Stacked/Tree Borrows — see the
 //       `borrow = shared` / `borrow = ptr` callers),
 //   (c) the `event_loop` / `loop_` / refcount accessor expressions.
 // These macros stamp that triple once per parent.
 //
-// `borrow = mut`    → bodies form `&mut *this` (unique access for the
-//                     callback's duration; the writer never holds
-//                     `&mut Parent` itself).
 // `borrow = shared` → bodies form `&*this` (callback may re-enter JS or
 //                     `enqueue(&self)` and observe a fresh `&Self`; aliased
-//                     `&Self` is sound where `&mut Self` is not).
+//                     `&Self` is sound where `&mut Self` is not). Requires the
+//                     parent to keep its writer in a `JsCell`/`UnsafeCell`:
+//                     the callback runs underneath the writer's own frames,
+//                     and a plain `&Parent` would cover the writer's bytes too.
 // `borrow = ptr`    → bodies call `Self::method(this, ..)` — no reference is
-//                     materialized at the boundary; for parents that must
-//                     keep full write/dealloc provenance through a re-entrant,
-//                     freeing callback (the callback may run `Box::from_raw`
-//                     on `this`, so a `&self`-derived ptr would carry only
-//                     SharedReadOnly provenance and dealloc through it is UB).
+//                     materialized at the boundary. Required when a callback
+//                     can release the parent's last ref: a reference argument
+//                     is protected for the duration of the call, and both
+//                     aliasing models reject freeing the allocation it points
+//                     into while it is live (besides which a `&self`-derived
+//                     pointer carries no dealloc provenance). The parent's
+//                     handlers take `this: *mut Self` and do their `&mut` work
+//                     through call-scoped reborrows, releasing through `this`.
+//
+// There is deliberately no `&mut` mode: a `&mut Parent` formed here would
+// assert unique access to the whole parent, writer field included, while the
+// writer that is making the call may itself be borrowed further up the stack,
+// and it would be protected across the very callback that may free it. See
+// test/internal/source-lints/writer-parent-mut-borrow.test.ts.
 //
 // Accessor args use closure-literal syntax (`|this| expr`) purely as a binder
 // for the macro — no actual closure is created; `expr` is pasted into an
@@ -2600,7 +2713,6 @@ pub mod __parent_macro {
 #[macro_export]
 macro_rules! impl_streaming_writer_parent {
     // Internal: dispatch a callback off the raw-ptr backref per `borrow` mode.
-    (@call mut    $p:expr; $m:ident($($a:tt)*)) => { (&mut *$p).$m($($a)*) };
     (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
     (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
 
@@ -2627,9 +2739,9 @@ macro_rules! impl_streaming_writer_parent {
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
                 // StreamingWriter never materializes `&mut Parent`. The handler
-                // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr` —
-                // see the module comment); `ptr` keeps full write/dealloc
-                // provenance through re-entrant, freeing callbacks.
+                // is dispatched per the `borrow` mode (`shared`/`ptr` — see the
+                // module comment); `ptr` keeps full write/dealloc provenance
+                // through re-entrant, freeing callbacks.
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
@@ -2738,8 +2850,9 @@ macro_rules! impl_streaming_writer_parent {
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
-    (@borrow mut    $p:expr) => { &mut *$p };
-    (@borrow shared $p:expr) => { &*$p };
+    // Internal: dispatch a callback off the raw-ptr backref per `borrow` mode.
+    (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
+    (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
 
     (@emit
         [$($gen:tt)*] $Ty:ty;
@@ -2760,20 +2873,22 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
-                // BufferedWriter never materializes `&mut Parent`, so this is
-                // the unique access path for the callback's duration.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+                // BufferedWriter never materializes `&mut Parent`. The handler
+                // is dispatched per the `borrow` mode (`shared`/`ptr` — see the
+                // module comment); `ptr` lets the handler release the parent's
+                // last ref with no reference to it live.
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_error(&err)) }
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
@@ -2821,18 +2936,18 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_error(&err)) }
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+                unsafe { $crate::impl_buffered_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {

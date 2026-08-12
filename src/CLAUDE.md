@@ -282,12 +282,16 @@ crashes that only reproduce under load or in CI.
 If a callback may free `self` (close, error, GC finalize), do **not**
 materialize `&self`/`&mut self` at the boundary — a `&self`-derived raw
 pointer carries `SharedReadOnly` provenance, and `Box::from_raw`/dealloc
-through it is UB. Pass and dispatch off `*mut Self` until the body proves
-ownership. `src/io/PipeWriter.rs`'s `impl_streaming_writer_parent!` macro
-encodes the three modes:
+through it is UB; and any reference that is a live argument of a frame on the
+stack is protected, so releasing the last ref from inside a `&mut self` method
+(`deref(ptr::from_mut(self))`) is UB under both aliasing models even when
+nothing touches `self` afterwards. Pass and dispatch off `*mut Self` until the
+body proves ownership, do the `&mut` work through call-scoped reborrows, and
+release through the raw pointer. `src/io/PipeWriter.rs`'s
+`impl_streaming_writer_parent!` / `impl_buffered_writer_parent!` macros encode
+the two modes (there is deliberately no `&mut` mode):
 
-- `borrow = mut` — body forms `&mut *this`; safe when nothing re-enters
-- `borrow = shared` — body forms `&*this`; safe when re-entrant code only needs `&Self`
+- `borrow = shared` — body forms `&*this`; for parents whose re-entrant code only needs `&Self` and whose writer lives in a `JsCell`/`UnsafeCell`
 - `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self`; required when the callback may free `self`
 
 ### `Strong` / `Weak` JS handles

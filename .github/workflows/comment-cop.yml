@@ -1,10 +1,7 @@
 name: Comment Cop
 
-# Flags paragraph-sized code comments (three or more lines of text, not
-# counting bare delimiter lines such as "/**" or "*/") added in src/ by
-# claude-labeled PRs and asks for them to be deleted. One- and two-line
-# comments are fine. Groups containing a SAFETY: marker are skipped. Runs
-# entirely against the GitHub API (no checkout of PR code).
+# Flags comments of 3+ text lines added in src/ by claude-labeled PRs (SAFETY: blocks exempt).
+# Runs entirely against the GitHub API, no checkout of PR code.
 
 on:
   pull_request_target:

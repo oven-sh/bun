@@ -4431,8 +4431,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    // Only the default global's queue is drained (GlobalObject::drainMicrotasks), so a
-    // ShadowRealm's process shares the default global's nextTick.
+    // GlobalObject::drainMicrotasks drains the default global's queue only.
     auto* eventLoopGlobalObject = defaultGlobalObject();
     if (eventLoopGlobalObject != globalObject) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

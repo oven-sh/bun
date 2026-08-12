@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3160,6 +3161,43 @@ describe("rm", () => {
     expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
     expect(elapsedMs).toBeLessThan(5000);
   });
+
+  // Node's test-fs-rm.js pins what a recursive rm reports when a directory in
+  // the tree is not writable: the EACCES from removing its child, except that
+  // on macOS node reports the ENOTEMPTY of removing the unwritable directory
+  // itself. Every level now goes through the same walk, so a directory 40
+  // levels down gets the same answer as one directly under the root (the
+  // fallback that used to handle everything below 16 levels said EACCES on
+  // macOS too), and bailing out releases the directories the walk had open.
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    "recursive rm reports an unwritable directory 40 levels down the same way as one at the top",
+    () => {
+      using dir = tempDir("rm-deep-unwritable", {});
+      const rmErrorCode = (levels: number) => {
+        const root = join(String(dir), `root-${levels}`);
+        const unwritable = join(root, Buffer.alloc(Math.max(levels * 2 - 1, 0), "a/").toString(), "unwritable");
+        mkdirSync(join(unwritable, "leaf"), { recursive: true });
+        fs.chmodSync(unwritable, 0o555);
+        try {
+          const maxFDBefore = getMaxFD();
+          let code: string | undefined;
+          try {
+            rmSync(root, { recursive: true });
+          } catch (e: any) {
+            code = e.code;
+          }
+          expect(getMaxFD()).toBe(maxFDBefore);
+          return code;
+        } finally {
+          if (existsSync(unwritable)) fs.chmodSync(unwritable, 0o755);
+        }
+      };
+
+      const atTop = rmErrorCode(0);
+      expect(atTop).toBe(isMacOS ? "ENOTEMPTY" : "EACCES");
+      expect(rmErrorCode(40)).toBe(atTop);
+    },
+  );
 });
 
 describe("rmdir", () => {

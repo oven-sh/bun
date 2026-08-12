@@ -239,15 +239,31 @@ pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }
 
-/// Whether a user-delivered signal's JS handlers are running right now.
-/// `process.exit()` in such a handler must really exit even under `--watch`
-/// (node's watcher dies with the child on Ctrl+C), so the keepalive branch
-/// consults this.
-pub fn is_emitting_signal_for_js() -> bool {
-    IS_EMITTING_SIGNAL_FOR_JS.load(Ordering::Relaxed)
+/// Whether a user-delivered kill-intent signal (Ctrl+C and friends) has
+/// reached JS handlers. Latched, never cleared: once the user has asked to
+/// stop, any later `process.exit()` under `--watch` is a real exit however
+/// the handler defers it (node's watcher dies with the child on Ctrl+C).
+pub fn user_kill_signal_delivered() -> bool {
+    USER_KILL_SIGNAL_DELIVERED.load(Ordering::Relaxed)
 }
 
-static IS_EMITTING_SIGNAL_FOR_JS: AtomicBool = AtomicBool::new(false);
+static USER_KILL_SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
+
+/// SIGHUP/SIGINT/SIGQUIT/SIGTERM on every supported platform, plus the
+/// Windows CRT's SIGBREAK.
+fn is_kill_intent_signal(number: i32) -> bool {
+    matches!(number, 1 | 2 | 3 | 15 | 21)
+}
+
+/// Both signal-delivery paths note the signal before emitting: POSIX in
+/// [`PosixSignalTask::run_from_js_thread`], Windows in `signalHandler`'s
+/// posted task (BunProcess.cpp).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__noteUserSignalDelivered(number: i32) {
+    if is_kill_intent_signal(number) {
+        USER_KILL_SIGNAL_DELIVERED.store(true, Ordering::Relaxed);
+    }
+}
 
 /// Runs the JS handlers of the configured `--watch-kill-signal` synchronously,
 /// mirroring node delivering that signal to the watched child before restart.
@@ -266,9 +282,8 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
 
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
-        IS_EMITTING_SIGNAL_FOR_JS.store(true, Ordering::Relaxed);
+        Bun__noteUserSignalDelivered(i32::from(number));
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
-        IS_EMITTING_SIGNAL_FOR_JS.store(false, Ordering::Relaxed);
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
         if !fired && number == SIGINT_NUMBER && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0

@@ -112,6 +112,28 @@ describe("Bun.deepEquals strict mode", () => {
     expect(Bun.deepEquals(new Foo(), { a: 1 }, true)).toBe(false);
   });
 
+  // The switch that drops the constructor check (node's skipPrototype) is only
+  // reachable through util.isDeepStrictEqual; Bun.deepEquals has no fourth
+  // argument, so anything after `strict` is ignored.
+  it("ignores arguments after strict", () => {
+    const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, ...rest: unknown[]) => boolean;
+    class Foo {
+      a = 1;
+    }
+    class Str extends String {}
+    for (const extra of [true, 1, "skipPrototype", {}]) {
+      expect(deepEquals(new Foo(), { a: 1 }, true, extra)).toBe(false);
+      expect(deepEquals({ a: 1 }, new Foo(), true, extra)).toBe(false);
+      expect(deepEquals({ x: new Foo() }, { x: { a: 1 } }, true, extra)).toBe(false);
+      expect(deepEquals(new String("a"), new Str("a"), true, extra)).toBe(false);
+      expect(deepEquals(new Str("a"), new String("a"), true, extra)).toBe(false);
+
+      expect(deepEquals(new Foo(), new Foo(), true, extra)).toBe(true);
+      expect(deepEquals({ a: 1 }, { a: 1, b: undefined }, true, extra)).toBe(false);
+      expect(deepEquals(new Foo(), { a: 1 }, false, extra)).toBe(true);
+    }
+  });
+
   it("is symmetric", () => {
     const a = { entries: [1, 2] };
     const b = { entries: [1, 2], extra: undefined };

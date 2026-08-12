@@ -1925,10 +1925,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     return std::nullopt;
 }
 
-// The other combinations are instantiated by their uses in this file. This one is
-// only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
-template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
-
 /**
  * @brief `Bun.deepMatch(a, b)`
  *

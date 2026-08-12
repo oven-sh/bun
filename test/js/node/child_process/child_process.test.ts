@@ -609,8 +609,9 @@ describe("spawn()", () => {
       }
 
       // Accumulates the socket's output; nextLine() resolves with everything received so far once
-      // one more "\n"-terminated line has arrived, whether it came in one chunk or several.
-      function readLines(socket: Socket) {
+      // one more "\n"-terminated line has arrived, whether it came in one chunk or several, and
+      // rejects if the pipe ends or errors first (i.e. the child died), carrying its stderr.
+      function readLines(socket: Socket, spawned: { readonly stderr: string }) {
         let text = "";
         socket.setEncoding("utf8");
         socket.on("data", chunk => (text += chunk));
@@ -620,12 +621,32 @@ describe("spawn()", () => {
           },
           nextLine() {
             const lines = text.split("\n").length;
-            const { promise, resolve } = Promise.withResolvers<string>();
-            socket.on("data", function onData() {
+            const { promise, resolve, reject } = Promise.withResolvers<string>();
+            const onData = () => {
               if (text.split("\n").length === lines) return;
-              socket.off("data", onData);
+              cleanup();
               resolve(text);
-            });
+            };
+            const onEnd = () => {
+              cleanup();
+              reject(
+                new Error(
+                  `pipe ended before the next line; received ${JSON.stringify(text)}, stderr: ${spawned.stderr}`,
+                ),
+              );
+            };
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+            const cleanup = () => {
+              socket.off("data", onData);
+              socket.off("end", onEnd);
+              socket.off("error", onError);
+            };
+            socket.on("data", onData);
+            socket.on("end", onEnd);
+            socket.on("error", onError);
             return promise;
           },
         };
@@ -650,7 +671,7 @@ describe("spawn()", () => {
         const replies = child.stdio[4] as Socket;
         expect([connectionState(requests), connectionState(replies)]).toEqual([connected, connected]);
 
-        const received = readLines(replies);
+        const received = readLines(replies, spawned);
         const writeErrors: (Error | null)[] = [];
         // Wait for each reply before sending the next request so the child sees one chunk per write.
         let reply = received.nextLine();
@@ -687,7 +708,7 @@ describe("spawn()", () => {
         const pipe = child.stdio[3] as Socket;
         expect(connectionState(pipe)).toEqual(connected);
 
-        const received = readLines(pipe);
+        const received = readLines(pipe, spawned);
         expect(await received.nextLine()).toBe("ready\n");
         let reply = received.nextLine();
         pipe.write("hello");
@@ -709,7 +730,7 @@ describe("spawn()", () => {
         );
         const { child, exited } = spawned;
         const input = child.stdio[3] as Socket;
-        const received = readLines(child.stdio[4] as Socket);
+        const received = readLines(child.stdio[4] as Socket, spawned);
 
         const size = 1024 * 1024;
         const { promise: written, resolve: onWritten } = Promise.withResolvers<Error | null>();

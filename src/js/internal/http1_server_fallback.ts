@@ -334,8 +334,7 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
-    // Node's resOnFinish: detach (the next response's assignSocket would otherwise throw
-    // ERR_HTTP_SOCKET_ASSIGNED), then the res._last branch or the keep-alive branch.
+    // Node's resOnFinish: detach, then its res._last branch or its keep-alive branch.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
       if (this[kMustCloseConnection]) {
@@ -459,8 +458,7 @@ function connectionListenerHTTP1(server, socket, options) {
     const serverTimeout = server.emit("timeout", socket);
     if (!reqTimeout && !resTimeout && !serverTimeout) socket.destroy();
   }
-  // The keep-alive branch of Node's resOnFinish. writableEnded: onfinished already ended the
-  // connection for a request that sent Connection: close.
+  // The keep-alive branch of Node's resOnFinish.
   function armKeepAliveTimeout() {
     if (
       socket[kHttp1ActiveRequests] !== 0 ||

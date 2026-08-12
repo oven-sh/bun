@@ -115,12 +115,9 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    /// The wrapper owns the sink outright, so its `${abi}__finalize`
-    /// (`~JSArrayBufferSink` during sweep, or prototype `.close()`) ends here.
-    ///
     /// # Safety
-    /// `this` must be the allocation `js_construct` leaked into the wrapper,
-    /// not yet freed.
+    /// `this` is the allocation `js_construct` leaked into the JS wrapper, whose
+    /// `__finalize` (the sole caller) frees it exactly once, here.
     pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box.

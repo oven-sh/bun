@@ -243,15 +243,12 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    /// Raw pointer, not `&mut self`: the tasklet owns this allocation and
-    /// releasing its ref below can be the last one, in which case its
-    /// `deinit` → `clear_sink` frees `*this` inside the call.
-    ///
     /// # Safety
-    /// `this` must be live; it must not be used after the call.
+    /// `this` must be live and must not be used after the call: the tasklet
+    /// owns this allocation, and if the ref released here was its last one,
+    /// its `deinit` → `clear_sink` frees `*this`.
     pub unsafe fn finalize(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live here; it is not touched
-        // again after `task` has been taken out of it.
+        // SAFETY: caller contract; `this` is not touched again after this line.
         let task = unsafe { (*this).task.take() };
         if let Some(task) = task {
             // Balances the `ref_()` taken in `start_request_stream` when the

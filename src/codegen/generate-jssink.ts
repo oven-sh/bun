@@ -1154,16 +1154,13 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
     // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
     // JS${name}::~JS${name}, ~JSReadable${name}Controller and ${name}__doClose.
-    // C++ caller null-checks `m_sinkPtr` / `ptr` before calling. Stays a raw
-    // pointer all the way down: for sinks the cell owns (ArrayBufferSink's Box,
-    // FileSink's wrapper ref) this call frees the allocation, which is UB while
-    // a `&mut ${name}` argument to any frame on the way is still live.
+    // C++ caller null-checks `m_sinkPtr` / `ptr` before calling. `*mut`, not
+    // `&mut`: this call may free the sink (see `JsSinkType::finalize`).
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
-    // SAFETY: C++ hands over the live \`m_sinkPtr\` exactly once (it nulls or
-    // destroys the cell's copy) and never touches it again.
+    // SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
     unsafe { ${JSSinkT}::js_finalize(this) }
 }
 

@@ -23,13 +23,10 @@ bun_core::declare_scope!(FileSink, visible);
 // ───────────────────────────────────────────────────────────────────────────
 
 // R-2 (`&mut self` host-fn re-entrancy → noalias UB): JS-reachable host-fns
-// take `&self` and mutate via `Cell`/`JsCell`. Every path that may drop the
-// last ref (`finalize`, the PipeWriter IO callbacks, the promise handlers)
-// takes the canonical `*mut FileSink` instead of a receiver: `FileSink::deref`
-// may `heap::take` the allocation, and a `&self`/`&mut self` argument is
-// protected for the whole call, so freeing under one is UB even though a
-// `&mut` reborrow carries write provenance — see the `borrow = ptr` note on
-// the `impl_streaming_writer_parent!` invocation below.
+// take `&self` and mutate via `Cell`/`JsCell`. Paths that may drop the last
+// ref (`finalize`, the PipeWriter IO callbacks, the promise handlers) take the
+// canonical `*mut FileSink` instead of any receiver — see the `borrow = ptr`
+// note on the `impl_streaming_writer_parent!` invocation below.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct FileSink {
@@ -916,34 +913,27 @@ impl FileSink {
         }
     }
 
-    /// Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
-    /// from `${name}__doClose` (prototype `.close()`). Must satisfy both
-    /// contexts: no touching live JS cells (sweep), and no tearing down
-    /// state that in-flight IO still needs (close).
-    ///
-    /// Raw pointer, not `&mut self`: the trailing `deref` releases the
-    /// wrapper's +1 and frees the allocation when it was the last ref (see the
-    /// note at the top of this file).
-    ///
     /// # Safety
-    /// `this` must be the live sink whose wrapper is being finalized (it holds
-    /// the +1 released here); `this` must not be used afterwards.
+    /// `this` is the live sink whose JS wrapper holds the +1 released here; it
+    /// must not be used after the call, which may free it.
     pub(crate) unsafe fn finalize(this: *mut FileSink) {
-        // SAFETY: caller contract — `this` is live until the trailing `deref`,
-        // which is the last use of it; every access before that is a
-        // statement-scoped place expression, so no borrow of the allocation
-        // outlives the free. The wrapper's +1 is still held while the two
-        // shutdown releases run, so neither of them can be the last ref.
+        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
+        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
+        // contexts: no touching live JS cells (sweep), and no tearing down
+        // state that in-flight IO still needs (close).
+
+        // Shutdown never unwinds the writer: the loop stops ticking, so the
+        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
+        // Release them here (a piped stdout whose write once returned
+        // `.pending` otherwise strands its keep-alive ref forever and the sink
+        // leaks). Only under `is_shutting_down`: on a live VM those events
+        // still arrive and must keep the sink alive past the wrapper.
+        // `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
+        // `onClose` is a no-op.
+        // SAFETY: caller contract — the wrapper's +1 is held until the trailing
+        // `deref` below, so neither release here can free `this`.
         unsafe {
-            // Shutdown never unwinds the writer: the loop stops ticking, so the
-            // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
-            // longer arrive, and a queued FlushPendingFileSinkTask never runs.
-            // Release them here (a piped stdout whose write once returned
-            // `.pending` otherwise strands its keep-alive ref forever and the sink
-            // leaks). Only under `is_shutting_down`: on a live VM those events
-            // still arrive and must keep the sink alive past the wrapper.
-            // `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
-            // `onClose` is a no-op.
             if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
                 FileSink::clear_keep_alive_ref(this);
                 if (*this).run_pending_later.has.replace(false) {
@@ -952,16 +942,19 @@ impl FileSink {
                     FileSink::deref(this);
                 }
             }
+        }
 
-            // Per-wrapper accounting is on `ref_count` directly: each path that
-            // hands the sink to C++ (`to_js` / `to_js_with_destructor`) takes a
-            // +1 via `ref_()`, and the `deref()` below releases it.
-            // `JsSinkType::construct` allocates with `ref_count=1` and that +1
-            // belongs to the wrapper it's about to be stored in, so no extra
-            // `ref_()` there. Callers that allocate via `init`/`create` and then
-            // `to_js()` must `deref()` once to release init's +1 (see
-            // `Blob::get_writer`). `pending`/`readable_stream` are left for
-            // `deinit` (Box drop) since in-flight IO may still need them.
+        // Per-wrapper accounting is on `ref_count` directly: each path that
+        // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
+        // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
+        // `JsSinkType::construct` allocates with `ref_count=1` and that +1
+        // belongs to the wrapper it's about to be stored in, so no extra
+        // `ref_()` there. Callers that allocate via `init`/`create` and then
+        // `to_js()` must `deref()` once to release init's +1 (see
+        // `Blob::get_writer`). `pending`/`readable_stream` are left for
+        // `deinit` (Box drop) since in-flight IO may still need them.
+        // SAFETY: as above; the `deref` is the last use of `this`.
+        unsafe {
             (*this).js_sink_ref.with_mut(|r| r.deinit());
             FileSink::deref(this);
         }

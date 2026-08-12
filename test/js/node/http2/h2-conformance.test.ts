@@ -993,18 +993,28 @@ describe("trailers after the stream was ended without a 'wantTrailers' listener 
   // node's onStreamTrailers returns without emitting once the stream is closed (a listener could
   // only throw ERR_HTTP2_INVALID_STREAM). Like the _final path, the stream is still ended with the
   // empty END_STREAM DATA frame, and close()'s RST_STREAM (sent once the writable finishes) follows.
-  test("client: 'wantTrailers' is not emitted on a stream close()d before its body reached the wire", async () => {
+  test("client: 'wantTrailers' is not emitted on a stream close()d while its last chunk was still buffered", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
+    const connected = once(client, "connect");
     try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await connected;
+
       const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
       req.on("error", () => {});
       let wantTrailers = 0;
       req.on("wantTrailers", () => wantTrailers++);
-      // A new request stream is corked until the next tick, so the body is written (and the
-      // trailer block requested) after close() has already marked the stream closed.
-      req.end("hello");
+      // 'ready' follows the tick that uncorks a new request stream, so the first write below goes
+      // out at once. Its write callback only completes on a later turn, which leaves the chunk
+      // passed to end() buffered behind it: that final chunk (the one that asks for the trailer
+      // block) is written after close() has already marked the stream closed.
+      await once(req, "ready");
+      req.write("a");
+      req.end("b");
       req.close();
       expect(req.closed).toBe(true);
 
@@ -1013,7 +1023,8 @@ describe("trailers after the stream was ended without a 'wantTrailers' listener 
       expect(wantTrailers).toBe(0);
       expect(raw.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
         { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
-        { type: FrameType.DATA, flags: 0, length: 5 },
+        { type: FrameType.DATA, flags: 0, length: 1 },
+        { type: FrameType.DATA, flags: 0, length: 1 },
         { type: FrameType.DATA, flags: 0x1 /* END_STREAM */, length: 0 },
         { type: FrameType.RST_STREAM, flags: 0, length: 4 },
       ]);

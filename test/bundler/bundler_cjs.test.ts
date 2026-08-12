@@ -597,4 +597,159 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // A wrapped entry point (__commonJS or __esm) is only ever invoked by the
+  // entry point tail. The iife format used to define the wrapper and never call
+  // it, so none of the entry point's code ran.
+  // ============================================================================
+
+  // Test 29: CommonJS entry point, format=iife
+  itBundled("cjs/__commonJS_entry_point_called_in_iife", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry ran");
+        module.exports = { a: 1 };
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_entry();");
+    },
+    run: {
+      stdout: "entry ran",
+    },
+  });
+
+  // Test 30: the entry point is only CommonJS because it require()s a bundled
+  // ESM file, format=iife
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_require_esm", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("./re.mjs");
+        console.log("entry ran", m.x);
+      `,
+      "/re.mjs": /* js */ `
+        export const x = 1;
+      `,
+    },
+    format: "iife",
+    run: {
+      stdout: "entry ran 1",
+    },
+  });
+
+  // Test 31: the tail call goes through the chunk's renamer, so it still names
+  // the wrapper after identifiers are minified
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_minified", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry ran");
+        module.exports = { a: 1 };
+      `,
+    },
+    format: "iife",
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    run: {
+      stdout: "entry ran",
+    },
+  });
+
+  // Test 32: every iife entry point gets its own tail call
+  itBundled("cjs/__commonJS_entry_point_called_in_iife_multiple_entry_points", {
+    files: {
+      "/a.js": /* js */ `
+        console.log("a ran");
+        module.exports = "a";
+      `,
+      "/b.js": /* js */ `
+        console.log("b ran");
+        module.exports = "b";
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    format: "iife",
+    run: [
+      { file: "/out/a.js", stdout: "a ran" },
+      { file: "/out/b.js", stdout: "b ran" },
+    ],
+  });
+
+  // Test 33: an ESM entry point gets an __esm wrapper when a dependency
+  // require()s it back. The tail must call init_entry() in iife output too.
+  itBundled("cjs/__esm_entry_point_called_in_iife", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry ran");
+        export const foo = 1;
+      `,
+      "/a.js": /* js */ `
+        const entry = require("./entry.js");
+        console.log("a ran", typeof entry);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("init_entry();");
+    },
+    run: {
+      stdout: "a ran object\nentry ran",
+    },
+  });
+
+  // Tests 34 and 35: the parser does not create a wrapper symbol for an ESM
+  // file whose top-level statements can all be hoisted, even when the linker
+  // marks it as wrapped. There is no init_entry to call, and printing the
+  // missing ref used to emit `__INVALID__REF__();` in cjs output.
+  itBundled("cjs/__esm_entry_point_without_wrapper_in_cjs_format", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load() {
+          return import("./a.js");
+        }
+      `,
+      "/a.js": /* js */ `
+        const entry = require("./entry.js");
+        console.log("a ran", typeof entry.load);
+      `,
+      "/test.js": /* js */ `
+        const entry = require("./out.js");
+        console.log("loaded", typeof entry.load);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+    },
+    run: {
+      file: "/test.js",
+      stdout: "loaded function",
+    },
+  });
+
+  itBundled("cjs/__esm_entry_point_without_wrapper_in_iife", {
+    files: {
+      "/entry.js": /* js */ `
+        export function load() {
+          return import("./a.js");
+        }
+      `,
+      "/a.js": /* js */ `
+        const entry = require("./entry.js");
+        console.log("a ran", typeof entry.load);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+    },
+    run: {
+      stdout: "",
+    },
+  });
 });

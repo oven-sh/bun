@@ -443,6 +443,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 3,
                 "lineText": "      export function brokenFunction(name: string {",
+                "lineTextColumnOffset": 0,
               },
               "message": "Expected ")" but found "{"",
               "notes": [],
@@ -455,6 +456,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 5,
                 "lineText": "      }",
+                "lineTextColumnOffset": 0,
               },
               "message": "Unexpected }",
               "notes": [],
@@ -464,6 +466,113 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
         },
       ]
     `);
+
+    // Fix the file so subsequent tests don't fail
+    fs.writeFileSync(
+      join(tempdir, "utils.ts"),
+      `
+      // Fixed utility module
+      export function greet(name: string) {
+        return \`Hello, \${name}!\`;
+      }
+    `,
+    );
+  });
+
+  test("bundleFailed locations on a long line carry the column offset of the lineText window", async () => {
+    // For an error deep inside a long line, `lineText` is only a window of the
+    // line (40 bytes in front of the error, 80 after it) while `column` still
+    // counts from the start of the line. `lineTextColumnOffset` is the width of
+    // the part the window dropped, so the overlay underlines `lineText` at
+    // `column - 1 - lineTextColumnOffset`. Like `column`, it counts UTF-16 code
+    // units (JS string indices), not bytes: 170 bytes of the second line are
+    // dropped but they are only 91 characters.
+    const asciiLine = `let a = 1;/*${"-".repeat(96)}*/let a = 2;/*${"-".repeat(96)}*/`;
+    const unicodeLine = `let b = 1;/*${"é".repeat(96)}*/let b = 2;/*${"é".repeat(96)}*/`;
+    const secondDeclaration = asciiLine.lastIndexOf("let ") + "let ".length; // 114, same on both lines
+
+    const bundleFailedPromise = session.waitForEvent("BunFrontendDevServer.bundleFailed");
+    // The file is already part of the graph, so the watcher rebundles it on its own.
+    fs.writeFileSync(join(tempdir, "utils.ts"), `${asciiLine}\n${unicodeLine}\n`);
+
+    const { buildErrorsPayloadBase64 } = await bundleFailedPromise;
+    const buffer = Uint8Array.from(atob(buildErrorsPayloadBase64), c => c.charCodeAt(0));
+    const reader = new DataViewReader(new DataView(buffer.buffer), 0);
+    const failures: Array<ReturnType<typeof decodeAndAppendServerError>> = [];
+    while (reader.hasMoreData()) {
+      failures.push(decodeAndAppendServerError(reader));
+    }
+
+    expect(failures.map(({ file, messages }) => ({ file, messages }))).toEqual([
+      {
+        file: "utils.ts",
+        messages: [
+          {
+            kind: "bundler",
+            level: 0,
+            message: '"a" has already been declared',
+            location: {
+              line: 1,
+              column: secondDeclaration + 1,
+              length: 1,
+              lineTextColumnOffset: secondDeclaration - 40,
+              lineText: asciiLine.slice(secondDeclaration - 40, secondDeclaration + 80),
+            },
+            notes: [
+              {
+                message: '"a" was originally declared here',
+                location: {
+                  line: 1,
+                  column: 5,
+                  length: 1,
+                  lineTextColumnOffset: 0,
+                  lineText: asciiLine.slice(0, 4 + 80),
+                },
+              },
+            ],
+          },
+          {
+            kind: "bundler",
+            level: 0,
+            message: '"b" has already been declared',
+            location: {
+              line: 2,
+              column: secondDeclaration + 1,
+              length: 1,
+              // The 40 bytes kept in front of `b` are "*/let " plus 17 two-byte
+              // "é", so the window drops "let b = 1;/*" and the other 79 "é".
+              lineTextColumnOffset: "let b = 1;/*".length + 79,
+              lineText: `${"é".repeat(17)}*/let b = 2;/*${"é".repeat(36)}`,
+            },
+            notes: [
+              {
+                message: '"b" was originally declared here',
+                location: {
+                  line: 2,
+                  column: 5,
+                  length: 1,
+                  lineTextColumnOffset: 0,
+                  lineText: `let b = 1;/*${"é".repeat(36)}`,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    // What the overlay relies on: the offset is where `lineText` starts in the
+    // line, in string indices, so the underline lands on the declared name.
+    const [aMessage, bMessage] = failures[0].messages;
+    for (const [name, line, message] of [
+      ["a", asciiLine, aMessage],
+      ["b", unicodeLine, bMessage],
+    ] as const) {
+      for (const { location } of [message, ...message.notes]) {
+        expect(line.indexOf(location.lineText)).toBe(location.lineTextColumnOffset);
+        expect(location.lineText[location.column - 1 - location.lineTextColumnOffset]).toBe(name);
+      }
+    }
 
     // Fix the file so subsequent tests don't fail
     fs.writeFileSync(

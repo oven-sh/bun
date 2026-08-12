@@ -1791,7 +1791,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
+        // SAFETY: `buffer` holds `create()`'s ref on a live writer. `start()`
+        // may free the writer (a write that fails synchronously on Windows),
+        // in which case `on_close_io` has already replaced this stdin slot;
+        // neither `buffer` nor the writer is used after the call.
+        if let Err(err) = unsafe { Subprocess::StaticPipeWriter::start(buffer.as_ptr()) } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);

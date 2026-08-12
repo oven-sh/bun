@@ -972,7 +972,7 @@ pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubp
 // Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
 // because the call is re-entrant: it may fire synchronously inside
 // `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
-// the stack (small JSON fits the pipe buffer → write completes → close).
+// the stack (Windows: the write fails synchronously and the writer closes).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
@@ -1316,8 +1316,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             (*parent).process = Some(process);
         }
 
-        // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
-        // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
+        // Assign the field BEFORE `start()`. On Windows a write that fails
+        // synchronously closes the writer inside `start()`, re-entering
         // `on_close_io` via the `parent` backref; that callback must observe
         // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
         // `is_done()` never returns true and `sleep_until` hangs.
@@ -1344,13 +1344,21 @@ impl<'a> SecurityScanSubprocess<'a> {
         });
 
         let writer_ptr = writer_local.as_ptr();
-        // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
-        // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        let start_result = unsafe { (*writer_ptr).start() };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
-        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        // SAFETY: `writer_local` holds a ref, so the writer stays live across
+        // and after `start()` whatever it does (it may re-enter `on_close_io`
+        // and release its own ref; see `StaticPipeWriter::start`).
+        let start_result = unsafe { StaticPipeWriter::start(writer_ptr) };
+        // Claim start()'s ref through the `started` token, the same token the
+        // writer's own release sites check: `writer_local` covers this frame and
+        // `json_writer` covers the write, so this owner has no use for it.
+        // `start()` leaves the token unset when it already released the ref
+        // itself (it failed, or the write failed synchronously).
         // SAFETY: `writer_local` keeps `*writer_ptr` live.
-        unsafe { (*writer_ptr).started = false };
+        if unsafe { core::mem::replace(&mut (*writer_ptr).started, false) } {
+            // SAFETY: `started` was the token for the outstanding start() ref;
+            // cleared above so no other site releases it. Not the last ref.
+            unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        }
         match start_result {
             Err(e) => {
                 writer_local.deref();

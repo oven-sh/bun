@@ -31,11 +31,24 @@ export class BuildError extends Error {
       out += `  hint: ${this.hint}\n`;
     }
     if (this.cause !== undefined) {
-      const cause = this.cause instanceof Error ? this.cause.message : String(this.cause);
-      out += `  cause: ${cause}\n`;
+      out += `  cause: ${describeError(this.cause)}\n`;
     }
     return out;
   }
+}
+
+/** The whole cause chain on one line: fetch() rejects with a bare "fetch failed" and keeps the socket/DNS/TLS error in `.cause` (or `.cause.errors[]`). */
+export function describeError(err: unknown, depth = 0): string {
+  if (!(err instanceof Error)) return String(err);
+  let out = err.message;
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code !== undefined && !out.includes(code)) out = `${code}: ${out}`;
+  if (depth >= 5) return out;
+  if (err instanceof AggregateError && err.errors.length > 0) {
+    out += ` [${err.errors.map(e => describeError(e, depth + 1)).join("; ")}]`;
+  }
+  if (err.cause !== undefined) out += ` <- ${describeError(err.cause, depth + 1)}`;
+  return out;
 }
 
 /**

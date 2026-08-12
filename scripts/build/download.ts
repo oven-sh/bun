@@ -8,10 +8,9 @@
  *
  * ## Retry behavior
  *
- * Exponential backoff (1s → 2s → 4s → 8s → cap at 30s), 5 attempts. GitHub
- * releases (our main source) are usually reliable, but CI sees transient
- * CDN failures often enough that no-retry means flaky builds. The cap at
- * 30s means worst-case we spend ~60s total before giving up.
+ * Exponential backoff (2s → 4s → 8s → 16s → cap at 30s), 8 attempts, ~2 minutes
+ * in all. A bad github.com edge stays bad for tens of seconds at a time, so the
+ * window has to outlast that rather than paper over one dropped connection.
  *
  * ## Atomic writes
  *
@@ -37,7 +36,7 @@ import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
-import { BuildError, assert } from "./error.ts";
+import { BuildError, assert, describeError } from "./error.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -153,22 +152,32 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
     return;
   }
 
-  const maxAttempts = 5;
+  const maxAttempts = 8;
   let lastError: unknown;
   let permanent = false;
 
   for (let attempt = 1; attempt <= maxAttempts && !permanent; attempt++) {
     if (attempt > 1) {
       const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
+      console.log(`attempt ${attempt - 1} failed: ${describeError(lastError)}`);
       console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms`);
       await new Promise(r => setTimeout(r, backoffMs));
     }
 
     const tmpPath = `${dest}.${process.pid}.partial`;
+    // Redirects are followed by hand so a failure names the hop that failed (github.com vs codeload vs objects.*).
+    let hop = url;
     try {
-      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
+      let res: Response;
+      for (let redirects = 0; ; redirects++) {
+        res = await fetch(hop, { headers: { "User-Agent": "bun-build-system" }, redirect: "manual" });
+        const location = res.headers.get("location");
+        if (res.status < 300 || res.status >= 400 || location === null || redirects >= 10) break;
+        await res.body?.cancel();
+        hop = new URL(location, hop).href;
+      }
       if (!res.ok || res.body === null) {
-        lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
+        lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${hop}`);
         // 4xx is deterministic — a bad URL/missing artifact won't succeed on
         // retry. Only loop on 5xx/network where the CDN may recover.
         permanent = res.status >= 400 && res.status < 500;
@@ -181,7 +190,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       await rename(tmpPath, dest);
       return;
     } catch (err) {
-      lastError = err;
+      lastError = hop === url ? err : new BuildError(`while fetching ${hop}`, { cause: err });
       // Swallow cleanup errors: on Windows, AV/indexer can briefly lock the
       // partial; a failed unlink must not abort the retry loop. Next attempt's
       // createWriteStream truncates anyway.

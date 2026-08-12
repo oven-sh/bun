@@ -3465,12 +3465,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (pushedStream && pushedStream[bunHTTP2Headers] == null) {
       pushedStream[bunHTTP2Headers] = headers;
     }
-    if (onServerStreamCreatedChannel.hasSubscribers) {
-      onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
-    }
-    if (onServerStreamStartChannel.hasSubscribers) {
-      onServerStreamStartChannel.publish({ stream: pushedStream, headers });
-    }
     let pushResult;
     try {
       pushResult = parser.pushPromise(this.id, pushId, wireHeaders, sensitiveNames);
@@ -3478,6 +3472,10 @@ class ServerHttp2Stream extends Http2Stream {
       // pushPromise() throws synchronously on an invalid header block. The pushed stream was
       // already created by getNextStream's streamStart; tear it down without an error so the
       // callback is the only error channel, matching node.
+      // 'created' (never 'start') still fires: it is the only handle on the stream being torn down.
+      if (onServerStreamCreatedChannel.hasSubscribers) {
+        onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
+      }
       if (pushedStream && !pushedStream.destroyed) {
         // The PUSH_PROMISE never reached the wire; sending RST_STREAM for the reserved id would
         // be a protocol violation (the peer sees an idle stream). The skipped reset dispatch is
@@ -3488,6 +3486,13 @@ class ServerHttp2Stream extends Http2Stream {
       }
       process.nextTick(callback, err);
       return;
+    }
+    // After the PUSH_PROMISE is written, as in node: a push made by a subscriber announces second.
+    if (onServerStreamCreatedChannel.hasSubscribers) {
+      onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
+    }
+    if (onServerStreamStartChannel.hasSubscribers) {
+      onServerStreamStartChannel.publish({ stream: pushedStream, headers });
     }
     if (pushResult === -1) {
       // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
@@ -4077,12 +4082,10 @@ function coerceHeaderValue(value) {
   return (type === "object" && value !== null) || type === "function" ? `${value}` : value;
 }
 
-// Coerces the header values in JS before the caller takes a stream id (node: buildNgHeaderString).
-// The native encoder coerces while encoding, so a value whose toString() re-enters request() or
-// pushStream() would take the next id yet reach the wire first (RFC 9113 §5.1.1). Arrays are always
-// copied so native never reads caller-owned storage; the input itself (sentHeaders) is not mutated.
+// Runs before an id is taken: a toString() re-entering request()/pushStream() gets the lower id.
 function toWireHeaders(headers) {
   if ($isArray(headers)) {
+    // Arrays are always copied: native must not read caller-owned storage (accessors, proxies).
     const list: any[] = [];
     for (let i = 0; i < headers.length; i++) {
       list[i] = coerceHeaderValue(headers[i]);
@@ -6422,8 +6425,7 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      // Must precede both the pending queue and getNextStream(): see toWireHeaders. The raw (array)
-      // form keeps duplicate-header interleaving the object form cannot represent.
+      // Must precede both the pending queue and getNextStream(): see toWireHeaders.
       const wireHeaders = toWireHeaders(rawHeadersList !== null ? rawHeadersList : headers);
 
       // A request made before the socket finished connecting, or while the peer's
@@ -6465,9 +6467,6 @@ class ClientHttp2Session extends Http2Session {
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-      if (onClientStreamCreatedChannel.hasSubscribers) {
-        onClientStreamCreatedChannel.publish({ stream: req, headers });
-      }
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
       } else {
@@ -6484,6 +6483,10 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(uncorkNT, req);
       setupRequestEndAndSignal(req, options, signal);
       process.nextTick(emitEventNT, req, "ready");
+      // Last, as in node: a request made by a subscriber from here must take the higher id.
+      if (onClientStreamCreatedChannel.hasSubscribers) {
+        onClientStreamCreatedChannel.publish({ stream: req, headers });
+      }
       return req;
     } catch (e: any) {
       if (connectionsCounted) {

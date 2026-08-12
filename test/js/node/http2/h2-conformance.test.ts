@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import diagnosticsChannel from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -902,11 +903,12 @@ const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral(
 
 // RFC 9113 §5.1.1: every stream an endpoint opens (client HEADERS) or reserves (server
 // PUSH_PROMISE) must carry a higher id than the ones it sent before; nghttp2 peers ignore a frame
-// that opens a lower id, so the request it carried never gets a response. The header values are
-// coerced while the block is built, so a value whose toString() calls request()/pushStream() again
-// is the one place user code can run between allocating an id and writing the frame that carries
-// it: the nested call must take its id and reach the wire first.
-describe("request()/pushStream() coerce header values before taking a stream id (RFC 9113 §5.1.1)", () => {
+// that opens a lower id, so the request it carried never gets a response. User code that runs while
+// request()/pushStream() is working (a header value's toString(), a diagnostics_channel subscriber)
+// may itself call request()/pushStream(), so none of it may run between taking an id and writing
+// the frame that carries it: header values are coerced before the id is taken, and the channels are
+// published after the frame is written.
+describe("request()/pushStream() run no user code between taking a stream id and writing its frame (RFC 9113 §5.1.1)", () => {
   function valueThatReenters(reenter: () => void) {
     let reentered = false;
     return {
@@ -920,22 +922,23 @@ describe("request()/pushStream() coerce header values before taking a stream id 
     };
   }
 
-  async function clientHeadersOrder(makeOuterHeaders: (probe: object) => any, requestBeforeConnect: boolean) {
+  // Drives `issueOuter` against a raw server and reports the HEADERS stream ids in wire order plus
+  // the ids the two requests ended up with. `requestInner` makes the nested request.
+  async function clientHeadersOrder(
+    issueOuter: (client: http2.ClientHttp2Session, requestInner: () => void) => any,
+    requestBeforeConnect = false,
+  ) {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
     try {
       if (!requestBeforeConnect) await once(client, "connect");
       let inner: any;
-      const outer = client.request(
-        makeOuterHeaders(
-          valueThatReenters(() => {
-            inner = client.request({ ":path": "/inner" });
-            inner.on("error", () => {});
-            inner.end();
-          }),
-        ),
-      );
+      const outer = issueOuter(client, () => {
+        inner = client.request({ ":path": "/inner" });
+        inner.on("error", () => {});
+        inner.end();
+      });
       outer.on("error", () => {});
       outer.end();
       await Promise.all([
@@ -958,10 +961,15 @@ describe("request()/pushStream() coerce header values before taking a stream id 
     ["a value in the raw [name, value] array form", probe => [":path", "/outer", "x-probe", probe]],
   ];
 
+  const requestWithReenteringValue =
+    (makeOuterHeaders: (probe: object) => any) => (client: http2.ClientHttp2Session, requestInner: () => void) =>
+      client.request(makeOuterHeaders(valueThatReenters(requestInner)));
+
+  // The nested request is made while the outer one is still being prepared, so it goes first.
   test.each(headerForms)(
     "a request() made while coercing %s is sent first, on the lower id",
     async (_, makeOuterHeaders) => {
-      expect(await clientHeadersOrder(makeOuterHeaders, false)).toEqual({
+      expect(await clientHeadersOrder(requestWithReenteringValue(makeOuterHeaders))).toEqual({
         wireOrder: [1, 3],
         ids: { inner: 1, outer: 3 },
       });
@@ -969,10 +977,33 @@ describe("request()/pushStream() coerce header values before taking a stream id 
   );
 
   test("requests made before the session connected are coerced when made, so the nested one is queued first", async () => {
-    expect(await clientHeadersOrder(headerForms[0][1], true)).toEqual({
+    expect(await clientHeadersOrder(requestWithReenteringValue(headerForms[0][1]), true)).toEqual({
       wireOrder: [1, 3],
       ids: { inner: 1, outer: 3 },
     });
+  });
+
+  // 'http2.client.stream.created' is published once the outer request is on the wire (node does
+  // the same), so a request made by a subscriber comes second.
+  test("a request() made from a 'http2.client.stream.created' subscriber is sent second, on the higher id", async () => {
+    let requestInner: (() => void) | null = null;
+    const subscriber = ({ headers }: any) => {
+      if (headers[":path"] !== "/outer" || requestInner === null) return;
+      const fn = requestInner;
+      requestInner = null;
+      fn();
+    };
+    diagnosticsChannel.subscribe("http2.client.stream.created", subscriber);
+    try {
+      expect(
+        await clientHeadersOrder((client, inner) => {
+          requestInner = inner;
+          return client.request({ ":path": "/outer" });
+        }),
+      ).toEqual({ wireOrder: [1, 3], ids: { outer: 1, inner: 3 } });
+    } finally {
+      diagnosticsChannel.unsubscribe("http2.client.stream.created", subscriber);
+    }
   });
 
   // End to end against a real peer: with the blocks encoded in wire order, both requests are
@@ -1016,28 +1047,26 @@ describe("request()/pushStream() coerce header values before taking a stream id 
     }
   });
 
-  test("a pushStream() made while coercing another push's header value is reserved and announced first", async () => {
+  // Serves one request whose handler runs `issueOuterPush(push)` (where `push(headers, label)`
+  // pushes and records the id that push ended up with) and reports the promised ids a raw client
+  // saw in its PUSH_PROMISE frames, in wire order, plus the recorded ids.
+  async function pushOrder(issueOuterPush: (push: (headers: any, label: "inner" | "outer") => void) => void) {
     const pushServer = http2.createServer();
     pushServer.on("sessionError", () => {});
-    const pushedIds = Promise.withResolvers<{ inner: number; outer: number }>();
+    const pushedIds = Promise.withResolvers<Record<string, number>>();
     pushServer.on("stream", (stream: any) => {
       stream.on("error", () => {});
-      let innerId = 0;
-      const push = (headers: any, onPushed: (id: number) => void) =>
+      const ids: Record<string, number> = {};
+      const push = (headers: any, label: "inner" | "outer") =>
         stream.pushStream(headers, (err: Error | null, pushed: any) => {
           if (err) return pushedIds.reject(err);
           pushed.on("error", () => {});
           pushed.respond({ ":status": 200 });
           pushed.end();
-          onPushed(pushed.id);
+          ids[label] = pushed.id;
+          if ("inner" in ids && "outer" in ids) pushedIds.resolve(ids);
         });
-      push(
-        {
-          ":path": "/outer",
-          "x-probe": valueThatReenters(() => push({ ":path": "/inner" }, id => (innerId = id))),
-        },
-        outerId => pushedIds.resolve({ inner: innerId, outer: outerId }),
-      );
+      issueOuterPush(push);
       stream.respond({ ":status": 200 });
       stream.end();
     });
@@ -1054,13 +1083,45 @@ describe("request()/pushStream() coerce header values before taking a stream id 
         c.waitFor(f => f.type === FrameType.PUSH_PROMISE && promisedId(f) === 2),
         c.waitFor(f => f.type === FrameType.PUSH_PROMISE && promisedId(f) === 4),
       ]);
-      expect({
+      return {
         wireOrder: c.frames.filter(f => f.type === FrameType.PUSH_PROMISE).map(promisedId),
         ids: await pushedIds.promise,
-      }).toEqual({ wireOrder: [2, 4], ids: { inner: 2, outer: 4 } });
+      };
     } finally {
       c.destroy();
       pushServer.close();
+    }
+  }
+
+  test("a pushStream() made while coercing another push's header value is reserved and announced first", async () => {
+    expect(
+      await pushOrder(push => {
+        const probe = valueThatReenters(() => push({ ":path": "/inner" }, "inner"));
+        push({ ":path": "/outer", "x-probe": probe }, "outer");
+      }),
+    ).toEqual({ wireOrder: [2, 4], ids: { inner: 2, outer: 4 } });
+  });
+
+  // 'http2.server.stream.created' for a pushed stream is published once its PUSH_PROMISE is on the
+  // wire (node does the same), so a push made by a subscriber comes second.
+  test("a pushStream() made from a 'http2.server.stream.created' subscriber is announced second, on the higher id", async () => {
+    let pushInner: (() => void) | null = null;
+    const subscriber = ({ headers }: any) => {
+      if (headers[":path"] !== "/outer" || pushInner === null) return;
+      const fn = pushInner;
+      pushInner = null;
+      fn();
+    };
+    diagnosticsChannel.subscribe("http2.server.stream.created", subscriber);
+    try {
+      expect(
+        await pushOrder(push => {
+          pushInner = () => push({ ":path": "/inner" }, "inner");
+          push({ ":path": "/outer" }, "outer");
+        }),
+      ).toEqual({ wireOrder: [2, 4], ids: { outer: 2, inner: 4 } });
+    } finally {
+      diagnosticsChannel.unsubscribe("http2.server.stream.created", subscriber);
     }
   });
 

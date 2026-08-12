@@ -56,6 +56,7 @@ public:
     void updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
+    const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
     size_t memoryCost() const;
 
     class Iterator {
@@ -71,7 +72,6 @@ public:
     Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
-    const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
     URLSearchParams(const String&, DOMURL*);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
     void updateURL();

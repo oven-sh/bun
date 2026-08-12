@@ -281,6 +281,48 @@ describe("expect()", () => {
       expect(new URLSearchParams("a=1&b=2")).not.toEqual(new URLSearchParams("a=1&"));
     });
 
+    test("URLSearchParams with a repeated name", () => {
+      expect(new URLSearchParams("a=1&a=2")).toEqual(new URLSearchParams("a=1&a=2"));
+      expect(new URLSearchParams("a=1&a=2")).toStrictEqual(new URLSearchParams("a=1&a=2"));
+      expect(new URLSearchParams("a=1&b=2&a=3")).toEqual(new URLSearchParams("a=1&b=2&a=3"));
+      expect(new URLSearchParams("a=1&a")).toEqual(new URLSearchParams("a=1&a="));
+
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=1&a=3"));
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=2&a=1"));
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=1"));
+      // Same size and every get() agrees, but the entries differ.
+      expect(new URLSearchParams("a=1&a=1&b=2")).not.toEqual(new URLSearchParams("a=1&b=2&b=2"));
+      expect(new URLSearchParams("a=1&a=1&b=2")).not.toStrictEqual(new URLSearchParams("a=1&b=2&b=2"));
+    });
+
+    test("URLSearchParams entries are ordered", () => {
+      expect(new URLSearchParams("b=2&a=1")).not.toEqual(new URLSearchParams("a=1&b=2"));
+      expect(new URLSearchParams("b=2&a=1")).not.toStrictEqual(new URLSearchParams("a=1&b=2"));
+
+      const sorted = new URLSearchParams("b=2&a=1");
+      sorted.sort();
+      expect(sorted).toEqual(new URLSearchParams("a=1&b=2"));
+    });
+
+    test("URLSearchParams built through different paths", () => {
+      const appended = new URLSearchParams();
+      appended.append("a", "1");
+      appended.append("a", "2");
+      expect(appended).toEqual(new URLSearchParams("a=1&a=2"));
+      expect(appended).toEqual(
+        new URLSearchParams([
+          ["a", "1"],
+          ["a", "2"],
+        ]),
+      );
+      expect(new URL("https://example.com/?a=1&a=2").searchParams).toEqual(new URLSearchParams("a=1&a=2"));
+
+      const url = new URL("https://example.com/?a=1");
+      const searchParams = url.searchParams;
+      url.search = "?a=1&a=2";
+      expect(searchParams).toEqual(new URLSearchParams("a=1&a=2"));
+    });
+
     if (isBun) {
       test("URL", () => {
         expect(new URL("https://example.com")).toEqual(new URL("https://example.com"));

@@ -1,0 +1,35 @@
+--- a/src/liblsquic/lsquic_cubic.c
++++ b/src/liblsquic/lsquic_cubic.c
+@@ -204,11 +204,14 @@ lsquic_cubic_loss (void *cong_ctl)
+     struct lsquic_cubic *const cubic = cong_ctl;
+     LSQ_DEBUG("%s(cubic)", __func__);
+     cubic->cu_epoch_start = 0;
++    /* bun: the window fields are unsigned long, which is 32 bits on Windows
++     * (LLP64), so widen before multiplying; see lsquic_cubic_pacing_rate. */
+     if (FAST_CONVERGENCE && cubic->cu_cwnd < cubic->cu_last_max_cwnd)
+-        cubic->cu_last_max_cwnd = cubic->cu_cwnd * TWO_MINUS_BETA_OVER_TWO / 1024;
++        cubic->cu_last_max_cwnd = (uint64_t) cubic->cu_cwnd
++                                        * TWO_MINUS_BETA_OVER_TWO / 1024;
+     else
+         cubic->cu_last_max_cwnd = cubic->cu_cwnd;
+-    cubic->cu_cwnd = cubic->cu_cwnd * ONE_MINUS_BETA / 1024;
++    cubic->cu_cwnd = (uint64_t) cubic->cu_cwnd * ONE_MINUS_BETA / 1024;
+     cubic->cu_tcp_cwnd = cubic->cu_cwnd;
+     cubic->cu_ssthresh = cubic->cu_cwnd;
+     LSQ_INFO("loss detected, last_max_cwnd: %lu, cwnd: %lu",
+@@ -266,7 +269,14 @@ lsquic_cubic_pacing_rate (void *cong_ctl, int in_recovery)
+     srtt = lsquic_rtt_stats_get_srtt(cubic->cu_rtt_stats);
+     if (srtt == 0)
+         srtt = 50000;
+-    bandwidth = cubic->cu_cwnd * 1000000 / srtt;
++    /* bun: cu_cwnd is unsigned long, 32 bits on Windows (LLP64), so this
++     * product wrapped for every window above 4 KB and the pacing rate came
++     * out as (cwnd * 10^6 mod 2^32) / srtt: a Cubic connection on Windows
++     * was paced at a more or less random rate, usually a small fraction of
++     * cwnd/srtt.  Reported upstream as a Windows throughput problem that went
++     * away with pacing disabled or BBR selected:
++     * https://github.com/litespeedtech/lsquic/issues/391 */
++    bandwidth = (uint64_t) cubic->cu_cwnd * 1000000 / srtt;
+     if (in_slow_start(cubic))
+         pacing_rate = bandwidth * 2;
+     else if (in_recovery)

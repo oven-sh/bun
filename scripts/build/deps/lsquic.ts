@@ -128,6 +128,18 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // Cubic keeps its windows in unsigned long, 32 bits on Windows, and
+    // multiplied them unwidened: the pacing rate (cwnd * 10^6 / srtt) wrapped
+    // for every window, so Cubic connections on Windows were paced at a
+    // garbage rate (litespeedtech/lsquic#391). quic.c pins both engines to
+    // Cubic, so every HTTP/3 connection on Windows would hit it.
+    "patches/lsquic/cubic-llp64-overflow.patch",
+    // The pacer assumes it is re-ticked about when it asked to be (~1 ms);
+    // Bun's engines are ticked from the event loop, so on a busy loop a tick
+    // arrives long after that with everything acked, and the pacer restarted
+    // from scratch (10 packets + 1 ms worth) instead of sending what the
+    // connection was owed. Let such a tick make up for the time it was held.
+    "patches/lsquic/pacer-late-tick-credit.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

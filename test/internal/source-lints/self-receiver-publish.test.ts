@@ -9,13 +9,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 //   ConcurrentTask::create(Task::init(std::ptr::from_mut(self)))
 //   ConcurrentTask::create_from(self)            // `&mut Self` coerces to `*mut Self`
+//   ManagedTask::new(&mut *self, Self::run)      // so does a reborrow
 //   let this = std::ptr::from_mut(self); ... Task::init(this)
 //   let p: *mut Self = self;             ... ConcurrentTask::create_from(p)
-//   ThreadSafeFunction::schedule_dispatch(self)  // a helper that posts its argument
+//   ThreadSafeFunction::schedule_dispatch(self)  // a function that posts its argument
 //
-// as the argument of `Task::init(..)` / `..::create_from(..)` /
-// `..::from_callback(..)`, or of one of the helpers in `POSTING_HELPERS` whose
-// contract is to post the pointer they are given, is banned.
+// as the argument of one of the `POSTING_CALLEES` below (the task constructors
+// that take the pointer a task will carry, and the functions whose contract is
+// to post the pointer they are given) is banned.
 //
 // The post is the hand-over, and it goes wrong in two ways. The consumer
 // (another thread, for a `ConcurrentTask`) starts using the object the moment
@@ -50,21 +51,28 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // src/runtime/napi/napi_body.rs, `async_job_run` in
 // src/runtime/node/node_zlib_binding.rs, `post_job` in src/jsc/VmHandle.rs.
 //
-// Scope: the spellings above, with `self` as the receiver and the three task
-// constructors or a listed helper as the callee. The conversion of a posting
-// site moves the post behind a `this: *mut Self` function, and `&mut Self`
-// coerces to `*mut Self` silently, so a `&mut self` caller that passes `self`
-// into that function recreates the bug without any of the spellings above
-// appearing at the post itself: that is what `POSTING_HELPERS` is for, and a
-// function that takes a pointer in order to post it has to be added there when
-// it is introduced (its `SAFETY` contract should say the pointer must be the
-// allocation's own, which is the other half of the guard). A pointer produced
-// by a helper (`self.as_ptr()`), a `NonNull::from(self)` binding posted through
-// `.as_ptr()`, the intrusive `ConcurrentTask::from(..)` form, and reference
-// *parameters* other than `self` (`fn f(load: &mut Load)` posting
-// `from_mut(load)`) are the same hazard but outside this lint. Siblings:
-// self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
-// frozen-nonnull-reborrow.test.ts.
+// Scope: the spellings above, with `self` as the receiver and one of
+// `POSTING_CALLEES` as the callee. The conversion of a posting site moves the
+// post behind a `this: *mut Self` function, and `&mut Self` coerces to
+// `*mut Self` silently, so a `&mut self` caller that passes `self` into that
+// function recreates the bug without any of the spellings above appearing at
+// the post itself: that is why such functions are callees here too, and one
+// that is introduced later has to be added (its `SAFETY` contract should say
+// the pointer must be the allocation's own, which is the other half of the
+// guard). Shapes the patterns cannot see, each the same hazard and tracked on
+// its own: a pointer produced by a helper (`StatWatcher::post_to_js_thread`
+// posting `self.as_ctx_ptr()`, #37857); the intrusive `ConcurrentTask::from(..)`
+// form (`napi_async_work::run` / `post_to_js_thread`, #37750); a receiver
+// pointer handed to a posting method that is not a listed callee
+// (`TranspilerJob::run` -> `dispatch_to_main_thread`, #37778); a `&Self` made
+// from the pointer and still live across the post (`FetchTasklet::
+// deref_from_thread`, tracked separately); and reference *parameters* other
+// than `self` (`fn f(load: &mut Load)` posting `from_mut(load)`). The
+// `SELF_AS_POINTER` list below mirrors self-receiver-reclaim.test.ts; once the
+// in-flight lints of this family (#37703, #37685, #37693, #37705, #37750,
+// #37778) have landed, the list and its fixtures should be shared rather than
+// copied again. Siblings: self-receiver-reclaim.test.ts,
+// fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -82,34 +90,48 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// Functions whose contract is to post the pointer they are given (see the
-// header): `post_job` in src/jsc/VmHandle.rs, `ThreadSafeFunction::
-// schedule_dispatch` in src/runtime/napi/napi_body.rs. Qualified or not.
-const POSTING_HELPERS = [String.raw`(?:[\w:]+::)?post_job`, String.raw`[\w:]+::schedule_dispatch`];
+// The callees: every constructor in src/event_loop that takes the pointer a
+// task will carry (`Task::init`, `ConcurrentTask::create_from` /
+// `from_callback`, `AnyTaskWithExtraContext::init` / `from_callback_auto_deinit`,
+// `ManagedTask::new` / `new_owned`), plus the functions elsewhere whose contract
+// is to post the pointer they are given (`post_job` in src/jsc/VmHandle.rs,
+// `ThreadSafeFunction::schedule_dispatch` in src/runtime/napi/napi_body.rs).
+// A new one of either kind is added here when it is introduced. The `\b` keeps
+// `NapiFinalizerTask::init(self)` (a constructor that copies out of `self`) out
+// of the `Task::init` entry; the entries that require a path in front are the
+// ones whose bare name is also used as a method elsewhere.
+const POSTING_CALLEES = [
+  String.raw`Task::init`,
+  String.raw`[\w:]+::create_from`,
+  String.raw`[\w:]+::from_callback(?:_auto_deinit)?`,
+  String.raw`(?:[\w:]+::)?AnyTaskWithExtraContext::init`,
+  String.raw`(?:[\w:]+::)?ManagedTask::new(?:_owned)?`,
+  String.raw`(?:[\w:]+::)?post_job`,
+  String.raw`[\w:]+::schedule_dispatch`,
+];
 
-// `Task::init(`, `ConcurrentTask::create_from(`, `ConcurrentTask::from_callback(`,
-// however the path in front is spelled, optionally turbofished, or one of the
-// helpers above. The `\b` before `Task` keeps `NapiFinalizerTask::init(self)` (a
-// constructor that copies out of `self`) out; `create_from` / `from_callback` /
-// `schedule_dispatch` require a path in front so a method call of the same name
-// does not count. `\s*` after the paren so a rustfmt-wrapped argument still
-// matches.
-const POST =
-  String.raw`\b(?:Task::init|[\w:]+::create_from|[\w:]+::from_callback|` +
-  POSTING_HELPERS.join("|") +
-  String.raw`)(?:::<[^>]*>)?\(\s*`;
+// Optionally turbofished; `\s*` after the paren so a rustfmt-wrapped argument
+// still matches.
+const POST = String.raw`\b(?:` + POSTING_CALLEES.join("|") + String.raw`)(?:::<[^>]*>)?\(\s*`;
 
-// The ways of spelling "`self`, as a raw pointer" as the first argument. Each
-// is anchored at its front only, so a trailing `.cast_mut()` / `.as_ptr()`
-// still matches; the bare form needs the `,` / `)` so `self.as_ptr()` (a
-// helper, out of scope) does not. `(?!\s*\.)` after the `&raw` form keeps
-// `&raw mut *self.field` (a field the receiver owns) out.
+// `self` reborrowed in place, which every spelling below may contain: all the
+// callees take `*mut T`, so `&mut *self` coerces exactly like bare `self`.
+const REBORROWED_SELF = String.raw`(?:&\s*mut\s+\*\s*)?self`;
+
+// The ways of spelling "`self`, as a raw pointer" as the first argument: the
+// spellings self-receiver-reclaim.test.ts bans, here also allowing a reborrow
+// inside `from_mut(..)` / `NonNull::from(..)` and a `,` after the bare form,
+// since these callees take further arguments. Each is anchored at its front
+// only, so a trailing `.cast_mut()` / `.as_ptr()` still matches; the bare form
+// needs the `,` / `)` so `self.as_ptr()` (a helper, out of scope) does not, and
+// `(?!\s*\.)` after the `&` forms keeps `&mut *self.field` (a field the
+// receiver owns) out.
 const SELF_AS_POINTER = [
   String.raw`self\s*[,)]`,
-  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-  String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
+  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*${REBORROWED_SELF}\s*\)`,
+  String.raw`(?:[\w:]+::)?NonNull::from\(\s*${REBORROWED_SELF}\s*\)`,
   String.raw`self\s+as\s+\*(?:mut|const)\b`,
-  String.raw`&raw\s+(?:mut|const)\s+\*\s*self\b(?!\s*\.)`,
+  String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
   String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
 ].join("|");
 
@@ -118,24 +140,25 @@ const DIRECT = new RegExp(`${POST}(?:${SELF_AS_POINTER})`, "g");
 // A local bound to such a pointer: `let this = ptr::from_mut(self);`,
 // `let p = self as *mut Self;`, `let p: *mut Self = self;` (the coercion
 // spelling needs the annotation; without it `let p = self;` is just another
-// reference). The binding is then looked for as a post argument further down
-// the same function, which ends at the next `fn` item (a closure inside it is
-// the same function for this purpose).
+// reference), or to a plain reborrow `let p = &mut *self;`, which coerces at
+// the call like bare `self` does. The binding is then looked for as a post
+// argument further down the same function, which ends at the next `fn` item (a
+// closure inside it is the same function for this purpose).
 const BINDING_HEAD = String.raw`let\s+(?:mut\s+)?(\w+)\s*`;
 const SELF_POINTER_BINDINGS = [
   new RegExp(
     BINDING_HEAD +
       String.raw`(?::[^=;]*)?=\s*(?:` +
       [
-        String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)(?:\s*\.cast_mut\(\))?`,
+        String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*${REBORROWED_SELF}\s*\)(?:\s*\.cast_mut\(\))?`,
         String.raw`self\s+as\s+\*(?:mut|const)\b[^;]*`,
-        String.raw`&raw\s+(?:mut|const)\s+\*\s*self\b`,
+        String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
         String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
       ].join("|") +
       String.raw`)\s*;`,
     "g",
   ),
-  new RegExp(BINDING_HEAD + String.raw`:\s*\*(?:mut|const)\b[^=;]*=\s*self\s*;`, "g"),
+  new RegExp(BINDING_HEAD + String.raw`:\s*\*(?:mut|const)\b[^=;]*=\s*${REBORROWED_SELF}\s*;`, "g"),
 ];
 const FN_ITEM = /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s/m;
 
@@ -145,8 +168,10 @@ function postOfBinding(name: string): RegExp {
 
 /** Byte offsets (into `stripped`) of every banned post in one file. */
 function findPosts(stripped: string): number[] {
-  const hits: number[] = [];
-  for (const m of stripped.matchAll(DIRECT)) hits.push(m.index);
+  // A set: `let p: *mut Self = &mut *self;` matches both binding patterns, and
+  // one post is one hit.
+  const hits = new Set<number>();
+  for (const m of stripped.matchAll(DIRECT)) hits.add(m.index);
   for (const pattern of SELF_POINTER_BINDINGS) {
     for (const binding of stripped.matchAll(pattern)) {
       const start = binding.index + binding[0].length;
@@ -154,10 +179,10 @@ function findPosts(stripped: string): number[] {
       const fnEnd = rest.search(FN_ITEM);
       const body = fnEnd === -1 ? rest : rest.slice(0, fnEnd);
       const post = body.search(postOfBinding(binding[1]));
-      if (post !== -1) hits.push(start + post);
+      if (post !== -1) hits.add(start + post);
     }
   }
-  return hits.sort((a, b) => a - b);
+  return [...hits].sort((a, b) => a - b);
 }
 
 function lineOf(text: string, offset: number): number {
@@ -167,7 +192,8 @@ function lineOf(text: string, offset: number): number {
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Each has been read and each has its conversion in flight or tied to
 // a conversion of its callers. Lower an entry when you convert one; do not
-// add entries.
+// add entries. The counts are of what the patterns above see; the escapes the
+// header lists are not in them.
 const ALLOW: Record<string, number> = {
   // `Resolve::dispatch` / `Load::dispatch` (`&mut self`) post the arena-owned
   // plugin request to the JS thread, which writes its `value` while
@@ -193,6 +219,13 @@ const ALLOW: Record<string, number> = {
   // (`dispatch_one` and what it calls), tracked separately; the addon-thread
   // side is converted.
   "src/runtime/napi/napi_body.rs": 1,
+  // `NewServer::schedule_deinit` (`&mut self`) enqueues `ManagedTask::new(
+  // from_mut(self), deinit)` on its own loop; `deinit` reclaims the allocation
+  // through that pointer (its contract asks for the owning pointer), while
+  // `deinit_if_we_can`, the caller, still writes through its receiver after the
+  // post. Same shape as the napi entry above: the pointer to post is the one
+  // the callers of `deinit_if_we_can` hold; tracked separately.
+  "src/runtime/server/mod.rs": 1,
 };
 
 const counts: Record<string, number> = {};
@@ -257,6 +290,19 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let self_ptr: *mut Self = self;\nunsafe { Self::schedule_dispatch(self_ptr) };",
     "unsafe { bun_jsc::post_job(std::ptr::from_mut(self)) };",
     "unsafe { post_job::<Self>(self as *mut Self) };",
+    // The other pointer-taking task constructors (`NewServer::schedule_deinit`
+    // is the `ManagedTask::new` shape).
+    "enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(\n    std::ptr::from_mut::<Self>(self),\n    |this| Self::deinit(this),\n));",
+    "ManagedTask::new_owned(self, Self::run)",
+    "AnyTaskWithExtraContext::from_callback_auto_deinit(self, Self::run_mini)",
+    "bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::init(self, Self::run)",
+    // A reborrow coerces exactly like bare `self`.
+    "let ct = ConcurrentTask::create_from(&mut *self);",
+    "unsafe { Self::schedule_dispatch(&mut *self) };",
+    "Task::init(std::ptr::from_mut(&mut *self))",
+    "Task::init(NonNull::from(&mut *self).as_ptr())",
+    "let p = &mut *self;\nlet ct = ConcurrentTask::create_from(p);",
+    "let p: *mut Self = &mut *self;\nunsafe { Self::schedule_dispatch(p) };",
   ];
   const allowed = [
     // Posting the pointer the caller handed us is the intended shape.
@@ -269,13 +315,20 @@ test("the patterns match the banned spellings and nothing else", () => {
     // A method call means the callee takes a receiver; its own body is where
     // the post (and the lint hit) is.
     "self.schedule_dispatch();",
-    // An owned box handed over whole (`NapiFinalizerTask::schedule(self: Box<Self>)`).
+    // An owned box handed over whole (`NapiFinalizerTask::schedule(self: Box<Self>)`,
+    // valkey's `ManagedTask::new(into_raw(self), ..)`).
     "let this = bun_core::heap::into_raw(self);\nlet ct = ConcurrentTask::create(Task::init(this));",
+    "bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw)",
+    // The other constructors with the pointer the caller handed us.
+    "jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased)",
+    "AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, ctx| run(p, ctx))",
     // Something the receiver owns or points at, or a helper's pointer, is
     // out of scope (see the header).
     "ConcurrentTask::create(Task::init(self.as_ctx_ptr()))",
     "Task::init(core::ptr::from_ref(&self.run_pending_later).cast_mut())",
     "Task::init(&raw mut *self.inner)",
+    "Task::init(&mut *self.inner)",
+    "ManagedTask::new(std::ptr::from_mut(&mut *self.inner), run)",
     "Task::init(self.task)",
     "ConcurrentTask::from_callback(std::ptr::from_mut(load), on_load_from_js_loop_raw)",
     // A constructor whose name merely ends in `Task`, and a method call.

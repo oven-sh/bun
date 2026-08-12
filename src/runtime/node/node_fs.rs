@@ -648,9 +648,6 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
     }
 
-    /// Runs when the completion (or `release_unrun`) drops the reclaimed box, on
-    /// the JS thread; the promise handle and the protected arguments are released
-    /// by their own field drops.
     #[cfg(windows)]
     impl<R, A: Unprotect, const F: NodeFSFunctionEnum> Drop for UVFSRequest<R, A, F> {
         fn drop(&mut self) {
@@ -691,10 +688,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
             });
-            // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed (`heap::take`) by the task-queue arm that runs
-            // `run_from_js_thread`, or by `release_unrun`. `heap::release` names that
-            // hand-off — it is `Box::leak` under the hood.
+            // Reclaimed by the task-queue arm (`run_from_js_thread`) or `release_unrun`.
             let task: &mut Self = bun_core::heap::release(task);
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
@@ -952,15 +946,11 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        /// Settles the promise. The task-queue arm reclaims the box `create()` leaked
-        /// and passes it in; dropping it on the way out (every return path) releases
-        /// the keep-alive and frees the request. Owning the box, rather than taking
-        /// `&mut self`, is what makes freeing it here sound: a reference argument is
-        /// protected for the whole call and must not be deallocated through.
+        /// Settles the promise; dropping the box on the way out releases the
+        /// keep-alive and frees the request.
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
         pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
-            // Move `result` out so the `global_object()` borrow below can coexist with
-            // the `&mut` conversion; the sentinel left behind drops with the box.
+            // Moved out: `fs_to_js` needs `&mut` while `global_object()` borrows `self`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             let global_object = self.global_object();
             let success = result.is_ok();
@@ -1398,9 +1388,6 @@ mod _async_tasks {
         pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
-    /// Runs on the owning thread when the completion (or `release_unrun`) drops
-    /// the box `schedule_new` leaked. `Drop for ThreadSafe<args::Cp>` releases the
-    /// `protect()` taken by `to_thread_safe()` when `src`/`dest` are Buffers.
     impl<const IS_SHELL: bool> Drop for NewAsyncCpTask<IS_SHELL> {
         fn drop(&mut self) {
             if !IS_SHELL {
@@ -1469,9 +1456,7 @@ mod _async_tasks {
         }
 
         fn run_owned(self: Box<Self>) {
-            // `ParentRef` preserves the `Box::leak` mutable provenance so the
-            // completion `on_subtask_done` enqueues (via `as_mut_ptr()`) may free
-            // the parent once the refcount reaches zero.
+            // `ParentRef` keeps the `Box::leak` provenance the completion frees with.
             let cp_task = self.cp_task;
             // Shared borrow only — other workpool threads (and the directory-scan
             // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
@@ -1661,10 +1646,8 @@ mod _async_tasks {
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
         /// and destroys `this`.
         ///
-        /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-        /// mutable provenance from the original `Box::leak`; the JS-thread
-        /// callback later frees the allocation through it, which would be UB if
-        /// the pointer were derived from a shared reference.
+        /// Takes `*mut Self` (not `&self`): the completion frees the box through
+        /// this pointer, so it must keep the `Box::leak` provenance.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -1683,9 +1666,7 @@ mod _async_tasks {
                 this_ref.result.set(Ok(()));
             }
 
-            // Count reached zero ⇒ exclusive access. `this` carries mutable
-            // provenance from `Box::leak`, so the enqueued `run_from_js_thread`
-            // may free `*this` on the JS thread.
+            // Count reached zero ⇒ exclusive access; the completion frees `*this`.
             let poster = this_ref.poster.clone();
             if poster.is_js() {
                 let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
@@ -1697,10 +1678,8 @@ mod _async_tasks {
                 let at =
                     AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
                         debug_assert!(IS_SHELL, "only the shell posts cp tasks to a mini loop");
-                        // SAFETY: subtask count hit zero ⇒ this is the only pointer left to
-                        // the box `schedule_new` leaked; reclaim it. The shell
-                        // specialization settles no promise, so there is no termination to
-                        // report: the result is always `Ok`.
+                        // SAFETY: count hit zero ⇒ sole pointer to the box `schedule_new` leaked.
+                        // The shell path settles no promise, so the result is always `Ok`.
                         let _ = unsafe { bun_core::heap::take(p) }.run_from_js_thread();
                     });
                 // `from_callback_auto_deinit` heap-allocates; never null.
@@ -1710,13 +1689,9 @@ mod _async_tasks {
             poster.embedded_work_finished();
         }
 
-        /// Delivers the result: settles the promise, or hands it to the shell's
-        /// `ShellCpTask`. The completion `on_subtask_done` posted reclaims the box
-        /// `schedule_new` leaked and passes it in; dropping it on the way out (every
-        /// return path) releases the keep-alive and frees the task. Owning the box,
-        /// rather than taking `&mut self`, is what makes freeing it here sound: a
-        /// reference argument is protected for the whole call and must not be
-        /// deallocated through.
+        /// Settles the promise (or, for the shell, continues the `ShellCpTask`);
+        /// dropping the box on the way out releases the keep-alive and
+        /// frees the task.
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
         pub(crate) fn run_from_js_thread(self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
             // `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.

@@ -301,8 +301,8 @@ pub(crate) fn run_task(
             .run();
         }
         task_tag::AsyncCpTask => {
-            // SAFETY: leaked by `schedule_new`; posted by `on_subtask_done` with the
-            // count at zero, so this is the last pointer to it and the arm consumes it.
+            // SAFETY: boxed by `schedule_new`; posted once by `on_subtask_done` with
+            // the count at zero; the arm consumes it.
             unsafe { bun_core::heap::take(cast_ptr!(crate::node::fs::AsyncCpTask)) }
                 .run_from_js_thread()?;
         }
@@ -430,9 +430,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    // SAFETY: §Dispatch — tag identifies the pointee, the box
-                    // `UVFSRequest::create` leaked, enqueued exactly once on
-                    // completion; the arm consumes it.
+                    // SAFETY: §Dispatch — tag identifies the pointee: the box
+                    // `UVFSRequest::create` leaked, enqueued once; the arm consumes it.
                     $(task_tag::$tag => unsafe { bun_core::heap::take(cast_ptr!(fs_async::$ty)) }
                         .run_from_js_thread()?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.

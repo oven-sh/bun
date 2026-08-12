@@ -862,6 +862,10 @@ pub trait PathLikeExt {
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
+    /// The returned path (NUL included) always lives in `buf`, unlike
+    /// [`slice_z`](Self::slice_z), which hands back a slice of the operand
+    /// itself when it can. `cp` / `cpSync` keep only the length and go on
+    /// appending directory entries to `buf` while they walk the tree.
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
@@ -1038,7 +1042,10 @@ impl PathLikeExt for PathLike {
         }
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            // `FORCE`: without it an empty operand (`fs.cp(dir, "")`) comes
+            // back as the static `ZStr::EMPTY` and `buf` is never written,
+            // yet the callers go on reading their path out of `buf`.
+            Ok(self.slice_z_with_force_copy::<true>(buf))
         }
     }
 

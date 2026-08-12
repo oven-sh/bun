@@ -1,5 +1,7 @@
 use core::ptr::NonNull;
 
+use bun_ptr::OwnedRef;
+
 use super::WebSocketProxyTunnel;
 
 /// WebSocketProxy encapsulates proxy state for WebSocket connections through HTTP/HTTPS proxies.
@@ -13,9 +15,9 @@ pub(crate) struct WebSocketProxy {
     target_is_https: bool,
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
-    /// TLS tunnel for wss:// through HTTP proxy
-    // Holds one intrusive ref; Drop calls shutdown()+deref().
-    tunnel: Option<NonNull<WebSocketProxyTunnel>>,
+    /// TLS tunnel for wss:// through HTTP proxy; `Drop` shuts it down before
+    /// the ref is released.
+    tunnel: Option<OwnedRef<WebSocketProxyTunnel>>,
 }
 
 impl WebSocketProxy {
@@ -46,12 +48,13 @@ impl WebSocketProxy {
 
     /// Get the TLS tunnel for wss:// through HTTP proxy
     pub(crate) fn get_tunnel(&self) -> Option<NonNull<WebSocketProxyTunnel>> {
-        self.tunnel
+        self.tunnel.as_ref().map(OwnedRef::as_non_null)
     }
 
-    /// Set the TLS tunnel
-    pub(crate) fn set_tunnel(&mut self, new_tunnel: Option<NonNull<WebSocketProxyTunnel>>) {
-        self.tunnel = new_tunnel;
+    /// Store the TLS tunnel; the proxy now holds the ref until it is dropped.
+    pub(crate) fn set_tunnel(&mut self, new_tunnel: OwnedRef<WebSocketProxyTunnel>) {
+        debug_assert!(self.tunnel.is_none(), "a connection creates one tunnel");
+        self.tunnel = Some(new_tunnel);
     }
 
     /// Take ownership of the WebSocket request buffer, clearing the internal reference.
@@ -66,12 +69,9 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            // SAFETY: tunnel is a live intrusive-refcounted pointer; we hold one ref
-            // until deref() below releases it.
-            unsafe {
-                WebSocketProxyTunnel::shutdown(tunnel.as_ptr());
-                WebSocketProxyTunnel::deref(tunnel.as_ptr());
-            }
+            // SAFETY: `tunnel` holds a ref, so the tunnel is live.
+            unsafe { WebSocketProxyTunnel::shutdown(tunnel.as_ptr()) };
+            // `tunnel` drops here and releases the ref.
         }
     }
 }

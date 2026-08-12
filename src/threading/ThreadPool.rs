@@ -1150,12 +1150,9 @@ impl Thread {
                     bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
-            // This also initializes the worker's `StackCheck` bounds. Every
-            // pool runs recursive parsers that depend on them (the bundler's
-            // JS parser, the runtime transpiler on `WorkPool`, npm manifest
-            // JSON on the install pool); with the bounds left unset,
-            // `is_safe_to_recurse()` is always true and deep input overflows
-            // the worker stack instead of reporting an error.
+            // Also initializes this thread's `StackCheck` bounds. Skipping that
+            // saves nothing (`main()` already ran the same code, so it is
+            // resident) and would leave any parser a task runs here unguarded.
             Output::Source::configure_named_thread(named);
         }
 

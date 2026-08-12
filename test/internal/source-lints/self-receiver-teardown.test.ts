@@ -11,12 +11,13 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // in the epilogue, while the receiver argument is still live) are banned.
 //
 // `destroy(this: *mut Self)` / `deinit(this: *mut Self)` / `finalize(this: *mut
-// Self)` are this tree's names for "reclaim the Box" (`heap::take` /
-// `heap::destroy` inside). Under Stacked and Tree Borrows a reference argument
-// is protected for the whole call, and deallocating protected memory is UB
-// regardless of whether the reference is used again afterwards ("deallocating
-// while item is strongly protected" / "the strongly protected tag disallows
-// deallocations" under Miri, the model `bun run rust:miri` checks; the
+// Self)` are the names this tree's "reclaim the Box" routines (`heap::take` /
+// `heap::destroy` inside) usually go by. Under Stacked and Tree Borrows a
+// reference argument is protected for the whole call, and deallocating
+// protected memory is UB regardless of whether the reference is used again
+// afterwards (Miri reports "deallocating while item is strongly protected"
+// under Stacked Borrows and "the strongly protected tag disallows
+// deallocations" under Tree Borrows, the model `bun run rust:miri` uses; the
 // protector is the model's counterpart of the `dereferenceable` attribute
 // rustc puts on reference arguments, so this is not only a Miri concern). The
 // function that frees has to take the allocation pointer (`this: *mut Self`)
@@ -28,17 +29,23 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // publishes the allocation to another thread that frees it.
 //
 // Scope: the two single-expression shapes above, with the callee literally
-// named `destroy`, `deinit` or `finalize` (the name list is the enforcement
-// boundary; a new teardown routine under another name goes here too;
-// `heap::destroy` counts as a `destroy` spelling). An in-place finalizer
-// (`JsSinkType::finalize(&mut self)`, called as `self.finalize()`) never takes
-// the receiver's address and so is not matched. Deliberately outside it:
+// named `destroy`, `deinit` or `finalize` (`heap::destroy` counts as a
+// `destroy` spelling). The name list is the enforcement boundary: a reclaim
+// routine under another name (src/runtime/dns_jsc/dns.rs's `on_cares_complete`
+// at the time of writing) is not caught until its name is added here, which is
+// the thing to do once its remaining sites are converted. In-place
+// finalizers, and `&mut self` methods that forward `self` itself
+// (`Self::finalize(self)`), take no address and are not matched; the one
+// `finalize` forwarder that does take the address is allowlisted below.
+// Deliberately outside it:
 //   - the other reclaim primitives (`heap::take(from_mut(self))`,
 //     `Box::from_raw(self as *mut _)`), a separate population one layer down;
 //   - refcount releases (`Self::deref(from_mut(self))`), which only free on the
 //     last count, so each site needs its own argument about who else holds one;
-//   - a self-derived pointer stashed in a local and freed later, and reference
-//     parameters (`fn f(this: &mut T)` freeing `this`).
+//   - a bare `self` argument coerced to `*mut Self` by a raw-pointer callee
+//     (textually identical to the UFCS forwarding above), a self-derived
+//     pointer stashed in a local and freed later, and reference parameters
+//     (`fn f(this: &mut T)` freeing `this`).
 //
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
 // unsound-erased-box.test.ts.
@@ -59,25 +66,31 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// The ways of spelling "`self`, as a raw pointer", optionally followed by
-// pointer-to-pointer conversions that keep it the same address (`.cast()`,
-// `.cast_mut()`, `.as_ptr()`). `(?!\s*\.)` after `&raw mut *self` keeps a
-// field's address (`&raw mut *self.inner`) out of it.
+// An optional `::<..>`, allowing one level of nesting (`::<Request<'a>>`).
+const TURBOFISH = String.raw`(?:::<(?:[^<>]|<[^<>]*>)*>)?`;
+
+// `self` (or a reborrow of it) as the sole argument of a pointer constructor.
+const SELF_ARG = String.raw`\(\s*(?:&(?:mut\s+)?\*\s*)?self\s*\)`;
+
+// The ways of spelling "`self`, as a raw pointer", optionally parenthesized and
+// optionally followed by pointer-to-pointer conversions that keep it the same
+// address (`.cast()`, `.cast_mut()`, `.as_ptr()`). `(?!\s*\.)` after
+// `&raw mut *self` keeps a field's address (`&raw mut *self.inner`) out of it.
 const SELF_AS_POINTER =
-  String.raw`(?:` +
+  String.raw`\(?\s*(?:` +
   [
-    String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-    String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
+    String.raw`(?:[\w:]+::)?from_(?:mut|ref)${TURBOFISH}${SELF_ARG}`,
+    String.raw`(?:[\w:]+::)?NonNull::from${SELF_ARG}`,
     String.raw`&raw\s+(?:mut|const)\s+\*\s*self\b(?!\s*\.)`,
     String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
     String.raw`self\s+as\s+\*(?:mut|const)\b[^,()]*`,
   ].join("|") +
-  String.raw`)(?:\s*\.\s*(?:cast(?:_mut|_const)?(?:::<[^>]*>)?|as_ptr)\(\))*`;
+  String.raw`)\s*\)?(?:\s*\.\s*(?:cast(?:_mut|_const)?${TURBOFISH}|as_ptr)\(\))*`;
 
 // `destroy(` / `deinit(` / `finalize(`, optionally path-qualified (`Self::`,
 // `Worker::`, `bun_core::heap::`) and turbofished. `\s*` after the paren so a
 // rustfmt-wrapped argument list still matches.
-const TEARDOWN = String.raw`\b(?:[\w:]+::)?(?:destroy|deinit|finalize)(?:::<[^>]*>)?\s*\(\s*`;
+const TEARDOWN = String.raw`\b(?:[\w:]+::)?(?:destroy|deinit|finalize)${TURBOFISH}\s*\(\s*`;
 
 const DIRECT = new RegExp(`${TEARDOWN}${SELF_AS_POINTER}\\s*[,)]`, "g");
 
@@ -172,6 +185,10 @@ test("the patterns recognize the spellings they claim to", () => {
     "unsafe { Self::destroy::<true>(std::ptr::from_mut(self)) }",
     "unsafe { crate::node::fs::AsyncCpTask::destroy(std::ptr::from_mut(self)) }",
     "unsafe { bun_core::heap::destroy(std::ptr::from_mut::<Self>(self)) };",
+    // Nested turbofish, a reborrow of the receiver, a parenthesized cast.
+    "unsafe { Self::destroy(std::ptr::from_mut::<Request<'a>>(self)) };",
+    "unsafe { Self::deinit(core::ptr::from_mut(&mut *self)) };",
+    "unsafe { Self::destroy((self as *mut Self).cast()) };",
     // Extra arguments after the pointer, and a rustfmt-wrapped call.
     "unsafe { Self::deinit(std::ptr::from_mut(self), allocator) }",
     "unsafe {\n    Self::destroy(\n        std::ptr::from_mut::<Self>(self),\n    )\n}",
@@ -191,8 +208,8 @@ test("the patterns recognize the spellings they claim to", () => {
     "unsafe { Worker::deinit(self.worker.as_ptr()) }",
     "unsafe { Self::destroy(&raw mut *self.inner) }",
     "unsafe { TCC::State::destroy(s.as_ptr()) };",
-    // By-value / in-place teardown and UFCS forwarding of the reference itself
-    // are not this shape.
+    // By-value / in-place teardown and forwarding `self` itself are not this
+    // shape (the raw-pointer-callee coercion case is out of scope, see header).
     "self.deinit();",
     "self.finalize();",
     "self.io_request.deinit();",
@@ -225,8 +242,8 @@ test("no method hands its own receiver to destroy/deinit/finalize", () => {
 
 test("allowlisted files still carry exactly their documented count", () => {
   // Ratchet: once an allowlisted file is converted, delete its entry so a new
-  // instance cannot take the old one's place.
-  for (const [f, n] of Object.entries(ALLOW)) {
-    expect(counts[f] ?? 0).toBe(n);
-  }
+  // instance cannot take the old one's place. Compared as one object so a
+  // failure names the file.
+  const actual = Object.fromEntries(Object.keys(ALLOW).map(f => [f, counts[f] ?? 0]));
+  expect(actual).toEqual(ALLOW);
 });

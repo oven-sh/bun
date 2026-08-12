@@ -320,7 +320,7 @@ describe("endpoint.close() while a session is live", () => {
 describe("endpoint bind failure", () => {
   test.skipIf(!fault.available() || isWindows)("carries the errno of a failing IPV6_V6ONLY setsockopt", async () => {
     const { ENOPROTOOPT } = osConstants.errno;
-    fault.set({ syscall: "udp_v6only", action: "errno", errno: ENOPROTOOPT });
+    fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: ENOPROTOOPT });
     let endpoint: any;
     try {
       // Like Node, listen() hands back the already-destroyed endpoint and the

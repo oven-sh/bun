@@ -207,7 +207,7 @@ describe("udpSocket()", () => {
     const options = { hostname: "::1", port: 0 } as const;
 
     function injectSetsockoptFailure() {
-      fault.set({ syscall: "udp_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
+      fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
     }
 
     async function creationError(): Promise<any> {

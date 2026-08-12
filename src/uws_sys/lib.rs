@@ -423,8 +423,9 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
-    /// The `IPV6_V6ONLY` setsockopt in `bsd_create_udp_socket`.
-    pub const UDP_V6ONLY: c_int = 13;
+    /// The `IPV6_V6ONLY` setsockopt (`bsd_set_v6only`: TCP listen, UDP
+    /// create and raw-descriptor UDP bind).
+    pub const SETSOCKOPT_V6ONLY: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

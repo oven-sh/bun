@@ -372,7 +372,7 @@ describe("bind()", () => {
     const { promise: error, resolve: onError, reject } = Promise.withResolvers<any>();
     socket.on("error", onError);
     socket.on("listening", () => reject(new Error("expected bind() to fail")));
-    fault.set({ syscall: "udp_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
+    fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
     try {
       socket.bind(0, "::1");
       const { name, code, syscall, address, message } = await error;
@@ -417,6 +417,19 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
   const err = _createSocketHandle("localhost", 0, "udp4");
 
   expect(err).toBe(-22);
+});
+
+// The raw-descriptor bind shares bsd_set_v6only() with the bind() path tested
+// above; flags bit 0 is UV_UDP_IPV6ONLY.
+test.skipIf(!fault.available() || isWindows)("_createSocketHandle() reports a failing IPV6_V6ONLY setsockopt", () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const { ENOPROTOOPT } = osConstants.errno;
+  fault.set({ syscall: "setsockopt_v6only", action: "errno", errno: ENOPROTOOPT });
+  try {
+    expect(_createSocketHandle("::1", 0, "udp6", undefined, 1)).toBe(-ENOPROTOOPT);
+  } finally {
+    fault.clear();
+  }
 });
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST

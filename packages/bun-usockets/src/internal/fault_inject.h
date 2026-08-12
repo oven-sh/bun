@@ -54,11 +54,10 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
-    /* The IPV6_V6ONLY setsockopt in bsd_create_udp_socket. It is issued on a
-     * descriptor socket(2) just returned, so outside of injection it only fails
-     * on kernels / seccomp policies that reject the option. Only US_FAULT_ERRNO
-     * applies. */
-    US_FAULT_UDP_V6ONLY,
+    /* The IPV6_V6ONLY setsockopt (bsd_set_v6only: TCP listen, UDP create and
+     * raw-descriptor UDP bind). Outside of injection it only fails on kernels /
+     * seccomp policies that reject the option. Only US_FAULT_ERRNO applies. */
+    US_FAULT_SETSOCKOPT_V6ONLY,
     US_FAULT_COUNT
 };
 

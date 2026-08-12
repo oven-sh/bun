@@ -5128,19 +5128,19 @@ pub mod testing_apis {
                 fi::CONNECT
             } else if syscall_str.eql_comptime(b"accept") {
                 fi::ACCEPT
+            } else if syscall_str.eql_comptime(b"setsockopt_v6only") {
+                fi::SETSOCKOPT_V6ONLY
             } else if syscall_str.eql_comptime(b"ssl_loop_buffer") {
                 fi::SSL_LOOP_BUFFER
             } else if syscall_str.eql_comptime(b"poll_start") {
                 fi::POLL_START
             } else if syscall_str.eql_comptime(b"session_buffer") {
                 fi::SESSION_BUFFER
-            } else if syscall_str.eql_comptime(b"udp_v6only") {
-                fi::UDP_V6ONLY
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, udp_v6only"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, setsockopt_v6only, ssl_loop_buffer, poll_start, session_buffer"
                 )));
             };
 

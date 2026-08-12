@@ -596,8 +596,8 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer", "udp_v6only"; see fault_inject.h for the
- * per-hook description). Arming anything else is rejected.
+ * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -607,10 +607,10 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
+  | "setsockopt_v6only"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer"
-  | "udp_v6only";
+  | "session_buffer";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

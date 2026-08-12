@@ -2478,6 +2478,13 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     return 0;
   }
 
+  /* Called from inside SSL_read/SSL_do_handshake on this socket (an ALPN/SNI
+   * callback writing): wait for the handshake, same as WANT_READ below. */
+  if (s->ssl_in_use) {
+    s->ssl_write_wants_read = 1;
+    return 0;
+  }
+
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   /* Earlier batched records of ours must reach the wire before anything new:
@@ -2506,7 +2513,18 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+    /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
+    s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    s->ssl_in_use = 0;
+    if (s->ssl_pending_detach) {
+      /* Closed from inside the call: drop this write's records and close now. */
+      loop_ssl_data->ssl_write_batching = 0;
+      loop_ssl_data->ssl_write_batch_len = 0;
+      s->ssl_pending_detach = 0;
+      us_socket_close(s, s->ssl_pending_close_code, NULL);
+      return 0;
+    }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;

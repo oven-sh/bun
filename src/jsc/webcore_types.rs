@@ -212,8 +212,11 @@ const _: () = {
 };
 
 impl Blob {
-    /// Heap-promote and mark as
-    /// heap-allocated so `deinit` knows to free the heap box.
+    /// Heap-promote with one count. The allocation is freed by [`Blob__deref`]
+    /// releasing the last count (JS wrapper finalizer, C++ `BlobRefPtr`,
+    /// [`bun_ptr::ExternalShared`]) and by nothing else. A `Blob` that is not
+    /// promoted needs no teardown call: its store ref, name and content type
+    /// are released by their own drops.
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
@@ -234,8 +237,8 @@ impl Blob {
         );
         // SAFETY: `self` is the allocation `Blob::new` produced and the JS
         // wrapper's `+1` is the count released here. `into_raw` hands the box
-        // over without dropping it; `Blob__deref` runs `deinit()` (which
-        // `drop(heap::take)`s) when the count reaches zero.
+        // over without dropping it; `Blob__deref` frees the allocation when
+        // the count reaches zero.
         unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
@@ -450,21 +453,6 @@ impl Blob {
             store::Data::S3(s3) => Some(s3.path()),
         }
     }
-
-    /// Tear down owned resources; if
-    /// heap-allocated, also frees the heap box.
-    pub fn deinit(&mut self) {
-        self.detach();
-        self.name.set(bun_core::String::dead());
-
-        self.content_type.set(BlobContentType::default());
-
-        if self.is_heap_allocated() {
-            // SAFETY: `self` is the `*mut Blob` originally produced by
-            // `Blob::new` (`heap::alloc`).
-            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
-        }
-    }
 }
 
 // SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
@@ -487,8 +475,9 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
 /// must happen on the thread that owns it (the count is not atomic). A
-/// by-value `Blob` has a count of zero; bumping it would make a later
-/// [`Blob::deinit`] free an address that was never heap-allocated.
+/// by-value `Blob` has a count of zero; giving it one would make the
+/// [`Blob__deref`] that later releases it free an address that was never
+/// heap-allocated.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__ref(this: *mut Blob) {
     // SAFETY: caller contract above.
@@ -512,18 +501,17 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 /// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__deref(this: *mut Blob) {
-    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
-    // is not touched after it.
+    // SAFETY: caller contract above: `this` is the `Blob::new` allocation and
+    // the count released here was owned by the caller. When it was the last
+    // one nothing else refers to the allocation, so the box is freed here;
+    // dropping it releases the store ref, name and content type.
     unsafe {
         debug_assert!(
             (*this).is_heap_allocated(),
             "cannot deref: this Blob is not heap-allocated"
         );
         if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-            // `deinit` has its own `is_heap_allocated()` guard around the
-            // `drop(heap::take)`, so re-arm so it returns true.
-            (*this).ref_count.increment();
-            (*this).deinit();
+            bun_core::heap::destroy(this);
         }
     }
 }

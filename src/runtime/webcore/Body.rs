@@ -768,8 +768,7 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                // `deinit` must run on every exit incl. `?` paths.
-                let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                let blob = self.use_();
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
@@ -821,7 +820,7 @@ impl Value {
             }
             Value::Blob(_) => {
                 let stream = {
-                    let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    let blob = self.use_();
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
@@ -1216,8 +1215,8 @@ impl Value {
         match self {
             Value::Blob(b) => {
                 // `Value` has `Drop`, so we cannot move the `Blob` out by
-                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
-                // (run by `Value::drop` on the assignment below) is a no-op.
+                // value (E0509). `mem::take` leaves a default `Blob`, which
+                // owns nothing, for the assignment below to drop.
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
@@ -1429,8 +1428,9 @@ impl Value {
             }
             return;
         }
-        // Assignment runs `Drop` on the old variant: deref WTFStringImpl, deinit
-        // Blob, free InternalBlob's Vec, reset Error. Null/Used/Empty are no-ops.
+        // Assignment drops the old variant: deref WTFStringImpl, release the
+        // Blob's store, free InternalBlob's Vec, reset Error. Null/Used/Empty
+        // are no-ops.
         *self = Value::Null;
     }
 }
@@ -1454,10 +1454,10 @@ impl Drop for Value {
                 }
             }
             Value::WTFStringImpl(s) => wtf_impl(s).deref(),
-            Value::Blob(b) => b.deinit(),
             Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
-            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
+            // `Blob`'s store ref / name / content type and `InternalBlob`'s
+            // `Vec<u8>` are freed by the compiler's drop glue.
+            Value::Blob(_) | Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
         }
     }
 }

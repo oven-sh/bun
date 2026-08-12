@@ -74,13 +74,9 @@ const SELF_AS_POINTER = [
 const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
-// shape. Prefer converting over adding an entry here.
-const ALLOW: Record<string, number> = {
-  // `Blob::deinit(&mut self)` frees heap-allocated blobs through its receiver.
-  // It is being converted separately (#37672); delete this entry when that
-  // lands.
-  "src/jsc/webcore_types.rs": 1,
-};
+// shape. Empty by design: the whole tree is at zero. Prefer converting over
+// adding an entry here.
+const ALLOW: Record<string, number> = {};
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];
@@ -122,7 +118,8 @@ test("the pattern recognizes the spellings it claims to", () => {
     // `<BlobReadChain as ReadBytesHandler>::on_read_bytes(&mut self)`, as it
     // was before the trait handed the pointer over.
     "let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };",
-    // `Blob::deinit(&mut self)`.
+    // `Blob::deinit(&mut self)`, as it was before it was deleted in favour of
+    // the field drops.
     "unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };",
     "unsafe { bun_core::heap::destroy(self) };",
     "drop(unsafe { Box::from_raw(self) });",

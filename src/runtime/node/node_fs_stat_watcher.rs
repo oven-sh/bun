@@ -405,7 +405,8 @@ impl StatWatcherScheduler {
 
             if time_since >= interval.saturating_sub(500) {
                 w.last_check.set(now);
-                w.restat();
+                // SAFETY: live, we hold the queue's ref on it (see above).
+                unsafe { StatWatcher::restat(watcher.as_ptr()) };
             } else {
                 closest_next_check = (interval - time_since).min(closest_next_check);
             }
@@ -664,22 +665,27 @@ impl StatWatcher {
         unsafe { VirtualMachine::event_loop_ctx(self.ctx.as_ptr()) }
     }
 
-    /// `self`'s address as `*mut Self` for `ConcurrentTask` ctx slots. The
-    /// callbacks deref it as `&*const` (shared) — see
-    /// `swap_and_call_listener_on_main_thread` etc. — so no write provenance
-    /// is required; the `*mut` spelling is purely to match the C ABI.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        std::ptr::from_ref::<Self>(self).cast_mut()
-    }
-
-    /// Pool thread → JS thread: `hop` runs there and consumes one ref on
-    /// `self`. Posted from counted (embedded) pool work, so always queued; a
-    /// VM tearing down releases the ref from its queue instead of running it.
-    fn post_to_js_thread(&self, hop: StatWatcherHop) {
-        self.pending_hop.set(hop as u8);
-        let task = ConcurrentTask::create(Task::init(self.as_ctx_ptr()));
-        let bun_jsc::vm_handle::Posted::Queued = self.loop_handle.post_task(task) else {
+    /// Pool thread → JS thread: `hop` runs there and releases the ref the
+    /// caller holds for it. Posted from counted (embedded) pool work, so
+    /// always queued; a VM tearing down releases the ref from its queue
+    /// instead of running it.
+    ///
+    /// # Safety
+    /// `this` is a live watcher (the allocation's own pointer, which is what
+    /// the hop's `deref` frees through) and the caller owns one ref on it,
+    /// which the posted hop takes over. Once the task is queued the JS thread
+    /// may release that ref, so the caller must not touch `*this` afterwards
+    /// unless it holds another ref.
+    unsafe fn post_to_js_thread(this: *mut Self, hop: StatWatcherHop) {
+        // The handle is cloned out so that the post itself holds no reference
+        // into the watcher: the hop may free it before `post_task` returns.
+        // SAFETY: fn contract; both accesses end before the post.
+        let handle = unsafe {
+            (*this).pending_hop.set(hop as u8);
+            (*this).loop_handle.clone()
+        };
+        let task = ConcurrentTask::create(Task::init(this));
+        let bun_jsc::vm_handle::Posted::Queued = handle.post_task(task) else {
             unreachable!("VM handle closed with stat-watcher pool work outstanding");
         };
     }
@@ -687,7 +693,7 @@ impl StatWatcher {
     /// JS thread dispatch of a [`post_to_js_thread`](Self::post_to_js_thread) hop.
     ///
     /// # Safety
-    /// `this` is the watcher the pool posted (ref held for the hop).
+    /// `this` is the pointer the pool posted (ref held for the hop).
     pub(crate) unsafe fn run_hop(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: fn contract.
         let hop = unsafe { (*this).pending_hop.get() };
@@ -922,17 +928,25 @@ impl StatWatcher {
         result.map(drop).map_err(Into::into)
     }
 
-    /// Called from any thread
-    fn restat(&self) {
+    /// Pool thread: re-stat the path and, if anything but atime changed, hand
+    /// the JS thread a ref to call the listener with.
+    ///
+    /// # Safety
+    /// `this` is a live watcher (the caller holds the queue's ref on it).
+    unsafe fn restat(this: *mut StatWatcher) {
         log!("recalling stat");
-        let stat = restat_impl(&self.path);
+        // BACKREF, live per fn contract. R-2: shared `&` only (the JS thread may
+        // be reading the same watcher); `ParentRef` Deref gives that `&` for the
+        // stat bookkeeping. The hand-over at the end is made through `this`.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("restat: watcher"));
+        let stat = restat_impl(&this_ref.path);
         let res = match stat {
             Ok(res) => res,
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             Err(_) => bun_core::ffi::zeroed::<PosixStat>(),
         };
 
-        let last_stat = self.get_last_stat();
+        let last_stat = this_ref.get_last_stat();
 
         // Ignore atime changes when comparing stats
         // Compare field-by-field to avoid false positives from padding bytes
@@ -956,12 +970,12 @@ impl StatWatcher {
             return;
         }
 
-        self.set_last_stat(&res);
-        // R-2: derive the ctx pointer from `&self` — the callback derefs it as
-        // shared (`&*const`), so no write provenance is required.
-        let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
-        Self::ref_(this_ptr);
-        self.post_to_js_thread(StatWatcherHop::Changed);
+        this_ref.set_last_stat(&res);
+        // The hop's ref; `swap_and_call_listener_on_main_thread` releases it.
+        Self::ref_(this);
+        // SAFETY: `this` is live per fn contract and the ref just taken is the
+        // hop's. The caller's queue ref keeps the watcher alive past the post.
+        unsafe { Self::post_to_js_thread(this, StatWatcherHop::Changed) };
     }
 
     /// After a restat found the file changed, this calls the listener function.
@@ -1239,12 +1253,11 @@ impl InitialStatTask {
         let this: *mut StatWatcher = self.watcher;
         // BACKREF — `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
-        // read-only, `path` is borrowed, and `set_last_stat`/
-        // `enqueue_task_concurrent` take `&self` (mutation goes through
-        // `Guarded`/atomics). The main thread may concurrently run
-        // `close()`/`finalize()` after `init()` returns the watcher to JS;
-        // both also deref as shared (R-2), so aliased `&` is sound.
-        // `ParentRef` Deref gives that shared `&`.
+        // read-only, `path` is borrowed, and `set_last_stat` takes `&self`
+        // (mutation goes through `Guarded`/atomics). The main thread may
+        // concurrently run `close()`/`finalize()` after `init()` returns the
+        // watcher to JS; both also deref as shared (R-2), so aliased `&` is
+        // sound. `ParentRef` Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("run_owned: watcher"));
         let handle = this_ref.loop_handle.clone();
         let _finished = scopeguard::guard((), |()| handle.embedded_work_finished());
@@ -1256,24 +1269,26 @@ impl InitialStatTask {
             return;
         }
 
-        let stat = restat_impl(&this_ref.path);
-        match stat {
+        let hop = match restat_impl(&this_ref.path) {
             Ok(ref res) => {
                 // we store the stat, but do not call the callback
                 this_ref.set_last_stat(res);
-                this_ref.post_to_js_thread(StatWatcherHop::InitialStatSuccess);
+                StatWatcherHop::InitialStatSuccess
             }
             Err(_) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
                 this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
-                this_ref.post_to_js_thread(StatWatcherHop::InitialStatError);
+                StatWatcherHop::InitialStatError
             }
-        }
-        // ref ownership transferred to main-thread callback
-        // (`initial_stat_*_on_main_thread` calls deref()). Nothing to forget —
-        // `watcher` is a raw pointer.
+        };
+        // SAFETY: `this` is live and the `create_and_schedule` ref is ours to
+        // hand over. This may be the watcher's last ref (the JS side can have
+        // closed and finalized it meanwhile), so the hop may free the watcher
+        // as soon as it is queued; nothing below touches it (`_finished` runs
+        // on the cloned handle).
+        unsafe { StatWatcher::post_to_js_thread(this, hop) };
     }
 }
 

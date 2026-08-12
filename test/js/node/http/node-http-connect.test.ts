@@ -633,8 +633,11 @@ describe("HTTP server CONNECT", () => {
       const result = await bunRun(join(import.meta.dir, "node-http-connect-unix-hangup-fixture.js"), {
         SOCK: join(String(dir), "proxy.sock"),
       });
+      const perTarget = Object.fromEntries(
+        Array.from({ length: 8 }, (_, i) => [`peer-${i}:443`, { ends: 1, closes: 1 }]),
+      );
       expect(result).toEqual({
-        stdout: JSON.stringify({ ends: 8, closes: 8 }),
+        stdout: JSON.stringify(perTarget),
         stderr: "",
         exitCode: 0,
         signalCode: null,

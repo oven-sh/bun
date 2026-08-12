@@ -1,20 +1,23 @@
 // N CONNECT clients over an AF_UNIX listener each destroy() once the server holds the handed-off
-// socket; the server never ends its side. Prints {ends, closes} once every server socket has closed.
+// socket; the server never ends its side. Prints per-target {ends, closes} once every server socket has closed.
 const http = require("node:http");
 const net = require("node:net");
 
 const N = 8;
 const clients = new Map();
-let ends = 0;
-let closes = 0;
+const counts = {};
+let closed = 0;
 
 const server = http.createServer();
 server.on("connect", (req, socket) => {
+  const c = (counts[req.url] = { ends: 0, closes: 0 });
   socket.on("error", () => {});
-  socket.on("end", () => ends++);
+  socket.on("end", () => c.ends++);
   socket.on("close", () => {
-    if (++closes === N) {
-      console.log(JSON.stringify({ ends, closes }));
+    c.closes++;
+    if (++closed === N) {
+      const sorted = Object.fromEntries(Object.keys(counts).sort().map(k => [k, counts[k]]));
+      console.log(JSON.stringify(sorted));
       server.close();
     }
   });

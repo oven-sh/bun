@@ -9645,8 +9645,9 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 // Implemented on top of
 // `bun_sys` primitives (`openat` + `unlinkat`) and *errno* values, mapping the
 // errno back to the error-set name strings the callers'
-// `map_anyerror_to_errno*` tables expect. The structure: 16-slot stack,
-// treat_as_dir flip-flop, close-then-deleteDir, retry-on-DirNotEmpty.
+// `map_anyerror_to_errno*` tables expect. The structure: one open directory
+// per level of the path being walked, treat_as_dir flip-flop,
+// close-then-deleteDir, retry-on-DirNotEmpty.
 
 #[inline]
 fn dt_err(errno: E) -> crate::Error {
@@ -9774,10 +9775,11 @@ pub(crate) fn zig_delete_tree(
             None => return Ok(()),
         };
 
-    // PERF: a Vec
-    // pre-reserved to 16 caps the depth the same way a fixed array would,
-    // with the bonus that the iterator buffers (8 KB each)
-    // live on the heap instead of the stack.
+    // One frame (an open fd plus an 8 KB readdir buffer) per level of the
+    // path currently being walked. The Vec grows with the tree, so every
+    // directory is opened once and the walk is linear in the number of
+    // entries; capping the depth here and re-walking deeper subtrees from
+    // their top made deep chains O(depth^2).
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
     let close_all = |stack: &mut Vec<DeleteTreeStackItem>| {
         for item in stack.drain(..) {
@@ -9803,64 +9805,51 @@ pub(crate) fn zig_delete_tree(
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
-            // `entry.name` borrows the iterator's internal buffer and
-            // is invalidated by the next `next()` call. Copy it once here so
-            // it survives both the push-onto-stack and the deleteDir-after-close
-            // paths.
+            // `entry.name` points into the iterator's buffer, which lives inside
+            // the stack frame: the next `next()` call overwrites it and a `push`
+            // below may reallocate the stack and move it. Copy it once here.
             let entry_name: Vec<u8> = entry.name.slice().to_vec();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {
                 if treat_as_dir {
-                    if stack.len() < stack.capacity() {
-                        let top_fd = stack[top_idx].iter.iter.dir;
-                        match dt_open_dir(sys::Dir::borrow(&top_fd), &entry_name) {
-                            Ok(iterable_dir) => {
-                                stack.push(DeleteTreeStackItem {
-                                    name: entry_name,
-                                    name_is_borrowed: false,
-                                    parent_dir: top_fd,
-                                    iter: DirIterator::WrappedIterator::init(
-                                        iterable_dir.into_raw(),
-                                    ),
-                                });
-                                continue 'process_stack;
-                            }
-                            Err(E::ENOTDIR) => {
-                                treat_as_dir = false;
-                                continue 'handle_entry;
-                            }
-                            #[cfg(target_os = "macos")]
-                            Err(e @ (E::EACCES | E::EPERM)) => {
-                                // Same as the pop-delete site below: node's rimraf
-                                // retries rmdir on the directory whose child could
-                                // not be opened and reports its ENOTEMPTY on macOS.
-                                let ancestor = &stack[top_idx];
-                                let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                    sub_path
-                                } else {
-                                    &ancestor.name
-                                };
-                                if matches!(
-                                    dt_delete_dir(
-                                        sys::Dir::borrow(&ancestor.parent_dir),
-                                        ancestor_name
-                                    ),
-                                    Err(E::ENOTEMPTY | E::EEXIST)
-                                ) {
-                                    return Err(dt_err(E::ENOTEMPTY));
-                                }
-                                return Err(dt_err(e));
-                            }
-                            Err(e) => return Err(dt_err(e)),
+                    let top_fd = stack[top_idx].iter.iter.dir;
+                    match dt_open_dir(sys::Dir::borrow(&top_fd), &entry_name) {
+                        Ok(iterable_dir) => {
+                            stack.push(DeleteTreeStackItem {
+                                name: entry_name,
+                                name_is_borrowed: false,
+                                parent_dir: top_fd,
+                                iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
+                            });
+                            continue 'process_stack;
                         }
-                    } else {
-                        let top_fd = stack[top_idx].iter.iter.dir;
-                        zig_delete_tree_min_stack_size_with_kind_hint(
-                            sys::Dir::borrow(&top_fd),
-                            &entry_name,
-                            entry.kind,
-                        )?;
-                        break 'handle_entry;
+                        Err(E::ENOTDIR) => {
+                            treat_as_dir = false;
+                            continue 'handle_entry;
+                        }
+                        #[cfg(target_os = "macos")]
+                        Err(e @ (E::EACCES | E::EPERM)) => {
+                            // Same as the pop-delete site below: node's rimraf
+                            // retries rmdir on the directory whose child could
+                            // not be opened and reports its ENOTEMPTY on macOS.
+                            let ancestor = &stack[top_idx];
+                            let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
+                                sub_path
+                            } else {
+                                &ancestor.name
+                            };
+                            if matches!(
+                                dt_delete_dir(
+                                    sys::Dir::borrow(&ancestor.parent_dir),
+                                    ancestor_name
+                                ),
+                                Err(E::ENOTEMPTY | E::EEXIST)
+                            ) {
+                                return Err(dt_err(E::ENOTEMPTY));
+                            }
+                            return Err(dt_err(e));
+                        }
+                        Err(e) => return Err(dt_err(e)),
                     }
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;
@@ -10029,115 +10018,6 @@ fn zig_delete_tree_open_initial_subpath(
                 Err(e) => return Err(dt_err(e)),
             }
         }
-    }
-}
-
-fn zig_delete_tree_min_stack_size_with_kind_hint(
-    self_: &sys::Dir,
-    sub_path: &[u8],
-    kind_hint: sys::FileKind,
-) -> crate::Result<()> {
-    'start_over: loop {
-        let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
-            Some(d) => d,
-            None => return Ok(()),
-        };
-        let mut cleanup_dir_parent: Option<sys::Dir> = None;
-
-        // Valid use of MAX_PATH_BYTES because dir_name_buf will only
-        // ever store a single path component that was returned from the
-        // filesystem.
-        let mut dir_name_buf = PathBuffer::uninit();
-        let mut dir_name_len = sub_path.len().min(dir_name_buf.len());
-        dir_name_buf[..dir_name_len].copy_from_slice(&sub_path[..dir_name_len]);
-        // `dir_name` conceptually aliases either `sub_path` or `dir_name_buf`;
-        // the borrow checker won't let that alias survive the copy/reassignment
-        // below, so track `(is_sub_path, len)` and re-slice on each use.
-        let mut dir_name_is_sub_path = true;
-
-        // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
-        // Go through each entry and if it is not a directory, delete it. If it is a directory,
-        // open it, and close the original directory. Repeat. Then start the entire operation over.
-        let result: crate::Result<()> = 'scan_dir: loop {
-            let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
-            'dir_it: loop {
-                let entry = match dir_it.next() {
-                    Ok(Some(e)) => e,
-                    Ok(None) => break 'dir_it,
-                    Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
-                };
-                let entry_name: Vec<u8> = entry.name.slice().to_vec();
-                let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
-                'handle_entry: loop {
-                    if treat_as_dir {
-                        match dt_open_dir(&dir, &entry_name) {
-                            Ok(new_dir) => {
-                                cleanup_dir_parent = Some(dir);
-                                dir = new_dir;
-                                let n = entry_name.len().min(dir_name_buf.len());
-                                dir_name_buf[..n].copy_from_slice(&entry_name[..n]);
-                                dir_name_len = n;
-                                dir_name_is_sub_path = false;
-                                continue 'scan_dir;
-                            }
-                            Err(E::ENOTDIR) => {
-                                treat_as_dir = false;
-                                continue 'handle_entry;
-                            }
-                            Err(E::ENOENT) => {
-                                // That's fine, we were trying to remove this directory anyway.
-                                continue 'dir_it;
-                            }
-                            Err(e) => break 'scan_dir Err(dt_err(e)),
-                        }
-                    } else {
-                        match dt_delete_file(&dir, &entry_name) {
-                            Ok(()) => continue 'dir_it,
-                            Err(E::ENOENT) => continue 'dir_it,
-                            Err(E::EISDIR) => {
-                                treat_as_dir = true;
-                                continue 'handle_entry;
-                            }
-                            Err(E::ENOTDIR) => {
-                                #[cfg(debug_assertions)]
-                                unreachable!();
-                                // "Unexpected" → caller's fallthrough arm = EFAULT.
-                                #[cfg(not(debug_assertions))]
-                                break 'scan_dir Err(err_from_static("Unexpected"));
-                            }
-                            Err(e) => break 'scan_dir Err(dt_err(e)),
-                        }
-                    }
-                }
-            }
-            // Reached the end of the directory entries, which means we successfully deleted all of them.
-            // Now to remove the directory itself.
-            dir.close();
-
-            let dir_name: &[u8] = if dir_name_is_sub_path {
-                sub_path
-            } else {
-                &dir_name_buf[..dir_name_len]
-            };
-            if let Some(d) = cleanup_dir_parent {
-                match dt_delete_dir(&d, dir_name) {
-                    Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
-                        // These two things can happen due to file system race conditions.
-                        continue 'start_over;
-                    }
-                    Err(e) => {
-                        return Err(dt_err(e));
-                    }
-                }
-            } else {
-                match dt_delete_dir(self_, sub_path) {
-                    Ok(()) | Err(E::ENOENT) => return Ok(()),
-                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
-                    Err(e) => return Err(dt_err(e)),
-                }
-            }
-        };
-        return result;
     }
 }
 

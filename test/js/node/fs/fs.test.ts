@@ -3111,6 +3111,55 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // Builds a single chain of at least `depth` nested directories under `parent`
+  // without handing the fs a path longer than ~100 bytes past `parent` (macOS
+  // PATH_MAX is 1024): every chunk of the chain is created on its own, and the
+  // part of the chain built so far is renamed to the bottom of the new chunk.
+  // Returns the top of the chain and the directory the last rename moved.
+  function makeDeepChain(parent: string, depth: number) {
+    const chunk = 50;
+    let top: string | undefined;
+    let seam: string | undefined;
+    for (let i = 0; depth > 0; i++) {
+      const levels = Math.min(chunk, depth);
+      const chunkTop = join(parent, `chunk${i}`);
+      const chunkBottom = join(chunkTop, Buffer.alloc(levels * 2 - 1, "a/").toString());
+      mkdirSync(chunkBottom, { recursive: true });
+      if (top !== undefined) {
+        seam = join(chunkBottom, "a");
+        renameSync(top, seam);
+      }
+      top = chunkTop;
+      depth -= levels;
+    }
+    return { top: top!, seam: seam! };
+  }
+
+  // The recursive walk keeps one directory open per level of nesting. It used
+  // to keep at most 16 open and handle anything deeper by re-walking that
+  // subtree from its top once per directory it removed, which is O(depth^2):
+  // removing this 2000-deep chain took 27 s in a release build and about 40 s
+  // in a debug build. The linear walk takes ~0.4 s in a debug+ASAN build.
+  it.each([
+    ["rmSync", (p: string) => rmSync(p, { recursive: true, force: true })],
+    ["promises.rm", (p: string) => promises.rm(p, { recursive: true, force: true })],
+  ])("%s removes a directory chain nested 2000 levels deep in linear time", async (_, rm) => {
+    using dir = tempDir("rm-deep-chain", {});
+    const { top, seam } = makeDeepChain(String(dir), 2000);
+    expect(statSync(seam).isDirectory()).toBe(true);
+
+    const maxFDBefore = getMaxFD();
+    const start = performance.now();
+    await rm(top);
+    const elapsedMs = performance.now() - start;
+
+    expect(existsSync(top)).toBe(false);
+    // Every level's directory handle must have been released again; the fs
+    // thread pool may have opened a handful of fds of its own.
+    expect(getMaxFD() - maxFDBefore).toBeLessThan(5);
+    expect(elapsedMs).toBeLessThan(5000);
+  });
 });
 
 describe("rmdir", () => {

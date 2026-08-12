@@ -198,7 +198,7 @@ pub enum ErrorKind {
     JsAggregate,
 }
 
-// All "write" functions get a corresponding "read" function in ./client/error.ts
+// All "write" functions get a corresponding "read" function in ../client/error-serialization.ts
 type Writer = Vec<u8>;
 
 fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
@@ -231,6 +231,10 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 
+        // `line_text` may be a window of a long line (`Location::init_or_null`)
+        // while `column` is relative to the whole line; the client needs the
+        // width of the dropped prefix to put the underline under the window.
+        _ = w.write_int_le::<u32>(loc.line_text_column_offset);
         // TODO: syntax highlighted line text + give more context lines
         write_string32(loc.line_text.as_deref().unwrap_or(b""), w);
 

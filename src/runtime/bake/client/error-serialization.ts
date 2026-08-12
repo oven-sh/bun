@@ -19,10 +19,17 @@ export interface BundlerMessage {
 export interface BundlerMessageLocation {
   /** One-based */
   line: number;
-  /** One-based */
+  /** One-based, relative to the whole source line (not to `lineText`) */
   column: number;
   /** Byte length */
   length: number;
+  /**
+   * Number of columns of the source line that precede `lineText`. Non-zero
+   * when `lineText` is only a window of a long line, so the highlight starts
+   * `column - 1 - lineTextColumnOffset` characters into `lineText`.
+   */
+  lineTextColumnOffset: number;
+  /** The source line, or a window of it around the highlighted range. */
   lineText: string;
 }
 
@@ -71,12 +78,14 @@ function readBundlerMessageLocationOrNull(r: DataViewReader): BundlerMessageLoca
 
   const column = r.u32();
   const length = r.u32();
+  const lineTextColumnOffset = r.u32();
   const lineText = r.string32();
 
   return {
     line,
     column,
     length,
+    lineTextColumnOffset,
     lineText,
   };
 }

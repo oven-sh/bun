@@ -450,6 +450,33 @@ devTest("importing bun on the client", {
     });
   },
 });
+devTest("error overlay underlines an error deep inside a long line", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `let ok = 1;\n${"a".repeat(100)}]${"b".repeat(100)}`,
+  },
+  async test(dev) {
+    // The `]` is at column 101 of a 201 character line. The overlay only shows
+    // a window of the line that starts 40 characters before the error, so the
+    // underline (what the `:41` below is measured from) has to start 40
+    // characters in rather than 100.
+    await using c = await dev.client("/", {
+      errors: ['index.ts:2:41: error: Expected ";" but found "]"'],
+    });
+    const { excerpt, underlineStart } = await c.js<{ excerpt: string; underlineStart: number }>`{
+      const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
+      return {
+        excerpt: msg.querySelector(".view > pre").textContent,
+        underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
+      };
+    }`;
+    expect(excerpt).toBe(`${"a".repeat(40)}]${"b".repeat(79)}`);
+    expect(excerpt[underlineStart]).toBe("]");
+  },
+});
 devTest("import.meta.main", {
   files: {
     "index.html": emptyHtmlFile({

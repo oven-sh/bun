@@ -624,7 +624,11 @@ function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageL
       elem("div", { class: "view" }, [
         mapCodePreviewLine(syntaxHighlight(location.lineText)),
         elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
-          elemText("span", { class: "space" }, "_".repeat(location.column - 1)),
+          elemText(
+            "span",
+            { class: "space" },
+            "_".repeat(Math.max(0, location.column - 1 - location.lineTextColumnOffset)),
+          ),
           elemText("span", { class: "line" }, "_".repeat(location.length)),
         ]),
       ]),

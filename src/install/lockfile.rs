@@ -1511,14 +1511,14 @@ impl Lockfile {
                     // above); `manifests` and `lockfile` are non-overlapping
                     // fields and nothing below resizes/relocates `manifests`
                     // while `manifest` is held.
-                    let scope = mgr_ref.options.scope_for_package_name(
-                        pkg_name.slice(self.buffers.string_bytes.as_slice()),
-                    );
+                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
                     let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
+                        pkg_name_str,
                         pkg_name_hash,
                         Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,

@@ -1912,6 +1912,72 @@ test.concurrent("can override npm package with workspace package under a differe
   });
 });
 
+test.concurrent(
+  "workspace: dependencies declared inside a tarball package do not create workspace packages",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const marker = join(packageDir, "extra-postinstall.txt");
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            lib: "file:./lib.tgz",
+          },
+        }),
+      ),
+      Bun.Archive.write(
+        join(packageDir, "lib.tgz"),
+        {
+          "lib/package.json": JSON.stringify({
+            name: "lib",
+            version: "1.0.0",
+            optionalDependencies: {
+              extra: "workspace:extra",
+            },
+          }),
+          "lib/extra/package.json": JSON.stringify({
+            name: "extra",
+            version: "1.0.0",
+            scripts: {
+              postinstall: `${bunExe()} postinstall.js`,
+            },
+          }),
+          "lib/extra/postinstall.js": `require("fs").writeFileSync(${JSON.stringify(marker)}, "")`,
+        },
+        { compress: "gzip" },
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 package installed");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["lib"]);
+    expect(await file(join(packageDir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "1.0.0",
+      optionalDependencies: {
+        extra: "workspace:extra",
+      },
+    });
+    expect(await exists(marker)).toBeFalse();
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile.workspace_paths).toEqual({});
+    expect(lockfile.packages.map((pkg: any) => pkg.name).sort()).toEqual(["foo", "lib"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe("LinkWorkspacePackages", () => {
   // Shared setup previously done in a `beforeEach`: each test gets its own dir,
   // a root workspace package.json, and a `no-deps` workspace package.

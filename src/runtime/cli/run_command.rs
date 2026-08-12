@@ -291,6 +291,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         for part in passthrough {
             copy_script.push(b' ');
+            if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
+                if !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                        bstr::BStr::new(name),
+                        bun_core::fmt::quote(&part[..]),
+                    );
+                    Output::flush();
+                }
+                Global::exit(1);
+            }
             if needs_escape_utf8_ascii_latin1(part) {
                 escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;

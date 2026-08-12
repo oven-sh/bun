@@ -406,10 +406,15 @@ impl Context {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream.
-            DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateParams(&raw mut self.state, level, strategy);
-            },
+            DEFLATE | DEFLATERAW => {
+                self.set_buffers(None, Some(&mut []));
+                // SAFETY: FFI — state is an initialized deflate stream; avail_in/avail_out
+                // are 0 (next_out non-null) so the internal deflate(Z_BLOCK) returns
+                // Z_BUF_ERROR without touching any previously installed caller buffer.
+                unsafe {
+                    self.err = c::deflateParams(&raw mut self.state, level, strategy);
+                }
+            }
             _ => {}
         }
         if self.err != c::ReturnCode::Ok && self.err != c::ReturnCode::BufError {

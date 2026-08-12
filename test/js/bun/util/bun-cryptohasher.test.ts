@@ -63,6 +63,75 @@ test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", ()
   expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(/Unsupported algorithm/);
 });
 
+test("static hash requires the algorithm to be a string primitive", () => {
+  const expected = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
+  });
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(new String("sha256"), "hello")).toThrow(expected);
+  expect(() =>
+    Bun.CryptoHasher.hash(
+      // @ts-expect-error
+      {
+        toString() {
+          return "sha256";
+        },
+      },
+      "hello",
+    ),
+  ).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(123, "hello")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(undefined, "hello")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(null, "hello")).toThrow(expected);
+  expect(Bun.CryptoHasher.hash("sha256", "hello", "hex")).toBe(
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+  );
+});
+
+test("update rejects a hasher that was digested while its input was being converted", async () => {
+  const source = /* js */ `
+    const results = {};
+    for (const name of ["SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256", "MD4", "MD5"]) {
+      const hasher = new Bun[name]();
+      hasher.update("hello");
+      const input = new String("world");
+      input.toString = () => {
+        hasher.digest();
+        return "world";
+      };
+      try {
+        hasher.update(input);
+        results[name] = "no throw";
+      } catch (e) {
+        results[name] = { code: e.code, message: e.message };
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected: Record<string, { code: string; message: string }> = {};
+  for (const name of ["SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256", "MD4", "MD5"]) {
+    expected[name] = {
+      code: "ERR_INVALID_STATE",
+      message: `${name} hasher already digested, create a new instance to update`,
+    };
+  }
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
 test("static hash reads the input buffer only after every argument has been coerced", async () => {
   const source = /* js */ `
     const emptyDigest = Bun.CryptoHasher.hash("sha256", new Uint8Array(0), "hex");

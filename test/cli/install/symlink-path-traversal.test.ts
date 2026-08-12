@@ -5,7 +5,7 @@ import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 
 // This test validates the fix for a symlink path traversal vulnerability in tarball extraction.
 // CVE: Path traversal via symlink when installing packages
@@ -520,6 +520,136 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
       server.stop();
     }
   });
+
+  for (const mode of ["streaming", "buffered"] as const) {
+    it(`writes every directory and file entry inside the package root before creating symlink entries whose names differ only by Unicode normalization (${mode} extraction)`, async () => {
+      let pad = "";
+      let seed = `deferred-symlink-pad-${mode}`;
+      while (pad.length < 256 * 1024) {
+        seed = createHash("sha256").update(seed).digest("hex");
+        pad += seed;
+      }
+
+      const composed = "d/" + String.fromCharCode(0xe9);
+      const decomposed = "d/e" + String.fromCharCode(0x301);
+      const tarball = createTarball([
+        { name: "test-package/", type: "dir" },
+        {
+          name: "test-package/package.json",
+          type: "file",
+          content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+        },
+        { name: "test-package/z/", type: "dir" },
+        { name: "test-package/q/", type: "dir" },
+        { name: `test-package/${composed}`, type: "symlink", linkname: "../q" },
+        { name: `test-package/${decomposed}/x`, type: "symlink", linkname: "../../z" },
+        { name: "test-package/q/x/marker/", type: "dir" },
+        { name: "test-package/q/x/marker/proof.txt", type: "file", content: "stays inside the package" },
+        { name: `test-package/${decomposed}/x/nested.txt`, type: "file", content: "written at its literal path" },
+        { name: "test-package/pad.bin", type: "file", content: pad },
+      ]);
+
+      const httpServer = createServer((req, res) => {
+        const url = new URL(req.url!, "http://localhost");
+        if (url.pathname.includes("/tarball/")) {
+          res.setHeader("Content-Type", "application/gzip");
+          res.setHeader("Content-Length", String(tarball.length));
+          req.socket.setNoDelay(true);
+          let offset = 0;
+          const step = () => {
+            if (offset >= tarball.length) {
+              res.end();
+              return;
+            }
+            res.write(Buffer.from(tarball.subarray(offset, Math.min(offset + 1024, tarball.length))));
+            offset += 1024;
+            setImmediate(step);
+          };
+          step();
+          return;
+        }
+        if (url.pathname.includes("/repos/")) {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ default_branch: "main" }));
+          return;
+        }
+        res.statusCode = 404;
+        res.end("Not Found");
+      });
+      await new Promise<void>(resolve => httpServer.listen(0, "127.0.0.1", () => resolve()));
+      const port = (httpServer.address() as { port: number }).port;
+
+      try {
+        using dir = tempDir(`deferred-symlink-${mode}-test`, {
+          "package.json": JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: { "test-package": "github:user/repo#main" },
+          }),
+        });
+        const installDir = String(dir);
+        const scratch = join(installDir, ".bun-tmp");
+        const cache = join(installDir, ".bun-cache");
+        await mkdir(join(scratch, "z"), { recursive: true });
+        await mkdir(join(cache, "z"), { recursive: true });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--verbose"],
+          cwd: installDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...env,
+            GITHUB_API_URL: `http://127.0.0.1:${port}`,
+            BUN_INSTALL_CACHE_DIR: cache,
+            BUN_TMPDIR: scratch,
+            TMPDIR: scratch,
+            BUN_INSTALL_STREAMING_MIN_SIZE: "1024",
+            ...(mode === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
+          },
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        if (mode === "streaming") {
+          expect(stderr).toContain("Streamed ");
+        } else {
+          expect(stderr).not.toContain("Streamed ");
+        }
+
+        if (exitCode !== 0) {
+          console.error("Install failed with exit code:", exitCode);
+          console.error("stdout:", stdout);
+          console.error("stderr:", stderr);
+        }
+        expect(exitCode).toBe(0);
+
+        const misplaced: string[] = [];
+        let markerDirs = 0;
+        for (const entry of await readdir(installDir, { recursive: true, withFileTypes: true })) {
+          if (entry.name !== "marker") continue;
+          const parentStats = await lstat(entry.parentPath);
+          if (basename(entry.parentPath) === "x" && parentStats.isDirectory() && !parentStats.isSymbolicLink()) {
+            markerDirs++;
+          } else {
+            misplaced.push(join(entry.parentPath, entry.name));
+          }
+        }
+        expect(misplaced).toEqual([]);
+        expect(markerDirs).toBeGreaterThan(0);
+
+        const pkgDir = join(installDir, "node_modules", "test-package");
+        expect((await lstat(join(pkgDir, "q", "x"))).isSymbolicLink()).toBe(false);
+        expect(await Bun.file(join(pkgDir, "q", "x", "marker", "proof.txt")).text()).toBe("stays inside the package");
+        const literalX = await lstat(join(pkgDir, decomposed, "x"));
+        expect(literalX.isSymbolicLink()).toBe(false);
+        expect(literalX.isDirectory()).toBe(true);
+        expect(await Bun.file(join(pkgDir, decomposed, "x", "nested.txt")).text()).toBe("written at its literal path");
+      } finally {
+        httpServer.closeAllConnections?.();
+        await new Promise<void>(resolve => httpServer.close(() => resolve()));
+      }
+    });
+  }
 });
 
 it.skipIf(isWindows)(

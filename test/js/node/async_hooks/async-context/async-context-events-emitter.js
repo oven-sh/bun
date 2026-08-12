@@ -31,14 +31,12 @@ asyncLocalStorage.run({ test: "EventEmitter" }, () => {
       console.error("FAIL: EventEmitter async listener lost context");
       failed = true;
     }
+    // The emits below are synchronous, so the other two listeners have already run.
+    process.exit(failed ? 1 : 0);
   });
 
   // Emit events
   emitter.emit("test");
   emitter.emit("once-test");
   emitter.emit("async-test");
-
-  setTimeout(() => {
-    process.exit(failed ? 1 : 0);
-  }, 100);
 });

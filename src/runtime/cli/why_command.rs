@@ -563,17 +563,13 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
 pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
-    /// Packages whose dependents were already printed for this target. Later
-    /// occurrences print `*deduped` instead of the subtree again; otherwise
-    /// every dependency path is printed in full, and the number of paths is
-    /// exponential in the size of a workspace whose packages share dependencies.
+    /// Subtrees already printed; repeats print `*deduped` (there are exponentially many paths).
     expanded: HashMap<PackageID, Expanded>,
 }
 
 #[derive(Clone, Copy)]
 struct Expanded {
-    /// Depth the dependents were printed at. Only matters when `truncated`:
-    /// an occurrence closer to the target gets more levels before `MAX_DEPTH`.
+    /// Only compared when `truncated`: a shallower repeat fits more levels under `MAX_DEPTH`.
     depth: usize,
     truncated: bool,
 }
@@ -595,8 +591,7 @@ impl<'a> TreeContext<'a> {
         }
     }
 
-    /// Returns the earlier expansion of `pkg_id` if printing its dependents
-    /// again at `depth` could not show anything that expansion did not.
+    /// The earlier expansion of `pkg_id`, unless repeating it at `depth` would show more.
     fn already_expanded(&self, pkg_id: PackageID, depth: usize) -> Option<Expanded> {
         let previous = *self.expanded.get(&pkg_id)?;
         (!previous.truncated || depth >= previous.depth).then_some(previous)
@@ -695,8 +690,7 @@ fn print_dependency_tree(
 
     ctx.path_tracker.remove(&current_pkg_id);
 
-    // The `*deduped` marker takes a line of its own, so a one-line subtree (the
-    // common `pkg -> root project` chain) is repeated: same length, more useful.
+    // A one-line subtree is no longer than the `*deduped` marker, so it is repeated instead.
     if printed.lines > 1 {
         ctx.expanded.insert(
             current_pkg_id,

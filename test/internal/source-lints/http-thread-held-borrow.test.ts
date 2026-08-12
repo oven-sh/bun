@@ -36,9 +36,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `HTTPThread::default_context_ptr()` for a context pointer that has to
 // survive across request code.
 //
-// `HTTPContext` is the struct embedded in `HTTPThread` and is only ever reached
-// through a borrow of it (`attach_loop`, `connect`), so it must not call the
-// accessor at all; it takes the uSockets loop as an `init` parameter instead.
+// The default `HTTPContext`s are fields of `HTTPThread`, and their `init` /
+// `init_with_thread_opts` run inside `&mut HTTPThread` methods (`attach_loop`,
+// `init_https_context`), where calling the accessor aliases the borrow they are
+// running under; that is why they take the uSockets loop as a parameter. A
+// regex cannot single those two functions out, so the whole of HTTPContext.rs
+// is banned from calling the accessor (an over-approximation: its other code
+// runs from socket callbacks or the receiver-less `HTTPThread::connect`, where a
+// statement-scoped call would be fine, but none of it needs one).
 //
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
 
@@ -79,8 +84,8 @@ const SHAPES: { name: string; re: RegExp }[] = [
 ];
 const ACCESSOR_CALL = new RegExp(ACCESSOR, "g");
 
-// Files whose types live inside `HTTPThread` and are therefore always entered
-// through a live borrow of it.
+// Files defining types embedded in `HTTPThread`, some of whose code is entered
+// under a live borrow of it (see the header); banned from the accessor outright.
 const EMBEDDED_IN_HTTP_THREAD = ["src/http/HTTPContext.rs"];
 
 const offenders: string[] = [];

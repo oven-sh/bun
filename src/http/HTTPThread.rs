@@ -106,8 +106,9 @@ pub struct HttpThread {
     /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
     /// init eagerly so a bad CA file crashes at thread start (the long-standing
     /// test contract) and this stays `None`. HTTP-thread-only after `on_start`;
-    /// `Option::take` is the once-guard (no atomics needed — `connect` is never
-    /// reentrant).
+    /// `Option::take` is the once-guard: `ensure_https_context_init` runs no
+    /// request code, so it has returned (leaving `None`) before
+    /// `HTTPContext::connect` can re-enter `connect` (h2 coalescing retries do).
     lazy_https_init: Option<InitOpts>,
 
     pub(crate) queued_tasks: Queue,
@@ -469,10 +470,10 @@ impl HttpThread {
         }
     }
 
-    /// One-shot lazy init of the default HTTPS context. See
-    /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
-    /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
-    /// is the once-guard. On failure, `on_init_error` diverges.
+    /// One-shot lazy init of the default HTTPS context; see
+    /// [`HttpThread::lazy_https_init`]. Must stay free of request code:
+    /// `connect` calls it through `http_thread()`. On failure, `on_init_error`
+    /// diverges.
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {

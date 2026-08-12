@@ -475,8 +475,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.secure.unwrap()
     }
 
-    // `loop_` is a parameter because `init*` runs inside `&mut HttpThread`
-    // methods, which `http::http_thread()` would alias.
     pub(crate) fn init_with_client_config(
         &mut self,
         client: &mut HTTPClient,
@@ -494,6 +492,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.init_with_opts(&opts, loop_)
     }
 
+    // `loop_` is passed in rather than read from `http::http_thread()`: `init`
+    // and `init_with_thread_opts` run inside `&mut HttpThread` methods
+    // (`attach_loop`, `init_https_context`), which that borrow would alias.
+    // `init_with_client_config` (custom contexts) just shares the signature.
     fn init_with_opts(
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,

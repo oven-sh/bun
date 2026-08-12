@@ -83,7 +83,7 @@ The output shows:
 
 For nested dependencies, the command shows the complete dependency tree by default, with indentation indicating the relationship hierarchy.
 
-A package can appear in the tree more than once when several chains go through it. Once its dependents have been listed (and take up more than one line), later occurrences are marked `*deduped` instead of listing them again. A dependency cycle is marked `*circular`.
+A package can appear in the tree more than once when several chains go through it. Once its dependents have been listed (and take up more than one line), later occurrences are marked `*deduped` instead of listing them again. The exception is `--depth`: if the listing was cut off by the depth limit and the package appears again closer to the queried package, where more levels fit, it is listed again. A dependency cycle is marked `*circular`.
 
 ```bash terminal icon="terminal"
 bun why pkg-x

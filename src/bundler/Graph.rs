@@ -234,14 +234,10 @@ impl<'a> Graph<'a> {
             self.pending_items += self.deferred_pending;
             self.deferred_pending = 0;
             // Their units are back in `pending_items`.
-            let mut load = self.outstanding_loads.head;
-            while !load.is_null() {
-                // SAFETY: linked ⇒ arena-live; bundle thread.
-                unsafe {
-                    (*load).deferred = false;
-                    load = (*load).outstanding.next;
-                }
-            }
+            self.outstanding_loads.for_each(|load| {
+                // SAFETY: linked ⇒ arena-live; `deferred` is this side's field (see `Load`).
+                unsafe { (*load).deferred = false };
+            });
 
             transpiler.drain_defer_task.init();
             transpiler.drain_defer_task.schedule();
@@ -262,7 +258,7 @@ use bun_ast::SideEffects;
 /// Intrusive doubly-linked membership in an [`OutstandingList`].
 pub struct OutstandingLink<T> {
     prev: *mut T,
-    pub(crate) next: *mut T,
+    next: *mut T,
     linked: bool,
 }
 impl<T> Default for OutstandingLink<T> {
@@ -274,10 +270,15 @@ impl<T> Default for OutstandingLink<T> {
         }
     }
 }
+/// Raw, not `&mut self`: the list owns only the link inside a node it shares
+/// with the plugin side (see `api::JSBundler::Resolve`).
 pub trait OutstandingNode: Sized {
-    fn link(&mut self) -> &mut OutstandingLink<Self>;
+    /// # Safety
+    /// `this` points at a live node.
+    unsafe fn link_raw(this: *mut Self) -> *mut OutstandingLink<Self>;
 }
-/// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
+/// A bundle pass's outstanding plugin requests; pass side only. Every linked
+/// node is out with the plugins, so the list touches nothing but links.
 pub struct OutstandingList<T: OutstandingNode> {
     head: *mut T,
 }
@@ -290,40 +291,39 @@ impl<T: OutstandingNode> Default for OutstandingList<T> {
 }
 impl<T: OutstandingNode> OutstandingList<T> {
     pub(crate) fn push(&mut self, node: *mut T) {
-        // SAFETY: `node` is arena-live and unlinked; bundle thread.
+        // SAFETY: `node` is arena-live and unlinked; the head is linked ⇒ arena-live.
         unsafe {
-            let l = (*node).link();
-            debug_assert!(!l.linked);
-            l.linked = true;
-            l.prev = core::ptr::null_mut();
-            l.next = self.head;
+            let l = T::link_raw(node);
+            debug_assert!(!(*l).linked);
+            (*l).linked = true;
+            (*l).prev = core::ptr::null_mut();
+            (*l).next = self.head;
             if !self.head.is_null() {
-                (*self.head).link().prev = node;
+                (*T::link_raw(self.head)).prev = node;
             }
         }
         self.head = node;
     }
     /// No-op if `node` is not linked (already answered / never dispatched).
-    pub(crate) fn unlink(&mut self, node: &mut T) {
-        let node_ptr: *mut T = node;
-        let l = node.link();
-        if !l.linked {
-            return;
-        }
-        l.linked = false;
-        let (prev, next) = (l.prev, l.next);
-        l.prev = core::ptr::null_mut();
-        l.next = core::ptr::null_mut();
-        // SAFETY: neighbours are linked ⇒ arena-live; bundle thread.
+    pub(crate) fn unlink(&mut self, node: *mut T) {
+        // SAFETY: `node` is arena-live; its neighbours are linked ⇒ arena-live.
         unsafe {
+            let l = T::link_raw(node);
+            if !(*l).linked {
+                return;
+            }
+            (*l).linked = false;
+            let (prev, next) = ((*l).prev, (*l).next);
+            (*l).prev = core::ptr::null_mut();
+            (*l).next = core::ptr::null_mut();
             if prev.is_null() {
-                debug_assert!(core::ptr::eq(self.head, node_ptr));
+                debug_assert!(core::ptr::eq(self.head, node));
                 self.head = next;
             } else {
-                (*prev).link().next = next;
+                (*T::link_raw(prev)).next = next;
             }
             if !next.is_null() {
-                (*next).link().prev = prev;
+                (*T::link_raw(next)).prev = prev;
             }
         }
     }
@@ -332,8 +332,17 @@ impl<T: OutstandingNode> OutstandingList<T> {
         if head.is_null() {
             return None;
         }
-        // SAFETY: linked ⇒ arena-live.
-        self.unlink(unsafe { &mut *head });
+        self.unlink(head);
         Some(head)
+    }
+    /// `f` may only touch the pass side's fields of each node, and must not link or unlink.
+    pub(crate) fn for_each(&self, mut f: impl FnMut(*mut T)) {
+        let mut node = self.head;
+        while !node.is_null() {
+            // SAFETY: linked ⇒ arena-live.
+            let next = unsafe { (*T::link_raw(node)).next };
+            f(node);
+            node = next;
+        }
     }
 }

@@ -9,7 +9,11 @@ import path from "node:path";
 
 const skip = !fault.available() || isWindows;
 
-afterEach(() => fault.clear());
+// fault.clear() throws on builds without the hooks compiled in, and the unfaulted scenario at the
+// bottom of this file runs on those builds too.
+afterEach(() => {
+  if (fault.available()) fault.clear();
+});
 
 // http2 sessions go through the same uSockets bsd_recv/bsd_send chokepoints.
 // Faults are process-global, so client and server (both in this process)

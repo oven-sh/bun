@@ -1230,19 +1230,29 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return Promise.all(promises);
   }
 
+  /** Hook for adapters holding connections outside the pool (the Postgres
+   * LISTEN connection). Runs from close() once the adapter is marked closed,
+   * so a connect still in flight sees `closed` and gives up. */
+  protected closeDedicatedConnections(): void {}
+
   async close(options?: { timeout?: number }): Promise<void> {
     if (this.closed) {
       return;
     }
 
     let timeout = options?.timeout;
-    if (timeout) {
+    const hasTimeout = !!timeout;
+    if (hasTimeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+    }
 
-      this.closed = true;
+    this.closed = true;
+    this.closeDedicatedConnections();
+
+    if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1264,7 +1274,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
       return promise;
     } else {
-      this.closed = true;
       if (!this.hasPendingQueries()) {
         // close immediately
         await this.#close();

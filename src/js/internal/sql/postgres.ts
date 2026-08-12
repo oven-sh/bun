@@ -523,6 +523,322 @@ class PostgresAdapter
     }
     return pushBindParam(this, value, binding_values, index);
   }
+
+  #listener: ListenConnection | null = null;
+
+  listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+    if (this.closed) return Promise.$reject(this.connectionClosedError());
+    return (this.#listener ??= new ListenConnection(this)).listen(channel, onnotify, onlisten);
+  }
+
+  unlisten(channel: string, onnotify: Listener | undefined): Promise<void> {
+    return this.#listener?.unlisten(channel, onnotify) ?? Promise.$resolve(undefined);
+  }
+
+  protected closeDedicatedConnections() {
+    this.#listener?.close();
+    this.#listener = null;
+  }
+}
+
+type Listener = (payload: string) => void;
+type ListenState = { pid: number; secret: number };
+type OnListen = (state: ListenState) => void;
+type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
+
+// One per subscribed channel. The entry's identity scopes its LISTEN round
+// trip: unlisten() drops the entry synchronously, so a listen() racing it gets
+// a fresh entry with its own round trip, and code resuming after an await can
+// tell whether its entry is still the live one.
+class Channel {
+  // A lone listener is stored bare; the second subscriber promotes to an array.
+  listeners: Listener | Listener[];
+  onlisten: Array<[Listener, OnListen]> | null = null;
+  // The LISTEN round trip on the current connection, shared by concurrent
+  // listen() calls; null until issued and again after a disconnect.
+  ready: Promise<void> | null = null;
+
+  constructor(listener: Listener) {
+    this.listeners = listener;
+  }
+
+  add(listener: Listener) {
+    const current = this.listeners;
+    if (typeof current === "function") {
+      if (current !== listener) this.listeners = [current, listener];
+    } else if (!current.includes(listener)) {
+      current.push(listener);
+    }
+  }
+
+  /** @returns true when no listeners remain */
+  remove(listener: Listener): boolean {
+    const current = this.listeners;
+    if (typeof current === "function") return current === listener;
+    const index = current.indexOf(listener);
+    if (index !== -1) current.splice(index, 1);
+    if (current.length === 1) this.listeners = current[0];
+    if (this.onlisten !== null) {
+      this.onlisten = this.onlisten.filter(pair => pair[0] !== listener);
+      if (this.onlisten.length === 0) this.onlisten = null;
+    }
+    return false;
+  }
+
+  has(listener: Listener): boolean {
+    const current = this.listeners;
+    return typeof current === "function" ? current === listener : current.includes(listener);
+  }
+
+  fireOnlisten(state: ListenState) {
+    const pairs = this.onlisten;
+    if (pairs === null) return;
+    for (let i = 0; i < pairs.length; i++) pairs[i][1](state);
+  }
+}
+
+// Stands in for a Query in the native run() callbacks: onResolvePostgresQuery
+// and onRejectPostgresQuery (initPostgres above) touch exactly these members.
+class ListenQuery {
+  resolve!: () => void;
+  reject!: (err: unknown) => void;
+  [_results] = null;
+  [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
+
+  constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
+    this[_handle] = handle;
+  }
+
+  static run(conn: ListenHandle, sql: string): Promise<void> {
+    const handle = createPostgresQuery(sql, [], new SQLResultArray(), undefined, false, true);
+    const query = new ListenQuery(handle);
+    const promise = new Promise<void>((resolve, reject) => {
+      query.resolve = resolve;
+      query.reject = err => reject(wrapPostgresError(err as Error));
+    });
+    handle.run(conn, query as any);
+    return promise;
+  }
+}
+
+function quoteChannel(channel: string) {
+  return '"' + channel.replaceAll('"', '""') + '"';
+}
+
+const RECONNECT_MIN_MS = 250;
+const RECONNECT_MAX_MS = 32_000;
+
+// The adapter's dedicated LISTEN connection and channel table. Every failure
+// (connect error, dropped connection, LISTEN rejected by the server) is
+// repaired the same way: #scheduleSweep() arms a backoff timer and #sweep()
+// re-issues LISTEN for each channel without a round trip on the current
+// connection.
+class ListenConnection {
+  readonly #adapter: PostgresAdapter;
+  readonly #channels = new Map<string, Channel>();
+  // Returned from every listen() and updated in place on (re)connect.
+  readonly #state: ListenState = { pid: 0, secret: 0 };
+
+  #conn: ListenHandle | null = null;
+  #connecting: Promise<ListenHandle> | null = null;
+  // The native handle while its handshake is in flight, so close() can abort it.
+  #handshake: ListenHandle | null = null;
+  #sweepTimer: ReturnType<typeof setTimeout> | null = null;
+  #backoffMs = RECONNECT_MIN_MS;
+
+  constructor(adapter: PostgresAdapter) {
+    this.#adapter = adapter;
+  }
+
+  // Called from native per NotificationResponse with an interned channel
+  // string. A throwing listener propagates out as an uncaught exception.
+  readonly #onNotification = (channel: string, payload: string) => {
+    const entry = this.#channels.get(channel);
+    if (entry === undefined) return;
+    const listeners = entry.listeners;
+    if (typeof listeners === "function") {
+      listeners(payload);
+      return;
+    }
+    for (let i = 0; i < listeners.length; i++) listeners[i](payload);
+  };
+
+  async listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+    let entry = this.#channels.get(channel);
+    if (entry === undefined) {
+      entry = new Channel(onnotify);
+      this.#channels.set(channel, entry);
+    } else {
+      entry.add(onnotify);
+    }
+
+    try {
+      await (entry.ready ??= this.#subscribe(channel, entry));
+    } catch (err) {
+      if (this.#channels.get(channel) === entry && entry.remove(onnotify)) {
+        this.#channels.delete(channel);
+        this.#closeIfIdle();
+      }
+      throw err;
+    }
+
+    if (onlisten !== undefined && this.#channels.get(channel) === entry && entry.has(onnotify)) {
+      (entry.onlisten ??= []).push([onnotify, onlisten]);
+      onlisten(this.#state);
+    }
+
+    const unlisten = () => this.unlisten(channel, onnotify);
+    return { state: this.#state, unlisten, [Symbol.asyncDispose]: unlisten };
+  }
+
+  async unlisten(channel: string, onnotify: Listener | undefined): Promise<void> {
+    const entry = this.#channels.get(channel);
+    if (entry === undefined) return;
+    if (onnotify !== undefined && !entry.remove(onnotify)) return;
+
+    this.#channels.delete(channel);
+    if (this.#channels.size === 0) {
+      this.#closeIfIdle();
+      return;
+    }
+    const conn = this.#conn;
+    if (conn === null) return;
+    try {
+      await ListenQuery.run(conn, "UNLISTEN " + quoteChannel(channel));
+    } catch {
+      // The connection dropped, which unsubscribed everything anyway.
+    }
+  }
+
+  close() {
+    this.#clearSweep();
+    this.#channels.clear();
+    const conn = this.#conn;
+    const handshake = this.#handshake;
+    this.#conn = this.#handshake = this.#connecting = null;
+    conn?.close();
+    handshake?.close();
+  }
+
+  async #subscribe(channel: string, entry: Channel): Promise<void> {
+    try {
+      const conn = await this.#connection();
+      if (this.#channels.get(channel) !== entry) {
+        this.#closeIfIdle();
+        return;
+      }
+      await ListenQuery.run(conn, "LISTEN " + quoteChannel(channel));
+      if (this.#channels.get(channel) !== entry) return;
+      entry.fireOnlisten(this.#state);
+    } catch (err) {
+      entry.ready = null;
+      throw err;
+    }
+  }
+
+  #connection(): Promise<ListenHandle> {
+    if (this.#conn !== null) return Promise.$resolve(this.#conn);
+    return (this.#connecting ??= this.#connect().finally(() => {
+      this.#connecting = null;
+    }));
+  }
+
+  #connect(): Promise<ListenHandle> {
+    const adapter = this.#adapter;
+    const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
+    let live: ListenHandle | null = null;
+
+    createPooledConnectionHandle(
+      createPostgresConnection,
+      { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
+      (err, conn) => {
+        this.#handshake = null;
+        if (err) return reject(wrapPostgresError(err));
+        if (adapter.closed) {
+          conn.close();
+          return reject(adapter.connectionClosedError());
+        }
+        live = this.#conn = conn;
+        this.#backoffMs = RECONNECT_MIN_MS;
+        this.#state.pid = conn.processId;
+        this.#state.secret = conn.secretKey;
+        conn.onnotification = this.#onNotification;
+        conn.ref();
+        resolve(conn);
+        this.#clearSweep();
+        this.#sweep();
+      },
+      err => {
+        if (live === null) {
+          this.#handshake = null;
+          return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
+        }
+        if (this.#conn !== live) return;
+        this.#conn = null;
+        for (const entry of this.#channels.values()) entry.ready = null;
+        this.#scheduleSweep();
+      },
+    ).then(handle => {
+      if (handle === null || live !== null) return;
+      if (adapter.closed) handle.close();
+      else this.#handshake = handle;
+    });
+
+    return promise;
+  }
+
+  #sweep() {
+    if (this.#adapter.closed || this.#channels.size === 0) return;
+    let failed = false;
+    let pending = 0;
+    const settle = () => {
+      if (--pending === 0 && failed) this.#scheduleSweep();
+    };
+    for (const [channel, entry] of this.#channels) {
+      if (entry.ready !== null) continue;
+      pending++;
+      (entry.ready = this.#subscribe(channel, entry)).then(settle, err => {
+        failed = true;
+        if (this.#channels.get(channel) === entry) {
+          console.warn(`bun:sql LISTEN ${quoteChannel(channel)} failed, retrying: ${(err as Error)?.message ?? err}`);
+        }
+        settle();
+      });
+    }
+  }
+
+  #scheduleSweep() {
+    if (this.#sweepTimer !== null || this.#adapter.closed || this.#channels.size === 0) return;
+    // Deliberately ref'd: during backoff this timer is what keeps a
+    // subscribed process alive.
+    const delay = this.#backoffMs * (0.75 + Math.random() * 0.5);
+    this.#backoffMs = Math.min(this.#backoffMs * 2, RECONNECT_MAX_MS);
+    this.#sweepTimer = setTimeout(() => {
+      this.#sweepTimer = null;
+      this.#sweep();
+    }, delay);
+  }
+
+  #clearSweep() {
+    if (this.#sweepTimer !== null) {
+      clearTimeout(this.#sweepTimer);
+      this.#sweepTimer = null;
+    }
+  }
+
+  // Closing the connection releases every server-side registration. A
+  // handshake still in flight is left alone: the #subscribe awaiting it
+  // re-checks its entry and ends up here itself.
+  #closeIfIdle() {
+    if (this.#channels.size !== 0) return;
+    this.#clearSweep();
+    this.#backoffMs = RECONNECT_MIN_MS;
+    const conn = this.#conn;
+    if (conn !== null) {
+      this.#conn = null;
+      conn.close();
+    }
+  }
 }
 
 export default {

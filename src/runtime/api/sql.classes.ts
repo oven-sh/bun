@@ -72,7 +72,10 @@ for (const type of types) {
             }
           : {}),
       },
-      values: type === "PostgresSQL" ? ["onconnect", "onclose", "queries", "onnotification"] : ["onconnect", "onclose", "queries"],
+      values:
+        type === "PostgresSQL"
+          ? ["onconnect", "onclose", "queries", "onnotification"]
+          : ["onconnect", "onclose", "queries"],
     }),
   );
 

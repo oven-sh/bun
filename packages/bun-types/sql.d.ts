@@ -413,6 +413,25 @@ declare module "bun" {
     type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
     /**
+     * The backend currently serving this client's LISTEN subscriptions. One
+     * object per client, updated in place whenever the listen connection is
+     * (re)established.
+     */
+    interface ListenState {
+      /** Process id of the listening backend */
+      pid: number;
+      /** Cancellation key of the listening backend */
+      secret: number;
+    }
+
+    /** Returned by {@link SQL.listen}. */
+    interface ListenSubscription extends AsyncDisposable {
+      state: ListenState;
+      /** Remove this subscription. Idempotent. */
+      unlisten(): Promise<void>;
+    }
+
+    /**
      * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
      * methods to control how it runs.
      */
@@ -930,6 +949,66 @@ declare module "bun" {
      * ```
      */
     file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
+
+    /**
+     * Subscribe to a PostgreSQL `LISTEN` channel.
+     *
+     * All subscriptions on this client share one dedicated connection, opened
+     * by the first `listen()` and closed when the last subscription is
+     * removed. If it drops, it is reconnected with exponential backoff and
+     * every channel is re-subscribed; `onlisten` runs again each time.
+     *
+     * A throwing `onnotify` is reported as an uncaught exception.
+     *
+     * @param channel - Channel name; any non-empty string, quoted for you
+     * @param onnotify - Receives each notification's payload
+     * @param onlisten - Runs once the `LISTEN` is acknowledged, initially and
+     * after every reconnect
+     *
+     * @returns `state` is shared by every subscription on this client and
+     * updated in place on reconnect: `state.pid` is the listening backend's
+     * process id (usable with `pg_terminate_backend`), `state.secret` its
+     * cancel key. `unlisten()` removes this subscription; the result is also
+     * an async disposable, so `await using` removes it at the end of the scope.
+     *
+     * @example
+     * ```ts
+     * const { state, unlisten } = await sql.listen("events", payload => console.log(payload));
+     * await sql.notify("events", "hello");
+     * await unlisten();
+     * ```
+     *
+     * @example
+     * ```ts
+     * await using subscription = await sql.listen("events", handle);
+     * ```
+     */
+    listen(
+      channel: string,
+      onnotify: (payload: string) => void,
+      onlisten?: (state: SQL.ListenState) => void,
+    ): Promise<SQL.ListenSubscription>;
+
+    /**
+     * Remove LISTEN subscriptions on `channel`: the one registered with
+     * `onnotify`, or all of them if it is omitted. Resolves once the channel
+     * is no longer subscribed; unknown channels and callbacks are ignored.
+     */
+    unlisten(channel: string, onnotify?: (payload: string) => void): Promise<void>;
+
+    /**
+     * Send a PostgreSQL `NOTIFY` via `pg_notify`. Runs as a normal query on
+     * this handle, so on a `sql.begin()` transaction it is delivered on commit
+     * and discarded on rollback. Omitting `payload` sends an empty one, like a
+     * bare `NOTIFY channel`.
+     *
+     * @example
+     * ```ts
+     * await sql.notify("events", JSON.stringify({ id: 1 }));
+     * await sql.notify("cache-invalidated");
+     * ```
+     */
+    notify(channel: string, payload?: string): Promise<void>;
   }
 
   /**

@@ -43,6 +43,7 @@ const sqliteResults = await sqlite`
 - Binary protocol support makes it faster
 - TLS support (and auth mode)
 - Automatic configuration with environment variables
+- PostgreSQL `LISTEN` / `NOTIFY`
 
 ---
 
@@ -972,6 +973,65 @@ try {
   await reserved`SELECT 1`;
 } // Automatically released
 ```
+
+---
+
+## LISTEN / NOTIFY (PostgreSQL)
+
+`sql.listen()` subscribes to a PostgreSQL notification channel and `sql.notify()` publishes to one. Processes sharing a database can use this as a lightweight message bus: cache invalidation, waking workers when rows are inserted (typically from a trigger calling `pg_notify`), fan-out of small events.
+
+```ts
+import { sql } from "bun";
+
+const { state, unlisten } = await sql.listen("orders", payload => {
+  console.log("new order", JSON.parse(payload));
+});
+console.log("listening on backend", state.pid);
+
+await sql.notify("orders", JSON.stringify({ id: 42 }));
+
+await unlisten();
+```
+
+`listen()` resolves once PostgreSQL has acknowledged the `LISTEN`, so a `notify()` issued after it resolves is delivered. The subscription is also an async disposable:
+
+```ts
+{
+  await using subscription = await sql.listen("orders", handleOrder);
+  await doWork();
+} // unlistened here
+```
+
+### How it works
+
+- All subscriptions on a client share one dedicated connection. The first `listen()` opens it and removing the last subscription closes it, so a client that never listens never pays for it, and unlistening everything lets the process exit without `sql.close()`.
+- While anything is subscribed, that connection keeps the process alive, like a listening server.
+- If the connection drops, it is re-established with exponential backoff (250ms doubling to 32s, with jitter) and every channel is re-subscribed. PostgreSQL only delivers to connected listeners, so notifications sent in between are lost; the optional third argument to `listen()` runs on the initial subscribe and after every reconnect, which is the place to catch up:
+
+```ts
+await sql.listen("orders", handleOrder, async () => {
+  for (const order of await sql`SELECT * FROM orders WHERE processed = false`) handleOrder(order);
+});
+```
+
+- Several `listen()` calls on one channel share a single server-side subscription and each callback receives every notification. `unlisten(channel, callback)` removes one of them; `unlisten(channel)` removes them all. A callback that throws is reported as an uncaught exception.
+- `state` is one object per client, updated in place on reconnect, so a reference from any `listen()` always describes the backend currently holding the subscriptions.
+- Channel names can be any non-empty string and are quoted as identifiers for you. PostgreSQL limits payloads to 8000 bytes by default.
+
+### `notify()`
+
+`notify()` is an ordinary query (`SELECT pg_notify($1, $2)`) on whichever handle you call it through. On `sql` it uses the pool; inside `sql.begin()` it runs in the transaction, so PostgreSQL delivers it on `COMMIT` and drops it on `ROLLBACK`, which is how to announce a change only once it is visible:
+
+```ts
+await sql.begin(async tx => {
+  const [order] = await tx`INSERT INTO orders ${sql(data)} RETURNING id`;
+  await tx.notify("orders", String(order.id)); // delivered when the transaction commits
+});
+```
+
+The payload is optional: `sql.notify("cache-invalidated")` is PostgreSQL's bare `NOTIFY`. Reserved and transaction handles also have `listen()` and `unlisten()`; those always use the client's shared listen connection.
+
+`LISTEN`/`NOTIFY` is PostgreSQL-only; on MySQL and SQLite these methods reject.
 
 ---
 

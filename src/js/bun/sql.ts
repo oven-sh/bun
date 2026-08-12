@@ -237,6 +237,48 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  // LISTEN/NOTIFY. Arguments are validated here for every adapter; adapters
+  // without support reject after validation so the API behaves uniformly.
+  const listenable = "listen" in pool ? pool : null;
+  function validateChannel(channel: unknown): asserts channel is string {
+    if (typeof channel !== "string" || channel.length === 0) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+    if (channel.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    }
+  }
+  function validateCallback(name: string, fn: unknown, optional: boolean) {
+    if (!$isCallable(fn) && !(optional && fn === undefined)) {
+      throw $ERR_INVALID_ARG_TYPE(name, "function", fn);
+    }
+  }
+  const listenUnsupported = () =>
+    Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+  const listen: Bun.SQL["listen"] = async (channel, onnotify, onlisten) => {
+    validateChannel(channel);
+    validateCallback("onnotify", onnotify, false);
+    validateCallback("onlisten", onlisten, true);
+    return listenable ? listenable.listen(channel, onnotify, onlisten) : listenUnsupported();
+  };
+  const unlisten: Bun.SQL["unlisten"] = async (channel, onnotify) => {
+    validateChannel(channel);
+    validateCallback("onnotify", onnotify, true);
+    return listenable ? listenable.unlisten(channel, onnotify) : listenUnsupported();
+  };
+  // NOTIFY is a plain query on the handle it is called through, so on a
+  // transaction handle it commits or rolls back with the transaction.
+  // .execute() starts the otherwise-lazy query so fire-and-forget works.
+  function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
+    return (channel, payload) => {
+      validateChannel(channel);
+      if (payload === undefined) payload = "";
+      else if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+      if (!listenable) return listenUnsupported();
+      return target.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute() as unknown as Promise<void>;
+    };
+  }
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -317,6 +359,9 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
+    reserved_sql.listen = listen;
+    reserved_sql.unlisten = unlisten;
+    reserved_sql.notify = makeNotify(reserved_sql);
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -592,6 +637,9 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
     transaction_sql.array = sql.array;
+    transaction_sql.listen = listen;
+    transaction_sql.unlisten = unlisten;
+    transaction_sql.notify = makeNotify(transaction_sql);
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -938,6 +986,9 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+  sql.listen = listen;
+  sql.unlisten = unlisten;
+  sql.notify = makeNotify(sql);
   return sql;
 };
 
@@ -1016,6 +1067,18 @@ defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazy
 defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
+};
+defaultSQLObject.listen = (...args: Parameters<typeof lazyDefaultSQL.listen>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.listen(...args);
+};
+defaultSQLObject.unlisten = (...args: Parameters<typeof lazyDefaultSQL.unlisten>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unlisten(...args);
+};
+defaultSQLObject.notify = (...args: Parameters<typeof lazyDefaultSQL.notify>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.notify(...args);
 };
 //define lazy properties
 defineProperties(defaultSQLObject, {

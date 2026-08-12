@@ -613,11 +613,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     cb: HotAccept;
     key: Id;
   };
-  /** Replaced modules, the modules their updates propagate through, and the self-accepting modules they stop at. */
+  /** Every module this update replaces with a new copy (disposed of, then evaluated again): the replaced
+   * modules, the modules their updates propagate through, and the self-accepting modules they stop at. */
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
   for (const key of Object.keys(modules)) {
@@ -648,9 +648,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         propagates = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
       else if (Object.keys(mod.data).length > 0) {
@@ -658,9 +655,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         toReload.add(mod);
         visited.add(mod);
         propagates = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
       }
 
       if (propagates) {
@@ -740,21 +734,20 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Dispose all modules
-  if (toDispose.length > 0) {
-    const disposePromises: Promise<void>[] = [];
-    for (const mod of toDispose) {
-      mod.state = State.Stale;
-      for (const fn of mod.onDispose!) {
-        const p = fn(mod.data);
-        if (p && p instanceof Promise) {
-          disposePromises.push(p);
-        }
+  const disposePromises: Promise<void>[] = [];
+  for (const mod of toReload) {
+    const { onDispose } = mod;
+    if (!onDispose) continue;
+    for (const fn of onDispose) {
+      const p = fn(mod.data);
+      if (p && p instanceof Promise) {
+        disposePromises.push(p);
       }
-      mod.onDispose = null;
     }
-    if (disposePromises.length > 0) {
-      await Promise.all(disposePromises);
-    }
+    mod.onDispose = null;
+  }
+  if (disposePromises.length > 0) {
+    await Promise.all(disposePromises);
   }
 
   // Reload all modules. All of them are marked stale before any is loaded, so

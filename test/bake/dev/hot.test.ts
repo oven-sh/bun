@@ -440,6 +440,109 @@ devTest("a self-accepting module imported by another one being reloaded is evalu
     await c.expectMessageInAnyOrder("y evaluated y(d2)", "index d2 y(d2)", "y accepted y(d2)");
   },
 });
+devTest("a module evaluated again because of an update below it is disposed of first", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index (self-accepting) -> mid -> d
+    //
+    // `mid` is replaced along with `d`, so the copy being thrown away has its
+    // dispose callbacks run, which also removes its event listener (on() is
+    // implemented with dispose()); only the new copy's listener fires.
+    "index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    "mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      console.log("mid evaluated " + mid);
+      import.meta.hot.dispose(() => console.log("mid disposed " + mid));
+      import.meta.hot.on("bun:afterUpdate", () => console.log("afterUpdate seen by " + mid));
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("mid evaluated mid(d1)", "index mid(d1)");
+
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage(
+      "mid disposed mid(d1)",
+      "mid evaluated mid(d2)",
+      "index mid(d2)",
+      "afterUpdate seen by mid(d2)",
+    );
+
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage(
+      "mid disposed mid(d2)",
+      "mid evaluated mid(d3)",
+      "index mid(d3)",
+      "afterUpdate seen by mid(d3)",
+    );
+  },
+});
+devTest("an update that is not accepted only reloads the page", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // index -> b -> d    (b accepts d)
+    // index -> c -> d    (c self-accepts)
+    // index -> d         (index does not accept anything: the update fails)
+    //
+    // Everything logs through the console.log captured when the page was
+    // loaded. The test client silences the console object as soon as the page
+    // starts reloading, but a captured reference still reaches the test, so
+    // anything the runtime still did in the page being left (disposing of c,
+    // evaluating d and c again, b's callback) would show up as a message
+    // between "full reload" and the messages of the freshly loaded page.
+    "index.ts": `
+      import "./b";
+      import "./c";
+      import "./d";
+      import.meta.hot.on("bun:beforeFullReload", () => globalThis.log("full reload"));
+      globalThis.log("index evaluated");
+    `,
+    "b.ts": `
+      import { d } from "./d";
+      globalThis.log("b evaluated " + d);
+      import.meta.hot.accept("./d", newModule => globalThis.log("b accepted " + newModule.d));
+    `,
+    "c.ts": `
+      import { d } from "./d";
+      globalThis.log("c evaluated " + d);
+      import.meta.hot.dispose(() => globalThis.log("c disposed " + d));
+      import.meta.hot.accept();
+    `,
+    "d.ts": `
+      globalThis.log ??= console.log;
+      export const d = "d1";
+      globalThis.log("d evaluated " + d);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("d evaluated d1", "b evaluated d1", "c evaluated d1", "index evaluated");
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "d.ts",
+        `
+          globalThis.log ??= console.log;
+          export const d = "d2";
+          globalThis.log("d evaluated " + d);
+        `,
+      );
+    });
+    await c.expectMessage("full reload", "d evaluated d2", "b evaluated d2", "c evaluated d2", "index evaluated");
+  },
+});
 devTest("server: modules between the updated module and the route are evaluated again", {
   framework: minimalFramework,
   files: {

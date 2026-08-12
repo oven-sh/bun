@@ -43,11 +43,13 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // converted versions are the templates.
 //
 // Scope: the argument of a call spelled `..WorkPool::schedule(..)`, when it is
-// a field path through a binding (`&raw mut x.f`, `&mut x.f`, `addr_of_mut!(
-// x.f)`, `ptr::from_mut(&mut x.f)`) or one of the tree's reference-returning
-// task accessors (`x.task()`, `x.task_mut()`, `x.field_mut()`). A raw pointer
-// projected through `(*p).f`, a local holding the projected pointer, and
-// `schedule_owned` / `schedule_new` are the intended shapes. Whether the
+// a field path through a binding (`&raw mut x.f`, `&raw mut (*self).f`,
+// `&mut x.f`, `addr_of_mut!(x.f)`, `ptr::from_mut(&mut x.f)`) or one of the
+// tree's reference-returning task accessors (`x.task()`, `x.task_mut()`,
+// `x.field_mut()`). A raw pointer projected through `(*p).f`, a local holding
+// the projected pointer, and `schedule_owned` / `schedule_new` are the intended
+// shapes; `(*r).f` through a reference parameter not named `self` looks the
+// same as the intended shape and is not caught. Whether the
 // pointer the function was handed is itself whole-object is that function's
 // caller's business (the io thread's `FileAction.poll: &mut Poll` and
 // `Request` hand-offs narrow one level up; tracked separately). The same
@@ -82,9 +84,13 @@ const tracked: Set<string> | null = (() => {
 const CALL = String.raw`\bWorkPool::schedule\(\s*(?:unsafe\s*\{\s*)?`;
 const END = String.raw`\s*\}?\s*[,)]`;
 
-// `x.f`, `x.a.f`: a field path whose base is a binding. A raw pointer projects
-// as `(*x).f`, which starts with `(` and so never matches.
-const FIELD_PATH = String.raw`\w+(?:\.\w+)+`;
+// `x.f`, `x.a.f`: a field path whose base is a binding; also `(*self).f`,
+// since `self` is a reference (or the value) in every position it can appear
+// in, so dereferencing it explicitly is the same projection. A raw pointer
+// projects as `(*p).f`; whether `p` is a raw pointer or a reference parameter
+// is not visible here, so only the `self` spelling of that form is matched.
+const BASE = String.raw`(?:\w+|\(\s*\*\s*self\s*\))`;
+const FIELD_PATH = String.raw`${BASE}(?:\.\w+)+`;
 
 const BANNED_ARGS = [
   String.raw`&raw\s+mut\s+${FIELD_PATH}`,
@@ -95,7 +101,7 @@ const BANNED_ARGS = [
   // was), `IntrusiveWorkTask::task_mut`, `IntrusiveField::field_mut`. A
   // trailing `.as_ptr()` or similar does not reach the closing paren, so a
   // helper returning a raw pointer is not matched.
-  String.raw`\w+(?:\.\w+)*\.(?:task|task_mut|field_mut)\(\s*\)`,
+  String.raw`${BASE}(?:\.\w+)*\.(?:task|task_mut|field_mut)\(\s*\)`,
 ].join("|");
 
 const BANNED = new RegExp(`${CALL}(?:${BANNED_ARGS})${END}`, "g");
@@ -164,6 +170,11 @@ test("the pattern recognizes the spellings it claims to", () => {
     "WorkPool::schedule(self.field_mut());",
     "WorkPool::schedule(this.inner.task());",
     "WorkPool::schedule(unsafe { &raw mut this.task });",
+    // `self` dereferenced explicitly is still a projection through `self`.
+    "WorkPool::schedule(&raw mut (*self).task);",
+    "WorkPool::schedule(addr_of_mut!((*self).task));",
+    "WorkPool::schedule(&mut (* self).inner.task);",
+    "WorkPool::schedule((*self).task_mut());",
     // rustfmt-wrapped.
     "WorkPool::schedule(\n    &raw mut self.task,\n);",
     "bun_jsc::WorkPool::schedule(\n    this.task(),\n);",

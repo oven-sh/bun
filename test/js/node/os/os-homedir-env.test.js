@@ -11,7 +11,9 @@ const { test } = require("node:test");
 const isWindows = process.platform === "win32";
 
 function runWithEnv(source, envOverride = {}) {
-  const env = { ...process.env };
+  // No harness import (the file must run under plain node), so set the
+  // quiet-log vars bunEnv would provide; node ignores them.
+  const env = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" };
   for (const [key, value] of Object.entries(envOverride)) {
     if (value === undefined) delete env[key];
     else env[key] = value;

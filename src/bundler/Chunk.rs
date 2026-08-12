@@ -651,7 +651,7 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
+        let mut relative_spill = Vec::new();
         let mut file_path_buf = bun_paths::path_buffer_pool::get();
         match self {
             IntermediateOutput::Pieces(pieces) => {
@@ -769,11 +769,10 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
+                                        &mut relative_spill, from_chunk_dir, file_path
                                     )
                                 },
                             );
@@ -950,11 +949,10 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
+                                        &mut relative_spill, from_chunk_dir, file_path
                                     )
                                 },
                             );

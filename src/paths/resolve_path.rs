@@ -651,9 +651,59 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
 ) -> &'a [u8] {
     // RELATIVE_FROM_BUF and RELATIVE_TO_BUF are independent allocations so the
     // two `&mut` borrows below are disjoint.
-    let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
-    let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
+    relative_platform_scratch::<P, ALWAYS_COPY>(
+        buf,
+        &mut RELATIVE_FROM_BUF.with(lazy_path_buf)[..],
+        &mut RELATIVE_TO_BUF.with(lazy_path_buf)[..],
+        from,
+        to,
+    )
+}
 
+/// Upper bound on what [`relative_platform_scratch`] writes into any one of its
+/// three buffers. Either input grows by a few bytes at most when it is resolved
+/// against the top-level dir and normalized; the result spends at most `/..`
+/// per segment of the normalized `from` (segments are at least two bytes apart,
+/// so under 1.5x its length) plus a separator and the tail of `to`. Rounded up.
+fn relative_scratch_len(from: &[u8], to: &[u8]) -> usize {
+    let top_level_dir_len = Fs::FileSystem::instance().top_level_dir().len();
+    let normalized_from = top_level_dir_len + from.len() + 4;
+    let normalized_to = top_level_dir_len + to.len() + 4;
+    2 * normalized_from + normalized_to + 8
+}
+
+/// [`relative_platform`] for inputs of any length. Uses the thread-local path
+/// buffers when they provably fit, otherwise computes in `spill` (grown as
+/// needed), so neither a long input nor a long `../` chain in the result can
+/// overflow a `PathBuffer`. Like [`relative_platform`], the result is valid
+/// until the next relative-path call on this thread or the next use of `spill`.
+pub fn relative_platform_spill<'a, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    from: &[u8],
+    to: &[u8],
+) -> &'a [u8] {
+    let needed = relative_scratch_len(from, to);
+    if needed <= MAX_PATH_BYTES {
+        return relative_platform::<P, false>(from, to);
+    }
+    if spill.len() < needed * 3 {
+        spill.resize(needed * 3, 0);
+    }
+    let (buf, rest) = spill.split_at_mut(needed);
+    let (relative_from_buf, relative_to_buf) = rest.split_at_mut(needed);
+    relative_platform_scratch::<P, false>(buf, relative_from_buf, relative_to_buf, from, to)
+}
+
+/// `relative_from_buf` and `relative_to_buf` must each hold the absolute,
+/// normalized form of their input and `buf` the result; see
+/// [`relative_scratch_len`].
+fn relative_platform_scratch<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    buf: &'a mut [u8],
+    relative_from_buf: &'a mut [u8],
+    relative_to_buf: &'a mut [u8],
+    from: &[u8],
+    to: &[u8],
+) -> &'a [u8] {
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {
             if P::P == Platform::Loose && cfg!(windows) {
@@ -2428,3 +2478,59 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // `PathChar` is now canonical at `crate::path_char`; re-export for callers
 // that still path through `resolve_path::PathChar`.
 pub use crate::PathChar;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The top-level dir is process-wide, so every test here resolves relative
+    // inputs against the same seed.
+    fn relative_spill<'a>(spill: &'a mut Vec<u8>, from: &[u8], to: &[u8]) -> &'a [u8] {
+        Fs::FileSystem::init(b"/cwd");
+        relative_platform_spill::<platform::Posix>(spill, from, to)
+    }
+
+    #[test]
+    fn relative_platform_spill_uses_thread_locals_when_inputs_fit() {
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_spill(&mut spill, b"./chunks", b"./assets/x.txt"),
+            b"../assets/x.txt"
+        );
+        assert_eq!(relative_spill(&mut spill, b"", b"./x.txt"), b"x.txt");
+        assert_eq!(
+            relative_spill(&mut spill, b"/cwd/a/b", b"/cwd/c"),
+            b"../../c"
+        );
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn relative_platform_spill_to_longer_than_a_path_buffer_once_resolved() {
+        // Fits a PathBuffer on its own; does not once joined onto the top-level dir.
+        let name = vec![b'a'; MAX_PATH_BYTES - 8];
+        let to: Vec<u8> = [b"./".as_slice(), &name].concat();
+        let mut spill = Vec::new();
+        assert_eq!(relative_spill(&mut spill, b"", &to), name);
+        assert!(!spill.is_empty());
+
+        let name = vec![b'a'; MAX_PATH_BYTES * 2];
+        let to: Vec<u8> = [b"./".as_slice(), &name].concat();
+        assert_eq!(
+            relative_spill(&mut spill, b"./chunks", &to),
+            [b"../".as_slice(), &name].concat()
+        );
+    }
+
+    #[test]
+    fn relative_platform_spill_result_longer_than_either_input() {
+        // `from` fits a PathBuffer, but climbing out of it takes 3 bytes per segment.
+        let segments = MAX_PATH_BYTES / 2;
+        let mut from = b"a/".repeat(segments);
+        from.pop();
+        let expected: Vec<u8> = [b"../".repeat(segments).as_slice(), b"x.txt"].concat();
+        let mut spill = Vec::new();
+        assert_eq!(relative_spill(&mut spill, &from, b"x.txt"), expected);
+        assert!(expected.len() > MAX_PATH_BYTES);
+    }
+}

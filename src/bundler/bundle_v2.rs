@@ -4205,6 +4205,7 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut has_unusable_output_path = false;
 
                 for reachable_source in reachable_files {
                     let index = reachable_source.get() as usize;
@@ -4275,6 +4276,15 @@ pub mod bv2_impl {
                             v.into_boxed_slice()
                         };
 
+                        if !template.check_output_path(
+                            self.transpiler.log_mut(),
+                            source.path.pretty,
+                            &output_path,
+                        ) {
+                            has_unusable_output_path = true;
+                            continue;
+                        }
+
                         let loader = loaders[index];
 
                         // Hand the existing `source.contents` buffer to the
@@ -4312,6 +4322,9 @@ pub mod bv2_impl {
                 }
 
                 self.graph.additional_output_files = additional_output_files;
+                if has_unusable_output_path {
+                    return Err(crate::Error::BuildFailed);
+                }
             }
             Ok(())
         }

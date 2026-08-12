@@ -370,6 +370,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
         let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
+        let mut has_unusable_output_path = false;
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk. This can technically be done in parallel but it
@@ -400,6 +401,18 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .print(&mut rel_path, !c.options.compile_mode.is_executable())
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
+
+            let input: &[u8] = c.parse_graph().input_files.items_source()
+                [chunk.entry_point.source_index() as usize]
+                .path
+                .pretty;
+            if !chunk
+                .template
+                .check_output_path(c.log_disjoint(), input, &rel_path)
+            {
+                has_unusable_output_path = true;
+                continue;
+            }
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {
                 // collect all duplicates in a list
@@ -495,6 +508,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             return Err(crate::Error::DuplicateOutputPath);
+        }
+
+        if has_unusable_output_path {
+            return Err(crate::Error::BuildFailed);
         }
     }
 
@@ -698,7 +715,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // so the sourceMappingURL resolves relative to the HTML
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
-                        let mut relative_platform_buf = path::path_buffer_pool::get();
+                        let mut relative_spill = Vec::new();
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
@@ -726,13 +743,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform_buf::<
+                                    path::resolve_path::relative_platform_spill::<
                                         path::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        html_dir,
-                                        &source_map_final_rel_path,
+                                        &mut relative_spill, html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )

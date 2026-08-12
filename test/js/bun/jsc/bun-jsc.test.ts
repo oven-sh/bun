@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isLinux, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -566,4 +566,82 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+// JSC only ships its tuned JIT worklist policy on Darwin/arm64; JSCInitialize
+// applies the same values on Linux. BUN_JSC_dumpOptions=2 prints every option
+// once they are final, so this reads back exactly what the worklist will use.
+describe.concurrent.skipIf(!isLinux)("JIT worklist options on Linux", () => {
+  const worklistOptionNames = [
+    "minNumberOfWorklistThreads",
+    "maxNumberOfWorklistThreads",
+    "numberOfBaselineCompilerThreads",
+    "numberOfDFGCompilerThreads",
+    "numberOfFTLCompilerThreads",
+    "worklistLoadFactor",
+    "worklistBaselineLoadWeight",
+    "worklistDFGLoadWeight",
+    "worklistFTLLoadWeight",
+  ];
+
+  async function dumpWorklistOptions(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "0"],
+      env: { ...bunEnv, BUN_JSC_dumpOptions: "2", ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    const options: Record<string, number> = {};
+    for (const line of stderr.split("\n")) {
+      // Overridden options print as "   name=value (default: x)".
+      const match = /^\s*(\w+)=(\d+)/.exec(line);
+      if (match && worklistOptionNames.includes(match[1])) options[match[1]] = Number(match[2]);
+    }
+    return options;
+  }
+
+  it("uses the load-based thread wakeup policy, capped at four compiler threads", async () => {
+    expect(await dumpWorklistOptions({ WTF_numberOfProcessorCores: "16" })).toEqual({
+      minNumberOfWorklistThreads: 1,
+      maxNumberOfWorklistThreads: 4,
+      numberOfBaselineCompilerThreads: 4,
+      numberOfDFGCompilerThreads: 4,
+      numberOfFTLCompilerThreads: 4,
+      worklistLoadFactor: 20,
+      worklistBaselineLoadWeight: 2,
+      worklistDFGLoadWeight: 5,
+      worklistFTLLoadWeight: 20,
+    });
+  });
+
+  it("never configures more compiler threads than cores", async () => {
+    expect(await dumpWorklistOptions({ WTF_numberOfProcessorCores: "2" })).toEqual({
+      minNumberOfWorklistThreads: 1,
+      maxNumberOfWorklistThreads: 2,
+      numberOfBaselineCompilerThreads: 2,
+      numberOfDFGCompilerThreads: 2,
+      numberOfFTLCompilerThreads: 2,
+      worklistLoadFactor: 20,
+      worklistBaselineLoadWeight: 2,
+      worklistDFGLoadWeight: 5,
+      worklistFTLLoadWeight: 20,
+    });
+  });
+
+  it("BUN_JSC_ environment overrides still win", async () => {
+    const options = await dumpWorklistOptions({
+      WTF_numberOfProcessorCores: "16",
+      BUN_JSC_worklistLoadFactor: "1",
+      BUN_JSC_maxNumberOfWorklistThreads: "3",
+    });
+    expect(options).toMatchObject({
+      maxNumberOfWorklistThreads: 3,
+      worklistLoadFactor: 1,
+      // Everything not overridden keeps the Linux defaults set by JSCInitialize.
+      minNumberOfWorklistThreads: 1,
+      worklistDFGLoadWeight: 5,
+    });
+  });
 });

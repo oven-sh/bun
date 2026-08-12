@@ -332,6 +332,28 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useWasmMemory64() = false;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
+#if OS(LINUX)
+            {
+                // JSC only applies its tuned JIT worklist policy under OS(DARWIN) && CPU(ARM64)
+                // (runtime/Options.cpp, overrideDefaults). Everywhere else the defaults are
+                // min = max = 3 worklist threads with a load factor of 1, so
+                // JITWorklist::wakeThreads wakes (or spawns) a compiler thread for every plan
+                // enqueued. Use the Darwin values: one thread handles warm-up and more are only
+                // woken once the weighted queue depth exceeds the load factor.
+                unsigned compilerThreads = std::min<unsigned>(4, WTF::numberOfProcessorCores());
+                JSC::Options::minNumberOfWorklistThreads() = 1;
+                JSC::Options::maxNumberOfWorklistThreads() = compilerThreads;
+                JSC::Options::numberOfBaselineCompilerThreads() = compilerThreads;
+                JSC::Options::numberOfDFGCompilerThreads() = compilerThreads;
+                JSC::Options::numberOfFTLCompilerThreads() = compilerThreads;
+                JSC::Options::worklistLoadFactor() = 20;
+                JSC::Options::worklistBaselineLoadWeight() = 2;
+                JSC::Options::worklistDFGLoadWeight() = 5;
+                // Equal to the load factor so every FTL plan is worth a thread of its own.
+                JSC::Options::worklistFTLLoadWeight() = 20;
+            }
+#endif
+
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif

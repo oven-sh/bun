@@ -349,12 +349,13 @@ impl FilePoll {
     // through the pointer the owner keeps (`FilePollRef`, `PollerPosix::Fd`,
     // the resolver's poll map): a one-shot re-arm reads and clears the
     // `NeedsRearm` that `on_update` set, and an owner that is finished deinits
-    // the slot (`Store::put` marks it `IgnoreUpdates`; the free itself is
-    // deferred past this turn). A `&mut self` receiver on any frame of the
-    // chain would be a protected reference spanning those foreign accesses,
-    // and a protected `&mut Loop` would alias the fresh `&mut Loop` the
-    // handler conjures via `EventLoopCtx::platform_event_loop()`. Nothing on
-    // the chain touches the slot after the handler returns.
+    // the slot. A `&mut self` receiver on any frame of the chain would be a
+    // protected reference spanning those foreign accesses, and a protected
+    // `&mut Loop` would alias the fresh `&mut Loop` the handler conjures via
+    // `EventLoopCtx::platform_event_loop()`. Each frame only needs the slot to
+    // be live when it is entered: nothing on the chain touches it after the
+    // handler returns, so what the handler did to it (up to returning it to
+    // the store) does not matter here.
 
     /// # Safety
     /// `this` is a live hive slot (the dispatch entry has checked `IgnoreUpdates`).
@@ -475,8 +476,8 @@ impl FilePoll {
         // Hot-path hoisted-match: the per-tag `switch` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types.
-        // SAFETY: caller contract; the slot stays allocated for the whole call
-        // even if the owner deinits it (`Store::put` defers the free).
+        // SAFETY: caller contract (`this` is live on entry). The owner may
+        // deinit the slot in there; nothing reads it afterwards, here or above.
         unsafe { __bun_run_file_poll(this, size_or_offset) };
     }
 
@@ -1531,9 +1532,10 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     // `FilePoll::on_kqueue_event`.
     let file_poll: *mut FilePoll = tag.as_file_poll();
     // SAFETY: tag matched FilePoll; the pointer was set via `Pollable::init` in
-    // `register_with_fd`. A slot deinited earlier in this turn is still
-    // allocated (`Store::put` defers the free) and carries `IgnoreUpdates`.
-    // The borrow ends with the statement.
+    // `register_with_fd`, and `Store::put` keeps a slot whose owner has since
+    // deinited it readable for this check (it flags it `IgnoreUpdates` and
+    // defers the free to the tick's after-callback). The borrow ends with the
+    // statement.
     if unsafe { (*file_poll).flags.contains(Flags::IgnoreUpdates) } {
         return;
     }

@@ -147,6 +147,23 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
+  // The pieces above are separate socket.write() calls and a TLS socket completes a write a tick
+  // later, so uncorked only the first piece would be on the transport when something destroys the
+  // socket in the same tick as end() (the idle sweep, res.destroy(), ...). Like Node's write_()/
+  // end(), cork across one tick's pieces and uncork in end(); native writeHeadAndEnd corks the same way.
+  let corkedThisTick = false;
+  function corkThisTick() {
+    if (corkedThisTick) return;
+    corkedThisTick = true;
+    socket.cork();
+    process.nextTick(uncorkThisTick);
+  }
+  function uncorkThisTick() {
+    if (!corkedThisTick) return;
+    corkedThisTick = false;
+    socket.uncork();
+  }
+
   const handle = {
     flags: 0,
     ended: false,
@@ -197,6 +214,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     write(chunk, encoding, _callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
+      corkThisTick();
       writeHeadToSocket(null);
       return writeBody(buf);
     },
@@ -204,12 +222,20 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (this.ended) return 0;
       const buf = toBuffer(chunk, encoding);
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
-      writeHeadToSocket(length);
-      writeBody(buf);
-      // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
-      // response never writes the terminating chunk, even when the user set
-      // Transfer-Encoding: chunked themselves.
-      if (chunked && !noBody) socket.write("0\r\n\r\n");
+      socket.cork();
+      try {
+        writeHeadToSocket(length);
+        writeBody(buf);
+        // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
+        // response never writes the terminating chunk, even when the user set
+        // Transfer-Encoding: chunked themselves.
+        if (chunked && !noBody) socket.write("0\r\n\r\n");
+      } finally {
+        uncorkThisTick();
+        socket.uncork();
+        // Node's end() releases the user's corks too, so the response is on its way regardless.
+        while (socket.writableCorked) socket.uncork();
+      }
       this.ended = true;
       this.finished = true;
       const onfinished = this.onfinished;
@@ -454,23 +480,29 @@ function connectionListenerHTTP1(server, socket, options) {
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
+  // A finished response can still be queued on the socket (a write still completing, a Duplex
+  // without _writev, a peer that stopped reading): let it flush, but only for as long as a
+  // connection may linger after close() anyway; past that the connection is cut as before.
+  const flushTimeout = server.keepAliveTimeout > 0 ? server.keepAliveTimeout : 5000;
   for (const socket of connections) {
     if (socket[kHttp1ActiveRequests] || socket.destroyed || socket[kHttp1Draining]) continue;
     if (!socket.writableLength) {
       socket.destroy();
       continue;
     }
-    // Unlike Node's OutgoingMessage, the handle above hands the response to the transport one
-    // write at a time (a tick apart on TLS), so a response ended this tick may still be queued here.
     socket[kHttp1Draining] = true;
-    destroySoon(socket);
+    destroyAfterFlush(socket, flushTimeout);
   }
 }
 
-// net.Socket#destroySoon(); a Duplex fed in through server.emit("connection") need not have it.
-function destroySoon(socket) {
+// net.Socket#destroySoon() (a Duplex fed in through server.emit("connection") need not have it)
+// with a deadline.
+function destroyAfterFlush(socket, timeout) {
   if (socket.writable) socket.end();
   socket.once("finish", socket.destroy);
+  const timer = setTimeout(() => socket.destroy(), timeout);
+  timer.unref();
+  socket.once("close", () => clearTimeout(timer));
 }
 
 function closeAllHttp1Connections(server) {

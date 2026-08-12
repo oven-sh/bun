@@ -28,7 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { duplexPair, PassThrough, Writable } from "node:stream";
-import { connect as tlsConnect } from "node:tls";
+import { connect as tlsConnect, createServer as createTlsServer } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -4191,5 +4191,38 @@ it("closing the server right after res.end() still delivers the body on an emit(
     }
   } finally {
     process.off("warning", onWarning);
+  }
+});
+
+it("closeAllConnections() right after res.end() still delivers the body on an emit('connection') TLS socket", async () => {
+  // closeAllConnections() destroys outright, so this only works if res.end() has handed the whole
+  // response (not just its first piece) to the TLS socket by the time it returns, as Node's
+  // OutgoingMessage does. Feeding a tls.Server's sockets to an http.Server is how a hand-rolled
+  // https server ends up on this path.
+  const httpServer = createServer((req, res) => {
+    res.write("BO");
+    res.end("DY");
+    httpServer.closeAllConnections();
+  });
+  const tlsServer = createTlsServer(tlsCert, socket => httpServer.emit("connection", socket));
+  await new Promise<void>(resolve => tlsServer.listen(0, resolve));
+  // Connection: close so the flow also completes where closeAllConnections() has nothing to do
+  // (Node only tracks connections once the http.Server itself is listening).
+  const client = tlsConnect(
+    { host: "localhost", port: (tlsServer.address() as AddressInfo).port, ca: tlsCert.cert },
+    () => client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+  );
+  try {
+    const chunks: Buffer[] = [];
+    client.on("data", chunk => chunks.push(chunk));
+    // The destroy may arrive as EOF or as a reset; either way everything written before it arrives first.
+    client.on("error", () => {});
+    await new Promise(resolve => client.on("close", resolve));
+    const raw = Buffer.concat(chunks).toString();
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("2\r\nBO\r\n2\r\nDY\r\n0\r\n\r\n");
+  } finally {
+    client.destroy();
+    tlsServer.close();
   }
 });

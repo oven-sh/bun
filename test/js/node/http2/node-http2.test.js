@@ -4304,12 +4304,19 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
-// Serves one HTTP/1.1 request whose handler runs `respond(res)` and then server.close() in the
-// same tick. close() sweeps the idle allowHTTP1 connections while the response bytes are still
-// queued in the TLS socket (each write completes a tick later), which used to destroy the socket
-// with only the head sent. Resolves with the raw bytes after the head once the server has closed.
-// The client keeps its own side open after the server's EOF, so close() only completes if the
-// server destroys the connection once the response has been flushed, rather than waiting on the peer.
+function connectOverHttp1(server, requestHead, options) {
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"], ...options },
+    () => socket.write(requestHead),
+  );
+  return socket;
+}
+
+// Serves one HTTP/1.1 request whose handler runs `respond(res)` and then server.close() in the same
+// tick, and resolves with the raw bytes after the response head once close() has completed. The
+// response bytes are still queued on the TLS socket when close() sweeps the connection (used to be
+// destroyed with only the head sent), and the client keeps its own side open after the server's EOF,
+// so close() only completes if the server itself destroys the connection once it has flushed.
 async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
   const serverClosed = Promise.withResolvers();
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
@@ -4317,18 +4324,9 @@ async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
     server.close(serverClosed.resolve);
   });
   await new Promise(resolve => server.listen(0, resolve));
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const socket = tls.connect(
-    {
-      host: "localhost",
-      port: server.address().port,
-      ca: TLS_CERT.cert,
-      ALPNProtocols: ["http/1.1"],
-      allowHalfOpen: true,
-    },
-    () => socket.write(requestHead),
-  );
+  const socket = connectOverHttp1(server, requestHead, { allowHalfOpen: true });
   try {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const chunks = [];
     socket.on("error", reject);
     socket.on("data", chunk => chunks.push(chunk));
@@ -4369,6 +4367,56 @@ it("http2 allowHTTP1 fallback delivers every chunk and the terminator when the h
   expect(body).toBe("2\r\nBO\r\n2\r\nDY\r\n0\r\n\r\n");
 });
 
+// Serves one HTTP/1.1 request whose handler destroys the connection outright in the same tick as
+// res.end(), and resolves with the raw bytes after the response head once the connection is gone.
+// Like Node's OutgoingMessage, the response has to be handed to the socket in full before end()
+// returns for any of this to arrive; it used to be queued piecemeal and lost.
+async function bodyReceivedWhenHandlerDestroysConnection(respond) {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => respond(req, res));
+  await new Promise(resolve => server.listen(0, resolve));
+  const socket = connectOverHttp1(server, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  try {
+    const chunks = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    // An abrupt server-side destroy may reach the client as EOF or as a reset; whatever was written
+    // before it arrives first either way, so just read until the connection is gone.
+    socket.on("error", () => {});
+    await new Promise(resolve => socket.on("close", resolve));
+    const raw = Buffer.concat(chunks).toString();
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+}
+
+it("http2 allowHTTP1 fallback delivers the body when the handler destroys the socket right after res.end()", async () => {
+  const body = await bodyReceivedWhenHandlerDestroysConnection((req, res) => {
+    res.end("BODY");
+    req.socket.destroy();
+  });
+  expect(body).toBe("BODY");
+});
+
+it("http2 allowHTTP1 fallback delivers the body when the handler destroys the response right after res.end()", async () => {
+  const body = await bodyReceivedWhenHandlerDestroysConnection((req, res) => {
+    res.end("BODY");
+    res.destroy();
+  });
+  expect(body).toBe("BODY");
+});
+
+it("http2 allowHTTP1 fallback delivers chunks written in the same tick as res.end() when the socket is destroyed right after", async () => {
+  const body = await bodyReceivedWhenHandlerDestroysConnection((req, res) => {
+    res.write("B");
+    res.write("O");
+    res.end("DY");
+    req.socket.destroy();
+  });
+  expect(body).toBe("1\r\nB\r\n1\r\nO\r\n2\r\nDY\r\n0\r\n\r\n");
+});
+
 it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose response was already delivered", async () => {
   let serverSocket;
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
@@ -4376,12 +4424,9 @@ it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose res
     res.end("BODY");
   });
   await new Promise(resolve => server.listen(0, resolve));
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const socket = tls.connect(
-    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-    () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
-  );
+  const socket = connectOverHttp1(server, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
   try {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const chunks = [];
     socket.on("error", reject);
     socket.on("data", chunk => {
@@ -4396,6 +4441,34 @@ it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose res
     const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));
     expect(serverSocket.destroyed).toBe(true);
     await Promise.all([serverClosed, closed]);
+  } finally {
+    socket.destroy();
+    if (server.listening) server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback close() gives a connection whose peer stopped reading keepAliveTimeout to flush, then cuts it", async () => {
+  let serverSocket;
+  const serverClosed = Promise.withResolvers();
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 100 }, (req, res) => {
+    serverSocket = req.socket;
+    // Far more than the kernel buffers of a peer that never reads will take.
+    res.end(Buffer.alloc(32 * 1024 * 1024, 120));
+    server.close(serverClosed.resolve);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => {
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    },
+  );
+  try {
+    socket.on("error", () => {});
+    // Completes once the server gives up on flushing; waiting on the peer would never return.
+    await serverClosed.promise;
+    expect(serverSocket.destroyed).toBe(true);
   } finally {
     socket.destroy();
     if (server.listening) server.close();

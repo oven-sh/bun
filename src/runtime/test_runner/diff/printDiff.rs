@@ -58,8 +58,7 @@ pub(crate) fn print_diff_main(
         return Ok(());
     }
 
-    // The values compared unequal but render to the same text (distinct
-    // symbols, a hole vs an explicit undefined, ...), so a diff would be empty.
+    // Unequal values can still render identically (distinct symbols, a hole vs undefined).
     if received_slice == expected_slice {
         print_line_prefix(writer, config, prefix_styles::SINGLE_LINE_REMOVED)?;
         for (i, line) in strings::split(expected_slice, b"\n").enumerate() {

@@ -595,6 +595,26 @@ impl Loader {
         }
     }
 
+    /// Deep copy of the variables and of the "already loaded" bookkeeping, so
+    /// `load_process` / `load` on the copy skip exactly what they skip on
+    /// `self`. The lazily derived caches (S3 credentials, TLS
+    /// reject-unauthorized) start empty and are rebuilt from the copied map.
+    ///
+    /// A loader keeps being mutated on the thread that owns it
+    /// (`process.env.HTTPS_PROXY = ...` replaces map values in place), so work
+    /// that reads env on another thread takes one of these instead.
+    pub fn clone(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());

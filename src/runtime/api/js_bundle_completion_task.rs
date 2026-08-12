@@ -59,7 +59,14 @@ pub struct JSBundleCompletionTask {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub(crate) env: *mut bun_dotenv::Loader,
+    /// The calling VM's env as of the `Bun.build()` call. The build reads env
+    /// (`configure_defines`, `env: "inline"` defines, the resolver's
+    /// `NODE_PATH`) on the bundle thread and its workers, while the VM's own
+    /// loader keeps being mutated on the JS thread (`Bun__setEnvValue` for
+    /// `process.env.HTTPS_PROXY = ...` frees the value it replaces), so the
+    /// build must not read that one. Boxed so the pointer `Transpiler::init`
+    /// keeps is to an allocation of its own, not into this struct.
+    pub(crate) env: Box<bun_dotenv::Loader>,
     pub(crate) log: bun_ast::Log,
     /// Set by the owner giving up on the result (HTMLBundle route torn down)
     /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
@@ -120,7 +127,7 @@ impl JSBundleCompletionTask {
             // last-ref drop is the only place that releases it.
             Plugin::destroy(plugin.as_ptr());
         }
-        // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
+        // Owned fields (`config`, `env`, `log`, `result`, `promise`) drop with the Box.
     }
 }
 
@@ -141,7 +148,10 @@ pub(crate) fn create_and_schedule_completion_task(
     global_this: &JSGlobalObject,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
+    // Copied here on this VM's JS thread, the thread `Bun__setEnvValue` mutates
+    // the loader from, so unlike a Worker's clone (web_worker.rs) this one
+    // needs no `proxy_env_storage` lock.
+    let env = Box::new(global_this.bun_vm().env_loader().clone()?);
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
@@ -173,8 +183,8 @@ pub(crate) fn create_and_schedule_completion_task(
     let _ = WorkPool::get();
 
     // Out on the bundle thread from here until it posts the completion: it
-    // reads this VM's env loader and the plugin cell, so the VM cancels it at
-    // teardown (registry) and waits for it (embedded work).
+    // reads this VM's plugin cell and posts into this VM's queue, so the VM
+    // cancels it at teardown (registry) and waits for it (embedded work).
     // SAFETY: `completion` is live (refcount==1), JS thread.
     unsafe { (*completion).loop_handle.embedded_work_scheduled() };
     crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
@@ -426,10 +436,7 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-            // construction; valid for the lifetime of the VirtualMachine, and
-            // nothing inside `to_executable` reaches it otherwise.
-            unsafe { &mut *self.env },
+            &mut self.env,
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
@@ -909,9 +916,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             core::hint::spin_loop();
         }
         // The VM released everything thread-affine (`stop_for_vm_teardown`);
-        // what is left — config, log, an empty promise slot, a `Done`
-        // keep-alive, the handle clone — is ours to drop here. The queue held
-        // the creation reference.
+        // what is left (config, the env copy, log, an empty promise slot, a
+        // `Done` keep-alive, the handle clone) is ours to drop here. The
+        // queue held the creation reference.
         // SAFETY: dequeued ⇒ sole owner; nothing JS-affine remains.
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -1105,8 +1112,9 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .conditions
                 .append_slice(&[b"development"])?;
         }
-        // `transpiler.env` is the dotenv loader installed by
-        // `Transpiler::init`; non-null and valid for `'a`.
+        // `transpiler.env` is this build's env copy (`self.env`), installed by
+        // `create_and_configure_transpiler`; the resolver's workers read
+        // `NODE_PATH` through it.
         transpiler.resolver.env_loader = NonNull::new(transpiler.env);
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
@@ -1191,7 +1199,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
+        // The build's own env copy (see the field doc). Same lifetime argument
+        // as `log`: every read through the transpiler happens before
+        // `complete_on_bundle_thread` hands this task back to the JS thread.
+        let env: *mut bun_dotenv::Loader = &raw mut *self.env;
+        let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.

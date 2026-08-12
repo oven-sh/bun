@@ -570,33 +570,22 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    /// Hands the `Worker` at `this` to its pool thread for teardown, or tears
-    /// it down right here when it was created off the pool.
-    ///
-    /// Raw-pointer receiver, like `schedule_with_options`: the `else` branch
-    /// frees `*this` before returning, and once `push_idle_task` has published
-    /// `deinit_task` the pool thread may free `*this` at any moment
-    /// (`Thread::drain_idle_events` runs after every task batch and on every
-    /// idle wake, not only after `wake_for_idle_events`). A `&mut self`
-    /// argument would be protected for the whole call, and freeing protected
-    /// memory is UB under both aliasing models, so no reference to the
-    /// `Worker` is formed here: each access is a raw place expression that
-    /// ends before the free can happen.
+    /// Raw-pointer receiver, as in `schedule_with_options`: `*this` is freed
+    /// during this call (synchronously below, or by the pool thread as soon as
+    /// `deinit_task` is pushed; it drains idle tasks between batches, not only
+    /// on `wake_for_idle_events`), and a `&mut self` argument must stay
+    /// allocated until the call returns.
     ///
     /// # Safety
-    /// `this` must be a live `Worker` from [`ThreadPool::get_worker`] that
-    /// nothing else will touch again (the caller is clearing the
-    /// `workers_assignments` map it came from); at most one call per
-    /// `Worker`. Afterwards `*this` belongs to the pool thread or is freed.
+    /// `this` is a live `Worker` from [`ThreadPool::get_worker`] that nothing
+    /// touches afterwards; called once per `Worker`.
     pub(crate) unsafe fn deinit_soon(this: *mut Self) {
-        // SAFETY: caller contract; `thread` is `Copy`, so the read of `*this`
-        // ends at the `;`.
+        // SAFETY: caller contract; `thread` is `Copy`, the read ends here.
         let thread = unsafe { (*this).thread };
         if let Some(thread) = thread {
-            // SAFETY: caller contract; a field projection through the
-            // allocation's own pointer, so the `Task` pointer carries
-            // whole-`Worker` provenance for `from_field_ptr!` in
-            // `deinit_callback`. Nothing touches `*this` after the push.
+            // SAFETY: caller contract. Projected from the allocation's own
+            // pointer so `from_field_ptr!` in `deinit_callback` gets whole-
+            // `Worker` provenance; `*this` is not touched after the push.
             let task = unsafe { &raw mut (*this).deinit_task };
             thread.push_idle_task(task);
         } else {
@@ -610,9 +599,8 @@ impl Worker {
             // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
-            // SAFETY: caller contract: `this` is the heap-allocated Worker and
-            // we are its sole owner now that the caller is clearing the
-            // `workers_assignments` map.
+            // SAFETY: caller contract; `this` is the heap-allocated Worker and
+            // nothing else holds it once the caller clears `workers_assignments`.
             unsafe { Self::deinit(this) };
         }
     }

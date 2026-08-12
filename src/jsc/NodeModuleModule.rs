@@ -114,6 +114,56 @@ fn find_path_inner(
     errorable.unwrap().ok()
 }
 
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__findPackageJSON(
+    global: &JSGlobalObject,
+    specifier: BunString,
+    source: BunString,
+) -> JSValue {
+    jsc::host_fn::to_js_host_call(global, || find_package_json(global, specifier, source))
+}
+
+fn find_package_json(
+    global: &JSGlobalObject,
+    specifier: BunString,
+    source: BunString,
+) -> JsResult<JSValue> {
+    let specifier = if specifier.has_prefix_comptime(b"file://") {
+        OwnedString::new(jsc::URL::path_from_file_url(specifier))
+    } else {
+        OwnedString::new(specifier.dupe_ref())
+    };
+
+    let source = if source.has_prefix_comptime(b"file://") {
+        OwnedString::new(jsc::URL::path_from_file_url(source))
+    } else {
+        OwnedString::new(source.dupe_ref())
+    };
+
+    let mut resolved = ErrorableString::ok(BunString::empty());
+    VirtualMachine::resolve(
+        &mut resolved,
+        global,
+        specifier.get(),
+        source.get(),
+        None,
+        crate::virtual_machine::ResolveMode::PackageJson,
+    )?;
+
+    if !resolved.success {
+        // SAFETY: !success activates the error arm of ErrorableString.
+        return Err(global.throw_value(unsafe { resolved.result.err }.value));
+    }
+
+    // SAFETY: success activates the value arm of ErrorableString.
+    let mut resolved = OwnedString::new(unsafe { resolved.result.value });
+    if resolved.get().is_empty() {
+        Ok(JSValue::UNDEFINED)
+    } else {
+        resolved.transfer_to_js(global)
+    }
+}
+
 pub fn stat(path: &[u8]) -> i32 {
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.

@@ -12,6 +12,7 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <wtf/URL.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -33,6 +34,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -572,6 +574,31 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
     BunString, JSArray*);
 
+extern "C" JSC::EncodedJSValue NodeModuleModule__findPackageJSON(JSGlobalObject*,
+    BunString, BunString);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->argumentCount() < 1)
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, "The \"specifier\" argument must be specified"_s);
+
+    auto specifier = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto baseValue = callFrame->argument(1);
+    String base = baseValue.isUndefined()
+        ? "data:"_s
+        : baseValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::URL baseURL(base);
+    if (baseURL.isValid() && baseURL.protocolIsFile())
+        base = baseURL.fileSystemPath();
+
+    return NodeModuleModule__findPackageJSON(globalObject, Bun::toString(specifier), Bun::toString(base));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -976,6 +1003,7 @@ constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
+findPackageJSON         jsFunctionFindPackageJSON        Function 2
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

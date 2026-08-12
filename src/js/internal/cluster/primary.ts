@@ -216,15 +216,10 @@ function exitedAfterDisconnect(worker, message) {
   send(worker, { ack: message.seq });
 }
 
-// RoundRobinHandle: the primary accepts and hands each connection to a worker. SharedHandle: every
-// worker accepts on its own copy of one socket. UDP has no connections to hand out, and a TLS
-// server accepts natively, so both always share.
-//
-// On Windows a TCP listener is served by the primary even under SCHED_NONE. When two workers poll
-// copies of one listening socket, the worker that loses the race for a connection blocks inside
-// accept() (the copy is non-blocking, Winsock waits anyway) and its event loop stops, and libuv's
-// exclusive AFD polls on the same socket from two processes cancel each other in a loop. Node shares
-// listeners there through AcceptEx, which Bun's listen sockets do not use.
+// Windows cannot accept from copies of one listening socket in two processes: the worker losing the
+// race for a connection blocks inside accept() despite its copy being non-blocking, and libuv's
+// exclusive AFD polls from two processes cancel each other in a loop (node uses AcceptEx there).
+// So on Windows the primary distributes TCP connections under every policy; UDP and TLS always share.
 function usesRoundRobinHandle(message) {
   if (message.sharedOnly === true || message.addressType === "udp4" || message.addressType === "udp6") return false;
   if (schedulingPolicy === SCHED_RR) return true;

@@ -922,9 +922,8 @@ pub struct SendQueue {
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
-    /// The peer's reply to a handle message whose write has not completed yet (`on_write_complete`
-    /// is what moves the message into `waiting_for_ack`). Only asynchronous writes (libuv, i.e.
-    /// Windows) can observe the reply first; `on_write_complete` applies it.
+    /// Reply to a handle message read before libuv reported that message's own write complete;
+    /// `on_write_complete` (which moves the message into `waiting_for_ack`) applies it.
     early_ack_nack: Cell<Option<AckNack>>,
 
     pub(crate) retry_count: Cell<u32>,
@@ -1608,8 +1607,6 @@ impl SendQueue {
         });
         match done {
             Done::AwaitAck => match early_ack_nack {
-                // The peer already replied while the write was in flight; settle the message now,
-                // otherwise it would wait in waiting_for_ack forever and block everything behind it.
                 Some(ack_nack) => self.on_ack_nack(&global_this, ack_nack),
                 None => self.continue_send(&global_this, ContinueSendReason::OnWritable),
             },

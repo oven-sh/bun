@@ -2772,17 +2772,35 @@ declare module "bun" {
 
   namespace Build {
     type Architecture = "x64" | "arm64" | "aarch64";
-    type Libc = "glibc" | "musl";
+    type Libc = "glibc" | "musl" | "android";
     type SIMD = "baseline" | "modern";
-    type CompileTarget =
+    /**
+     * Platforms a standalone executable can be built for. Covers the spellings
+     * used by the docs and by the published `@oven/bun-*` package names; the
+     * runtime additionally accepts the same segments in any order. Unlike
+     * {@link CompileTarget}, a `Platform` never carries a version suffix, so
+     * this union stays finite.
+     */
+    type Platform =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}`
       | `bun-linux-${Architecture}-${Libc}`
       | `bun-linux-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
+      | `bun-linux-${Architecture}-${Libc}-${SIMD}`
+      | `bun-freebsd-${Architecture}`
       | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
+    /**
+     * A {@link Platform}, optionally followed by `-v<major>.<minor>.<patch>` to
+     * embed that version of Bun instead of the one running the build.
+     *
+     * @example "bun-linux-x64"
+     * @example "bun-linux-arm64-android"
+     * @example "bun-darwin-arm64-v1.2.3"
+     */
+    type CompileTarget = Platform | `${Platform}-v${number}.${number}.${number}`;
   }
 
   /**
@@ -3225,6 +3243,14 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
+    /**
+     * Platform to build the executable for, optionally pinned to a Bun version
+     * with a `-v<major>.<minor>.<patch>` suffix. Defaults to the platform and
+     * version of the Bun running the build; anything else is downloaded from
+     * npm the first time it is used.
+     *
+     * Equivalent CLI flag: `--target`
+     */
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;

@@ -16,6 +16,57 @@ expectAssignable<Bun.Build.CompileTarget>("bun-darwin-x64-modern");
 expectAssignable<Bun.Build.CompileTarget>("bun-darwin-arm64-baseline");
 expectAssignable<Bun.Build.CompileTarget>("bun-windows-x64-modern");
 
+// Every published @oven/bun-* package name is checked against Build.Platform in
+// bun-types.test.ts. These are the spellings that list does not contain.
+
+// android and freebsd (runtime support landed in #29676), with the docs' arch names
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-android");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern-android");
+expectAssignable<Bun.Build.CompileTarget>("bun-freebsd-arm64");
+
+// libc before the SIMD level, as in the package names (bun-linux-x64-musl-baseline)
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-musl-modern");
+
+// pinned Bun version
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-v1.10.0");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-musl-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-musl-baseline-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-android-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-darwin-arm64-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-windows-x64-baseline-v1.2.3");
+expectAssignable<Bun.Build.CompileTarget>("bun-freebsd-x64-v1.2.3");
+
+// Build.Platform is the version-less subset of Build.CompileTarget.
+expectType<Bun.Build.Platform>().extends<Bun.Build.CompileTarget>();
+expectAssignable<Bun.Build.Platform>("bun-linux-arm64-android");
+// @ts-expect-error - only CompileTarget takes a version suffix
+expectAssignable<Bun.Build.Platform>("bun-linux-x64-v1.2.3");
+
+// Spellings the runtime rejects stay rejected.
+// @ts-expect-error - android is a Linux libc, the runtime rejects it with any other OS
+expectAssignable<Bun.Build.CompileTarget>("bun-windows-x64-android");
+// @ts-expect-error - musl only exists on Linux
+expectAssignable<Bun.Build.CompileTarget>("bun-freebsd-x64-musl");
+// @ts-expect-error - the version suffix must be a complete major.minor.patch
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-v1.2");
+// @ts-expect-error - the version suffix starts with "v"
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-1.2.3");
+// @ts-expect-error - the version must be numeric
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-vlatest");
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: "bun-linux-arm64-android",
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: {
+    target: "bun-freebsd-x64-v1.2.3",
+  },
+});
+
 Bun.build({
   entrypoints: ["hey"],
   splitting: false,

@@ -8,6 +8,8 @@ import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
 
+import { platforms } from "../../../packages/bun-release/src/platform";
+
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
@@ -110,6 +112,29 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
   }
 
   return fixtureDir;
+}
+
+// Runs on debug builds too: spawning tsc over a file or two is cheap, unlike the
+// in-process LanguageService runs in `typeTest`.
+async function tsc(name: string, files: Record<string, string>) {
+  const checkDir = join(TEMP_DIR, name);
+  const tsconfig = structuredClone(sourceTsconfig);
+  tsconfig.include = Object.keys(files);
+  tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+  await mkdir(checkDir, { recursive: true });
+  await makeTree(checkDir, { ...files, "tsconfig.json": JSON.stringify(tsconfig, null, 2) });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+    env: bunEnv,
+    cwd: checkDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
 }
 
 function typeTest(name: string, config: TypeTestConfig) {
@@ -358,36 +383,43 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
     test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+      const result = await tsc("mmap-options-check", {
         "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
       });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+  });
+
+  describe("Bun.build", () => {
+    // fixture/build.ts holds the Bun.Build.CompileTarget cases (android, freebsd, libc before the
+    // SIMD level, -vX.Y.Z suffix), so the release-only runs above cover them as well.
+    test("fixture/build.ts type-checks", async () => {
+      const result = await tsc("build-fixture-check", {
+        "build.ts": await Bun.file(join(FIXTURE_SOURCE_DIR, "build.ts")).text(),
+        "utilities.ts": await Bun.file(join(FIXTURE_SOURCE_DIR, "utilities.ts")).text(),
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
 
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+    // `--target` downloads `@oven/<bin>` for the bins in packages/bun-release/src/platform.ts,
+    // so a bin added there has to be a valid target here too.
+    test("every published platform is a CompileTarget", async () => {
+      const result = await tsc("published-platforms-check", {
+        "platforms.ts": platforms
+          .map(
+            ({ bin }) => `"${bin}" satisfies Bun.Build.Platform;\n"${bin}-v1.2.3" satisfies Bun.Build.CompileTarget;`,
+          )
+          .join("\n"),
+      });
+
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
   });
 

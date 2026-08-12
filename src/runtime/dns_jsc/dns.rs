@@ -5110,10 +5110,8 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request` is
-        // the heap-allocated GetHostByAddrInfoRequest, which stays allocated until
-        // `HostentHandler::on_hostent` (possibly invoked before this returns)
-        // consumes it.
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until its handler consumes it (possibly during this call).
         unsafe { (*channel).get_host_by_addr(ip, request) };
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
@@ -5434,10 +5432,8 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-        // is the freshly heap-allocated ResolveInfoRequest, which stays allocated
-        // until `T::RAW_CALLBACK` (→ `on_cares_complete`, possibly invoked before
-        // this returns) consumes it.
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until `on_cares_complete` consumes it (possibly during this call).
         unsafe { (*channel).resolve(name, request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
@@ -5489,10 +5485,8 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
-        // is the freshly heap-allocated GetAddrInfoRequest, which stays allocated
-        // until `AddrInfoHandler::on_addr_info` (→ `on_cares_complete`, possibly
-        // invoked before this returns) consumes it.
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; the heap
+        // `request` lives until `on_cares_complete` consumes it (possibly during this call).
         unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
@@ -6013,11 +6007,9 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
-        // sockaddr_storage reborrowed as sockaddr; `request` is the freshly
-        // heap-allocated GetNameInfoRequest, which stays allocated until
-        // `NameinfoHandler::on_nameinfo` (possibly invoked before this returns)
-        // consumes it.
+        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid sockaddr_storage
+        // reborrowed as sockaddr; the heap `request` lives until `on_cares_complete`
+        // consumes it (possibly during this call).
         unsafe {
             (*channel).get_name_info(
                 // See `get_sockaddr` call above — inferred `sockaddr` type is

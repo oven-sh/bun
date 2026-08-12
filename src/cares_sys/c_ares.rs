@@ -312,29 +312,15 @@ pub struct struct_hostent {
 // type provides the callback as a trait method, and the `extern "C"` thunk is
 // monomorphized per `T: Trait`.
 //
-// The request travels as a raw pointer the whole way: the `Channel` method
-// that registers it takes `ctx: *mut T`, the thunk passes c-ares's ctx
-// pointer through unchanged, and the trait method receives `this: *mut Self`
-// rather than `&mut self`. The completion is where the implementor reclaims
-// the request's allocation, and freeing an allocation while a reference
-// argument to it is live is UB under the aliasing models (the argument is
-// protected for the whole call). That covers the registering call too:
-// c-ares runs the callback synchronously for inputs it rejects (EBADNAME,
-// ENOTIMP, ...), i.e. before the registering call returns.
-//
-// Contracts referred to below:
-//   - handler contract (every `on_*`): `this` is the pointer the request was
-//     registered with, live and not otherwise borrowed; the caller does not
-//     touch it after the call, because the implementor may free it.
-//   - registration contract (`Channel::{get_addr_info, resolve,
-//     get_host_by_addr, get_name_info}`): `ctx` is delivered to `T`'s handler
-//     exactly once, possibly before the registering call returns, and must
-//     stay valid until then.
+// The request stays a `*mut` through registration, thunk and handler: the
+// handler frees it, and c-ares may run the handler before the registering
+// call returns, so no frame may hold it as a reference (freeing behind a
+// reference argument is UB; `mod tests` below checks this under Miri).
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait HostentHandler: Sized {
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_hostent(
         this: *mut Self,
         status: Option<Error>,
@@ -354,8 +340,7 @@ impl struct_hostent {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_host_by_addr`,
-            // delivered exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_host_by_addr`; delivered once, unused after.
             unsafe { T::on_hostent(this, Error::get(status), timeouts, ptr::null_mut()) };
             return;
         }
@@ -373,8 +358,7 @@ impl struct_hostent {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
             unsafe { T::on_hostent(this, Error::get(status), timeouts, ptr::null_mut()) };
             return;
         }
@@ -409,8 +393,7 @@ impl struct_hostent {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
             unsafe { T::on_hostent(this, Error::get(status), timeouts, ptr::null_mut()) };
             return;
         }
@@ -435,8 +418,7 @@ impl struct_hostent {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
             unsafe { T::on_hostent(this, Error::get(status), timeouts, ptr::null_mut()) };
             return;
         }
@@ -488,7 +470,7 @@ pub trait HostentWithTtlsHandler: Sized {
     const PARSE: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error>;
 
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_hostent_with_ttls(
         this: *mut Self,
         status: Option<Error>,
@@ -509,8 +491,7 @@ impl hostent_with_ttls {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
             unsafe { T::on_hostent_with_ttls(this, Error::get(status), timeouts, None) };
             return;
         }
@@ -600,7 +581,7 @@ pub struct struct_nameinfo {
 
 pub trait NameinfoHandler: Sized {
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_nameinfo(
         this: *mut Self,
         status: Option<Error>,
@@ -621,8 +602,7 @@ impl struct_nameinfo {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_name_info`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_name_info`; delivered once, unused after.
             unsafe { T::on_nameinfo(this, Error::get(status), timeouts, None) };
             return;
         }
@@ -684,7 +664,7 @@ pub struct AddrInfo {
 
 pub trait AddrInfoHandler: Sized {
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_addr_info(
         this: *mut Self,
         status: Option<Error>,
@@ -713,8 +693,7 @@ impl AddrInfo {
         timeouts: c_int,
         addr_info: *mut AddrInfo,
     ) {
-        // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_addr_info`, delivered
-        // exactly once and not used after this call (handler contract).
+        // SAFETY: `ctx` is the `*mut T` registered by `Channel::get_addr_info`; delivered once, unused after.
         unsafe { T::on_addr_info(ctx.cast::<T>(), Error::get(status), timeouts, addr_info) };
     }
 
@@ -862,7 +841,7 @@ impl Channel {
     /// See c-ares `ares_getaddrinfo` documentation.
     ///
     /// # Safety
-    /// The registration contract (see the callback-wrapper note).
+    /// `ctx` must stay valid until `T`'s handler gets it (once; possibly before this returns).
     pub unsafe fn get_addr_info<T: AddrInfoHandler>(
         &mut self,
         host: &[u8],
@@ -889,8 +868,7 @@ impl Channel {
         } else {
             ptr::null()
         };
-        // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or
-        // null; `ctx` is valid until the callback fires (registration contract).
+        // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx lives until its callback runs.
         unsafe {
             ares_getaddrinfo(
                 self,
@@ -904,14 +882,13 @@ impl Channel {
     }
 
     /// # Safety
-    /// The registration contract (see the callback-wrapper note).
+    /// `ctx` must stay valid until `T`'s handler gets it (once; possibly before this returns).
     pub unsafe fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: *mut T) {
         if name.len() >= 1023
             || bun_core::strings::contains_char(name, 0)
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
         {
-            // SAFETY: delivers `ctx` the one time the registration contract promises;
-            // the thunk handles the ARES_EBADNAME path.
+            // SAFETY: this is ctx's one delivery; the thunk handles the ARES_EBADNAME path.
             unsafe { T::raw_callback(ctx.cast::<c_void>(), ARES_EBADNAME, 0, ptr::null_mut(), 0) };
             return;
         }
@@ -919,8 +896,7 @@ impl Channel {
         let mut name_buf = [0u8; 1024];
         let name_ptr = copy_nul_terminated(&mut name_buf, name);
 
-        // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; `ctx` is
-        // valid until the callback fires (registration contract).
+        // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx lives until its callback runs.
         unsafe {
             ares_query(
                 self,
@@ -934,7 +910,7 @@ impl Channel {
     }
 
     /// # Safety
-    /// The registration contract (see the callback-wrapper note).
+    /// `ctx` must stay valid until `T`'s handler gets it (once; possibly before this returns).
     pub unsafe fn get_host_by_addr<T: HostentHandler>(&mut self, ip_addr: &[u8], ctx: *mut T) {
         // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
         const BUF_SIZE: usize = 46;
@@ -955,8 +931,7 @@ impl Channel {
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
             if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0
             {
-                // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton;
-                // `ctx` is valid until the callback fires (registration contract).
+                // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx lives until its callback runs.
                 unsafe {
                     ares_gethostbyaddr(
                         self,
@@ -973,8 +948,7 @@ impl Channel {
                 ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr().cast::<c_void>())
             } > 0
             {
-                // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton;
-                // `ctx` is valid until the callback fires (registration contract).
+                // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx lives until its callback runs.
                 unsafe {
                     ares_gethostbyaddr(
                         self,
@@ -988,8 +962,7 @@ impl Channel {
                 return;
             }
         }
-        // SAFETY: delivers `ctx` the one time the registration contract promises,
-        // with ENOTIMP for an address neither family could parse.
+        // SAFETY: this is ctx's one delivery: ENOTIMP for an address neither family parsed.
         unsafe {
             struct_hostent::host_callback_wrapper::<T>(
                 ctx.cast::<c_void>(),
@@ -1003,15 +976,14 @@ impl Channel {
     /// https://c-ares.org/ares_getnameinfo.html
     ///
     /// # Safety
-    /// The registration contract (see the callback-wrapper note).
+    /// `ctx` must stay valid until `T`'s handler gets it (once; possibly before this returns).
     pub unsafe fn get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr, ctx: *mut T) {
         let salen: ares_socklen_t = if sa.sa_family == AF::INET as _ {
             core::mem::size_of::<sockaddr_in>() as ares_socklen_t
         } else {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
         };
-        // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; `ctx` is valid
-        // until the callback fires (registration contract).
+        // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; ctx lives until its callback runs.
         unsafe {
             ares_getnameinfo(
                 self,
@@ -1270,7 +1242,7 @@ pub trait AresReply: Sized {
 /// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
 pub trait ReplyHandler<R: AresReply>: Sized {
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_reply(this: *mut Self, status: Option<Error>, timeouts: i32, results: *mut R);
 }
 
@@ -1286,8 +1258,7 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
 ) {
     let this = ctx.cast::<T>();
     if status != ARES_SUCCESS {
-        // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-        // exactly once and not used after this call (handler contract).
+        // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
         unsafe { T::on_reply(this, Error::get(status), timeouts, ptr::null_mut()) };
         return;
     }
@@ -1482,7 +1453,7 @@ impl Default for struct_any_reply {
 
 pub trait AnyHandler: Sized {
     /// # Safety
-    /// The handler contract (see the callback-wrapper note).
+    /// `this` is the registered request, live and unaliased; it may be freed here.
     unsafe fn on_any(
         this: *mut Self,
         status: Option<Error>,
@@ -1503,8 +1474,7 @@ impl struct_any_reply {
     ) {
         let this = ctx.cast::<T>();
         if status != ARES_SUCCESS {
-            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`, delivered
-            // exactly once and not used after this call (handler contract).
+            // SAFETY: `ctx` is the `*mut T` registered by `Channel::resolve`; delivered once, unused after.
             unsafe { T::on_any(this, Error::get(status), timeouts, None) };
             return;
         }
@@ -2105,12 +2075,8 @@ pub struct in_addr {
     pub s_addr: u32,
 }
 
-// Run by `bun run rust:miri` (Tree Borrows): a request that frees itself in
-// its completion, the way every dns_jsc request type does, delivered through
-// each thunk and through the two `Channel` methods that complete a request
-// without calling c-ares. With any of those frames holding the request as a
-// reference, Miri rejects the free ("the strongly protected tag disallows
-// deallocations"); nothing here reaches a foreign function.
+// `bun run rust:miri -p bun_cares_sys`: a self-freeing request delivered through
+// every thunk, and through the two `Channel` paths that complete without c-ares.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2131,8 +2097,7 @@ mod tests {
         }
 
         fn complete(this: *mut Self, status: Option<Error>) {
-            // SAFETY: `this` is the pointer `register` leaked, delivered exactly
-            // once by the thunk under test.
+            // SAFETY: `this` came from `register` and is delivered once.
             let request = unsafe { bun_core::heap::take(this) };
             request.completed.set(Some(
                 status.expect("every test completes with an error status"),
@@ -2215,8 +2180,7 @@ mod tests {
         }
     }
 
-    // Wired the way dns_jsc wires a CNAME query: `Channel::resolve` hands the
-    // request to a `struct_hostent` thunk.
+    // Wired like dns_jsc's CNAME query.
     impl ResolveHandler for Request {
         const LOOKUP_NAME: &'static [u8] = b"cname";
         const NS_TYPE: NSType = NSType::ns_t_cname;
@@ -2242,13 +2206,9 @@ mod tests {
 
     type ParseThunk = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
 
-    /// Delivers `status` through a reply-parsing thunk and returns what the
-    /// request was completed with (after it has freed itself).
     fn deliver(thunk: ParseThunk, status: c_int) -> Error {
         let (request, completed) = Request::register();
-        // SAFETY: `request` is a live `*mut Request` registered for exactly this
-        // delivery (registration contract); a non-success status never reads
-        // the (null) reply buffer.
+        // SAFETY: `request` is live and delivered once; an error status never reads the buffer.
         unsafe { thunk(request.cast::<c_void>(), status, 0, ptr::null_mut(), 0) };
         completed.get().expect("thunk completed the request")
     }
@@ -2278,7 +2238,7 @@ mod tests {
         );
 
         let (request, completed) = Request::register();
-        // SAFETY: as in `deliver`, for the thunk `ares_gethostbyaddr` calls back through.
+        // SAFETY: as in `deliver`.
         unsafe {
             struct_hostent::host_callback_wrapper::<Request>(
                 request.cast::<c_void>(),
@@ -2326,7 +2286,7 @@ mod tests {
     #[test]
     fn nameinfo_thunk_frees_the_request() {
         let (request, completed) = Request::register();
-        // SAFETY: as in `deliver`, for the `ares_getnameinfo` thunk.
+        // SAFETY: as in `deliver`.
         unsafe {
             struct_nameinfo::callback_wrapper::<Request>(
                 request.cast::<c_void>(),
@@ -2342,7 +2302,7 @@ mod tests {
     #[test]
     fn addr_info_thunk_frees_the_request() {
         let (request, completed) = Request::register();
-        // SAFETY: as in `deliver`, for the `ares_getaddrinfo` thunk.
+        // SAFETY: as in `deliver`.
         unsafe {
             AddrInfo::callback_wrapper::<Request>(
                 request.cast::<c_void>(),
@@ -2354,9 +2314,7 @@ mod tests {
         assert_eq!(completed.get(), Some(Error::EDESTRUCTION));
     }
 
-    /// `Channel` is a zero-sized opaque handle (asserted next to its
-    /// definition), so a `&mut Channel` needs no c-ares behind it; the two
-    /// tests below only take the paths that complete before calling c-ares.
+    // `Channel` is a ZST (asserted at its definition), so no c-ares channel is needed.
     fn channel() -> &'static mut Channel {
         Channel::opaque_mut(ptr::NonNull::<Channel>::dangling().as_ptr())
     }
@@ -2365,8 +2323,7 @@ mod tests {
     fn resolve_completes_an_overlong_name_before_returning() {
         let (request, completed) = Request::register();
         let name = [b'a'; 1023];
-        // SAFETY: registration contract; a name of 1023 bytes is rejected before
-        // `ares_query`, so the request is completed (and freed) inside this call.
+        // SAFETY: `request` is live; a 1023-byte name is completed before `ares_query`.
         unsafe { channel().resolve::<Request>(&name, request) };
         assert_eq!(completed.get(), Some(Error::EBADNAME));
     }
@@ -2374,9 +2331,7 @@ mod tests {
     #[test]
     fn get_host_by_addr_completes_an_unparsable_address_before_returning() {
         let (request, completed) = Request::register();
-        // SAFETY: registration contract; an empty address skips both
-        // `ares_inet_pton` calls and `ares_gethostbyaddr`, so the request is
-        // completed (and freed) inside this call.
+        // SAFETY: `request` is live; an empty address is completed before any c-ares call.
         unsafe { channel().get_host_by_addr::<Request>(b"", request) };
         assert_eq!(completed.get(), Some(Error::ENOTIMP));
     }

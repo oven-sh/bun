@@ -18,7 +18,7 @@ use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
+use crate::api::js_bundle_completion_task::{BuildPlugins, JSBundleCompletionTask};
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
@@ -482,8 +482,12 @@ impl Route {
         };
 
         // The build is the server's: it continues the script that made the server.
-        let mut completion_task =
-            JSBundleCompletionTask::new(config, plugins, global, server.context_id());
+        let mut completion_task = JSBundleCompletionTask::new(
+            config,
+            plugins.map(BuildPlugins::Borrowed),
+            global,
+            server.context_id(),
+        );
         completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
         // While we're building, ensure this doesn't get freed.
         completion_task.html_build_task = Some(RefPtr::from_this(this));

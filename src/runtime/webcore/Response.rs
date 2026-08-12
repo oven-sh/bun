@@ -845,7 +845,7 @@ impl Response {
             //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url: OwnedString` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
+            // - `JsRef` — assignment drops the `Strong` arm (slot released).
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));

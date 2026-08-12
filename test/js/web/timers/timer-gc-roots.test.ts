@@ -1,22 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-// bun_jsc::Strong handles now live in StrongRootBlock cells (rooted by a
-// per-VM marking constraint on JSVMClientData; slots re-visited on eden via the
-// write-barrier remembered set) instead of one HandleSet strong handle per
-// armed timer, so the "Sh" strong-handle marking constraint no longer walks
-// every armed timer on every eden collection. heapStats() walks the block list
-// to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
+// An armed timer pins its Timeout object through a bun_jsc::Strong, which is a
+// slot in the VM's JSC::StrongSet, the same storage JSC::Strong<> uses. Those
+// slots are what heapStats() reports as protected objects and what
+// getProtectedObjects() returns, and the pin goes away with the timer.
 
-describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
-  test("heapStats still reports protected Timeout counts", async () => {
+describe.concurrent("Strong handles are JSC strong-handle slots", () => {
+  test("heapStats and getProtectedObjects report armed timers, and only while armed", async () => {
     const src = `
-      const { heapStats } = require("bun:jsc");
+      const { heapStats, getProtectedObjects } = require("bun:jsc");
       const N = 5000;
       const h = [];
       for (let i = 0; i < N; i++) h.push(setTimeout(() => {}, 600000));
+      const TimeoutPrototype = Object.getPrototypeOf(h[0]);
+      const countTimeouts = () =>
+        getProtectedObjects().filter(o => typeof o === "object" && o !== null && Object.getPrototypeOf(o) === TimeoutPrototype).length;
       Bun.gc(true);
       const armed = heapStats();
+      const armedProtected = countTimeouts();
       for (const t of h) clearTimeout(t);
       Bun.gc(true);
       await new Promise(r => setTimeout(r, 0));
@@ -25,22 +27,28 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
       console.log(JSON.stringify({
         N,
         armedTimeout: armed.protectedObjectTypeCounts.Timeout || 0,
-        armedBlocks: armed.objectTypeCounts.StrongRootBlock || 0,
+        armedProtected,
+        armedProtectedCountCoversTimers: armed.protectedObjectCount >= N,
         clearedTimeout: cleared.protectedObjectTypeCounts.Timeout || 0,
-        clearedBlocks: cleared.objectTypeCounts.StrongRootBlock || 0,
+        clearedProtected: countTimeouts(),
+        clearedObjectTypes: Object.keys(cleared.objectTypeCounts).filter(k => /Strong/.test(k)),
       }));
       process.exit(0);
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { N, armedTimeout, armedBlocks, clearedTimeout, clearedBlocks } = JSON.parse(stdout);
-    // protectedObjectTypeCounts walks the block list, so the count is preserved.
-    expect(armedTimeout).toBe(N);
-    // N/capacity blocks while armed; all but one spare released after clearing.
-    expect(armedBlocks).toBeGreaterThanOrEqual(3);
-    expect(clearedTimeout).toBe(0);
-    expect(clearedBlocks).toBeLessThanOrEqual(1);
+    const result = JSON.parse(stdout);
+    expect(result).toEqual({
+      N: 5000,
+      armedTimeout: 5000,
+      armedProtected: 5000,
+      armedProtectedCountCoversTimers: true,
+      clearedTimeout: 0,
+      clearedProtected: 0,
+      // The slots are not heap cells, so nothing shows up in objectTypeCounts.
+      clearedObjectTypes: [],
+    });
     expect(exitCode).toBe(0);
   });
 

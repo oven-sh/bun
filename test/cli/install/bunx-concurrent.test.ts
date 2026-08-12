@@ -152,4 +152,6 @@ test("concurrent bunx spawns of the same package do not corrupt the shared insta
     expect(stdout).toContain("OK-37830 600");
     expect(exitCode).toBe(0);
   }
+  // Outlier timeout: 8 serialized cold-cache installs of ~600 files each;
+  // shrinking the workload loses the repro on unfixed builds.
 }, 60_000);

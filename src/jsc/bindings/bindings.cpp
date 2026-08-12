@@ -646,20 +646,29 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
-JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
+// Reads one array index for the deep-equality walk; the empty JSValue means a hole.
+// Getters run, as they do for named properties. jest only sees own enumerable
+// indexes (for..in), node's deepStrictEqual sees every own index (hasOwnProperty +
+// a[i]), so a non-enumerable index is a hole unless the node entry point is asking.
+template<bool includeNonEnumerable>
+static JSValue getOwnIndexForDeepEquals(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
         return obj->tryGetIndexQuickly(i);
     }
 
     PropertySlot slot(obj, PropertySlot::InternalMethodType::Get);
-    if (obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot)) {
-        if (!slot.isAccessor()) {
-            return slot.getValue(globalObject, i);
+    bool hasIndex = obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasIndex) {
+        return {};
+    }
+    if constexpr (!includeNonEnumerable) {
+        if (slot.attributes() & PropertyAttribute::DontEnum) {
+            return {};
         }
     }
-
-    return JSValue();
+    return slot.getValue(globalObject, i);
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -862,9 +871,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         uint64_t i = 0;
         for (; i < array1Length; i++) {
-            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+            JSValue left = getOwnIndexForDeepEquals<checkPrototypes>(globalObject, scope, o1, i);
             RETURN_IF_EXCEPTION(scope, false);
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getOwnIndexForDeepEquals<checkPrototypes>(globalObject, scope, o2, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if constexpr (isStrict) {
@@ -888,7 +897,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (; i < array2Length; i++) {
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getOwnIndexForDeepEquals<checkPrototypes>(globalObject, scope, o2, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if (((right.isEmpty() || right.isUndefined()))) {

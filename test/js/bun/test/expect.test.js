@@ -542,6 +542,82 @@ describe("expect()", () => {
     }
   });
 
+  describe("deepEquals reads enumerable index accessors on arrays", () => {
+    /** `[1, <getter>]` where the getter at index 1 returns `value`. */
+    const withIndexGetter = (/** @type {unknown} */ value, { enumerable = true } = {}) => {
+      /** @type {any[]} */
+      const array = [1, 2];
+      Object.defineProperty(array, 1, { get: () => value, enumerable, configurable: true });
+      return array;
+    };
+
+    test("the getter's value is compared, on either side", () => {
+      expect(withIndexGetter("got")).toEqual([1, "got"]);
+      expect(withIndexGetter("got")).toStrictEqual([1, "got"]);
+      expect([1, "got"]).toEqual(withIndexGetter("got"));
+      expect([1, "got"]).toStrictEqual(withIndexGetter("got"));
+      expect(withIndexGetter({ a: 1 })).toEqual([1, { a: 1 }]);
+      expect(withIndexGetter({ a: 1 })).toStrictEqual([1, { a: 1 }]);
+      expect(withIndexGetter("got")).toEqual(withIndexGetter("got"));
+      expect(withIndexGetter("got")).toStrictEqual(withIndexGetter("got"));
+
+      expect(withIndexGetter("got")).not.toEqual([1, 2]);
+      expect(withIndexGetter("got")).not.toStrictEqual([1, 2]);
+      expect([1, 2]).not.toEqual(withIndexGetter("got"));
+      expect([1, 2]).not.toStrictEqual(withIndexGetter("got"));
+      expect(withIndexGetter("got")).not.toEqual(withIndexGetter("other"));
+      expect(withIndexGetter("got")).not.toStrictEqual(withIndexGetter("other"));
+      expect(withIndexGetter("got")).not.toEqual([1, ,]);
+      expect(withIndexGetter("got")).not.toStrictEqual([1, ,]);
+    });
+
+    test("an accessor is not a hole even when the getter returns undefined", () => {
+      expect(withIndexGetter(undefined)).toEqual([1, undefined]);
+      expect(withIndexGetter(undefined)).toStrictEqual([1, undefined]);
+      expect(withIndexGetter(undefined)).toEqual([1, ,]);
+      expect(withIndexGetter(undefined)).not.toStrictEqual([1, ,]);
+    });
+
+    test("a throwing getter propagates instead of the index passing as a hole", () => {
+      /** @type {any[]} */
+      const throwing = [1, 2];
+      Object.defineProperty(throwing, 1, {
+        get() {
+          throw new Error("index getter threw");
+        },
+        enumerable: true,
+      });
+      expect(() => expect(throwing).toEqual([1, ,])).toThrow("index getter threw");
+      expect(() => expect([1, ,]).toEqual(throwing)).toThrow("index getter threw");
+    });
+
+    test("non-enumerable indexes are skipped like non-enumerable named properties", () => {
+      expect(withIndexGetter("got", { enumerable: false })).not.toEqual([1, "got"]);
+      expect(withIndexGetter("got", { enumerable: false })).not.toStrictEqual([1, "got"]);
+      expect(withIndexGetter("got", { enumerable: false })).toEqual([1, ,]);
+      expect(withIndexGetter("got", { enumerable: false })).toStrictEqual([1, ,]);
+
+      /** @type {any[]} */
+      const hiddenData = [1, 2];
+      Object.defineProperty(hiddenData, 1, { enumerable: false });
+      expect(hiddenData).not.toEqual([1, 2]);
+      expect(hiddenData).not.toStrictEqual([1, 2]);
+      expect([1, 2]).not.toEqual(hiddenData);
+      expect([1, 2]).not.toStrictEqual(hiddenData);
+      expect(hiddenData).toEqual([1, ,]);
+      expect(hiddenData).toStrictEqual([1, ,]);
+      expect(hiddenData).toEqual([1, undefined]);
+      expect(hiddenData).not.toStrictEqual([1, undefined]);
+    });
+
+    test("frozen arrays still compare by value", () => {
+      expect(Object.freeze([1, { a: 2 }])).toEqual([1, { a: 2 }]);
+      expect(Object.freeze([1, { a: 2 }])).toStrictEqual([1, { a: 2 }]);
+      expect(Object.freeze([1, 2])).not.toEqual([1, 3]);
+      expect(Object.freeze([1, 2])).not.toStrictEqual([1, 3]);
+    });
+  });
+
   test("deepEquals bugfix #11370", () => {
     // Two objects with equal number of properties, but left object has
     // undefined keys and right object has keys that don't exist

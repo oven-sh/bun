@@ -59,6 +59,13 @@ function withExtraProperty<T extends object>(value: T): T {
   return Object.assign(value, { extra: 1 });
 }
 
+/** `[1, <getter>]`: index 1 is an accessor property backed by `get`. */
+function withIndexGetter(get: () => unknown, enumerable = true) {
+  const array: unknown[] = [1, 2];
+  Object.defineProperty(array, 1, { get, enumerable, configurable: true });
+  return array;
+}
+
 function selfReferencingObject() {
   const object: Record<string, unknown> = {};
   object.self = object;
@@ -593,6 +600,35 @@ const cases: Case[] = [
   },
   { name: "arrays of different length", a: () => [1, 2], b: () => [1], strict: false, loose: false },
   { name: "'a' and ['a']", a: () => "a", b: () => ["a"], strict: false, loose: false },
+  // Index accessors are read through their getter, like named ones.
+  {
+    name: "an array with an index getter and a plain array",
+    a: () => withIndexGetter(() => 2),
+    b: () => [1, 2],
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a plain array and an array with an index getter",
+    a: () => [1, 2],
+    b: () => withIndexGetter(() => 2),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "arrays whose index getters return different values",
+    a: () => withIndexGetter(() => 2),
+    b: () => withIndexGetter(() => 3),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an array with an index getter and a sparse array",
+    a: () => withIndexGetter(() => 2),
+    b: () => [1, ,],
+    strict: false,
+    loose: false,
+  },
 
   // Cycles.
   {
@@ -706,6 +742,35 @@ describe("util.isDeepStrictEqual", () => {
     };
     expect(util.isDeepStrictEqual(make(), make())).toBe(true);
     expect(calls).toBe(2);
+  });
+
+  test("reads an array's index getter once per side", () => {
+    const calls = { a: 0, b: 0 };
+    const a = withIndexGetter(() => (calls.a++, 2));
+    const b = withIndexGetter(() => (calls.b++, 2));
+    expect(util.isDeepStrictEqual(a, b)).toBe(true);
+    expect(calls).toEqual({ a: 1, b: 1 });
+  });
+
+  // node reads the dense part of an array with a[i], which does not care about
+  // enumerability; jest-style comparisons (expect, Bun.deepEquals) skip these.
+  test("reads a non-enumerable index getter too, like node's a[i]", () => {
+    const hiddenTwo = withIndexGetter(() => 2, false);
+    const hiddenThree = withIndexGetter(() => 3, false);
+    expect(util.isDeepStrictEqual(hiddenTwo, [1, 2])).toBe(true);
+    expect(util.isDeepStrictEqual(hiddenThree, [1, 2])).toBe(false);
+    expect(util.isDeepStrictEqual(hiddenTwo, [1, ,])).toBe(false);
+    expect(() => assert.deepStrictEqual(hiddenTwo, [1, 2])).not.toThrow();
+  });
+
+  test("propagates an index getter that throws", () => {
+    const throwing = withIndexGetter(() => {
+      throw new Error("index getter threw");
+    });
+    expect(() => util.isDeepStrictEqual(throwing, [1, 2])).toThrow("index getter threw");
+    expect(() => util.isDeepStrictEqual([1, 2], throwing)).toThrow("index getter threw");
+    expect(() => assert.deepStrictEqual(throwing, [1, 2])).toThrow("index getter threw");
+    expect(() => assert.deepEqual(throwing, [1, 2])).toThrow("index getter threw");
   });
 
   // The third argument was added in Node v26.

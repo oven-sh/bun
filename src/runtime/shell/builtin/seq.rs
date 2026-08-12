@@ -13,11 +13,9 @@ enum State {
     Done,
 }
 
-/// Upper bound on the number of decimals `-w` prints. The smallest f64 is
-/// 2^-1074, so no float value has more fractional digits than this and every
-/// digit past it would be a zero; it also keeps the precision and width handed
-/// to `core::fmt` below the `u16::MAX` it panics above (an operand written as
-/// `1e-70000` asks for 70000 decimals).
+/// `core::fmt` panics on a precision or width above `u16::MAX`, which an
+/// operand like `1e-70000` would request; no float has more than 1074
+/// fractional digits (the smallest f64 is 2^-1074), so the rest would be zeros.
 const MAX_FIXED_WIDTH_DECIMALS: u32 = 1074;
 
 pub struct Seq {
@@ -26,7 +24,7 @@ pub struct Seq {
     end: f32,
     increment: f32,
     /// Most decimal places any positional argument was written with
-    /// (`seq 0 0.25 1` → 2). `-w` prints every value with this many decimals.
+    /// (`seq 0 0.25 1` → 2); `-w` prints every value with this many.
     decimals: u32,
     /// `-w` / `--fixed-width`: zero-pad every value to the same width.
     fixed_width: bool,
@@ -99,8 +97,6 @@ impl Seq {
                 idx += 1;
                 continue;
             }
-            // `-f format` is in the (BSD) usage string but not implemented;
-            // report that instead of parsing the format as a number.
             if arg.starts_with(b"-f") || arg == b"--format" {
                 let flag: &'static [u8] = if arg == b"--format" {
                     b"--format"
@@ -216,7 +212,6 @@ impl Seq {
             current >= end
         } {
             let _ = match fixed_width {
-                // `0` pads after the sign (`-05`), as BSD and GNU seq do.
                 Some(FixedWidth { width, decimals }) => {
                     write!(&mut out, "{current:0width$.decimals$}")
                 }
@@ -269,8 +264,8 @@ impl Seq {
     }
 }
 
-/// How `-w` lays out each value: `decimals` fraction digits, zero-padded to
-/// `width`.
+/// `-w` layout: `decimals` fraction digits, zero-padded after the sign
+/// (`-05`) to `width`, as in BSD and GNU seq.
 #[derive(Clone, Copy)]
 struct FixedWidth {
     width: usize,
@@ -278,10 +273,8 @@ struct FixedWidth {
 }
 
 impl FixedWidth {
-    /// Every value printed lies between `start` and `end`, and at a fixed
-    /// number of decimals a value never prints wider than the bound it lies
-    /// inside of, so the wider of the two bounds is the width of the widest
-    /// value.
+    /// Every value lies between `start` and `end`, and at a fixed number of
+    /// decimals it prints no wider than the bound on its side of zero.
     fn new(start: f32, end: f32, decimals: u32) -> Self {
         let decimals = decimals.min(MAX_FIXED_WIDTH_DECIMALS) as usize;
         let len = |n: f32| bun_core::fmt::count(format_args!("{n:.decimals$}"));

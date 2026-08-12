@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 
-// `Bun.connect` to a hostname that fails to resolve must surface the resolver
-// error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
-// `node:dns`, rather than collapsing it into `ECONNREFUSED` / `syscall:
-// "connect"` as if a listener had refused the connection.
+// `Bun.connect` / `Bun.listen` with a hostname that fails to resolve must
+// surface the resolver error (code `ENOTFOUND`, `syscall: "getaddrinfo"`,
+// `hostname`), matching `node:dns`, rather than collapsing it into
+// `ECONNREFUSED` / `syscall: "connect"` as if a listener had refused the
+// connection, or (for listen) a code-less "Failed to listen" error.
 //
 // These live in their own file because `socket.test.ts` is a large
 // `describe.concurrent` block whose dual-stack `localhost` tests are
@@ -116,6 +117,32 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
         (e: Error) => pick(e),
       ),
     );
+  }
+  expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
+});
+
+test.each([
+  ["tcp", {}],
+  ["tls", { tls }],
+])("Bun.listen (%s) on an unresolvable hostname throws the resolver error", (_, extra) => {
+  // Three attempts: each failed listen tears down a half-built listener, so a
+  // second and third attempt must neither crash nor report something else.
+  const errors = [];
+  for (let i = 0; i < 3; i++) {
+    let listener;
+    try {
+      listener = Bun.listen({
+        ...extra,
+        hostname: UNRESOLVABLE_HOST,
+        port: 0,
+        socket: { open() {}, data() {} },
+      });
+    } catch (e) {
+      errors.push(pick(e));
+      continue;
+    }
+    listener.stop(true);
+    throw new Error(`expected Bun.listen to throw, but it is listening on port ${listener.port}`);
   }
   expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
 });

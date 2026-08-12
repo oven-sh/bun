@@ -1046,12 +1046,14 @@ public:
         group.vtable = &httpVTable<true>;
     }
 
-    /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
-    us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options) {
+    /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP.
+     * *dnsError receives the getaddrinfo(3) return code when `host` does not resolve
+     * (see us_socket_group_listen); syscall failures are left in errno for the caller. */
+    us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options, int *dnsError) {
         int error = 0;
         /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
          * accept() until data arrives and dispatch the read immediately after accept. */
-        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
+        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error, dnsError);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);

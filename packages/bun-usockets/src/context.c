@@ -388,8 +388,8 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
 
 struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        const char *host, int port, int options, int socket_ext_size, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error);
+        const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error) {
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket(host, port, options, error, dns_error);
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }

@@ -123,8 +123,10 @@ typedef struct {
     uws_websocket_close_handler close;
 } uws_socket_behavior_t;
 
+/* dns_error: getaddrinfo(3) return code when the host failed to resolve (then
+ * listen_socket is NULL), 0 otherwise. See uWS::TemplatedApp::ListenHandler. */
 typedef void (*uws_listen_handler)(struct us_listen_socket_t* listen_socket,
-    void* user_data);
+    int dns_error, void* user_data);
 typedef void (*uws_listen_domain_handler)(
     struct us_listen_socket_t* listen_socket, const char* domain, int options,
     void* user_data);

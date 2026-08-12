@@ -1977,26 +1977,40 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
             return 0;
         }
     }
-    {
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
-        let in6: &mut sockaddr_in6 =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
-        // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin6_addr` storage.
-        if unsafe {
-            ares_inet_pton(
-                AF::INET6,
-                addr_ptr,
-                (&raw mut in6.sin6_addr).cast::<c_void>(),
-            )
-        } == 1
-        {
-            in6.sin6_family = AF::INET6 as _;
-            in6.sin6_port = port.to_be();
-            return 0;
-        }
+    let mut octets = [0u8; 16];
+    // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is a
+    // 16-byte `in6_addr`-sized buffer.
+    if unsafe { ares_inet_pton(AF::INET6, addr_ptr, (&raw mut octets).cast::<c_void>()) } != 1 {
+        return -1;
     }
 
-    -1
+    if octets[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff] {
+        // IPv4-mapped `::ffff:a.b.c.d`: store as AF_INET. The consumer is
+        // `ares_getnameinfo`, which (unlike the OS getnameinfo Node uses) has
+        // no v4-mapped handling and would issue an ip6.arpa PTR query that
+        // never resolves.
+        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
+        let in_: &mut sockaddr_in =
+            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        in_.sin_family = AF::INET as _;
+        in_.sin_port = port.to_be();
+        // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+        unsafe {
+            (&raw mut in_.sin_addr)
+                .cast::<[u8; 4]>()
+                .write([octets[12], octets[13], octets[14], octets[15]]);
+        }
+        return 0;
+    }
+
+    // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
+    let in6: &mut sockaddr_in6 =
+        unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+    in6.sin6_family = AF::INET6 as _;
+    in6.sin6_port = port.to_be();
+    // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+    unsafe { (&raw mut in6.sin6_addr).cast::<[u8; 16]>().write(octets) };
+    0
 }
 
 /// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers`

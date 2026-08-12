@@ -57,9 +57,8 @@ pub enum Tag {
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
     HTMLRewriterSuspension,
-    /// Task-only tag (never a context cell): frees a `RewriterPipe` whose
-    /// last claim was released from a GC destructor; see
-    /// `RewriterPipe::release_pump_claim`.
+    /// Task-only tag (never a context cell): drops the last ref of a
+    /// `RewriterPipe` on behalf of `RewriterPipe::release_pump_ref`.
     HTMLRewriterPipeFree,
 }
 
@@ -221,13 +220,11 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live pointer of the
-        // type indicated by `tag`. The request-context tags hold an intrusive
-        // refcount released here. The HTMLRewriter tags point at a
-        // claim-counted `RewriterPipe`: the suspension task owns the claim
-        // taken in `begin_suspension`, and `HTMLRewriterPipeFree` is
-        // scheduled only by the release of the last claim, so this task is
-        // the sole owner of the allocation it frees. We are on the JS thread.
+        // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
+        // of the type indicated by `tag`, and this task owns one ref on it,
+        // released below (for the HTMLRewriter tags: the ref taken in
+        // `begin_suspension`, or the last ref handed over by
+        // `release_pump_ref`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -253,7 +250,9 @@ impl DeferredDerefTask {
                     html_rewriter::RewriterPipe::abandon_suspension(back);
                 }
                 Tag::HTMLRewriterPipeFree => {
-                    bun_core::heap::destroy(ctx.cast::<html_rewriter::RewriterPipe>());
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    );
                 }
             }
         }

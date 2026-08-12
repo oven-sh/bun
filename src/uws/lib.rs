@@ -31,7 +31,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
+pub use bun_uws_sys::{h3 as H3, quic, socket_transfer, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -214,6 +214,17 @@ pub mod ssl_wrapper {
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
+        traffic: Cell<Traffic>,
+    }
+
+    /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Traffic {
+        Idle,
+        /// A pass is on the stack.
+        Running,
+        /// A callback of the running pass called `handle_traffic` again.
+        RerunRequested,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -480,6 +491,7 @@ pub mod ssl_wrapper {
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
+                traffic: Cell::new(Traffic::Idle),
             })
         }
 
@@ -1128,7 +1140,30 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Not re-entrant. A call made from inside a pass's callback (a write
+        /// from `on_data`, a synchronous peer feeding `receive_data`) flushes the
+        /// ciphertext queued so far and schedules another pass; decrypting there
+        /// would hand the owner the next chunk while it is still inside its
+        /// callback for the previous one.
         fn handle_traffic(&self) {
+            if self.traffic.get() != Traffic::Idle {
+                log!("handleTraffic re-entered, flushing and deferring to the outer pass");
+                let mut buffer = [0u8; BUFFER_SIZE];
+                self.handle_writing(&mut buffer);
+                self.traffic.set(Traffic::RerunRequested);
+                return;
+            }
+            loop {
+                self.traffic.set(Traffic::Running);
+                self.traffic_pass();
+                if self.traffic.get() != Traffic::RerunRequested {
+                    break;
+                }
+            }
+            self.traffic.set(Traffic::Idle);
+        }
+
+        fn traffic_pass(&self) {
             // always handle the handshake first
             if self.update_handshake_state() {
                 // shared stack buffer for reading and writing
@@ -1138,9 +1173,17 @@ pub mod ssl_wrapper {
                 self.handle_writing(&mut buffer);
 
                 // drain the output BIO in loop, because read can trigger writing and vice versa
-                while self.has_pending_read() && self.handle_reading(&mut buffer) {
+                // Once a callback re-entered, the next pass takes over: the bytes it fed in
+                // may belong to the handshake, which only update_handshake_state reports.
+                while self.traffic.get() == Traffic::Running
+                    && self.has_pending_read()
+                    && self.handle_reading(&mut buffer)
+                {
                     // read data can trigger writing so we need to handle it
                     self.handle_writing(&mut buffer);
+                }
+                if self.traffic.get() != Traffic::Running {
+                    return;
                 }
 
                 // The SSL_do_handshake/SSL_read calls above may have parked

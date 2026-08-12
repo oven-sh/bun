@@ -418,7 +418,9 @@ impl HTTPClient<'_> {
         };
         let should_continue = self.handle_response_metadata(&mut response)?;
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
-        // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
+        // HTTP/1.x persistence rules (no Content-Length ⇒ no keep-alive, and the
+        // HTTP/1.0 default that the synthetic `minor_version: 0` above trips)
+        // don't apply.
         self.state.transfer_encoding = Encoding::Identity;
         if self.state.response_stage == ResponseStage::BodyChunk {
             self.state.response_stage = ResponseStage::Body;
@@ -3717,8 +3719,7 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            let bytes_read =
-                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
+            let bytes_read = parsed.bytes_read.min(to_read.len());
             to_read = &to_read[bytes_read..];
 
             if parsed.status_code == 101 {
@@ -4790,6 +4791,7 @@ impl<'a> HTTPClient<'a> {
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
+        let mut has_keep_alive_token = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -4885,8 +4887,10 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Connection") => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
-                    if connection_header_keep_alive(header.value()) == Some(false) {
-                        self.state.flags.allow_keepalive = false;
+                    match connection_header_keep_alive(header.value()) {
+                        Some(false) => self.state.flags.allow_keepalive = false,
+                        Some(true) => has_keep_alive_token = true,
+                        None => {}
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {
@@ -4973,6 +4977,14 @@ impl<'a> HTTPClient<'a> {
             self.flags.proxy_tunneling = false;
             self.flags.disable_keepalive = true;
             is_proxy_connect_failure = true;
+        }
+
+        // RFC 9112 §9.3: an HTTP/1.0 response is non-persistent unless it says
+        // `Connection: keep-alive`. Deliberately below the CONNECT return above:
+        // proxies commonly answer CONNECT with `HTTP/1.0 200`, which says nothing
+        // about the tunneled origin, whose own response is what gets judged here.
+        if response.minor_version == 0 && !has_keep_alive_token {
+            self.state.flags.allow_keepalive = false;
         }
 
         let status_code = response.status_code;

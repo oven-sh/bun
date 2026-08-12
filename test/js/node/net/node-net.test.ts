@@ -2048,3 +2048,33 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
     expect(missingErr.code).toBe("ENOENT");
   });
 });
+
+describe("net.Server.listen({ fd })", () => {
+  // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
+  // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
+  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-deprecation", // Socket.prototype._handle (DEP0112) is the only way to get the descriptor
+        "-e",
+        `
+        const dgram = require("dgram"), net = require("net");
+        const u = dgram.createSocket("udp4");
+        u.bind(0, "127.0.0.1", () => {
+          const s = net.createServer();
+          s.on("error", e => { console.log(e.code); u.close(); });
+          s.on("listening", () => { console.log("listening"); s.close(); u.close(); });
+          s.listen({ fd: u._handle.fd });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

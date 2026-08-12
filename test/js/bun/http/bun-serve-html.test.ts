@@ -1163,3 +1163,88 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// server.reload() hands the dev server a new route object for the same html
+// file. The dev server used to give it a second route bundle and deliver the
+// bundled html there, so a request that was deferred on the original bundle
+// while it was still building crashed the process once the bundle finished.
+test("server.reload() while an html route's first bundle is still in flight", async () => {
+  using dir = tempDir("bun-serve-html-reload-during-bundle", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    // Holds the first bundle open until serve.ts has reloaded the server, so
+    // the request that started the bundle stays deferred on it meanwhile.
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "hold-bundle",
+        setup(build) {
+          build.onLoad({ filter: /app\\.ts$/ }, async () => {
+            globalThis.bundleStarted.resolve();
+            await globalThis.releaseBundle.promise;
+            return { loader: "ts", contents: "console.log('app');" };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      globalThis.bundleStarted = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      const options = { port: 0, development: true, routes: { "/": html } };
+      const server = Bun.serve(options);
+
+      // Asks the dev server over its HMR socket which route bundle currently
+      // backs "/": the client's "set url" message ('n' + route pattern) is
+      // answered with 'n' + the route bundle index as a u32.
+      async function routeBundleIndex() {
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("hmr socket closed before answering"));
+        ws.onmessage = ({ data }) => {
+          const view = new DataView(data);
+          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+        };
+        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      const first = fetch(server.url).then(res => res.status);
+      await globalThis.bundleStarted.promise;
+      const before = await routeBundleIndex();
+
+      server.reload(options);
+      const after = await routeBundleIndex();
+
+      globalThis.releaseBundle.resolve();
+      const second = fetch(server.url).then(res => res.status);
+
+      console.log(JSON.stringify({ first: await first, second: await second, sameRouteBundle: before === after }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ first: 200, second: 200, sameRouteBundle: true }),
+    exitCode: 0,
+  });
+});

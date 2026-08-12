@@ -500,10 +500,8 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
   }
 }
 
-/** Every module whose evaluation failed, including each importer that was
- * waiting on it, has to record the failure. A module left in `State.Pending`
- * is handed out as-is by the loaders (that is how circular imports work), so
- * the next load of it would receive its `null` namespace instead of the error. */
+/** Pending modules are handed out as-is (circular imports), so every module a
+ * failed load leaves behind must record the failure, importers included. */
 function throwLoadFailure(mod: HMRModule, e: unknown): never {
   mod.state = State.Error;
   mod.failure = e;
@@ -530,11 +528,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     try {
       promiseOrModule = enqueueModuleLoad(dep, false, parent);
     } catch (e) {
-      // An AsyncImportError normally means the dependency refused to be loaded
-      // synchronously, not that anything failed to evaluate: `parent` still
-      // loads through `import()`, so it only goes back to needing a load. Not
-      // so when it is the dependency's recorded failure (its body called
-      // `require()` on an async module): that dependency did fail.
+      // A dependency refusing to be loaded synchronously (as opposed to having
+      // failed) is not an evaluation failure: `parent` still loads via import().
       if (e instanceof AsyncImportError && registry.get(dep)?.state !== State.Error) {
         parent.state = State.Stale;
         throw e;

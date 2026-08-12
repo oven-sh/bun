@@ -121,24 +121,32 @@ describe("cat (builtin) sharing one stdin reader", () => {
       let output = "";
       const separator = Promise.withResolvers<void>();
       const trailer = Promise.withResolvers<void>();
-      await using terminal = new Bun.Terminal({
-        data(_, chunk) {
-          output += Buffer.from(chunk).toString();
-          if (output.includes("---\n")) separator.resolve();
-          if (/exit=\d+\n/.test(output)) trailer.resolve();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childCode("cat; echo ---; cat", false)],
+        env: builtinEnv,
+        terminal: {
+          data(_, chunk) {
+            output += Buffer.from(chunk).toString();
+            if (output.includes("---\n")) separator.resolve();
+            if (/exit=\d+\n/.test(output)) trailer.resolve();
+          },
+          // Fires once the exited child's output has all been delivered, so a
+          // child that dies early fails the await below instead of timing out.
+          // (A no-op for whichever promise the output above already resolved.)
+          exit() {
+            const error = new Error(`child exited early, output so far: ${JSON.stringify(output)}`);
+            (output.includes("---\n") ? trailer : separator).reject(error);
+          },
         },
       });
+      await using terminal = proc.terminal!;
       // Same values on Linux and macOS. Without these the typed input would be
       // echoed into `output` and the child's "\n" would come back as "\r\n".
+      // The child has nothing to read yet, so nothing has been output either.
       const ECHO = 0x8;
       const OPOST = 0x1;
       terminal.localFlags &= ~ECHO;
       terminal.outputFlags &= ~OPOST;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", childCode("cat; echo ---; cat", false)],
-        env: builtinEnv,
-        terminal,
-      });
       terminal.write("hi\n\x04");
       await separator.promise;
       terminal.write("more\n\x04");

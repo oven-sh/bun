@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ciUserHome, ciUserId } from "./ci-user";
 import { config, guestImage, releaseTier } from "./config";
+import { installSelf } from "./host";
 import { plist } from "./launchd";
 import { consoleUser, fail, output, poll, sleep, succeeds, sudoRead, sudoWrite } from "./shell";
 
@@ -10,7 +11,7 @@ const path = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const launchAgents = "/Library/LaunchAgents";
 // One launchd job per guest release, `<prefix>.<release>`. Hosts set up when there
 // was one image per host have a single job named just `<prefix>`; the prefix match
-// in installedAgentLabels() retires it too.
+// in retireTartAgents() covers it too.
 const agentLabelPrefix = "com.buildkite.buildkite-agent";
 const cleanupLabel = "com.buildkite.cleanup";
 
@@ -62,11 +63,10 @@ export async function installTartAgent({ releases, spawn }: TartAgentOptions): P
 
   await $`sudo launchctl bootout system/buildkite-agent`.quiet().nothrow();
   await $`sudo launchctl bootout system/${cleanupLabel}`.quiet().nothrow();
-  for (const label of installedAgentLabels()) {
-    await unload(`gui/${uid}/${label}`);
-    await $`sudo rm -f ${join(launchAgents, `${label}.plist`)}`;
-  }
+  await retireTartAgents();
   await $`sudo find ${configDir} -name ${"buildkite-agent*.cfg"} -delete`;
+  // the configs below point at installDir's hooks, which look images up the same way these agents are tagged
+  await installSelf();
 
   const nightly = [
     `PATH=${path}`,
@@ -120,6 +120,22 @@ export async function installTartAgent({ releases, spawn }: TartAgentOptions): P
     console.log(`--- macOS ${release} (${releaseTier(release)})`);
     console.log(await output($`sudo tail -4 ${join(logs, `buildkite-agent-${release}.log`)}`));
   }
+}
+
+/**
+ * Stop and remove every agent job on this host, whatever layout installed it, so
+ * no job is picked up while the images and hooks underneath them are replaced.
+ * Returns the labels retired; nothing to do on a fresh host.
+ */
+export async function retireTartAgents(): Promise<string[]> {
+  const labels = installedAgentLabels();
+  if (!labels.length) return labels;
+  const uid = await ciUserId();
+  for (const label of labels) {
+    await unload(`gui/${uid}/${label}`);
+    await $`sudo rm -f ${join(launchAgents, `${label}.plist`)}`;
+  }
+  return labels;
 }
 
 function installedAgentLabels(): string[] {

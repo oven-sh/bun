@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { installBareAgent, installTartAgent } from "./lib/agent";
+import { installBareAgent, installTartAgent, retireTartAgents } from "./lib/agent";
 import { bake } from "./lib/bake";
 import { ciUserExists, enableAutoLogin, ensureCiUser } from "./lib/ci-user";
 import { config, guestBase, guestImage, releaseTier } from "./lib/config";
@@ -24,15 +24,16 @@ const configuredReleases = config.tart.guests.map(({ release }) => release);
 
 const usage = `usage:
   main.ts provision <hostname> <tart|bare> [--tags <tailscale tags>] [--release N] [--spawn N]
-                                                   converge a freshly imaged host
+                                                   converge a freshly imaged (or previously provisioned) host
   main.ts setup-user                               create the auto-login ${config.ciUser} user
   main.ts bake [--release N [--base <image>]] [--ref <bun ref>]
                                                    build the guest images (run as ${config.ciUser})
-  main.ts install-agent [--release N] [--spawn N]  write agent configs and launchd jobs
+  main.ts install-agent [--release N] [--spawn N]  install the hooks, then one agent launchd job per image
 
 A tart host bakes one image per configured guest release (${configuredReleases.join(", ")}) and runs
---spawn agents (default ${config.tart.spawn}) for each, so it serves every darwin lane. --release N limits
-the host to one release; --base overrides that release's base image.
+one agent, i.e. one concurrent guest, per image, so it serves every darwin lane.
+--spawn N runs N agents per image (default ${config.tart.spawn}), so the host runs images x N guests.
+--release N limits the host to one release; --base overrides that release's base image.
 
 provision, setup-user and install-agent need passwordless sudo.`;
 
@@ -112,6 +113,12 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
 
   step("tailscale");
   await joinTailnet(name, values.tags);
+
+  if (mode === "tart") {
+    // everything below replaces what running agents use (binary, hooks, images); install-agent brings them back
+    const retired = await retireTartAgents();
+    if (retired.length) console.log(`retired ${retired.join(", ")} until the agents are reinstalled`);
+  }
 
   step(`buildkite-agent ${config.buildkiteAgent.version}`);
   await installBuildkiteAgent();

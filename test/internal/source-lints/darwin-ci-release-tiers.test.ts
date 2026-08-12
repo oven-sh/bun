@@ -16,7 +16,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { tartAgentConfig } from "../../../scripts/darwin-ci/lib/agent.ts";
-import { agentGuestRelease, config, guestImage, releaseTier } from "../../../scripts/darwin-ci/lib/config.ts";
+import {
+  agentGuestRelease,
+  config,
+  guestBase,
+  guestImage,
+  releaseTier,
+} from "../../../scripts/darwin-ci/lib/config.ts";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const guests = config.tart.guests;
@@ -58,9 +64,14 @@ describe("scripts/darwin-ci serves every darwin release-tier that .buildkite/ci.
     expect(scheduled.filter(tier => !served.has(tier))).toEqual([]);
   });
 
-  test("each configured guest bakes to its own image", () => {
+  test("each configured guest bakes from its own base to its own image", () => {
     const images = guests.map(({ release }) => guestImage(release));
     expect(new Set(images).size).toBe(images.length);
+
+    // main.ts resolves bases through guestBase(); a release nobody configured needs an explicit --base
+    expect(guests.map(({ release }) => guestBase(release))).toEqual(guests.map(({ base }) => base));
+    const unconfigured = Math.max(...guests.map(({ release }) => release)) + 1;
+    expect(guestBase(unconfigured)).toBeUndefined();
   });
 
   test("each image's agents are tagged with its release and tier, and the hook boots that image", () => {

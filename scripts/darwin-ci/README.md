@@ -49,10 +49,15 @@ their hooks path. It asks for one reboot the first time and is re-run after it.
 `bake` is safe on a live host: it builds a staging image and swaps it in only
 after the guest's macOS major matches the image's release and the toolchain
 verifies. Re-run it when toolchain pins move, or with `--release N` for one
-image. `install-agent` retires whatever agents the host had (including the
-single `com.buildkite.buildkite-agent` job from before images were
-per-release) before installing one per image; a host from that era also still
-has the old `bun-ci-base` image to `tart delete`.
+image. `install-agent` re-installs `hooks/` and `lib/` alongside the agent
+configs that point at them, retiring whatever agent jobs the host had first.
+
+To move a host that was provisioned with a single `bun-ci-base` image onto
+this layout, re-run `provision` (the same `host.sh` command as below): it
+retires the host's `com.buildkite.buildkite-agent` job before replacing the
+hooks, bakes both images, and installs the new agents, so the host simply
+takes no jobs while it bakes. `tart delete bun-ci-base` as the CI user
+afterwards; nothing references it any more.
 
 ## Bringing up a host
 

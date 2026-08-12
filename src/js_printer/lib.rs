@@ -1819,17 +1819,7 @@ pub(crate) mod __gated_printer {
                 self.print_space();
                 self.print(b"=");
                 self.print_space_before_identifier();
-                match statement {
-                    None => self.print_require_or_import_expr(
-                        import.import_record_index,
-                        false,
-                        &[],
-                        Expr::EMPTY,
-                        Level::Lowest,
-                        ExprFlag::none(),
-                    ),
-                    Some(s) => self.print(s),
-                }
+                self.print_internal_bun_module(import.import_record_index, statement);
                 self.print_semicolon_after_statement();
                 self.print_indent();
             }
@@ -1838,27 +1828,30 @@ pub(crate) mod __gated_printer {
                 self.print_semicolon_if_needed();
                 self.print(b"var ");
                 self.print_symbol(default.ref_);
-                match statement {
-                    None => {
-                        self.print_equals();
-                        self.print_require_or_import_expr(
-                            import.import_record_index,
-                            false,
-                            &[],
-                            Expr::EMPTY,
-                            Level::Lowest,
-                            ExprFlag::none(),
-                        );
-                    }
-                    Some(s) => {
-                        self.print_equals();
-                        self.print(s);
-                    }
-                }
+                self.print_equals();
+                self.print_internal_bun_module(import.import_record_index, statement);
                 self.print_semicolon_after_statement();
             }
 
-            if slice_of(import.items).len() > 0 {
+            // The module's default export is the module object itself, so
+            // `import { default as bun } from "bun"` (and the `import` that the
+            // bundler turns `export { default } from "bun"` into) binds the whole
+            // module rather than reading a "default" property off of it.
+            let mut named_item_count: usize = 0;
+            for item in slice_of(import.items).iter() {
+                if item.alias.slice() != b"default" {
+                    named_item_count += 1;
+                    continue;
+                }
+                self.print_semicolon_if_needed();
+                self.print(b"var ");
+                self.print_symbol(item.name.ref_);
+                self.print_equals();
+                self.print_internal_bun_import_value(import, statement);
+                self.print_semicolon_after_statement();
+            }
+
+            if named_item_count > 0 {
                 self.print_semicolon_if_needed();
                 self.print_whitespacer(ws!(b"var {"));
 
@@ -1868,7 +1861,11 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                 }
 
-                for (i, item) in slice_of(import.items).iter().enumerate() {
+                let mut i: usize = 0;
+                for item in slice_of(import.items).iter() {
+                    if item.alias.slice() == b"default" {
+                        continue;
+                    }
                     if i > 0 {
                         self.print(b",");
                         self.print_space();
@@ -1877,6 +1874,7 @@ pub(crate) mod __gated_printer {
                             self.print_indent();
                         }
                     }
+                    i += 1;
                     self.print_clause_item_as(item, ClauseItemAs::Var);
                 }
 
@@ -1888,26 +1886,43 @@ pub(crate) mod __gated_printer {
                 }
 
                 self.print_whitespacer(ws!(b"} = "));
-
-                if import.star_name_loc.is_empty() && import.default_name.is_none() {
-                    match statement {
-                        None => self.print_require_or_import_expr(
-                            import.import_record_index,
-                            false,
-                            &[],
-                            Expr::EMPTY,
-                            Level::Lowest,
-                            ExprFlag::none(),
-                        ),
-                        Some(s) => self.print(s),
-                    }
-                } else if let Some(name) = &import.default_name {
-                    self.print_symbol(name.ref_);
-                } else {
-                    self.print_symbol(import.namespace_ref);
-                }
-
+                self.print_internal_bun_import_value(import, statement);
                 self.print_semicolon_after_statement();
+            }
+        }
+
+        /// Prints the module object that the bindings of `import` are read from:
+        /// the binding declared by an earlier `var` of the same statement when
+        /// there is one, otherwise the module expression itself.
+        fn print_internal_bun_import_value(
+            &mut self,
+            import: &S::Import,
+            statement: Option<&'static [u8]>,
+        ) {
+            if let Some(default) = &import.default_name {
+                self.print_symbol(default.ref_);
+            } else if !import.star_name_loc.is_empty() {
+                self.print_symbol(import.namespace_ref);
+            } else {
+                self.print_internal_bun_module(import.import_record_index, statement);
+            }
+        }
+
+        fn print_internal_bun_module(
+            &mut self,
+            import_record_index: u32,
+            statement: Option<&'static [u8]>,
+        ) {
+            match statement {
+                None => self.print_require_or_import_expr(
+                    import_record_index,
+                    false,
+                    &[],
+                    Expr::EMPTY,
+                    Level::Lowest,
+                    ExprFlag::none(),
+                ),
+                Some(s) => self.print(s),
             }
         }
 
@@ -2494,7 +2509,20 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
+                        // The linker asks for __toESM() when the import needs ESM
+                        // namespace semantics (a default import or `import *`); the
+                        // bare Bun object has no "default" property.
+                        let wrap_with_to_esm =
+                            record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                        if wrap_with_to_esm {
+                            self.print_space_before_identifier();
+                            self.print_symbol(self.options.to_esm_ref);
+                            self.print(b"(");
+                        }
                         self.print(b"globalThis.Bun");
+                        if wrap_with_to_esm {
+                            self.print(b")");
+                        }
                         if wrap {
                             self.print(b")");
                         }

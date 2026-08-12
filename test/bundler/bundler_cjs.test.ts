@@ -597,4 +597,31 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // Test 29: export * from an external package in a file that is not the entry
+  // point. Only the entry point's own re-exports are mirrored onto module.exports;
+  // a re-exporting dependency bundled into the entry chunk must not be.
+  itBundled("cjs/__reExport_external_in_non_entry_file", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./re-export.js";
+        console.log(foo);
+      `,
+      "/re-export.js": `export * from "ext";`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = { foo: "foo", bar: "bar" };`,
+      "/test.js": /* js */ `
+        const entry = require("./out.js");
+        console.log(JSON.stringify(Object.keys(entry)));
+      `,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: {
+      file: "/test.js",
+      stdout: "foo\n[]",
+    },
+  });
 });

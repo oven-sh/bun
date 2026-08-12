@@ -4082,13 +4082,22 @@ function coerceHeaderValue(value) {
   return (type === "object" && value !== null) || type === "function" ? `${value}` : value;
 }
 
+// Arrays stay arrays but are always copied: native must not read caller-owned storage.
+function toWireHeaderValue(value) {
+  if (!$isArray(value)) return coerceHeaderValue(value);
+  const copy: any[] = [];
+  for (let i = 0; i < value.length; i++) {
+    copy[i] = coerceHeaderValue(value[i]);
+  }
+  return copy;
+}
+
 // Runs before an id is taken: a toString() re-entering request()/pushStream() gets the lower id.
 function toWireHeaders(headers) {
   if ($isArray(headers)) {
-    // Arrays are always copied: native must not read caller-owned storage (accessors, proxies).
     const list: any[] = [];
     for (let i = 0; i < headers.length; i++) {
-      list[i] = coerceHeaderValue(headers[i]);
+      list[i] = toWireHeaderValue(headers[i]);
     }
     return list;
   }
@@ -4097,16 +4106,8 @@ function toWireHeaders(headers) {
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const value = headers[key];
-    let wireValue;
-    if ($isArray(value)) {
-      wireValue = [];
-      for (let j = 0; j < value.length; j++) {
-        wireValue[j] = coerceHeaderValue(value[j]);
-      }
-    } else {
-      wireValue = coerceHeaderValue(value);
-      if (wireValue === value) continue;
-    }
+    const wireValue = toWireHeaderValue(value);
+    if (wireValue === value) continue;
     if (wire === null) wire = { ...headers };
     wire[key] = wireValue;
   }

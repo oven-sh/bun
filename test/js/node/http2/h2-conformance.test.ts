@@ -959,6 +959,7 @@ describe("request()/pushStream() run no user code between taking a stream id and
     ["an object value", probe => ({ ":path": "/outer", "x-probe": probe })],
     ["an array element", probe => ({ ":path": "/outer", "x-probe": ["first", probe] })],
     ["a value in the raw [name, value] array form", probe => [":path", "/outer", "x-probe", probe]],
+    ["an array element in the raw array form", probe => [":path", "/outer", "x-probe", ["first", probe]]],
   ];
 
   const requestWithReenteringValue =

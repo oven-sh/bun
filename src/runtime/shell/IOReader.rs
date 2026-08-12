@@ -47,6 +47,9 @@ struct State {
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
     /// `SystemError` per callee in `on_reader_done_cb`.
     raw_err: Option<sys::Error>,
+    starting: bool,
+    /// While `starting`, errors are parked here for `start()` to return.
+    start_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
@@ -128,6 +131,8 @@ impl IOReader {
                 buf: Vec::new(),
                 readers: Readers::new(),
                 raw_err: None,
+                starting: false,
+                start_err: None,
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
@@ -193,37 +198,45 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading.
-    pub(crate) fn start(&self) -> Yield {
-        #[cfg(not(windows))]
-        {
-            let r = self.reader();
-            let need_start = match &r.handle {
-                bun_io::pipes::PollOrFd::Closed => true,
-                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
-                bun_io::pipes::PollOrFd::Fd(_) => true,
-            };
-            if need_start {
-                let fd = self.state().fd;
-                if let Err(e) = r.start(fd, true) {
-                    self.on_reader_error(&e);
-                }
-            }
-            return Yield::suspended();
+    /// Idempotent. A start failure is returned, not dispatched (cf. `IOWriter::on_sync_error`).
+    pub(crate) fn start(&self) -> sys::Result<()> {
+        self.state().starting = true;
+        let result = self.start_impl();
+        let s = self.state();
+        s.starting = false;
+        let result = match s.start_err.take() {
+            Some(e) => Err(e),
+            None => result,
+        };
+        if result.is_err() {
+            self.set_reading(false);
         }
-        #[cfg(windows)]
-        {
-            let s = self.state();
-            if s.is_reading {
-                return Yield::suspended();
-            }
-            s.is_reading = true;
-            if let Err(e) = self.reader().start_with_current_pipe() {
-                self.on_reader_error(&e);
-                return Yield::failed();
-            }
-            Yield::suspended()
+        result
+    }
+
+    #[cfg(not(windows))]
+    fn start_impl(&self) -> sys::Result<()> {
+        let r = self.reader();
+        let need_start = match &r.handle {
+            bun_io::pipes::PollOrFd::Closed => true,
+            bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
+            bun_io::pipes::PollOrFd::Fd(_) => true,
+        };
+        if !need_start {
+            return Ok(());
         }
+        let fd = self.state().fd;
+        r.start(fd, true)
+    }
+
+    #[cfg(windows)]
+    fn start_impl(&self) -> sys::Result<()> {
+        let s = self.state();
+        if s.is_reading {
+            return Ok(());
+        }
+        s.is_reading = true;
+        self.reader().start_with_current_pipe()
     }
 
     /// Only adds if not already present.
@@ -296,6 +309,10 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
+        if s.starting {
+            s.start_err = Some(err.clone());
+            return;
+        }
         s.raw_err = Some(err.clone());
         // NOTE: reshaped for borrowck — copy out before dispatching.
         let readers: Vec<ChildPtr> = s.readers.clone();

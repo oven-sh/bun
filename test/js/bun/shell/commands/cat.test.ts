@@ -1,0 +1,159 @@
+import type { FileSink } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMusl, isPosix, libcPathForDlopen, tempDir } from "harness";
+import { closeSync, writeSync } from "node:fs";
+
+// On POSIX the shell only runs its own `cat` when this flag is set (see
+// `Kind::DISABLED_ON_POSIX`); otherwise it spawns the system binary. The
+// scripts run in a child so the flag applies.
+const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+// Unless `quiet` is set, cat's stdout is the shell's IOWriter on the child's
+// stdout pipe: a chunk cat reads stays queued there until the event loop
+// reaches the writable poll, which is the window the read-error paths under
+// test fire in. `r.stdout` is a tee of the same bytes, so the child's stdout
+// ends up as cat's own output followed by the report line. With `quiet`
+// nothing is queued (output goes straight into the capture buffer).
+function spawnReport(command: string, options: { quiet?: boolean; stdin?: number | "pipe"; cwd?: string } = {}) {
+  return Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        import { $ } from "bun";
+        const r = await $\`${command}\`${options.quiet ? ".quiet()" : ""}.nothrow();
+        console.log(JSON.stringify({ exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }));
+      `,
+      // Should the child crash, make the panic line the failure instead of a
+      // slow symbolized backtrace.
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: builtinEnv,
+    cwd: options.cwd,
+    stdin: options.stdin ?? "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+function report(exitCode: number, stdout: string): string {
+  return JSON.stringify({ exitCode, stdout, stderr: "" }) + "\n";
+}
+
+const EIO = 5;
+
+// On Linux, once the slave side of a pty is closed, read() on the master
+// returns whatever the slave wrote and then fails with EIO. Handing the master
+// to the child as its stdin is a way to feed the builtin a genuine read error
+// preceded by data: cat gets both in the same poll wake.
+function openptyMasterWithClosedSlave(payload: string): number {
+  // glibc ships openpty in libutil (merged into libc only in 2.34); musl has it in libc.
+  const { openpty } = dlopen(isMusl ? libcPathForDlopen() : "libutil.so.1", {
+    openpty: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.i32,
+    },
+  }).symbols;
+  const master = new Int32Array(1);
+  const slave = new Int32Array(1);
+  expect(openpty(master, slave, null, null, null)).toBe(0);
+  // No newline: the pty's output processing would turn it into "\r\n".
+  writeSync(slave[0], payload);
+  closeSync(slave[0]);
+  return master[0];
+}
+
+describe.concurrent("cat (builtin)", () => {
+  test.skipIf(!isPosix)("copies stdin to stdout until EOF", async () => {
+    await using proc = spawnReport("cat", { stdin: "pipe" });
+    const stdin = proc.stdin as FileSink;
+    stdin.write("piped in\n");
+    await stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "piped in\n" + report(0, "piped in\n"), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("read error with nothing queued: exits with the errno", async () => {
+    const master = openptyMasterWithClosedSlave("read before the error");
+    await using proc = spawnReport("cat", { quiet: true, stdin: master });
+    // The child holds its own copy of the master.
+    closeSync(master);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: report(EIO, "read before the error"), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same error, but with the data still queued on stdout. This used to cancel
+  // the queued chunk and suspend; a cancelled chunk completes without calling
+  // back into cat, so the command never finished, the `$` promise never
+  // settled, and the data was dropped.
+  test.skipIf(!isLinux)("read error with data still queued: flushes it, then exits with the errno", async () => {
+    const master = openptyMasterWithClosedSlave("read before the error");
+    await using proc = spawnReport("cat", { stdin: master });
+    closeSync(master);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "read before the error" + report(EIO, "read before the error"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The master hands 8 KiB back as three reads (4095, 4095, 2 bytes) in the
+  // same wake as the error, so three chunks are queued when the error lands
+  // and each of their completions has to be counted.
+  test.skipIf(!isLinux)("read error with several chunks queued: flushes all of them", async () => {
+    const payload = Buffer.alloc(8192, "x").toString();
+    const master = openptyMasterWithClosedSlave(payload);
+    await using proc = spawnReport("cat", { stdin: master });
+    closeSync(master);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: payload + report(EIO, payload), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // File-argument state, failing before anything is queued: a directory opens
+  // but cannot be read (Linux refuses to even register it with epoll, so the
+  // failure is reported from inside the start call itself). With stdout on an
+  // fd this used to suspend forever: finishing was gated on a flag only a
+  // completed chunk could set. The pipeline and sequence forms check that the
+  // command finishes through its own trampoline frame: completing it from
+  // inside the start call tore down the pipeline node the trampoline was still
+  // holding, and nested one trampoline per statement otherwise.
+  async function runWithUnreadableArg(command: string, quiet = false) {
+    using dir = tempDir("shell-cat-dir-arg", { "sub/.keep": "" });
+    await using proc = spawnReport(command, { cwd: String(dir), quiet });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.skipIf(!isPosix).each([
+    ["cat sub", false],
+    ["cat sub | cat sub", false],
+    ["true | cat sub", true],
+  ])("unreadable file argument exits with the errno instead of hanging: %s", async (command, quiet) => {
+    const { stdout, stderr, exitCode } = await runWithUnreadableArg(command, quiet);
+    // Nothing but the report reaches stdout, so it parses as a whole; on a
+    // crash the raw output (and stderr) shows up in the diff instead.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      parsed = stdout;
+    }
+    expect({ parsed, stderr }).toEqual({
+      parsed: { exitCode: expect.any(Number), stdout: "", stderr: "" },
+      stderr: "",
+    });
+    expect((parsed as { exitCode: number }).exitCode).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isPosix)("unreadable file arguments in consecutive statements", async () => {
+    const { stdout, stderr, exitCode } = await runWithUnreadableArg("cat sub; cat sub; cat sub; cat sub; echo after");
+    expect({ stdout, stderr }).toEqual({ stdout: "after\n" + report(0, "after\n"), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

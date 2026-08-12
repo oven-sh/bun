@@ -14,7 +14,7 @@ describe("yield", async () => {
   // used to re-enter the `Yield::run` trampoline from `IOWriter::on_error`, one
   // nesting level per failing command, tripping the interpreter's re-entrancy
   // guard. Spawn a subprocess so the aborting child stays contained.
-  async function expectShellOutput(script: string, expected: { stdout: string; exitCode: number }) {
+  async function expectShellOutput(script: string, expected: { stdout: string; exitCode: number }, env = bunEnv) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -29,7 +29,7 @@ describe("yield", async () => {
         // backtrace so the failure is the panic message, not a test timeout.
         "--debug-crash-handler-use-trace-string",
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -60,6 +60,19 @@ describe("yield", async () => {
     await expectShellOutput(
       "echo a > /dev/full || echo f1; echo b > /dev/full || echo f2; echo c > /dev/full || echo f3; echo d > /dev/full || echo f4",
       { stdout: "f1\nf2\nf3\nf4\n", exitCode: 0 },
+    );
+  });
+
+  // The read-side counterpart. The builtin cat (opted into on POSIX by the env
+  // var) can open a directory but Linux refuses to register it with epoll, so
+  // the reader fails from inside its start call; that failure used to be
+  // dispatched as a completion right there, starting the next statement from
+  // one more nested trampoline each time.
+  test.if(isLinux)("synchronous read errors in sequential statements", async () => {
+    await expectShellOutput(
+      "cat / || echo f1; cat / || echo f2; cat / || echo f3; cat / || echo f4",
+      { stdout: "f1\nf2\nf3\nf4\n", exitCode: 0 },
+      { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
     );
   });
 });

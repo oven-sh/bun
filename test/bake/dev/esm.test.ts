@@ -850,7 +850,7 @@ devTest("a route whose dependency throws reports that error on every request", {
   },
 });
 
-// Fixture for the two tests below: modules whose top-level await the test
+// Fixture for the three tests below: modules whose top-level await the test
 // settles through the route, so that a module can be hot-updated while an
 // evaluation of it (or of a module importing it) is still waiting.
 const supersededEvaluationFiles = {
@@ -859,6 +859,8 @@ const supersededEvaluationFiles = {
   "reexports-slow-2.ts": `
     export { value } from "./slow-2";
   `,
+  "slow-3.ts": settledThroughRoute("slow-3"),
+  "slow-4.ts": settledThroughRoute("slow-4"),
   "slow-a.ts": settledThroughRoute("slow-a"),
   "slow-b.ts": settledThroughRoute("slow-b"),
   "imports-slow-a.ts": `
@@ -874,6 +876,9 @@ const supersededEvaluationFiles = {
       "slow-1": () => import("../slow-1"),
       "slow-2": () => import("../slow-2"),
       "reexports-slow-2": () => import("../reexports-slow-2"),
+      "slow-3": () => import("../slow-3"),
+      "slow-4": () => import("../slow-4"),
+      "slow-4-require": () => require("../slow-4"),
       "imports-slow-a": () => import("../imports-slow-a"),
       "imports-slow-b": () => import("../imports-slow-b"),
     };
@@ -949,6 +954,32 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
     expect(await command(dev, "load reexports-slow-2").json()).toEqual({
       first: 'resolved: {"value":"slow-2 v2"}',
       again: 'resolved: {"value":"slow-2 v2"}',
+    });
+  },
+});
+
+devTest("an evaluation superseded by a hot update to CommonJS does not publish its outcome", {
+  // Same as above, except that the new version of the module is CommonJS, which
+  // the loaders evaluate on a different path. The old evaluation settling must
+  // neither mark the CommonJS module as failed nor tear down its module object.
+  framework: minimalFramework,
+  files: supersededEvaluationFiles,
+  async test(dev) {
+    await command(dev, "start slow-3").equals("started");
+    await command(dev, "start slow-4").equals("started");
+    await dev.write("slow-3.ts", `module.exports = { value: "slow-3 cjs" };`);
+    await dev.write("slow-4.ts", `module.exports = { value: "slow-4 cjs" };`);
+
+    await command(dev, "reject slow-3 v1").equals("settled");
+    await command(dev, "resolve slow-4 v1").equals("settled");
+
+    expect(await command(dev, "load slow-3").json()).toEqual({
+      first: "threw: slow-3 v1 failed",
+      again: 'resolved: {"default":{"value":"slow-3 cjs"},"value":"slow-3 cjs"}',
+    });
+    // Nothing was started under this name, so only `again` is reported.
+    expect(await command(dev, "load slow-4-require").json()).toEqual({
+      again: 'resolved: {"value":"slow-4 cjs"}',
     });
   },
 });

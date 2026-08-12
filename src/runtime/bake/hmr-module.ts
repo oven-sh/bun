@@ -85,7 +85,7 @@ export class HMRModule {
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
   failure: unknown = null;
-  /** Incremented whenever an ESM evaluation starts; an evaluation a hot update superseded must not publish its outcome. */
+  /** Incremented whenever an evaluation starts; an evaluation a hot update superseded must not publish its outcome. */
   generation = 0;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
@@ -309,6 +309,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (importer) {
       mod.importers.add(importer);
     }
+    mod.generation++;
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);
@@ -414,6 +415,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (importer) {
       mod.importers.add(importer);
     }
+    mod.generation++;
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);

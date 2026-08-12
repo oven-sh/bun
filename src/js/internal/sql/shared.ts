@@ -1813,11 +1813,7 @@ function parseOptions(
     }
     query = query.trim();
 
-    // The pathname names the database (postgres://host/db) and, like the fields
-    // above, outranks PGDATABASE and friends. The exception is a host-less URL
-    // whose pathname was taken as the socket path above and not replaced by
-    // options.path or ?path=; the per-adapter switch below still uses that as
-    // the last-resort database name it has always been.
+    // postgres://host/db names a database; a host-less pathname is the socket path taken above.
     const pathnameIsSocketPath = !url.hostname && path === url.pathname;
     if (!pathnameIsSocketPath) {
       database ||= options.database || options.db || decodeIfValid(url.pathname.slice(1));

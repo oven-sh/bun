@@ -10,6 +10,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { once } from "node:events";
 import net from "node:net";
 import path from "path";
 import {
@@ -1323,7 +1324,8 @@ describe.skipIf(isWindows)("MySQL: unix socket", () => {
       });
       socket.on("error", () => {});
     });
-    await new Promise<void>(resolve => server.listen(sock, resolve));
+    server.listen(sock);
+    await once(server, "listening");
 
     try {
       // hostname/port name a TCP port nothing listens on: with a socket

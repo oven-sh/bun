@@ -531,10 +531,8 @@ BignumPointer BignumPointer::NewPrime(const PrimeConfig& params,
 bool BignumPointer::generate(const PrimeConfig& params,
     PrimeCheckCallback innerCb) const
 {
-    // BN_generate_prime_ex draws safe-prime candidates with the top two bits
-    // set, so below 6 bits the only safe prime it can reach is 7 (3 bits); 11
-    // and 23 are unreachable and sizes 4 and 5 loop forever. OpenSSL rejects
-    // these sizes up front (BN_generate_prime_ex2); BoringSSL only rejects 2.
+    // Same check as OpenSSL's BN_generate_prime_ex2: the only safe prime
+    // BoringSSL can reach below 6 bits is 7, so sizes 4 and 5 never terminate.
     if (params.safe && params.add.get() == nullptr && params.bits < 6 && params.bits != 3) {
         ERR_put_error(ERR_LIB_BN, 0, BN_R_BITS_TOO_SMALL, __FILE__, __LINE__);
         return false;
@@ -557,15 +555,9 @@ bool BignumPointer::generate(const PrimeConfig& params,
             &innerCb);
     }
 
-    // BoringSSL's probable_prime_dh() (the non-safe add/rem path inside
-    // BN_generate_prime_ex) applies the safe-prime trial-division criterion
-    // `rnd mod p <= 1` instead of `== 0`, and never re-randomizes or re-clamps
-    // the candidate to the requested bit range. For any odd prime q dividing
-    // `add`, `rnd mod q` is invariant across steps of `add`, so a start with
-    // `rnd mod q == 1` loops forever; and for small sizes the walk can return
-    // values well above the requested bit length. Implement OpenSSL's
-    // bn_probable_prime_dh semantics here and let BN_is_prime_fasttest_ex do
-    // the (correct) trial division.
+    // OpenSSL's bn_probable_prime_dh. BoringSSL's probable_prime_dh() rejects
+    // candidates with `rnd mod p <= 1`, which never terminates once a prime
+    // factor of `add` divides rnd - 1, and it never re-clamps rnd to `bits`.
     if (params.add.get() != nullptr && !params.safe && params.bits >= 2) {
         BignumCtxPointer ctx(BN_CTX_new());
         BignumPointer t1(BN_new());

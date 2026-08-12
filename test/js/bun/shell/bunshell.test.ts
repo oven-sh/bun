@@ -3109,6 +3109,137 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
+describe("stdin redirect still held open by a helper after the command's process has exited", () => {
+  // `< ${buf}` is pumped into the child over a pipe. The child hands its stdin
+  // to a detached helper and exits without reading any of it, and the helper
+  // only acts once the test has seen the child disappear, so the exit code and
+  // the stdout/stderr EOFs have been processed by the time the stdin side
+  // closes: that close is what has to complete the command. The helper either
+  // just exits (the pending write fails) or drains the redirect, which it must
+  // receive in full: the shell keeps pumping for whoever still holds the pipe.
+  const SIZE = 4 << 20; // far more than a pipe or socketpair buffers, so the write is still pending when the child exits
+  // Each helper records what it did in RESULT_FILE once released, so a helper
+  // that died early (which would also fail the pending write) cannot pass as one
+  // that exited on cue.
+  const helper = (resultExpression: string) => `
+    const deadline = Date.now() + 60_000;
+    while (!(await Bun.file(process.env.RELEASE_FILE).exists()) && Date.now() < deadline) await Bun.sleep(5);
+    await Bun.write(process.env.RESULT_FILE, ${resultExpression});
+  `;
+  const exitingHelper = helper(`"released"`);
+  const drainingHelper = helper(`"read " + (await Bun.stdin.bytes()).length + " bytes"`);
+  const childCode = `
+    Bun.spawn({
+      cmd: [process.execPath, "-e", process.env.HELPER_CODE],
+      stdin: "inherit",
+      stdout: "ignore",
+      stderr: Bun.file(process.env.HELPER_STDERR),
+      detached: true,
+    }).unref();
+    await Bun.write(process.env.PID_FILE, String(process.pid));
+    console.log("child stdout");
+    console.error("child stderr");
+    process.exitCode = 3;
+  `;
+
+  async function until<T>(what: string, poll: () => T | Promise<T>): Promise<T> {
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      const value = await poll();
+      if (value) return value;
+      if (Date.now() > deadline) throw new Error(`${what} did not happen within 30s`);
+      await Bun.sleep(5);
+    }
+  }
+  async function fileContents(path: string) {
+    return (await Bun.file(path).exists()) ? Bun.file(path).text() : "";
+  }
+  function hasExited(pid: number) {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  async function run(helperCode: string, command: (env: Record<string, string | undefined>) => $.ShellPromise) {
+    using dir = tempDir("shell-stdin-held-open", {});
+    const env: Record<string, string | undefined> = {
+      ...bunEnv,
+      HELPER_CODE: helperCode,
+      HELPER_STDERR: join(String(dir), "helper.stderr"),
+      PID_FILE: join(String(dir), "pid"),
+      RELEASE_FILE: join(String(dir), "release"),
+      RESULT_FILE: join(String(dir), "result"),
+    };
+    // The ASAN CI lanes run with this set, which makes the child SIGKILL the helper when it exits.
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    const running = command(env).then(r => r); // `$` is lazy; start it now.
+    let pid = 0;
+    try {
+      pid = Number(await until("child pid file", () => fileContents(env.PID_FILE!)));
+      await until("child exit", () => hasExited(pid));
+    } finally {
+      // Also on the failure path, so the helper and the command wind down now rather
+      // than lingering for the rest of the file.
+      await Bun.write(env.RELEASE_FILE!, "");
+      if (pid !== 0 && !hasExited(pid)) process.kill(pid, "SIGKILL");
+      await running;
+    }
+    const result = await running;
+    const helperResult = await until("helper result", () => fileContents(env.RESULT_FILE!)).catch(async error => {
+      throw new Error(`${error.message}; helper stderr: ${JSON.stringify(await fileContents(env.HELPER_STDERR!))}`);
+    });
+    return {
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+      helper: helperResult,
+    };
+  }
+
+  const redirects: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(redirects)("helper exits without reading: %s", async (_name, input) => {
+    const out = await run(exitingHelper, env => $`${BUN} -e ${childCode} < ${input()}`.env(env).quiet().nothrow());
+    expect(out).toEqual({ stdout: "child stdout\n", stderr: "child stderr\n", exitCode: 3, helper: "released" });
+  });
+
+  test.concurrent.each(redirects)("helper drains the redirect: %s", async (_name, input) => {
+    const out = await run(drainingHelper, env => $`${BUN} -e ${childCode} < ${input()}`.env(env).quiet().nothrow());
+    expect(out).toEqual({
+      stdout: "child stdout\n",
+      stderr: "child stderr\n",
+      exitCode: 3,
+      helper: `read ${SIZE} bytes`,
+    });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const upper = "process.stdout.write((await Bun.stdin.text()).toUpperCase())";
+    const out = await run(exitingHelper, env =>
+      $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} | ${BUN} -e ${upper}`.env(env).quiet().nothrow(),
+    );
+    expect(out).toEqual({ stdout: "CHILD STDOUT\n", stderr: "child stderr\n", exitCode: 0, helper: "released" });
+  });
+
+  test.concurrent("as the left side of ||", async () => {
+    const out = await run(exitingHelper, env =>
+      $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} || echo failed`.env(env).quiet().nothrow(),
+    );
+    expect(out).toEqual({
+      stdout: "child stdout\nfailed\n",
+      stderr: "child stderr\n",
+      exitCode: 0,
+      helper: "released",
+    });
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop

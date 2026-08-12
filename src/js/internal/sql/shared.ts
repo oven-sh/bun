@@ -1230,9 +1230,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return Promise.all(promises);
   }
 
-  /** Hook for adapters holding connections outside the pool (the Postgres
-   * LISTEN connection). Runs from close() once the adapter is marked closed,
-   * so a connect still in flight sees `closed` and gives up. */
+  /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
   protected closeDedicatedConnections(): void {}
 
   async close(options?: { timeout?: number }): Promise<void> {

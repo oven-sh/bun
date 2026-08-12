@@ -237,8 +237,6 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  // LISTEN/NOTIFY. Arguments are validated here for every adapter; adapters
-  // without support reject after validation so the API behaves uniformly.
   const listenable = "listen" in pool ? pool : null;
   function validateChannel(channel: unknown): asserts channel is string {
     if (typeof channel !== "string" || channel.length === 0) {
@@ -266,9 +264,7 @@ const SQL: typeof Bun.SQL = function SQL(
     validateCallback("onnotify", onnotify, true);
     return listenable ? listenable.unlisten(channel, onnotify) : listenUnsupported();
   };
-  // NOTIFY is a plain query on the handle it is called through, so on a
-  // transaction handle it commits or rolls back with the transaction.
-  // .execute() starts the otherwise-lazy query so fire-and-forget works.
+  // .execute(): queries are lazy, and notify() must send even when not awaited.
   function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
     return (channel, payload) => {
       validateChannel(channel);

@@ -546,18 +546,15 @@ type ListenState = { pid: number; secret: number };
 type OnListen = (state: ListenState) => void;
 type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
 
-// One per subscribed channel. The entry's identity scopes its LISTEN round
-// trip: unlisten() drops the entry synchronously, so a listen() racing it gets
-// a fresh entry with its own round trip, and code resuming after an await can
-// tell whether its entry is still the live one.
+// unlisten() removes the entry synchronously, so a racing listen() gets a new
+// entry and a new round trip, and code resuming after an await compares its
+// entry against the map to learn whether it was unsubscribed meanwhile.
 class Channel {
-  // A lone listener is stored bare; more are stored in an array that is
-  // replaced, never mutated, so a dispatch in progress is unaffected by
-  // listen()/unlisten() calls made from inside a callback.
+  // One listener is stored bare. The array is replaced, never mutated, so a
+  // dispatch in progress is unaffected by listen()/unlisten() from a callback.
   listeners: Listener | readonly Listener[];
   onlisten: Array<[Listener, OnListen]> | null = null;
-  // The LISTEN round trip on the current connection, shared by concurrent
-  // listen() calls; null until issued and again after a disconnect.
+  /** LISTEN round trip on the current connection; reset to null on disconnect. */
   ready: Promise<void> | null = null;
 
   constructor(listener: Listener) {
@@ -600,8 +597,7 @@ class Channel {
   }
 }
 
-// Stands in for a Query in the native run() callbacks: onResolvePostgresQuery
-// and onRejectPostgresQuery (initPostgres above) touch exactly these members.
+// The members onResolvePostgresQuery/onRejectPostgresQuery read off a query.
 class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
@@ -631,20 +627,18 @@ function quoteChannel(channel: string) {
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 32_000;
 
-// The adapter's dedicated LISTEN connection and channel table. Every failure
-// (connect error, dropped connection, LISTEN rejected by the server) is
-// repaired the same way: #scheduleSweep() arms a backoff timer and #sweep()
-// re-issues LISTEN for each channel without a round trip on the current
-// connection.
+// Every failure (connect error, drop, rejected LISTEN) is repaired by
+// #scheduleSweep(): after a backoff, #sweep() re-issues LISTEN for each
+// channel whose `ready` is null.
 class ListenConnection {
   readonly #adapter: PostgresAdapter;
   readonly #channels = new Map<string, Channel>();
-  // Returned from every listen() and updated in place on (re)connect.
+  /** Shared with every listen() result; updated in place on (re)connect. */
   readonly #state: ListenState = { pid: 0, secret: 0 };
 
   #conn: ListenHandle | null = null;
   #connecting: Promise<ListenHandle> | null = null;
-  // The native handle while its handshake is in flight, so close() can abort it.
+  /** Mid-handshake handle, so close() can abort it. */
   #handshake: ListenHandle | null = null;
   #sweepTimer: ReturnType<typeof setTimeout> | null = null;
   #backoffMs = RECONNECT_MIN_MS;
@@ -653,8 +647,6 @@ class ListenConnection {
     this.#adapter = adapter;
   }
 
-  // Called from native per NotificationResponse with an interned channel
-  // string. A throwing listener propagates out as an uncaught exception.
   readonly #onNotification = (channel: string, payload: string) => {
     const entry = this.#channels.get(channel);
     if (entry === undefined) return;
@@ -812,8 +804,7 @@ class ListenConnection {
 
   #scheduleSweep() {
     if (this.#sweepTimer !== null || this.#adapter.closed || this.#channels.size === 0) return;
-    // Deliberately ref'd: during backoff this timer is what keeps a
-    // subscribed process alive.
+    // Ref'd on purpose: while disconnected, this timer keeps the process alive.
     const delay = this.#backoffMs * (0.75 + Math.random() * 0.5);
     this.#backoffMs = Math.min(this.#backoffMs * 2, RECONNECT_MAX_MS);
     this.#sweepTimer = setTimeout(() => {
@@ -829,9 +820,7 @@ class ListenConnection {
     }
   }
 
-  // Closing the connection releases every server-side registration. A
-  // handshake still in flight is left alone: the #subscribe awaiting it
-  // re-checks its entry and ends up here itself.
+  // An in-flight handshake is left alone: the #subscribe awaiting it lands here.
   #closeIfIdle() {
     if (this.#channels.size !== 0) return;
     this.#clearSweep();

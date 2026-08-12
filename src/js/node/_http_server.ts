@@ -998,10 +998,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req._dumpAndCloseReadable();
         }
 
-        // An accepted upgrade is handed off and a missing Host is rejected
-        // before the request is counted against maxRequestsPerSocket, so
-        // neither is ever counted or answered with the 503 dropRequest:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (parserOnIncoming)
+        // Like Node's parserOnIncoming (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js):
+        // an accepted upgrade or a missing-Host rejection never counts against maxRequestsPerSocket.
         let rejectMissingHost = false;
         let reachedRequestsLimit = false;
         if (!is_upgrade) {
@@ -1012,21 +1010,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.httpVersionMajor === 1 &&
             http_req.httpVersionMinor >= 1
           ) {
-            // The native parser exempts Upgrade/CONNECT requests from its Host
-            // check so they can dispatch through the 'upgrade'/'connect' events;
-            // a request that fell through to normal dispatch instead must still
-            // honor requireHostHeader, like Node.js.
+            // The native parser lets Upgrade requests past its Host check so they can reach
+            // 'upgrade'; one that dispatches as a normal request still needs the header.
             rejectMissingHost = true;
           } else if (typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
             const requestCount = (socket._requestCount || 0) + 1;
             socket._requestCount = requestCount;
             http_res._maxRequestsPerSocket = maxRequestsPerSocket;
-            // At (or beyond) the limit the response advertises Connection:
-            // close, like Node.js - including the over-limit 503 dropRequest
-            // answer, which would otherwise claim keep-alive right before the
-            // socket is destroyed. Closing the socket here instead would race
-            // already-pipelined requests, which still need to be dispatched so
-            // they can be answered with 503 via dropRequest.
+            // <= like Node: the response that uses up the limit, and every 503 after it, advertises Connection: close.
             http_res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestCount;
             reachedRequestsLimit = maxRequestsPerSocket < requestCount;
           }

@@ -2403,15 +2403,11 @@ extern "C" fn napi_internal_enqueue_finalizer(
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
 /// `thread_count` references, and whoever drops the last one frees it.
 ///
-/// The addon-thread entry points (`push`, `acquire`, `release` and what they
-/// call under `lock`) take `*mut Self` and borrow one field per statement,
-/// never the whole object: the task `schedule_dispatch` posts must carry the
-/// pointer the addon gave us (one made from a receiver is invalidated for the
-/// JS thread by our own unlock right after the post), and from the post on the
-/// JS thread uses the object, and after a last release or `napi_closing` call
-/// frees it, while these frames are still returning, so no `&Self` /
-/// `&mut Self` argument of ours may cover it. The `&mut self` methods are
-/// JS-thread only.
+/// Addon-thread entry points (`push`, `acquire`, `release`) take `*mut Self` and
+/// borrow one field at a time: once a dispatch is posted the JS thread uses the
+/// object (and frees it after the last reference), so no `&Self` / `&mut Self`
+/// of ours may be live then, and the posted pointer must be the addon's own,
+/// not one made from a receiver. The `&mut self` methods are JS-thread only.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
@@ -2618,10 +2614,9 @@ impl ThreadSafeFunction {
         // not add unnecessary event loop ticks.
     }
 
-    /// SAFETY: `this` is a live threadsafe function.
+    /// SAFETY: `this` is live.
     unsafe fn is_closing(this: *const ThreadSafeFunction) -> bool {
-        // SAFETY: fn contract; `closing` is atomic, so borrowing just that
-        // field is sound whatever the other threads are doing.
+        // SAFETY: fn contract; only the atomic is borrowed.
         unsafe { (*this).closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8 }
     }
 
@@ -2761,12 +2756,10 @@ impl ThreadSafeFunction {
         Ok(())
     }
 
-    /// Runs on an addon thread (Node's `Push`). A call that reports
-    /// `napi_closing` consumes the caller's thread reference, so like a release
-    /// it can free the threadsafe function; see the receiver rule on the struct.
+    /// Addon thread (Node's `Push`). A `napi_closing` result consumes the
+    /// caller's thread reference, so like `release` this can free the function.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds no
-    /// reference into it.
+    /// SAFETY: `this` is live and the caller holds no reference into it.
     pub(crate) unsafe fn push(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
@@ -2791,17 +2784,15 @@ impl ThreadSafeFunction {
     /// Caller must hold `lock`. Returns `(status, caller_must_free)`; the free
     /// must happen after the lock is dropped.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds `lock`.
+    /// SAFETY: `this` is live and the caller holds `lock`.
     unsafe fn push_locked(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
         block: bool,
     ) -> (napi_status, bool) {
-        // SAFETY: live per fn contract, and it stays live until the caller
-        // drops the lock (every path that frees it takes the lock first). Each
-        // access borrows a single field for a single statement, so the JS
-        // thread, which touches the atomics without the lock once
-        // `schedule_dispatch` has posted, never overlaps a borrow of ours.
+        // SAFETY: live per fn contract, and still live when we return, since
+        // every path that frees it takes the lock first. Each access borrows one
+        // field for one statement (see the struct doc).
         unsafe {
             if block {
                 while (*this).queue.is_blocked() && !ThreadSafeFunction::is_closing(this) {
@@ -2839,16 +2830,13 @@ impl ThreadSafeFunction {
     }
 
     /// Caller must hold `lock`. Reached from addon threads (`push_locked`,
-    /// `release_locked`); the VM is reached only through its handle. The
-    /// posted task carries `this` itself, the pointer the JS thread keeps
-    /// using after the caller's unlock (see the receiver rule on the struct),
-    /// and from the moment it is queued the JS thread may be in `on_dispatch`,
-    /// so nothing here borrows the object across the post.
+    /// `release_locked`); the VM is reached only through its handle, and the
+    /// task carries `this` itself: the JS thread may be in `on_dispatch` from
+    /// the moment it is queued.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds `lock`.
+    /// SAFETY: `this` is live and the caller holds `lock`.
     unsafe fn schedule_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: see `push_locked`. `loop_handle` is immutable after creation,
-        // so the borrow of it for the post does not overlap anything either.
+        // SAFETY: see `push_locked`; `loop_handle` is immutable after creation.
         unsafe {
             let prev = (*this)
                 .dispatch_state
@@ -3009,13 +2997,12 @@ impl ThreadSafeFunction {
         self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
-    /// Runs on an addon thread; see the receiver rule on the struct.
+    /// Addon thread.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds no
-    /// reference into it.
+    /// SAFETY: `this` is live and the caller holds no reference into it.
     pub(crate) unsafe fn acquire(this: *mut ThreadSafeFunction) -> napi_status {
-        // SAFETY: live per fn contract. The guard holds the lock by raw
-        // pointer and the two other accesses each borrow one atomic field.
+        // SAFETY: live per fn contract; the guard holds the lock by pointer and
+        // the other two accesses each borrow one atomic.
         unsafe {
             let _g = (*this).lock.lock_guard();
             if ThreadSafeFunction::is_closing(this) {
@@ -3026,12 +3013,10 @@ impl ThreadSafeFunction {
         NapiStatus::ok as napi_status
     }
 
-    /// Runs on an addon thread. Frees the threadsafe function when this drops
-    /// the last thread reference of an orphaned one; see the receiver rule on
-    /// the struct.
+    /// Addon thread. Frees an orphaned function when this drops its last
+    /// thread reference.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds no
-    /// reference into it.
+    /// SAFETY: `this` is live and the caller holds no reference into it.
     pub(crate) unsafe fn release(
         this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,
@@ -3055,7 +3040,7 @@ impl ThreadSafeFunction {
     /// Caller must hold `lock`. Returns `(status, caller_must_free)`; the free
     /// must happen after the lock is dropped.
     ///
-    /// SAFETY: `this` is a live threadsafe function and the caller holds `lock`.
+    /// SAFETY: `this` is live and the caller holds `lock`.
     unsafe fn release_locked(
         this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,

@@ -432,10 +432,7 @@ impl Debugger {
         jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Without a loader of its own, `Transpiler::init` would hand this VM
-            // the process-wide `dot_env` instance, i.e. the parent VM's loader,
-            // which the parent thread is using concurrently (#22206). Never
-            // freed: this VM lives until the process exits (`start` never returns).
+            // `None` would share the parent thread's loader (#22206). Never freed, like this VM.
             env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init())),
             is_main_thread: false,
             ..Default::default()
@@ -445,9 +442,7 @@ impl Debugger {
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
 
-        // The inspected program's .env files are not this VM's to read; all it
-        // needs from its environment is `BUN_INSPECT_NOTIFY`, which tooling puts
-        // in the process environment.
+        // Only `BUN_INSPECT_NOTIFY` is read from this env; it comes from the process environment.
         vm.transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::Disable;
         vm.transpiler
             .configure_defines()

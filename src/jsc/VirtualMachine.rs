@@ -3145,18 +3145,19 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    PackageJson,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::PackageJson)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::PackageJson => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -4541,7 +4542,11 @@ impl VirtualMachine {
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    *res = resolved_path;
+                    *res = if mode == ResolveMode::PackageJson {
+                        ErrorableString::ok(bun_core::String::empty())
+                    } else {
+                        resolved_path
+                    };
                     return Ok(());
                 }
             }
@@ -4553,7 +4558,9 @@ impl VirtualMachine {
             Default::default(),
         ) {
             *res = ErrorableString::ok(
-                if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                if mode == ResolveMode::PackageJson {
+                    bun_core::String::empty()
+                } else if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.dupe_ref()
                 } else {
                     bun_core::String::init(hardcoded.path.as_bytes())
@@ -4564,7 +4571,11 @@ impl VirtualMachine {
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-            *res = ErrorableString::ok(specifier.dupe_ref());
+            *res = ErrorableString::ok(if mode == ResolveMode::PackageJson {
+                bun_core::String::empty()
+            } else {
+                specifier.dupe_ref()
+            });
             return Ok(());
         }
 
@@ -4674,7 +4685,17 @@ impl VirtualMachine {
             };
         }
 
-        *res = ErrorableString::ok(bun_core::String::clone_utf8(result.path));
+        let path = if mode == ResolveMode::PackageJson {
+            result
+                .result
+                .as_ref()
+                .and_then(bun_resolver::Result::package_json_path)
+                .map(bun_core::String::clone_utf8)
+                .unwrap_or_default()
+        } else {
+            bun_core::String::clone_utf8(result.path)
+        };
+        *res = ErrorableString::ok(path);
         Ok(())
     }
     /// Worker-thread teardown.

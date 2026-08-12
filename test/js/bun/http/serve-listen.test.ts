@@ -161,6 +161,86 @@ describe.each([
   });
 });
 
+describe("Bun.serve() with a hostname that does not resolve", () => {
+  // A DNS label longer than 63 bytes is invalid (RFC 1035 section 2.3.4), so
+  // getaddrinfo rejects these locally without touching the network.
+  const unresolvable = Buffer.alloc(64, "a").toString() + ".com";
+
+  function resolverError(hostname: string) {
+    return {
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+    };
+  }
+
+  function listenError(options: Parameters<typeof serve>[0]) {
+    let server;
+    try {
+      server = serve(options);
+    } catch (error: any) {
+      const { name, code, syscall, hostname, message } = error;
+      return { name, code, syscall, hostname, message };
+    }
+    server.stop(true);
+    throw new Error(`expected Bun.serve() to throw, but it is listening on ${server.url}`);
+  }
+
+  test.each([
+    ["http", {}],
+    ["https", { tls }],
+  ])("%s: throws the resolver error instead of a listen error", (_, extra) => {
+    expect(
+      listenError({
+        ...extra,
+        hostname: unresolvable,
+        port: 0,
+        fetch() {
+          return new Response();
+        },
+      }),
+    ).toEqual(resolverError(unresolvable));
+  });
+
+  test("the error does not depend on what the resolver left behind in errno", () => {
+    // These used to surface as whatever errno getaddrinfo happened to leave
+    // behind (EAGAIN / ENOENT / EMSGSIZE, varying with the input) attributed
+    // to listen(2). The error must describe the lookup of the hostname as
+    // given, including the brackets Bun strips before resolving.
+    const hostnames = [unresolvable, `[${unresolvable}]`, Buffer.alloc(1100, "a").toString() + ".com"];
+    expect(
+      hostnames.map(hostname =>
+        listenError({
+          hostname,
+          port: 0,
+          fetch() {
+            return new Response();
+          },
+        }),
+      ),
+    ).toEqual(hostnames.map(resolverError));
+  });
+
+  test("a later Bun.serve() still works", () => {
+    listenError({
+      hostname: unresolvable,
+      port: 0,
+      fetch() {
+        return new Response();
+      },
+    });
+    using server = serve({
+      port: 0,
+      fetch() {
+        return new Response();
+      },
+    });
+    expect(server.port).toBeGreaterThan(0);
+  });
+});
+
 // Linux-only: uses /proc/self/fd to find the listen socket and close it from
 // under the server so getsockname() fails with EBADF.
 test.skipIf(!isLinux)("server.address / server.port do not panic when getsockname() fails", async () => {

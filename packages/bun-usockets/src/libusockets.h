@@ -386,11 +386,18 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
  * (borrowed ref, optional), the SNI tree (optional), and the kind to stamp on
- * accepted sockets. */
+ * accepted sockets.
+ *
+ * The out-params are only meaningful when NULL is returned. A `host` that did
+ * not resolve leaves the raw getaddrinfo(3) return code in *dns_error and does
+ * not touch *error; failures after resolution report errno (WSAGetLastError()
+ * on Windows) through *error. The two number spaces overlap, so they are kept
+ * apart the same way us_connecting_socket_t tags error_is_dns. Callers zero
+ * both before the call. */
 struct us_listen_socket_t *us_socket_group_listen(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-    const char *host, int port, int options, int socket_ext_size, int *error)
-    __attribute__((nonnull(1, 8)));  /* ssl_ctx, host nullable */
+    const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error)
+    __attribute__((nonnull(1, 8, 9)));  /* ssl_ctx, host nullable */
 struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)

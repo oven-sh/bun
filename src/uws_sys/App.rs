@@ -244,7 +244,7 @@ impl<const SSL: bool> App<SSL> {
     pub fn listen(
         &mut self,
         port: i32,
-        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
+        handler: extern "C" fn(*mut UwsListenSocket, c_int, *mut c_void),
         user_data: *mut c_void,
     ) {
         // Callers supply the C-ABI shim directly (see the RouteHandler note above).
@@ -462,7 +462,9 @@ pub(crate) type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
+    /// `(listen_socket, dns_error, user_data)`; `dns_error` as in `SocketGroup::listen`.
+    pub(crate) type uws_listen_handler =
+        Option<extern "C" fn(*mut UwsListenSocket, c_int, *mut c_void)>;
     pub(crate) type uws_method_handler =
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     // The C++ shim hands the filter the uws_res_t*, which for HTTP server

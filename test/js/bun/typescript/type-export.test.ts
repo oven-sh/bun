@@ -179,7 +179,7 @@ function runnerSource(entries: Record<string, string>) {
         await load();
         results[name] = lines.length === 1 ? JSON.parse(lines[0]) : { lines };
       } catch (error) {
-        results[name] = { error: String(error) };
+        results[name] = { error: String(error), lines };
       } finally {
         console.log = log;
       }

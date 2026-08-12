@@ -835,7 +835,7 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
     pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
@@ -849,7 +849,9 @@ impl Subprocess<'_> {
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.disconnect_ipc(true);
+        if let Some(ipc_data) = this.ipc() {
+            ipc_data.disconnect();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1473,9 +1475,7 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {
-            // Avoid keeping the callback alive longer than necessary
-            js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
-
+            // The ipc callback is kept: a server/dgram handle still adopting at EOF is delivered afterwards, as in node.
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)

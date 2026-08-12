@@ -190,7 +190,11 @@ async function main(): Promise<void> {
       if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
-      if (result.cfg.mode === "link-only" || result.cfg.mode === "rust-and-link") {
+      if (
+        result.cfg.mode === "link-only" ||
+        result.cfg.mode === "rust-and-link" ||
+        result.cfg.mode === "archive-link"
+      ) {
         await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
       }
     }

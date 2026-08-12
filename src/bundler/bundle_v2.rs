@@ -7454,6 +7454,11 @@ pub mod bv2_impl {
         Javascript {
             source_index: IndexInt,
             result: bun_js_printer::PrintResult,
+            /// The imports/exports the printer emitted for this part range.
+            /// Only present when `LinkerOptions::generates_module_info()`;
+            /// `post_process_js_chunk` appends these to the chunk's
+            /// `ModuleInfo` in output order.
+            module_info: Option<Box<crate::analyze_transpiled_module::ModuleInfo>>,
         },
         Css {
             result: crate::Result<Box<[u8]>>,
@@ -7513,48 +7518,6 @@ pub mod bv2_impl {
         }
     }
 
-    impl Clone for CompileResult {
-        fn clone(&self) -> Self {
-            match self {
-                CompileResult::Javascript {
-                    source_index,
-                    result,
-                } => CompileResult::Javascript {
-                    source_index: *source_index,
-                    result: match result {
-                        bun_js_printer::PrintResult::Result(r) => {
-                            bun_js_printer::PrintResult::Result(
-                                bun_js_printer::PrintResultSuccess {
-                                    code: r.code.clone(),
-                                    source_map: r.source_map.clone(),
-                                },
-                            )
-                        }
-                        bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
-                    },
-                },
-                CompileResult::Css {
-                    result,
-                    source_index,
-                    source_map,
-                } => CompileResult::Css {
-                    result: result.clone(),
-                    source_index: *source_index,
-                    source_map: source_map.clone(),
-                },
-                CompileResult::Html {
-                    source_index,
-                    code,
-                    script_injection_offset,
-                } => CompileResult::Html {
-                    source_index: *source_index,
-                    code: code.clone(),
-                    script_injection_offset: *script_injection_offset,
-                },
-            }
-        }
-    }
-
     impl Default for CompileResult {
         fn default() -> Self {
             CompileResult::Javascript {
@@ -7563,6 +7526,7 @@ pub mod bv2_impl {
                     code: Box::new([]),
                     source_map: None,
                 }),
+                module_info: None,
             }
         }
     }

@@ -790,7 +790,12 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
+                // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
+                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                } else {
+                    actions.inherit(fileno)?;
+                }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;

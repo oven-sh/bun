@@ -1046,6 +1046,14 @@ static JSValue fetchESMSourceCode(
             BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
 #undef CASE
 
+#define LAZY_CASE(str, name)                                                                                                                                        \
+    case (SyntheticModuleType::name): {                                                                                                                             \
+        auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::createWithLazyExports(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                                    \
+    }
+            BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
+#undef LAZY_CASE
+
         // CommonJS modules from src/js/*
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {

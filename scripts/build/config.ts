@@ -17,11 +17,11 @@ import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
-export type OS = "linux" | "darwin" | "windows" | "freebsd" | "ohos";
+export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only";
+export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 export type WebKitMode = "prebuilt" | "local";
 
 /**
@@ -82,7 +82,6 @@ export interface Config {
   darwin: boolean;
   windows: boolean;
   freebsd: boolean;
-  ohos: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
   /** darwin || freebsd — kqueue-based event loop */
@@ -96,6 +95,13 @@ export interface Config {
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
+  /**
+   * True when the linked binary can execute on this host (same os+arch, and on
+   * linux same abi). Distinct from `crossTarget === undefined`: a native-arch
+   * linux-gnu build still passes --target/--sysroot for glibc pinning but the
+   * output runs fine here.
+   */
+  canRunOnHost: boolean;
 
   // ─── Platform file conventions ───
   // Centralized so a new target (or a forgotten .exe) is one edit away.
@@ -135,7 +141,7 @@ export interface Config {
   asan: boolean;
   assertions: boolean;
   logs: boolean;
-  /** x64-only: target nehalem (no AVX) instead of haswell. */
+  /** x64-only: target nehalem (no AVX). Default true on x64 — the only x64 build we ship. */
   baseline: boolean;
   canary: boolean;
   /** MinSizeRel → optimize for size. */
@@ -306,16 +312,6 @@ export interface Config {
   /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
   freebsdVersion: string | undefined;
 
-  // ─── OHOS cross-compilation (ohos only, undefined elsewhere) ───
-  /** Sysroot path for OHOS NDK. */
-  ohosSysroot: string | undefined;
-  /** OHOS SDK root path. */
-  ohosSdkRoot: string | undefined;
-  /** Cross-compiled libc++/libunwind path. */
-  ohosCrossLibs: string | undefined;
-  /** Cross-compiled ICU path. */
-  ohosIcuDir: string | undefined;
-
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
@@ -370,16 +366,8 @@ export interface PartialConfig {
   freebsdSysroot?: string;
   /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
   freebsdVersion?: string;
-  /** OHOS sysroot path. Only used when os=ohos. */
-  ohosSysroot?: string;
-  /** OHOS SDK root. Auto-detected if not provided. */
-  ohosSdkRoot?: string;
-  /** OHOS cross-compiled LLVM runtime libs (libc++/libc++abi/libunwind). Auto-detected if not provided. */
-  ohosCrossLibs?: string;
-  /** OHOS cross-compiled ICU directory. Auto-detected if not provided. */
-  ohosIcuDir?: string;
-  /** Override cross-compilation target triple (e.g. "aarch64-linux-ohos"). */
-  crossTarget?: string;
+  /** Linux glibc sysroot (pinned old glibc/libstdc++). Only used when linux && abi=gnu. */
+  linuxSysroot?: string;
   /**
    * macOS SDK path (a MacOSX*.sdk directory). Only used when cross-compiling
    * for darwin from a non-darwin host; native darwin builds use xcrun.
@@ -500,7 +488,7 @@ export interface Toolchain {
 export function detectHost(): Host {
   const plat = hostPlatform();
   const os: OS =
-    plat === "linux" || plat === "openharmony"
+    plat === "linux"
       ? "linux"
       : plat === "darwin"
         ? "darwin"
@@ -570,6 +558,32 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
     if (existsSync(join(p, "usr", "include", "sys", "param.h"))) return p;
   }
   return undefined;
+}
+
+/**
+ * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
+ * matching the WebKit prebuilt's build environment. Arch-specific. See
+ * install_linux_glibc_sysroot() in scripts/bootstrap.sh.
+ */
+export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
+  const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
+  const env = process.env.LINUX_GLIBC_SYSROOT;
+  if (env && looksValid(env)) return env;
+  const candidate = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
+  return looksValid(candidate) ? candidate : undefined;
+}
+
+/**
+ * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
+ * see install_linux_musl_sysroot() in scripts/bootstrap.sh. Checks env var then
+ * well-known install paths. Arch-specific. Returns undefined if none found.
+ */
+export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
+  const looksValid = (p: string) => existsSync(join(p, "usr", "lib", "libc.so"));
+  const env = process.env.LINUX_MUSL_SYSROOT;
+  if (env && looksValid(env)) return env;
+  const candidate = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+  return looksValid(candidate) ? candidate : undefined;
 }
 
 /**
@@ -711,14 +725,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // skip this (the host clang-cl's default arch is just the host's).
   const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
-  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : os === "ohos" ? "musl" : undefined;
+  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const ohos = os === "ohos";
-  const unix = linux || darwin || freebsd || ohos;
+  const unix = linux || darwin || freebsd;
   const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
@@ -775,30 +788,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // Resolved early because the LTO defaults below need it (the windows
-  // -baseline WebKit prebuilt has no -lto variant).
-  const baseline = partial.baseline ?? false;
-
-  // LTO: default on for CI release non-asan non-assertions builds on Linux
-  // and on darwin cross-compiles. Windows is NOT in the default even though
-  // the windows x64 cross toolchain fully supports ThinLTO + cross-language
-  // LTO (and `--lto=on` still builds that way): LLVM's ThinLTO backend
-  // pipeline miscompiles JSC on x86-64 at -O1 and above — JS-visible
-  // corruption in the bundler tests, the same family as the linux x86-64
-  // ThinLTO miscompile that keeps linux on full LTO — and the regular-LTO
-  // route for COFF (full-LTO WebKit windows artifacts + a COFF rust summary
-  // fix-up) hasn't been built yet. Re-enable the default once one of those
-  // lands. The -lto WebKit prebuilts only exist for the cross toolchain, so
-  // native windows/darwin lanes are non-LTO regardless.
-  const ltoDefault = release && (linux || darwinCross) && ci && !assertions && !asan;
+  // LTO: default on for CI release non-asan non-assertions builds across
+  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
+  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
+  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
+  const windowsCross = windows && host.os !== "windows";
+  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  // Windows arm64 / baseline: same — oven-sh/WebKit ships no
-  // bun-webkit-windows-arm64-lto (LLVM's CodeView emitter aborts on ARM64
-  // NEON tuple registers during LTO codegen), and the pinned WEBKIT_VERSION
-  // predates the -baseline-lto variant.
-  if ((asan && lto) || abi === "android" || (windows && (arm64 || baseline))) {
+  // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
+  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
+  if ((asan && lto) || abi === "android" || (windows && arm64)) {
     lto = false;
   }
 
@@ -873,7 +874,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
-  // (`baseline` is resolved earlier, next to the LTO defaults.)
+  const baseline = partial.baseline ?? x64;
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
@@ -1008,27 +1009,43 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
-  // ─── OHOS ───
-  let ohosSysroot: string | undefined;
-  let ohosSdkRoot: string | undefined;
-  let ohosCrossLibs: string | undefined;
-  let ohosIcuDir: string | undefined;
-  if (ohos) {
-    ohosSdkRoot = partial.ohosSdkRoot ? resolve(cwd, partial.ohosSdkRoot) : findOhosSdkRoot();
-    if (!ohosSdkRoot) {
-      throw new BuildError("OHOS build requires --ohos-sdk-root=<path> or setup-ohos-sdk in home", {
-        hint: "Install OHOS SDK from https://gitee.com/openharmony and point --ohos-sdk-root to the SDK root.",
-      });
+  // ─── Linux-gnu/musl sysroot + target ───
+  // Every CI linux-gnu build (native AND cross-arch) uses the ubuntu:20.04 +
+  // gcc-13 sysroot so the glibc verneed matches what the --wrap list covers
+  // and the libstdc++ ABI matches the WebKit prebuilt. musl uses an
+  // alpine-derived sysroot. Local dev without a sysroot builds native.
+  if (linux && abi !== "android" && crossTarget === undefined) {
+    const llvmArch = x64 ? "x86_64" : "aarch64";
+    const hostAbi = host.os === "linux" ? detectLinuxAbi() : undefined;
+    const isCross = arch !== host.arch || abi !== hostAbi;
+    if (abi === "musl") {
+      sysroot = detectLinuxMuslSysroot(arch);
+      if (sysroot !== undefined || isCross) {
+        crossTarget = `${llvmArch}-alpine-linux-musl`;
+        if (sysroot === undefined) {
+          const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+          throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see install_linux_musl_sysroot() in scripts/bootstrap.sh).`,
+          });
+        }
+      }
+    } else {
+      sysroot =
+        partial.linuxSysroot !== undefined
+          ? isAbsolute(partial.linuxSysroot)
+            ? partial.linuxSysroot
+            : resolve(cwd, partial.linuxSysroot)
+          : detectLinuxGlibcSysroot(arch);
+      if (sysroot !== undefined || isCross) {
+        crossTarget = `${llvmArch}-linux-gnu`;
+        if (sysroot === undefined) {
+          const p = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
+          throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see install_linux_glibc_sysroot() in scripts/bootstrap.sh).`,
+          });
+        }
+      }
     }
-    ohosSysroot = partial.ohosSysroot ? resolve(cwd, partial.ohosSysroot) : resolve(ohosSdkRoot, "ohos/native/sysroot");
-    if (!existsSync(ohosSysroot)) {
-      throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
-    }
-    ohosCrossLibs = partial.ohosCrossLibs ? resolve(cwd, partial.ohosCrossLibs) : resolve(cwd, "build", "ohos-cross-libs");
-    ohosIcuDir = partial.ohosIcuDir ? resolve(cwd, partial.ohosIcuDir) : resolve(cwd, "build", "ohos-icu", "target");
-    // Populate generic cross-compile fields so downstream plumbing sees OHOS settings
-    sysroot = ohosSysroot;
-    crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";
   }
 
   // ─── Cross-compilation (Windows) ───
@@ -1108,18 +1125,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     // rust-only mode never compiles C/C++ or links, so it doesn't need the
-    // SDK — skip resolution to keep the shared CI rust box from downloading
+    // SDK — skip resolution so a rust-only build doesn't download
     // a ~730 MB sysroot it never reads.
     if ((partial.mode ?? "full") !== "rust-only") {
       osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
       if (toolchain.ld64Lld === undefined) {
         throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-22 (or equivalent).",
+          hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
         });
       }
       if (toolchain.llvmStrip === undefined) {
         throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-22 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
         });
       }
       if (toolchain.clangResourceDir === undefined) {
@@ -1129,7 +1146,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
       if (toolchain.dsymutil === undefined) {
         throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-22 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
         });
       }
       // The Mach-O flavor of whichever lld the rest of the config picked.
@@ -1157,12 +1174,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     darwin,
     windows,
     freebsd,
-    ohos,
     unix,
     kqueue,
     x64,
     arm64,
     host,
+    canRunOnHost: os === host.os && arch === host.arch && (!linux || abi === (detectLinuxAbi() ?? abi)),
     exeSuffix,
     objSuffix,
     libPrefix,
@@ -1210,7 +1227,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
     rustSysroot: toolchain.rustSysroot,
-    strip: ld64StripSwap?.strip ?? toolchain.strip,
+    // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
+    // fully; host strip rejects foreign-arch ELF); other cross targets use
+    // llvm-strip.
+    strip:
+      ld64StripSwap?.strip ??
+      (crossTarget !== undefined
+        ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
+          ? `/usr/bin/${crossTarget}-strip`
+          : (toolchain.llvmStrip ?? toolchain.strip)
+        : toolchain.strip),
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
@@ -1243,10 +1269,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     androidApiLevel,
     androidNdkRuntimeDir,
     freebsdVersion,
-    ohosSysroot,
-    ohosSdkRoot,
-    ohosCrossLibs,
-    ohosIcuDir,
     version,
     revision,
     nodejsVersion,
@@ -1476,23 +1498,6 @@ export function bunExeName(cfg: Config): string {
   return "bun-profile";
 }
 
-function findOhosSdkRoot(): string | undefined {
-  // Environment variable takes priority (standard for cross-compilation toolchains).
-  const envRoot = process.env.OHOS_SDK_ROOT;
-  if (envRoot && existsSync(resolve(envRoot, "ohos/native/sysroot"))) {
-    return envRoot;
-  }
-  const candidates = [
-    resolve(homedir(), "setup-ohos-sdk"),
-    resolve(homedir(), "ohos-sdk"),
-    "/opt/ohos-sdk",
-  ];
-  for (const dir of candidates) {
-    if (existsSync(resolve(dir, "ohos/native/sysroot"))) return dir;
-  }
-  return undefined;
-}
-
 /**
  * Whether this config produces a stripped `bun` alongside `bun-profile`.
  *
@@ -1539,10 +1544,15 @@ export function formatConfig(cfg: Config, exe: string): string {
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
-  // Version pin overrides — show a short hash so you catch "forgot to
-  // revert my WebKit test branch" before the build goes weird.
-  if (cfg.webkitVersion !== versionDefaults.webkitVersion)
-    features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
+  // Version pin overrides — show an identifying value so you catch "forgot
+  // to revert my WebKit test branch" before the build goes weird. Strip the
+  // autobuild- prefix so preview tags show their sha instead of the prefix.
+  if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
+    const v = cfg.webkitVersion.startsWith("autobuild-")
+      ? cfg.webkitVersion.slice("autobuild-".length)
+      : cfg.webkitVersion;
+    features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
+  }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

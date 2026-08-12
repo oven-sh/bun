@@ -2116,8 +2116,11 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
 
     crate::impl_js_sink_forwarders!();
 
-    fn finalize(&mut self) {
-        Self::finalize(self)
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is live, and only the RequestContext's
+        // `destroy` frees it (never the inherent `finalize`), so the `&mut`
+        // scoped to this call stays valid throughout.
+        unsafe { (*this).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
@@ -2527,8 +2530,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn finalize(&mut self) {
-        Self::finalize(self)
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is live, and the inherent `finalize`
+        // only releases the ref on the separate `MultiPartUpload`, never this
+        // sink, so the `&mut` scoped to this call stays valid throughout.
+        unsafe { (*this).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

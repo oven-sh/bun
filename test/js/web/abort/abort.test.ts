@@ -290,4 +290,45 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
     await deadline;
     expect(summarize(signal)).toEqual({ aborted: true, reason: "TimeoutError" });
   });
+
+  // A Request keeps its signal as a native ref and wraps it again on demand, so
+  // the signal's JS wrapper can be collected while the timeout is still
+  // observable through request.signal. The timer has to survive the wrapper as
+  // well; only the signal itself going away (or aborting) may stop it.
+  // Subprocess so heapStats() only sees this scenario's signals.
+  test("after its wrapper was collected while a Request still held the signal", async () => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const wrappers = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
+      const N = 32;
+      // A full GC of the debug heap takes ~100ms under ASAN; the deadline only
+      // has to come after it.
+      const deadline = 1000;
+      const started = performance.now();
+      const requests = [];
+      for (let i = 0; i < N; i++) {
+        requests.push(new Request("http://localhost/", { signal: AbortSignal.timeout(deadline) }));
+      }
+      const fence = AbortSignal.timeout(deadline + 100);
+      const withWrappers = wrappers();
+      // Fresh stack first, so nothing conservatively scanned still points at a wrapper.
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      const collected = withWrappers - wrappers();
+      const collectedBeforeDeadline = performance.now() - started < deadline;
+      await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
+      // request.signal wraps the native signal again.
+      const timedOut = requests.filter(r => r.signal.aborted && r.signal.reason.name === "TimeoutError").length;
+      console.log(JSON.stringify({ N, collected, collectedBeforeDeadline, timedOut }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { N, collected, collectedBeforeDeadline, timedOut } = JSON.parse(stdout);
+    // The wrappers have to be gone before the timers fire for the run to mean
+    // anything; allow a straggler or two in case something still pins one.
+    expect(collected).toBeGreaterThanOrEqual(N - 4);
+    expect({ collectedBeforeDeadline, timedOut }).toEqual({ collectedBeforeDeadline: true, timedOut: N });
+    expect(exitCode).toBe(0);
+  });
 });

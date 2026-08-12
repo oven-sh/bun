@@ -3,17 +3,47 @@ import { describe, expect, test } from "bun:test";
 import { isPosix } from "harness";
 
 /**
- * Resolves after the event loop has polled for I/O at least `count` more times.
+ * A way to wait until something written to a loopback connection has not only
+ * been delivered but also read by its in-process receiver, without guessing at
+ * a delay. Loopback delivers in order, so by the time a byte sent through this
+ * extra connection shows up in JS, everything written before it has reached
+ * its socket too and was readable in the same poll; the immediate then lets the
+ * loop finish dispatching that poll's batch, which includes the receiver's read.
  *
- * An immediate queued from ordinary JS runs before the loop's next poll, and
- * one queued from inside an immediate runs after that poll, so every extra
- * link in the chain is one more poll. Timers are no substitute: one that is
- * already due fires at the end of the tick that armed it, before the next poll.
+ * setImmediate alone would not do: an immediate queued from ordinary JS runs
+ * before the loop polls again, and an already-due timer fires in the tick that
+ * armed it, so either one lets a second write coalesce with the first.
  */
-async function afterIOPolls(count: number) {
-  for (let i = 0; i <= count; i++) {
-    await new Promise<void>(resolve => setImmediate(resolve));
-  }
+async function loopbackClock() {
+  let arrived = () => {};
+  const listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data() {
+        arrived();
+      },
+    },
+  });
+  const socket = await Bun.connect({
+    hostname: listener.hostname,
+    port: listener.port,
+    socket: { data() {} },
+  });
+  return {
+    async tick() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      arrived = resolve;
+      socket.write(".");
+      socket.flush();
+      await promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
+    [Symbol.dispose]() {
+      socket.end();
+      listener.stop();
+    },
+  };
 }
 
 interface SeenRequest {
@@ -33,9 +63,9 @@ const BODY_REJECTED = "AbortError: The connection was closed.";
  * too).
  *
  * Each segment reaches the server in its own read: the next one is written only
- * after the server has had a poll in which to read the previous one, plus a
- * poll for its reaction to reach us. Once the server has answered or hung up,
- * the remaining segments stay unsent. They are still worth listing for the
+ * once the server has read the previous one and whatever it wrote back in
+ * reaction has reached `received`. Once the server has answered or hung up, the
+ * remaining segments stay unsent. They are still worth listing for the
  * rejection cases: a server that wrongly kept the request going gets them and
  * is caught answering 200, while one that rightly rejected it is left alone.
  */
@@ -68,6 +98,7 @@ async function exchange(segments: string[], options: { maxRequestBodySize?: numb
   let received = "";
   let closed = false;
   const { promise: closedPromise, resolve: onClose } = Promise.withResolvers<void>();
+  using clock = await loopbackClock();
   using socket = await Bun.connect({
     hostname: server.hostname,
     port: server.port,
@@ -87,7 +118,10 @@ async function exchange(segments: string[], options: { maxRequestBodySize?: numb
     if (received !== "" || closed) break;
     socket.write(segment);
     socket.flush();
-    await afterIOPolls(2);
+    // First tick: the server has read the segment (and written any reaction).
+    // Second tick: that reaction has been read into `received` on this side.
+    await clock.tick();
+    await clock.tick();
   }
 
   await closedPromise;
@@ -103,7 +137,7 @@ function chunkedRequest(path = "/") {
 }
 
 describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
-  test.concurrent("writes spaced by afterIOPolls() reach the server as separate reads", async () => {
+  test.concurrent("writes separated by a loopbackClock() tick arrive as separate reads", async () => {
     // Guards the premise of every split-segment case below. If the writes
     // coalesced, those cases would still pass, just against unsplit input.
     const reads: string[] = [];
@@ -116,6 +150,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
         },
       },
     });
+    using clock = await loopbackClock();
     using socket = await Bun.connect({
       hostname: listener.hostname,
       port: listener.port,
@@ -125,7 +160,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
     for (const segment of ["5\r", "\n", "Hello\r\n"]) {
       socket.write(segment);
       socket.flush();
-      await afterIOPolls(2);
+      await clock.tick();
     }
 
     expect(reads).toEqual(["5\r", "\n", "Hello\r\n"]);

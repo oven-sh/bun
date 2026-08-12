@@ -727,6 +727,7 @@ impl WebWorker {
         unsafe {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
+            b.apply_log_level_to_env_loader();
 
             if let Some(graph) = parent.standalone_module_graph {
                 (hooks.apply_standalone_runtime_flags)(b, graph);

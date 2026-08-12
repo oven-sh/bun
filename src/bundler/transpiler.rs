@@ -722,6 +722,12 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
+    /// Only for the loader's owner; `Bun.build`, macros and `Bun.Transpiler` run on another VM's.
+    pub fn apply_log_level_to_env_loader(&mut self) {
+        let quiet = !self.log().level.at_least(bun_ast::Level::Info);
+        self.env_mut().quiet = quiet;
+    }
+
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
@@ -1246,14 +1252,6 @@ impl<'a> Transpiler<'a> {
             dot_env::set_instance(env_loader);
         }
 
-        // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
-        // leak above; no other live `&mut` to either at this point.
-        unsafe {
-            (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
-        }
-
         // var pool = try arena.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .arena = arena,
@@ -1320,6 +1318,10 @@ impl<'a> Transpiler<'a> {
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
+        }
+        if env_loader_.is_none() {
+            // SAFETY: every field was written above.
+            unsafe { dst.assume_init_mut() }.apply_log_level_to_env_loader();
         }
         Ok(())
     }

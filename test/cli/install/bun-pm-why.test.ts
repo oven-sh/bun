@@ -679,6 +679,73 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
 
+    // pkg-a and pkg-p depend on each other. Walking up from pkg-x, the cycle is
+    // first reached through pkg-l1 -> pkg-l2 -> pkg-a, where pkg-p's only
+    // dependent (pkg-a) is cut off as circular, and again through pkg-p itself,
+    // three levels closer to pkg-x.
+    const cycle = {
+      "pkg-x": [],
+      "pkg-l1": ["pkg-x"],
+      "pkg-l2": ["pkg-l1"],
+      "pkg-a": ["pkg-l2", "pkg-p"],
+      "pkg-p": ["pkg-a", "pkg-x"],
+      "pkg-q1": ["pkg-a"],
+      "pkg-q2": ["pkg-q1"],
+      "pkg-q3": ["pkg-q2"],
+    };
+
+    it("does not dedupe a package whose circular branch hides what --depth would show closer to the root", async () => {
+      using dir = workspaceFixture("why-deduped-cycle-depth", cycle);
+
+      // pkg-q3 only fits within the depth limit under the shorter chain.
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x", "--depth", "5"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-l1@workspace (requires workspace:*)
+          │  └─ pkg-l2@workspace (requires workspace:*)
+          │     └─ pkg-a@workspace (requires workspace:*)
+          │        ├─ pkg-p@workspace (requires workspace:*)
+          │        │  └─ pkg-a@workspace (requires workspace:*)
+          │        │     └─ *circular
+          │        └─ pkg-q1@workspace (requires workspace:*)
+          │           └─ pkg-q2@workspace (requires workspace:*)
+          │              └─ (deeper dependencies hidden)
+          │
+          └─ pkg-p@workspace (requires workspace:*)
+             └─ pkg-a@workspace (requires workspace:*)
+                ├─ pkg-p@workspace (requires workspace:*)
+                │  └─ *circular
+                └─ pkg-q1@workspace (requires workspace:*)
+                   └─ pkg-q2@workspace (requires workspace:*)
+                      └─ pkg-q3@workspace (requires workspace:*)"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    it("dedupes a package inside a cycle once its dependents were printed in full", async () => {
+      using dir = workspaceFixture("why-deduped-cycle", cycle);
+
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-l1@workspace (requires workspace:*)
+          │  └─ pkg-l2@workspace (requires workspace:*)
+          │     └─ pkg-a@workspace (requires workspace:*)
+          │        ├─ pkg-p@workspace (requires workspace:*)
+          │        │  └─ pkg-a@workspace (requires workspace:*)
+          │        │     └─ *circular
+          │        └─ pkg-q1@workspace (requires workspace:*)
+          │           └─ pkg-q2@workspace (requires workspace:*)
+          │              └─ pkg-q3@workspace (requires workspace:*)
+          │
+          └─ pkg-p@workspace (requires workspace:*)
+             └─ *deduped"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
     it("keeps the output linear when every package depends on the next two", async () => {
       // w00 depends on w01 and w02, w01 on w02 and w03, and so on, so the
       // number of dependency paths between w15 and any one package grows like

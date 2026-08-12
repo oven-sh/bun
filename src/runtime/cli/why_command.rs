@@ -562,24 +562,24 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
 
 pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
-    path_tracker: HashMap<PackageID, usize>,
+    /// Packages being expanded right now; the value records whether a `*circular` pointed at it.
+    path_tracker: HashMap<PackageID, bool>,
     /// Subtrees already printed; repeats print `*deduped` (there are exponentially many paths).
     expanded: HashMap<PackageID, Expanded>,
 }
 
 #[derive(Clone, Copy)]
 struct Expanded {
-    /// Only compared when `truncated`: a shallower repeat fits more levels under `MAX_DEPTH`.
     depth: usize,
-    truncated: bool,
+    cutoff: usize,
 }
 
 /// What `print_dependency_tree` printed below a package line.
 #[derive(Clone, Copy)]
 struct Printed {
     lines: usize,
-    /// Some branch below ran into `MAX_DEPTH`.
-    truncated: bool,
+    /// Repeating the package at a depth below this shows more: a branch ran into `MAX_DEPTH`.
+    cutoff: usize,
 }
 
 impl<'a> TreeContext<'a> {
@@ -594,7 +594,7 @@ impl<'a> TreeContext<'a> {
     /// The earlier expansion of `pkg_id`, unless repeating it at `depth` would show more.
     fn already_expanded(&self, pkg_id: PackageID, depth: usize) -> Option<Expanded> {
         let previous = *self.expanded.get(&pkg_id)?;
-        (!previous.truncated || depth >= previous.depth).then_some(previous)
+        (depth >= previous.cutoff).then_some(previous)
     }
 }
 
@@ -606,11 +606,12 @@ fn print_dependency_tree(
     printed_break_line: bool,
     parent_is_workspace: bool,
 ) -> Printed {
-    if ctx.path_tracker.get(&current_pkg_id).is_some() {
+    if let Some(pointed_at_by_cycle) = ctx.path_tracker.get_mut(&current_pkg_id) {
+        *pointed_at_by_cycle = true;
         bun_core::prettyln!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix));
         return Printed {
             lines: 1,
-            truncated: false,
+            cutoff: 0,
         };
     }
 
@@ -618,17 +619,17 @@ fn print_dependency_tree(
         bun_core::prettyln!("<d>{}└─ *deduped<r>", BStr::new(prefix));
         return Printed {
             lines: 1,
-            truncated: previous.truncated,
+            cutoff: previous.cutoff,
         };
     }
 
-    ctx.path_tracker.insert(current_pkg_id, depth);
+    ctx.path_tracker.insert(current_pkg_id, false);
     // All post-insert exit paths below remove explicitly. Error paths are gone
     // (alloc failures abort under global mimalloc).
 
     let mut printed = Printed {
         lines: 0,
-        truncated: false,
+        cutoff: 0,
     };
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
@@ -644,7 +645,7 @@ fn print_dependency_tree(
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 printed.lines += 1;
-                printed.truncated = true;
+                printed.cutoff = depth;
                 break;
             }
 
@@ -680,7 +681,8 @@ fn print_dependency_tree(
                 dep.workspace,
             );
             printed.lines += subtree.lines;
-            printed.truncated |= subtree.truncated;
+            // A dependent repeats one level deeper than this package does.
+            printed.cutoff = printed.cutoff.max(subtree.cutoff.saturating_sub(1));
 
             if print_break_line {
                 bun_core::prettyln!("<d>{}<r>", BStr::new(prefix));
@@ -688,7 +690,16 @@ fn print_dependency_tree(
         }
     }
 
-    ctx.path_tracker.remove(&current_pkg_id);
+    let pointed_at_by_cycle = ctx.path_tracker.remove(&current_pkg_id) == Some(true);
+
+    if pointed_at_by_cycle && printed.cutoff > 0 {
+        // Their `*circular` stood in for this cut-off subtree; a repeat reaches it one level down.
+        for record in ctx.expanded.values_mut() {
+            if record.depth > depth {
+                record.cutoff = record.cutoff.max(printed.cutoff - 1);
+            }
+        }
+    }
 
     // A one-line subtree is no longer than the `*deduped` marker, so it is repeated instead.
     if printed.lines > 1 {
@@ -696,7 +707,7 @@ fn print_dependency_tree(
             current_pkg_id,
             Expanded {
                 depth,
-                truncated: printed.truncated,
+                cutoff: printed.cutoff,
             },
         );
     }

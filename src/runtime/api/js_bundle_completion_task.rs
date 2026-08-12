@@ -150,8 +150,12 @@ pub(crate) fn create_and_schedule_completion_task(
     let vm = global_this.bun_vm_ptr();
     // Copied here on this VM's JS thread, the thread `Bun__setEnvValue` mutates
     // the loader from, so unlike a Worker's clone (web_worker.rs) this one
-    // needs no `proxy_env_storage` lock.
-    let env = Box::new(global_this.bun_vm().env_loader().clone()?);
+    // needs no `proxy_env_storage` lock. OOM aborts like the `Box::new` below:
+    // returning an error would leak the `plugins` Bun.build hands us, which
+    // only the task's `deinit` releases.
+    let env = Box::new(bun_core::handle_oom(
+        global_this.bun_vm().env_loader().clone(),
+    ));
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,

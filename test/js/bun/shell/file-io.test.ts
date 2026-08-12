@@ -246,6 +246,11 @@ describe("IOWriter file output redirection", () => {
       .exitCode(0)
       .fileEquals("append_output.txt", "existing line\n$TEMP_DIR\n")
       .runAsTest("builtin pwd with &>> append redirect");
+
+    TestBuilder.command`pwd &>> new_append_output.txt`
+      .exitCode(0)
+      .fileEquals("new_append_output.txt", "$TEMP_DIR\n")
+      .runAsTest("builtin pwd with &>> redirect creates a missing file");
   });
 });
 

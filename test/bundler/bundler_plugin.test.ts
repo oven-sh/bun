@@ -142,6 +142,28 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  itBundled("plugin/LoadContentsStringConversionThrows", {
+    files: loadFixture,
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, () => {
+        // A 16-bit rope string of the maximum length (2^31 - 1 chars). Building
+        // it only allocates rope nodes, but flattening it needs a 4GB buffer
+        // that WTF::StringImpl refuses to allocate, so the first thing to read
+        // it (the bundler, converting `contents` to bytes) gets JSC's
+        // "Out of memory" RangeError. That used to panic inside onLoadAsync.
+        let contents = "\u0100";
+        for (let i = 0; i < 30; i++) contents = contents + contents + "\u0100";
+        expect(contents.length).toBe(2 ** 31 - 1);
+        return { contents, loader: "js" };
+      });
+    },
+    bundleErrors: {
+      "/foo.magic": [`Out of memory`],
+    },
+    onAfterApiBundle(build) {
+      expect(build.success).toBe(false);
+    },
+  });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `

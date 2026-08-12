@@ -219,6 +219,58 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
   });
 }
 
+// process.exit() in a --preload script unwinds inside load_preloads' own
+// promise-spin loop, which must bail like load_entry_point's does.
+test("--watch: process.exit() in a --preload script keeps the watcher alive", async () => {
+  const fixture = (n: number) =>
+    `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`;
+  using dir = tempDir("watch-preload-exit", {
+    "preload.ts": fixture(0),
+    "index.ts": `console.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  });
+  const path = join(String(dir), "preload.ts");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "--preload=./preload.ts", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stderrText = proc.stderr.text();
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  let out = "";
+  const waitForMark = async (n: number) => {
+    const marker = `MARK:${n}`;
+    while (!out.includes(marker)) {
+      const { done, value } = await reader.read();
+      if (done) {
+        throw new Error(
+          `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+        );
+      }
+      out += decoder.decode(value, { stream: true });
+    }
+  };
+
+  await waitForMark(0);
+  for (let n = 1; n <= 2; n++) {
+    await writeFile(path, fixture(n));
+    await waitForMark(n);
+  }
+
+  // Neither the statement after exit nor the entry point may run.
+  expect(out).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  expect(proc.exitCode).toBeNull();
+
+  await reader.cancel();
+  proc.kill();
+  expect(await stderrText).toBe("");
+});
+
 // The keepalive is scoped to --watch (it re-execs on change). --hot
 // re-evaluates in place, so process.exit() there still exits the process.
 test("--hot: process.exit() exits the process (no keepalive)", async () => {

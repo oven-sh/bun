@@ -239,10 +239,11 @@ pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }
 
-/// Whether a user-delivered kill-intent signal (Ctrl+C and friends) has
-/// reached JS handlers. Latched, never cleared: once the user has asked to
-/// stop, any later `process.exit()` under `--watch` is a real exit however
-/// the handler defers it (node's watcher dies with the child on Ctrl+C).
+/// Whether a kill-intent signal (Ctrl+C and friends) has reached JS
+/// handlers. Latched, never cleared, and the sender is indistinguishable
+/// (a self-sent `process.kill` counts too): any later `process.exit()`
+/// under `--watch` is a real exit however the handler defers it (node's
+/// watcher dies with the child on such signals).
 pub fn user_kill_signal_delivered() -> bool {
     USER_KILL_SIGNAL_DELIVERED.load(Ordering::Relaxed)
 }

@@ -570,11 +570,9 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    /// Raw-pointer receiver, as in `schedule_with_options`: `*this` is freed
-    /// during this call (synchronously below, or by the pool thread as soon as
-    /// `deinit_task` is pushed; it drains idle tasks between batches, not only
-    /// on `wake_for_idle_events`), and a `&mut self` argument must stay
-    /// allocated until the call returns.
+    /// Takes `*mut Self`, not `&mut self`: `*this` is freed during this call
+    /// (below, or by the pool thread as soon as `deinit_task` is pushed), and a
+    /// `&mut self` argument would have to stay allocated until it returned.
     ///
     /// # Safety
     /// `this` is a live `Worker` from [`ThreadPool::get_worker`] that nothing
@@ -585,7 +583,9 @@ impl Worker {
         if let Some(thread) = thread {
             // SAFETY: caller contract. Projected from the allocation's own
             // pointer so `from_field_ptr!` in `deinit_callback` gets whole-
-            // `Worker` provenance; `*this` is not touched after the push.
+            // `Worker` provenance. The pool thread drains idle tasks between
+            // batches, not only on `wake_for_idle_events`, so `*this` may be
+            // freed as soon as it is pushed; nothing touches it after that.
             let task = unsafe { &raw mut (*this).deinit_task };
             thread.push_idle_task(task);
         } else {

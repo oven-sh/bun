@@ -1883,6 +1883,10 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // Adoption completes inside this call: SocketHandlers.open runs
+      // synchronously, attaches the handle and emits 'connect'. `connecting`
+      // must stay false below, or _write parks every chunk behind a 'connect'
+      // that has already been emitted (child_process stdio[3+] writes were lost).
       doConnect(this._handle, {
         data: this,
         fd: fd,

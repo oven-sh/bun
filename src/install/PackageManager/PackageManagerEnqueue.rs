@@ -1173,6 +1173,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
+            // Second: the package an identical dependency literal resolved to
+            if let Some(pkg_id) =
+                find_locked_git_package(this, id, dependency, &dep, ResolutionTag::Git)
+            {
+                success_fn(this, id, pkg_id);
+                return Ok(());
+            }
+
             // reshaped for borrowck — `alias`/`url` borrow
             // `this.lockfile.buffers.string_bytes`; detach the slice
             // lifetimes so the `&mut PackageManager` reborrows for the
@@ -1201,14 +1209,41 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let resolved = Repository::find_commit(
-                    this.env_mut(),
-                    this.log_mut(),
-                    repo_fd,
-                    alias,
-                    this.lockfile.str(&dep.committish),
-                    clone_id,
-                )?;
+                // A dependency already bound to a package checks out that
+                // package's locked commit. `find_commit` follows the ref,
+                // which may have moved since it was locked, and the isolated
+                // installer's store entry waits on the locked checkout id
+                // (the clone-failure drain in runTasks.rs keys the same way).
+                let bound_resolved: Option<Vec<u8>> = {
+                    let bound = this.lockfile.buffers.resolutions[id as usize];
+                    if bound != invalid_package_id
+                        && (bound as usize) < this.lockfile.packages.len()
+                    {
+                        let bound_res = &this.lockfile.packages.items_resolution()[bound as usize];
+                        if bound_res.tag == ResolutionTag::Git {
+                            let locked = bound_res
+                                .git()
+                                .resolved
+                                .slice(this.lockfile.buffers.string_bytes.as_slice());
+                            (!locked.is_empty()).then(|| locked.to_vec())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                let resolved = match bound_resolved {
+                    Some(resolved) => resolved,
+                    None => Repository::find_commit(
+                        this.env_mut(),
+                        this.log_mut(),
+                        repo_fd,
+                        alias,
+                        this.lockfile.str(&dep.committish),
+                        clone_id,
+                    )?,
+                };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
                 let needs_ctx =
@@ -1279,6 +1314,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
             // First: see if we already loaded the github package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                success_fn(this, id, pkg_id);
+                return Ok(());
+            }
+
+            // Second: the package an identical dependency literal resolved to
+            if let Some(pkg_id) =
+                find_locked_git_package(this, id, dependency, dep, ResolutionTag::Github)
+            {
                 success_fn(this, id, pkg_id);
                 return Ok(());
             }
@@ -1918,6 +1961,75 @@ fn update_name_and_name_hash_from_version_replacement(
         }
         _ => (original_name, original_name_hash),
     }
+}
+
+/// The package an identical git/github dependency (same name and version
+/// literal) is already bound to. `bun.lock` writes the resolved commit in the
+/// committish position of the resolution string, so after a reload a branch,
+/// tag, or bare ref never matches `get_package_id`'s committish comparison;
+/// the unchanged dependency literal is the lossless record of the previous
+/// resolution, and reusing its binding keeps re-resolution off the network.
+fn find_locked_git_package(
+    this: &PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    repo: &Repository,
+    resolution_tag: ResolutionTag,
+) -> Option<PackageID> {
+    if this.lockfile.buffers.resolutions[id as usize] != invalid_package_id {
+        return None;
+    }
+
+    // An update target must re-resolve against the remote (same test as
+    // `Diff::generate`; an empty request list is a bare `bun update`).
+    if this.to_update
+        && (this.update_requests.is_empty()
+            || this
+                .update_requests
+                .iter()
+                .any(|request| request.name_hash == dependency.name_hash))
+    {
+        return None;
+    }
+
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let package_resolutions = this.lockfile.packages.items_resolution();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions = this.lockfile.buffers.resolutions.as_slice();
+
+    for (other, &package_id) in dependencies.iter().zip(resolutions) {
+        if package_id == invalid_package_id || (package_id as usize) >= package_resolutions.len() {
+            continue;
+        }
+        if other.name_hash != dependency.name_hash
+            || other.version.tag != dependency.version.tag
+            || !other
+                .version
+                .literal
+                .eql(dependency.version.literal, buf, buf)
+        {
+            continue;
+        }
+        // Overrides/catalogs replace the version after parsing, so the bound
+        // package must also match the effective repository (changed overrides
+        // and catalogs invalidate old bindings before re-enqueueing).
+        let resolution = &package_resolutions[package_id as usize];
+        if resolution.tag != resolution_tag {
+            continue;
+        }
+        // Byte-equal repos only. An scp-like repo ("git@host:path") is
+        // serialized with an "ssh://" prefix the dependency parse lacks, and
+        // every git task id downstream keys on these exact bytes, so binding
+        // across the two spellings would strand the isolated store's checkout
+        // waiter; scp dependencies keep the pre-reuse fetch path instead.
+        let locked = resolution.repository();
+        if !locked.repo.eql(repo.repo, buf, buf) || !locked.owner.eql(repo.owner, buf, buf) {
+            continue;
+        }
+        return Some(package_id);
+    }
+
+    None
 }
 
 pub(crate) enum ResolvedPackageTask {

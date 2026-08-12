@@ -1012,3 +1012,421 @@ it("optional peer with a non-wildcard range is idempotent with two versions of t
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
 });
+
+// Minimal gzipped tarball with a single root folder wrapping the files, the
+// shape of both github codeload tarballs and npm pack tarballs.
+function makeTarball(rootDir: string, files: Record<string, string>): Uint8Array {
+  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
+    const header = new Uint8Array(512);
+    const encoder = new TextEncoder();
+    header.set(encoder.encode(name), 0);
+    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
+    header.set(encoder.encode("0000000 "), 108);
+    header.set(encoder.encode("0000000 "), 116);
+    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
+    header.set(encoder.encode("00000000000 "), 136);
+    header.set(encoder.encode("        "), 148);
+    header[156] = (isDir ? "5" : "0").charCodeAt(0);
+    header.set(encoder.encode("ustar"), 257);
+    header.set(encoder.encode("00"), 263);
+    let checksum = 0;
+    for (const byte of header) checksum += byte;
+    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+    return header;
+  }
+  const blocks: Uint8Array[] = [];
+  blocks.push(tarHeader(`${rootDir}/`, 0, true));
+  for (const [name, contents] of Object.entries(files)) {
+    const bytes = new TextEncoder().encode(contents);
+    blocks.push(tarHeader(`${rootDir}/${name}`, bytes.length, false));
+    blocks.push(bytes);
+    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
+  }
+  blocks.push(new Uint8Array(1024));
+  return Bun.gzipSync(Buffer.concat(blocks));
+}
+
+// Isolate git from system/global config (e.g. core.autocrlf on Windows).
+async function makeGitFixture(packageDir: string) {
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+    GIT_AUTHOR_NAME: "bun-test",
+    GIT_AUTHOR_EMAIL: "test@bun.sh",
+    GIT_COMMITTER_NAME: "bun-test",
+    GIT_COMMITTER_EMAIL: "test@bun.sh",
+  };
+  async function git(args: string[], cwd: string): Promise<string> {
+    await using proc = spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("fatal:");
+    expect(code).toBe(0);
+    return out;
+  }
+  await write(join(packageDir, "gitconfig"), "[core]\n\tautocrlf = false\n");
+  return { gitEnv, git };
+}
+
+// The text lockfile writes the resolved commit in the committish position of a
+// git/github resolution string ("git+url#<sha>"), so after a lockfile round
+// trip a dependency naming a branch or tag (or no ref at all) never matches the
+// loaded committish again. Re-resolving (any edit that re-parses a workspace
+// member's dependency list) then fetched every such dependency from the remote
+// on every install. The identical dependency literal already bound in the
+// loaded lockfile must be reused instead.
+it("re-resolving reuses branch and bare ref git dependencies from the lockfile instead of re-fetching", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const { gitEnv, git } = await makeGitFixture(packageDir);
+
+  // Bare repos served over git's dumb HTTP protocol: after
+  // `git update-server-info`, a bare repo is plain static files.
+  async function makeBareRepo(name: string): Promise<string> {
+    const srcDir = join(packageDir, `${name}-src`);
+    await write(join(srcDir, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+    await write(join(srcDir, "index.js"), `module.exports = '${name}';\n`);
+    await git(["init", "-q", "-b", "main"], srcDir);
+    await git(["add", "-A"], srcDir);
+    await git(["commit", "-qm", "init"], srcDir);
+    const sha = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+    await git(["clone", "-q", "--bare", srcDir, join(packageDir, `${name}.git`)], packageDir);
+    await git(["update-server-info"], join(packageDir, `${name}.git`));
+    return sha;
+  }
+  const bareSha = await makeBareRepo("bare-dep");
+  const branchSha = await makeBareRepo("branch-dep");
+
+  let bareRequests = 0;
+  let branchRequests = 0;
+  await using gitServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      const match = pathname.match(/^\/((?:bare|branch)-dep\.git)\/(.+)$/);
+      if (!match) return new Response("not found", { status: 404 });
+      if (match[1] === "bare-dep.git") bareRequests++;
+      else branchRequests++;
+      const f = file(join(packageDir, match[1], match[2]));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const ghTarball = makeTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": "module.exports = 'gh';\n",
+  });
+  let githubDownloads = 0;
+  await using ghServer = Bun.serve({
+    port: 0,
+    fetch() {
+      githubDownloads++;
+      return new Response(ghTarball, { headers: { "Content-Type": "application/gzip" } });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    GITHUB_API_URL: `http://localhost:${ghServer.port}`,
+    // CI exports BUN_INSTALL_CACHE_DIR; pin it so this test's cache is its own.
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function install(retries = 1) {
+    const bareRequestsBefore = bareRequests;
+    const branchRequestsBefore = branchRequests;
+    const githubDownloadsBefore = githubDownloads;
+    await using proc = spawn({
+      // Explicit linker: the cold-cache stage below regresses only under the
+      // isolated linker's store (its entry waits on the locked commit's
+      // checkout id).
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL); that
+    // is environmental, not the behavior under test. A kill between git clone
+    // and git checkout leaves a half-created cache folder the next attempt
+    // would trust, so retry from a clean cache, with the counters restored to
+    // the aborted attempt's baseline.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+      bareRequests = bareRequestsBefore;
+      branchRequests = branchRequestsBefore;
+      githubDownloads = githubDownloadsBefore;
+      return install(retries - 1);
+    }
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  // The installs are staged so at most one git clone runs at a time: loaded
+  // CI machines reliably OOM-kill one of two concurrent git children under an
+  // ASAN build. Each stage edits the member, which re-parses its whole
+  // dependency list and re-resolves the dependencies added by earlier stages.
+  await write(packageJson, JSON.stringify({ name: "ws-root", workspaces: ["packages/*"] }));
+  const memberPackageJson = join(packageDir, "packages", "member", "package.json");
+  const memberDeps: Record<string, string> = {
+    "bare-dep": `git+http://127.0.0.1:${gitServer.port}/bare-dep.git`,
+  };
+  async function writeMember() {
+    await write(memberPackageJson, JSON.stringify({ name: "member", version: "1.0.0", dependencies: memberDeps }));
+  }
+  await writeMember();
+  await write(
+    join(packageDir, "packages", "member", "dummy", "package.json"),
+    JSON.stringify({ name: "dummy", version: "1.0.0" }),
+  );
+
+  await install();
+  expect(bareRequests).toBeGreaterThan(0);
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
+
+  // Adding dependencies to the member re-resolves bare-dep; its bare ref must
+  // bind to the loaded package without contacting the remote again.
+  memberDeps["branch-dep"] = `git+http://127.0.0.1:${gitServer.port}/branch-dep.git#main`;
+  memberDeps["gh-dep"] = "github:testowner/testrepo#main";
+  await writeMember();
+  const bareRequestsAfterFirstInstall = bareRequests;
+  await install();
+  expect(bareRequests).toBe(bareRequestsAfterFirstInstall);
+  expect(branchRequests).toBeGreaterThan(0);
+  expect(githubDownloads).toBeGreaterThan(0);
+  const lockSecond = await file(join(packageDir, "bun.lock")).text();
+  expect(lockSecond).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
+
+  // Another member edit re-resolves all three; none may go to the network.
+  memberDeps["dummy"] = "file:./dummy";
+  await writeMember();
+  const snapshot = { bareRequests, branchRequests, githubDownloads };
+  await install();
+  expect({ bareRequests, branchRequests, githubDownloads }).toEqual(snapshot);
+
+  // The locked commits did not move.
+  const lockAfter = await file(join(packageDir, "bun.lock")).text();
+  expect(lockAfter).toContain(`bare-dep@git+http://127.0.0.1:${gitServer.port}/bare-dep.git#${bareSha}`);
+  expect(lockAfter).toContain(`branch-dep@git+http://127.0.0.1:${gitServer.port}/branch-dep.git#${branchSha}`);
+  const memberModules = join(packageDir, "packages", "member", "node_modules");
+  expect(await file(join(memberModules, "bare-dep", "index.js")).text()).toBe("module.exports = 'bare-dep';\n");
+  expect(await file(join(memberModules, "branch-dep", "index.js")).text()).toBe("module.exports = 'branch-dep';\n");
+  expect(await file(join(memberModules, "gh-dep", "index.js")).text()).toBe("module.exports = 'gh';\n");
+
+  // Changing a dependency's ref is the boundary the reuse must not cross: a
+  // different literal consults the remote again (here the same commit wins,
+  // so only the request counter moves).
+  memberDeps["branch-dep"] = `git+http://127.0.0.1:${gitServer.port}/branch-dep.git`;
+  await writeMember();
+  const beforeRefChange = { bareRequests, branchRequests, githubDownloads };
+  await install();
+  expect(branchRequests).toBeGreaterThan(beforeRefChange.branchRequests);
+  expect({ bareRequests, githubDownloads }).toEqual({
+    bareRequests: beforeRefChange.bareRequests,
+    githubDownloads: beforeRefChange.githubDownloads,
+  });
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(`branch-dep.git#${branchSha}`);
+
+  // Cold cache with a moved branch head: the lockfile pin must win and the
+  // install must terminate. The isolated store waits on the locked commit's
+  // checkout; a re-enqueued dependency that follows the moved ref instead of
+  // the bound package's commit starves it forever (and without the reuse the
+  // pin silently floats to the new head).
+  const branchSrc = join(packageDir, "branch-dep-src");
+  await write(join(branchSrc, "index.js"), "module.exports = 'branch-dep-v2';\n");
+  await git(["add", "-A"], branchSrc);
+  await git(["commit", "-qm", "move"], branchSrc);
+  const movedSha = (await git(["rev-parse", "HEAD"], branchSrc)).trim();
+  await git(["fetch", "-q", branchSrc, "+refs/heads/*:refs/heads/*"], join(packageDir, "branch-dep.git"));
+  await git(["update-server-info"], join(packageDir, "branch-dep.git"));
+
+  // Drop every git dependency except the one under test so the cold install
+  // runs a single clone chain (see the staging note above).
+  delete memberDeps["dummy"];
+  delete memberDeps["bare-dep"];
+  await writeMember();
+  await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(memberModules, { recursive: true, force: true });
+  await install();
+  const lockCold = await file(join(packageDir, "bun.lock")).text();
+  expect(lockCold).toContain(`branch-dep.git#${branchSha}`);
+  expect(lockCold).not.toContain(movedSha);
+  expect(await file(join(memberModules, "branch-dep", "index.js")).text()).toBe("module.exports = 'branch-dep';\n");
+  // Five staged installs plus a git-child-kill retry exceed the 5s default;
+  // this also bounds the cold-cache starvation mode to a fast failure.
+}, 90_000);
+
+// `bun update` must keep going to the remote for a branch-tracking ref: the
+// reuse above is explicitly skipped for update targets.
+it("`bun update` still re-resolves a branch ref git dependency against the remote", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const { gitEnv, git } = await makeGitFixture(packageDir);
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+  await git(["init", "-q", "-b", "main"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "init"], srcDir);
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  let gitRequests = 0;
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      gitRequests++;
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function run(args: string[], retries = 1) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // A loaded CI machine can OOM-kill the spawned git child (SIGKILL); retry
+    // from a clean cache (a kill between clone and checkout leaves a
+    // half-created folder the next attempt would trust). Retrying only ever
+    // adds requests, so the requests-increase assertion holds.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+      return run(args, retries - 1);
+    }
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "git-update-root",
+      dependencies: { "git-dep": `git+http://127.0.0.1:${server.port}/repo.git#main` },
+    }),
+  );
+
+  await run(["install"]);
+  const requestsAfterInstall = gitRequests;
+  expect(requestsAfterInstall).toBeGreaterThan(0);
+
+  await run(["update", "git-dep"]);
+  expect(gitRequests).toBeGreaterThan(requestsAfterInstall);
+}, 60_000);
+
+// A changed override or catalog entry that moves a git dependency to a
+// different ref of the same repository must re-resolve every dependent.
+// Several dependencies sharing one name is the interesting case: the reuse
+// above must not rebind a cleared dependency to a sibling's not-yet-cleared
+// binding from the old entry.
+async function changedEntryReResolves(mode: "overrides" | "catalog") {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const { gitEnv, git } = await makeGitFixture(packageDir);
+
+  const srcDir = join(packageDir, "git-src");
+  const bareDir = join(packageDir, "repo.git");
+  await write(join(srcDir, "package.json"), JSON.stringify({ name: "over-dep", version: "1.0.0" }));
+  await write(join(srcDir, "index.js"), "module.exports = 'V1';\n");
+  await git(["init", "-q", "-b", "main"], srcDir);
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "v1"], srcDir);
+  await git(["tag", "v1"], srcDir);
+  const sha1 = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await write(join(srcDir, "index.js"), "module.exports = 'V2';\n");
+  await git(["add", "-A"], srcDir);
+  await git(["commit", "-qm", "v2"], srcDir);
+  await git(["tag", "v2"], srcDir);
+  const sha2 = (await git(["rev-parse", "HEAD"], srcDir)).trim();
+  await git(["clone", "-q", "--bare", srcDir, bareDir], packageDir);
+  await git(["update-server-info"], bareDir);
+
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+      const f = file(join(bareDir, pathname.slice("/repo.git/".length)));
+      return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+    },
+  });
+
+  const installEnv = {
+    ...gitEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+  };
+  async function install(retries = 1) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // See the retry note in the re-resolving test above.
+    if (retries > 0 && err.includes("git failed with signal 9")) {
+      await rm(installEnv.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true });
+      return install(retries - 1);
+    }
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
+  function rootPackageJson(ref: string) {
+    return JSON.stringify(
+      mode === "overrides"
+        ? {
+            name: "ws-root",
+            workspaces: ["packages/*"],
+            overrides: { "over-dep": `${repoUrl}#${ref}` },
+          }
+        : {
+            name: "ws-root",
+            workspaces: { packages: ["packages/*"], catalog: { "over-dep": `${repoUrl}#${ref}` } },
+          },
+    );
+  }
+  const memberSpec = mode === "overrides" ? "^1.0.0" : "catalog:";
+  await write(packageJson, rootPackageJson("v1"));
+  for (const member of ["member-a", "member-b"]) {
+    await write(
+      join(packageDir, "packages", member, "package.json"),
+      JSON.stringify({ name: member, version: "1.0.0", dependencies: { "over-dep": memberSpec } }),
+    );
+  }
+
+  await install();
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(`#${sha1}`);
+  expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V1';\n");
+
+  await write(packageJson, rootPackageJson("v2"));
+  await install();
+  const lockAfter = await file(join(packageDir, "bun.lock")).text();
+  expect(lockAfter).toContain(`#${sha2}`);
+  expect(lockAfter).not.toContain(`#${sha1}`);
+  expect(await file(join(packageDir, "node_modules", "over-dep", "index.js")).text()).toBe("module.exports = 'V2';\n");
+}
+
+it(
+  "a changed git override re-resolves every dependent instead of reusing the old pin",
+  () => changedEntryReResolves("overrides"),
+  60_000,
+);
+
+it(
+  "a changed git catalog entry re-resolves every dependent instead of reusing the old pin",
+  () => changedEntryReResolves("catalog"),
+  60_000,
+);

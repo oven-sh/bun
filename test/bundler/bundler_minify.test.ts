@@ -1359,6 +1359,24 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("minify/BunImportDefaultAliasAndNamed", {
+    files: {
+      "/entry.js": /* js */ `
+        import { default as bun, embeddedFiles } from "bun"
+        import { default as bunAgain } from "bun"
+        console.log(typeof embeddedFiles)
+        console.log(bun === Bun, bunAgain === Bun)
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "object\ntrue true",
+    },
+  });
+
   // https://github.com/oven-sh/bun/issues/31722
   // An arrow whose body is a single `return <value>` collapses to a shorthand
   // expression body when minifying: `(a) => { return a; }` becomes `(a) => a`.

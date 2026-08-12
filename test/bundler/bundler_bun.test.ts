@@ -77,6 +77,70 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // A non-entry `export * from "bun"` is evaluated at runtime with __reExport(),
+  // which has to read the Bun object before the re-exporting module's body runs.
+  itBundled("bun/ReExportStarFromBunInNonEntryFile", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Glob, version } from "./re-export";
+        console.log(typeof Glob, version === Bun.version);
+      `,
+      "/re-export.ts": `export * from "bun";`,
+    },
+    run: { stdout: "function true" },
+  });
+  itBundled("bun/ReExportStarFromBunInNonEntryFileCJS", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Glob, version } from "./re-export";
+        console.log(typeof Glob, version === Bun.version);
+      `,
+      "/re-export.ts": `export * from "bun";`,
+    },
+    runtimeFiles: {
+      // The entry point exports nothing, so nothing may be copied onto its
+      // module.exports. (When the whole Bun object was, running the bundle
+      // directly made Bun treat the copied "fetch" as a server entry point.)
+      "/test.js": /* js */ `
+        const entry = require("./out.js");
+        console.log(typeof entry.fetch, Object.keys(entry).length);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "function true\nundefined 0",
+    },
+  });
+  // The default export of "bun" is the Bun object itself.
+  itBundled("bun/ReExportDefaultFromBun", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import ReExported, { G } from "./re-export";
+        import { default as Aliased } from "bun";
+        console.log(ReExported === Bun, Aliased === Bun, typeof G);
+      `,
+      "/re-export.ts": `export { default, Glob as G } from "bun";`,
+    },
+    run: { stdout: "true true function" },
+  });
+  itBundled("bun/ReExportDefaultFromBunCJS", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        import ReExported from "./re-export";
+        import Direct, { Glob } from "bun";
+        import * as ns from "bun";
+        console.log(ReExported === Bun, Direct === Bun, typeof Glob, ns.default === Bun, ns.Glob === Glob);
+      `,
+      "/re-export.ts": `export { default } from "bun";`,
+    },
+    run: { stdout: "true true function true true" },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",

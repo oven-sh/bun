@@ -190,6 +190,16 @@ const _: () = {
         safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
     }
 
+    // `JSS3File` (src/jsc/bindings/JSS3File.cpp) is the `JSBlob` subclass whose
+    // prototype carries `presign` / `stat` / `bucket`. Like `Blob__create` it
+    // adopts `blob` as `m_ctx`; the `JSBlob` finalizer releases it.
+    crate::jsc_abi_extern! {
+        fn BUN__createJSS3FileUnsafely(
+            global: &JSGlobalObject,
+            blob: *mut core::ffi::c_void,
+        ) -> JSValue;
+    }
+
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value))
@@ -197,12 +207,19 @@ const _: () = {
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)
         }
+        /// The Rust-side way to wrap a `Blob` (the JS constructors and the
+        /// `Blob__dupe` / `Blob__fromBytes*` exports instead return the
+        /// [`Blob::new`] pointer for C++ to wrap): heap-promotes `self` and gives
+        /// the allocation to the wrapper, which owns it from then on
+        /// ([`Blob::finalize`]). S3-backed blobs get the `JSS3File` subclass.
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            // Heap-promote and hand
-            // ownership to the codegen wrapper. The S3File fast-path (different
-            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
-            // S3-backed blobs; lower-tier callers never construct S3 blobs.
+            let is_s3 = self.is_s3();
             let ptr = Blob::new(self);
+            if is_s3 {
+                // SAFETY: `ptr` is the allocation `Blob::new` just returned and
+                // nothing else holds it; the wrapper becomes its sole owner.
+                return unsafe { BUN__createJSS3FileUnsafely(global, ptr.cast()) };
+            }
             JSBlob::to_js(ptr, global)
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -212,10 +229,15 @@ const _: () = {
 };
 
 impl Blob {
-    /// Heap-promote and mark as
-    /// heap-allocated so `deinit` knows to free the heap box.
+    /// Heap-promote and mark as heap-allocated so `deinit` knows to free the
+    /// heap box. Every JS wrapper, whether created from Rust ([`JsClass::to_js`])
+    /// or from C++ (the constructors, `Blob__dupe`, `Blob__fromBytes*`), adopts
+    /// a pointer minted here and reports `reported_estimated_size` to the GC
+    /// from then on, so this is where the size is computed: only the store,
+    /// content type and name set before this call are counted.
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
+        blob.calculate_estimated_byte_size();
         blob.ref_count = bun_ptr::RawRefCount::init(1);
         bun_core::heap::into_raw(Box::new(blob))
     }
@@ -449,6 +471,47 @@ impl Blob {
             // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
             store::Data::S3(s3) => Some(s3.path()),
         }
+    }
+
+    /// Compute `reported_estimated_size`: the in-memory footprint (not the size
+    /// on disk) that [`Self::estimated_size`] reports. [`Blob::new`] calls this
+    /// for every heap blob; a type that embeds a `Blob` by value and reports it
+    /// as part of its own size calls it directly. The GC reads the result from
+    /// its marking threads once the blob is reachable, which is why it is a
+    /// value cached up front rather than a walk of the store at report time.
+    pub fn calculate_estimated_byte_size(&self) {
+        let mut size = core::mem::size_of::<Blob>();
+
+        if let Some(store) = self.store() {
+            size += core::mem::size_of::<Store>();
+            match &store.data {
+                store::Data::Bytes(bytes) => {
+                    size += bytes.stored_name.len();
+                    size += if self.size.get() != MAX_SIZE {
+                        self.size.get() as usize
+                    } else {
+                        bytes.len() as usize
+                    };
+                }
+                store::Data::File(file) => size += file.pathlike.estimated_size(),
+                store::Data::S3(s3) => size += s3.estimated_size(),
+            }
+        }
+
+        let content_type = self.content_type.get();
+        if content_type.is_owned() {
+            size += content_type.as_slice().len();
+        }
+        self.reported_estimated_size
+            .set(size + self.name.get().byte_slice().len());
+    }
+
+    /// Body of the generated `Blob__estimatedSize` thunk (`estimatedSize: true`
+    /// in response.classes.ts): what `Blob__create` reports when it allocates
+    /// the wrapper and what `JSBlob::visitChildren` re-reports on every GC.
+    #[inline]
+    pub fn estimated_size(&self) -> usize {
+        self.reported_estimated_size.get()
     }
 
     /// Tear down owned resources; if

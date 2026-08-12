@@ -1971,7 +1971,8 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
+    use crate::webcore::blob::Blob;
+    use bun_jsc::JsClass as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm();
@@ -2022,11 +2023,9 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // as the blob name, preserving any subdirectory from the asset template.
         let input_blob: &mut Blob = file.file_blob(global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let blob = Blob::new(input_blob.dupe_with_content_type(true));
-        // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().dupe_ref()) };
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        let blob = input_blob.dupe_with_content_type(true);
+        blob.name.set(input_blob.name.get().dupe_ref());
+        array.put_index(global_this, i as u32, blob.to_js(global_this))?;
     }
 
     Ok(array)
@@ -2990,7 +2989,8 @@ mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore};
-    use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
+    use crate::webcore::blob::{Blob, Store, StoreRef};
+    use bun_jsc::JsClass as _;
 
     thread_local! {
         static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
@@ -3036,9 +3036,7 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        Blob::init_with_store(store, global_this).to_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

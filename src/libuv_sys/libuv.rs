@@ -14,6 +14,13 @@
     non_upper_case_globals,
     clippy::missing_safety_doc
 )]
+#![allow(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "*_sys FFI bindings, as in bun_uws_sys: the `init`/`spawn`/`write*`/`set_data`/\
+              `dump_active_handles` wrappers hand the caller's loop, stream, options, data or `FILE*` \
+              pointer straight to libuv; the SAFETY comment in each body states that pointer's \
+              contract, which is the same whether or not the wrapper is spelled `unsafe fn`"
+)]
 
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
@@ -21,31 +28,23 @@ use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
-// (no `bun_output` dep): an `eprintln!` gated by `BUN_DEBUG_uv` in debug, a
-// constant-false branch in release — the arguments stay type-checked (and
-// count as used) in both, like `bun_core::scoped_log!`.
+// Debug log scope (`bun.Output.scoped(.uv, .hidden)`, enabled by
+// `BUN_DEBUG_uv=1`). `log!` is `#[macro_export]`ed because other crates call
+// it as `bun_sys::windows::libuv::log!`, so its body names everything through
+// `$crate`; the scope static lives in a hidden module so the crate-root glob
+// re-export does not hand every `use libuv::*` a bare `uv` item.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
-#[inline]
-pub fn __uv_log_enabled() -> bool {
-    if !cfg!(debug_assertions) {
-        return false;
-    }
-    // `Output.scoped` reads the env var once at startup; `inc/dec` are on the
-    // per-handle ref/unref hot path, so cache the lookup instead of paying a
-    // GetEnvironmentVariableW syscall + alloc per tick.
-    static ENABLED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| ::std::env::var_os("BUN_DEBUG_uv").is_some())
+pub mod __macro_support {
+    pub use bun_core::scoped_log;
+    bun_core::declare_scope!(uv, hidden);
 }
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uv_log {
-    ($($arg:tt)*) => {{
-        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
-            ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
-        }
-    }};
+    ($($arg:tt)*) => {
+        $crate::__macro_support::scoped_log!($crate::__macro_support::uv, $($arg)*)
+    };
 }
 /// `bun.windows.libuv.log` — re-exported under the conventional name.
 pub use crate::__uv_log as log;
@@ -179,6 +178,8 @@ impl uv_buf_t {
         if self.len == 0 || self.base.is_null() {
             return &mut [];
         }
+        // SAFETY: fn contract — `(base, len)` is a writeable allocation that
+        // nothing else borrows for the returned slice's lifetime.
         unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
     }
 }
@@ -463,6 +464,11 @@ impl Loop {
             // SAFETY: live per-thread loop; `count` is the active arm of the
             // union whenever the loop is initialised (uv/win.h).
             unsafe {
+                #[allow(
+                    clippy::while_immutable_condition,
+                    reason = "`uv_run` completes in-flight requests and decrements `active_reqs.count` \
+                              through `loop_`, which the condition re-reads through the raw pointer"
+                )]
                 while (*loop_).active_reqs.count > 0 {
                     log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
                     uv_run(loop_, RunMode::Once);
@@ -499,6 +505,8 @@ impl Loop {
                     // SAFETY: every linked handle's storage is still allocated
                     // (owners are freed only after this returns).
                     unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
+                    // SAFETY: as above; closing handles from inside `uv_walk` is
+                    // supported (the close only takes effect when the loop runs below).
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
                     // Everything is closing now; only close callbacks / endgames
                     // remain. Turn the loop without blocking until they have run —
@@ -600,9 +608,12 @@ impl Loop {
     pub fn wakeup(&mut self) {
         self.wq_async.send();
     }
+    /// `stream` is an open C `FILE*` (e.g. the CRT's stderr); libuv only
+    /// writes to it during this call.
     #[inline]
     pub fn dump_active_handles(&mut self, stream: *mut c_void) {
-        // SAFETY: self is a live loop.
+        // SAFETY: self is a live loop; `stream` is the caller's open `FILE*`,
+        // which libuv neither retains nor closes.
         unsafe { uv_print_active_handles(self, stream) };
     }
 }
@@ -648,6 +659,9 @@ unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
+        // SAFETY: same live handle, not yet closing; `close_thread_loop` keeps
+        // its storage allocated until the close has run, and a null close
+        // callback is allowed.
         unsafe { uv_close(handle, None) };
     }
 }
@@ -682,7 +696,8 @@ pub unsafe trait UvHandle: Sized {
     }
     #[inline]
     fn set_data(&mut self, ptr_: *mut c_void) {
-        // SAFETY: handle prefix invariant.
+        // SAFETY: handle prefix invariant; `ptr_` is an opaque token libuv
+        // stores in `handle->data` and never dereferences.
         unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
     }
     /// Typed `Box<T>`-taking sibling of [`set_data`] for the common case where
@@ -775,22 +790,37 @@ pub unsafe trait UvHandle: Sized {
         fd_
     }
 }
-// SAFETY: all of these are `#[repr(C)]` with `UV_HANDLE_FIELDS` first.
+// SAFETY: `Handle` is `UV_HANDLE_FIELDS` itself.
 unsafe impl UvHandle for Handle {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_stream_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for Pipe {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_tcp_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_tty_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_udp_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for Timer {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_async_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_prepare_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_check_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_idle_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_poll_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_signal_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for Process {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_fs_event_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `Handle`'s (`UV_HANDLE_FIELDS`).
 unsafe impl UvHandle for uv_fs_poll_t {}
 
 /// Marker for `#[repr(C)]` structs prefixed with `UV_STREAM_FIELDS`
@@ -916,10 +946,13 @@ pub trait StreamReader: Sized {
     /// `this` is the live context passed to [`UvStream::read_start_ctx`].
     unsafe fn on_read(this: *mut Self, data: &[u8]);
 }
-// SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
+// SAFETY: `uv_stream_t` is `UV_HANDLE_FIELDS` + `UV_STREAM_FIELDS` itself.
 unsafe impl UvStream for uv_stream_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_stream_t`'s.
 unsafe impl UvStream for Pipe {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_stream_t`'s.
 unsafe impl UvStream for uv_tcp_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_stream_t`'s.
 unsafe impl UvStream for uv_tty_t {}
 
 /// Marker for `#[repr(C)]` structs prefixed with `UV_REQ_FIELDS`.
@@ -935,7 +968,8 @@ pub unsafe trait UvReq: Sized {
     }
     #[inline]
     fn set_data(&mut self, ptr_: *mut c_void) {
-        // SAFETY: req prefix invariant.
+        // SAFETY: req prefix invariant; `ptr_` is an opaque token libuv stores
+        // in `req->data` and never dereferences.
         unsafe { uv_req_set_data(self.as_req(), ptr_) };
     }
     #[inline]
@@ -944,15 +978,25 @@ pub unsafe trait UvReq: Sized {
         let _ = unsafe { uv_cancel(self.as_req()) };
     }
 }
+// SAFETY: `uv_req_t` is `UV_REQ_FIELDS` itself.
 unsafe impl UvReq for uv_req_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_write_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_connect_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_shutdown_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_getaddrinfo_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_getnameinfo_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_work_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_random_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for fs_t {}
+// SAFETY: `#[repr(C)]`; its first fields are exactly `uv_req_t`'s (`UV_REQ_FIELDS`).
 unsafe impl UvReq for uv_udp_send_t {}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1292,7 +1336,9 @@ impl Pipe {
     /// free of `bun_sys`.
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
-        // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
+        // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation; `loop_` is a
+        // live, initialised loop (`Loop::get()` or the owner's `uv_loop()`) that
+        // outlives every handle initialised on it.
         let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
         if rc.0 == 0 {
             open_handles::add_pipe(self);
@@ -1406,6 +1452,8 @@ impl Pipe {
             // Never initialized — safe to free directly.
             // SAFETY: caller contract — Box-allocated; no `&mut` borrow held.
             drop(unsafe { Box::from_raw(this) });
+        // SAFETY: caller contract — `this` is live and, being initialised, was
+        // not freed above.
         } else if !unsafe { (*this).is_closing() } {
             // Initialized and not yet closing — must uv_close first.
             // SAFETY: `this` is live until the close cb fires.
@@ -1472,7 +1520,9 @@ pub type Tty = uv_tty_t;
 impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
-        // SAFETY: self is a valid `uv_tty_t`-sized allocation.
+        // SAFETY: self is a valid `uv_tty_t`-sized allocation; `loop_` is a
+        // live, initialised loop (`Loop::get()` or the owner's `uv_loop()`) that
+        // outlives every handle initialised on it.
         let rc = unsafe { uv_tty_init(loop_, self, file, 0) };
         // fd 0 is the process-static stdin tty (never freed, shared across
         // threads by design); everything else is a heap tty owned by this thread.
@@ -1555,7 +1605,9 @@ pub type uv_timer_t = Timer;
 impl Timer {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop) {
-        // SAFETY: `self` is a valid `uv_timer_t`-sized allocation.
+        // SAFETY: `self` is a valid `uv_timer_t`-sized allocation; `loop_` is a
+        // live, initialised loop (`Loop::get()` or the owner's `uv_loop()`) that
+        // outlives every handle initialised on it.
         if unsafe { uv_timer_init(loop_, self) } != 0 {
             panic!("internal error: uv_timer_init failed");
         }
@@ -1626,7 +1678,9 @@ impl uv_idle_t {
     pub fn init(&mut self, loop_: *mut Loop) {
         // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
         unsafe { ptr::write_bytes(self, 0, 1) };
-        // SAFETY: self is a valid `uv_idle_t`-sized allocation.
+        // SAFETY: self is a valid `uv_idle_t`-sized allocation; `loop_` is a
+        // live, initialised loop (`Loop::get()` or the owner's `uv_loop()`) that
+        // outlives every handle initialised on it.
         if unsafe { uv_idle_init(loop_, self) } != 0 {
             panic!("internal error: uv_idle_init failed");
         }
@@ -1662,7 +1716,9 @@ impl uv_async_t {
     pub fn init(&mut self, loop_: *mut Loop, callback: uv_async_cb) {
         // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
         unsafe { ptr::write_bytes(self, 0, 1) };
-        // SAFETY: self is a valid `uv_async_t`-sized allocation.
+        // SAFETY: self is a valid `uv_async_t`-sized allocation; `loop_` is a
+        // live, initialised loop (`Loop::get()` or the owner's `uv_loop()`) that
+        // outlives every handle initialised on it.
         if unsafe { uv_async_init(loop_, self, callback) } != 0 {
             panic!("internal error: uv_async_init failed");
         }
@@ -1709,7 +1765,11 @@ pub type uv_process_t = Process;
 impl Process {
     #[inline]
     pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
-        // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
+        // SAFETY: `self` is a valid `uv_process_t`-sized allocation; `loop_` is
+        // a live, initialised loop (`Loop::get()` or the owner's `uv_loop()`)
+        // that outlives the handle; `options` points at the caller's populated
+        // options struct, which libuv only reads during this call (it copies
+        // what it keeps).
         let rc = unsafe { uv_spawn(loop_, self, options) };
         if rc.0 == 0 {
             open_handles::add_process(self);
@@ -2122,6 +2182,7 @@ impl fs_t {
     /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
     #[inline]
     pub unsafe fn file_fd(&self) -> uv_file {
+        // SAFETY: fn contract — the caller's last `uv_fs_*` call wrote the `fd` arm.
         unsafe { self.file.fd }
     }
 }
@@ -2476,23 +2537,51 @@ pub struct ReturnCode(pub(crate) c_int);
 // a valid pre-`uv_*_init` state. Auditing the bound once per type here lets every
 // `Box::new(zeroed())` / stack out-param site drop its `unsafe` block.
 //
-// SAFETY (per type): audited against the field list in this file — no
-// `NonNull`/`NonZero`/reference/bare-fn-ptr fields; every enum field has a
-// `= 0` discriminant (`HandleType::Unknown`, `uv_req_type`/`uv_fs_type` are
-// plain `c_uint`/`c_int`).
+// Each impl below was audited against the field list in this file (including
+// the embedded `bun_windows_sys` structs): no `NonNull`/`NonZero`/reference/
+// bare-fn-ptr fields, and the only enum field is `HandleType`
+// (`uv_req_type`/`uv_fs_type` are plain `c_uint`/`c_int`).
+
+// SAFETY: integer and raw-pointer fields only; all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_buf_t {}
+// SAFETY: integer and raw-pointer fields only (`req_u` included); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_req_t {}
+// SAFETY: integers, raw pointers and an `Option` callback (zero is `None`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
+// SAFETY: integers, raw pointers and an `Option` callback (zero is `None`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
+// SAFETY: integers, raw pointers, an `Option` callback (zero is `None`) and
+// `HandleType` (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for Handle {}
+// SAFETY: integers, raw pointers, `Option` callbacks (zero is `None`) and
+// `HandleType` (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for Timer {}
+// SAFETY: every field and union arm (`CRITICAL_SECTION` included) is integers,
+// raw pointers, `Option` callbacks (zero is `None`) or `HandleType`
+// (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for Pipe {}
+// SAFETY: integers, raw pointers, `Option` callbacks (zero is `None`) and
+// `HandleType` (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_idle_t {}
+// SAFETY: every field (`AFD_POLL_INFO` included) is integers, raw pointers,
+// `Option` callbacks (zero is `None`) or `HandleType` (`Unknown = 0`);
+// all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_poll_t {}
+// SAFETY: integers, raw pointers, `Option` callbacks (zero is `None`) and
+// `HandleType` (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
+// SAFETY: integers (`ReturnCode` is a transparent `c_int`), raw pointers and
+// `Option` callbacks (zero is `None`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
+// SAFETY: every field and union arm (`INPUT_RECORD`/`COORD` included) is
+// integers, raw pointers, `Option` callbacks (zero is `None`) or `HandleType`
+// (`Unknown = 0`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
+// SAFETY: every field and union arm is integers (`ReturnCodeI64` is a
+// transparent `i64`), `f64`s, raw pointers or `Option` callbacks (zero is
+// `None`); all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
+// SAFETY: integer fields only; all-zero is valid.
 unsafe impl bun_core::ffi::Zeroable for uv_stat_t {}
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);

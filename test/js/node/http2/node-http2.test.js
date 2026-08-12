@@ -1838,18 +1838,28 @@ it("http2 session.goaway() validates input types", async done => {
   });
 });
 
+// Resolves with the arguments of the next `event`; rejects instead if the emitter errors or closes
+// first, so a frame that never shows up fails with the reason rather than with the test timeout.
+// The listeners are removed once settled, so errors a test expects later stay its own business.
+function nextEvent(emitter, event) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const onEvent = (...args) => resolve(args);
+  const onClose = () => reject(new Error(`'close' was emitted before '${event}'`));
+  emitter.once(event, onEvent).once("error", reject).once("close", onClose);
+  return promise.finally(() => emitter.off(event, onEvent).off("error", reject).off("close", onClose));
+}
+
 // node defines goaway() once, on Http2Session, so a client session rejects the same arguments
 // as a server session. Every rejected call below must throw synchronously without putting a
 // GOAWAY frame on the wire.
 it("http2 client and server sessions validate goaway() arguments identically", async () => {
   const server = http2.createServer();
-  const { promise: serverSessionOpened, resolve: onServerSession } = Promise.withResolvers();
-  server.once("session", onServerSession);
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const serverSessionOpened = nextEvent(server, "session");
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
   try {
-    await new Promise(resolve => client.once("connect", resolve));
-    const serverSession = await serverSessionOpened;
+    await nextEvent(client, "connect");
+    const [serverSession] = await serverSessionOpened;
 
     function thrown(fn) {
       try {
@@ -1884,12 +1894,10 @@ it("http2 client and server sessions validate goaway() arguments identically", a
 
     // Frames are ordered on the wire, so the first GOAWAY the server sees being the valid one
     // proves none of the rejected client calls sent anything (a string opaqueData used to).
-    const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
-    serverSession.once("goaway", (code, lastStreamID, opaqueData) =>
-      onGoaway({ code, lastStreamID, opaqueData: opaqueData.toString() }),
-    );
+    const goawayReceived = nextEvent(serverSession, "goaway");
     client.goaway(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, 0, Buffer.from("bye"));
-    expect(await goawayReceived).toEqual({
+    const [code, lastStreamID, opaqueData] = await goawayReceived;
+    expect({ code, lastStreamID, opaqueData: opaqueData.toString() }).toEqual({
       code: http2.constants.NGHTTP2_ENHANCE_YOUR_CALM,
       lastStreamID: 0,
       opaqueData: "bye",
@@ -1918,23 +1926,25 @@ it("http2 session.goaway() and destroy() accept any numeric code like node and s
   // 'goaway' event carried. One connection per call: the receiver tears the session down right
   // after emitting a non-zero GOAWAY, so a connection can only observe one of them.
   async function issueAndReadPeer(sender, issue) {
-    const { promise: serverSessionOpened, resolve: onServerSession } = Promise.withResolvers();
-    server.once("session", onServerSession);
+    const serverSessionOpened = nextEvent(server, "session");
     const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    // The non-zero codes below make whichever side receives them destroy itself with
+    // ERR_HTTP2_SESSION_ERROR, and the destroy() row emits its error on the issuing side.
     client.on("error", () => {});
     try {
-      await new Promise(resolve => client.once("connect", resolve));
-      const serverSession = await serverSessionOpened;
-      const { promise: codeReceived, resolve: onGoaway } = Promise.withResolvers();
+      await nextEvent(client, "connect");
+      const [serverSession] = await serverSessionOpened;
       const [session, peer] = sender === "client" ? [client, serverSession] : [serverSession, client];
-      peer.once("goaway", onGoaway);
       try {
         issue(session);
       } catch (e) {
         return { threw: e.code, destroyed: session.destroyed };
       }
       const destroyed = session.destroyed;
-      return { code: await codeReceived, destroyed };
+      // The frame just written cannot reach the peer before this tick yields, so listening for it
+      // only now is safe and leaves nothing pending on the `threw` path above.
+      const [code] = await nextEvent(peer, "goaway");
+      return { code, destroyed };
     } finally {
       client.destroy();
     }
@@ -1980,15 +1990,15 @@ it("http2 client session.goaway() sends opaqueData given as any Buffer, TypedArr
   try {
     const received = {};
     for (const [name, view] of Object.entries(views)) {
-      const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
-      server.once("session", session =>
-        session.once("goaway", (code, lastStreamID, opaqueData) => onGoaway(opaqueData)),
-      );
+      const serverSessionOpened = nextEvent(server, "session");
       const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
       try {
-        await new Promise(resolve => client.once("connect", resolve));
+        await nextEvent(client, "connect");
+        const [serverSession] = await serverSessionOpened;
+        const goawayReceived = nextEvent(serverSession, "goaway");
         client.goaway(http2.constants.NGHTTP2_NO_ERROR, 0, view);
-        received[name] = (await goawayReceived).toString();
+        const [, , opaqueData] = await goawayReceived;
+        received[name] = opaqueData.toString();
       } finally {
         client.destroy();
       }

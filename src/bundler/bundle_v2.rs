@@ -1074,12 +1074,10 @@ pub mod bv2_impl {
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
             pub struct Resolve {
-                /// For `dispatch()` and the answer, which run on the loop that
-                /// owns the pass. `run_on_js_thread` runs on the plugins' thread
-                /// while that loop is mid-tick on the pass, so it must not
-                /// dereference this; what it needs is copied into `plugins`.
+                /// Only for the pass's own loop (`dispatch()`, the answer);
+                /// `run_on_js_thread` runs on the plugins' thread and uses `plugins`.
                 pub bv2: *mut BundleV2<'static>,
-                /// `BundleV2::plugins` as of `init`, for `run_on_js_thread`.
+                /// `BundleV2::plugins` as of `init`.
                 pub(crate) plugins: Option<core::ptr::NonNull<Plugin>>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
@@ -1142,7 +1140,7 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
                 }
-                /// Plugins' JS thread; see `bv2`.
+                /// Plugins' JS thread.
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
@@ -1185,7 +1183,7 @@ pub mod bv2_impl {
             pub struct Load {
                 /// See `Resolve::bv2`.
                 pub bv2: *mut BundleV2<'static>,
-                /// `BundleV2::plugins` as of `init`, for `run_on_js_thread`.
+                /// `BundleV2::plugins` as of `init`.
                 pub(crate) plugins: Option<core::ptr::NonNull<Plugin>>,
                 pub(crate) source_index: bun_ast::Index,
                 pub(crate) default_loader: Loader,
@@ -1275,7 +1273,7 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
-                /// Plugins' JS thread; see `Resolve::bv2`.
+                /// Plugins' JS thread.
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;

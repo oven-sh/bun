@@ -15,9 +15,8 @@ use core::ptr::NonNull;
 /// Embedded in the pass as `BundleV2::drain_defer_task`.
 #[derive(Default)]
 pub struct DeferredBatchTask {
-    /// `BundleV2::plugins`, copied by `schedule`. `run_on_js_thread` runs on
-    /// the plugins' thread while the bundle thread is mid-tick on the pass
-    /// this task is embedded in, so it does not walk back to the pass.
+    /// `BundleV2::plugins`, copied by `schedule`: `run_on_js_thread` runs on
+    /// the plugins' thread, which must not reach into the pass.
     plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 
@@ -38,8 +37,7 @@ impl DeferredBatchTask {
         bv2.enqueue_on_js_loop_for_plugins(task);
     }
 
-    /// Plugins' JS thread. The void result is deliberate; see
-    /// `Plugin::drain_deferred`.
+    /// Plugins' JS thread.
     pub fn run_on_js_thread(&self) {
         JSBundlerPlugin::opaque_mut(self.plugins.expect("plugins").as_ptr()).drain_deferred();
     }

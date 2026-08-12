@@ -53,8 +53,16 @@ describe("Native types report their size correctly", () => {
     expect(estimateShallowMemoryUsageOf(new File([], longName))).toBeGreaterThanOrEqual(longName.length);
 
     // A single Blob part shares the source's store instead of copying it; the
-    // new File still has to report it.
+    // new File still has to report it (and not just repeat what the source reported).
     expect(estimateShallowMemoryUsageOf(new File([file], name))).toBeGreaterThanOrEqual(payload.byteLength);
+
+    // Over a file-backed or S3-backed store the name lives on the File itself
+    // instead of in the store.
+    expect(estimateShallowMemoryUsageOf(new File([Bun.file(import.meta.path)], longName))).toBeGreaterThanOrEqual(
+      longName.length,
+    );
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" }).file("key");
+    expect(estimateShallowMemoryUsageOf(new File([s3], longName))).toBeGreaterThanOrEqual(longName.length);
 
     class MyFile extends File {}
     const subclassed = new MyFile([payload], name);
@@ -70,13 +78,14 @@ describe("Native types report their size correctly", () => {
   });
 
   // `new File()` and S3 files are the two Blob wrappers created outside the
-  // generated Blob constructor. Bun caps JSC's allocation budget per GC cycle at
-  // 8 MiB (largeHeapSize), so 512 instances that each own ~64 KB (a payload, or
-  // the credentials an S3 file copies) are worth several collections, but only if
-  // the wrapper reports that size when it is created: the cells themselves are a
-  // few dozen bytes each and never get near the budget. `className` is the heap
-  // type both the prototype and the instances are counted under.
-  describe.each([
+  // generated Blob constructor. Bun lowers JSC's minimum allocation budget per GC
+  // cycle (largeHeapSize) to 8 MiB, which is what a fresh process with almost
+  // nothing live gets, so 512 instances that each own ~64 KB (a payload, or the
+  // credentials an S3 file copies) are worth several collections, but only if the
+  // wrapper reports that size when it is created: the cells themselves are a few
+  // dozen bytes each and never get near the budget. `className` is the heap type
+  // both the prototype and the instances are counted under.
+  describe.concurrent.each([
     {
       className: "Blob",
       setup: /* js */ `const payload = Buffer.alloc(64 * 1024, "abc");`,
@@ -132,9 +141,10 @@ describe("Native types report their size correctly", () => {
       const { before, withHeld, created, alive } = JSON.parse(stdout);
       // Positive control: the counter really counts these instances.
       expect(withHeld).toBe(before + 1);
-      // Seen: 10-25 alive when the size is reported on construction, and the
-      // 8 MiB budget keeps whatever piles up after the last collection to about a
-      // quarter of them; exactly `created` when it is not reported.
+      // Seen: 10-25 alive when the size is reported on construction; roughly one
+      // budget's worth (~125 of these) is what can pile up after the last
+      // collection, so the budget would have to double before the bound is at
+      // risk. Exactly `created` survive when the size is not reported.
       expect(alive).toBeLessThan(created / 2);
       expect(exitCode).toBe(0);
     });

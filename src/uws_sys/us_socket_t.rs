@@ -370,6 +370,19 @@ impl us_socket_t {
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
+    /// Reads and dispatches everything the kernel still holds for this socket,
+    /// then dispatches `on_end` and closes it, as if the peer's EOF had been
+    /// read. For owners that learn out of band that the peer is gone (IPC
+    /// child exit). Re-enters the socket's handlers synchronously.
+    #[cfg(not(windows))]
+    pub(crate) fn drain_readable_then_end(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_drain_readable_then_end({:p})", self);
+        // SAFETY: self is a live us_socket_t. Declared over `*mut` (like
+        // `us_socket_close`) because the dispatch re-enters this socket's
+        // handlers, which reach it again through their own pointers.
+        unsafe { c::us_socket_drain_readable_then_end(self) };
+    }
+
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: both slices valid for their respective lengths
@@ -524,6 +537,8 @@ mod c {
             length: i32,
             fd: i32,
         ) -> i32;
+        #[cfg(not(windows))]
+        pub(super) fn us_socket_drain_readable_then_end(s: *mut us_socket_t);
         pub(super) fn us_socket_write2(
             s: *mut us_socket_t,
             header: *const u8,

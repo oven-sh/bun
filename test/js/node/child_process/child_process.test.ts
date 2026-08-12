@@ -1,7 +1,18 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -192,6 +203,67 @@ describe("fork() IPC", () => {
       stdout: ['{"stdin":"chardev"}', "child exit 0"],
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same scenario as "delivers messages sent right before exit" in test/js/bun/spawn/spawn.ipc.test.ts,
+  // through fork(): on the waiter-thread exit path the child's exit is processed before the IPC
+  // socket is read, and the messages it sent just before exiting used to be dropped. node emits
+  // them before 'exit'. The parent stays off its event loop until the child is dead so the exit is
+  // always processed first.
+  it.concurrent.skipIf(!isLinux)("delivers messages the child sent right before exiting", async () => {
+    using dir = tempDir("fork-message-before-exit", {
+      "child.js": `process.send("hello"); Promise.resolve().then(() => process.exit(3));`,
+      "parent.js": `
+        const { fork } = require("node:child_process");
+        const { readFileSync } = require("node:fs");
+        const events = [];
+        const child = fork(require("node:path").join(__dirname, "child.js"));
+        child.on("message", message => events.push(["message", message]));
+        child.on("exit", code => events.push(["exit", code]));
+        child.on("disconnect", () => events.push(["disconnect"]));
+        child.on("close", code => {
+          events.push(["close", code]);
+          console.log(JSON.stringify(events));
+        });
+        function childIsDead() {
+          let stat;
+          try {
+            stat = readFileSync("/proc/" + child.pid + "/stat", "latin1");
+          } catch {
+            return true; // already reaped
+          }
+          // "<pid> (<comm>) <state> ..."
+          return stat[stat.lastIndexOf(")") + 2] === "Z";
+        }
+        const deadline = Date.now() + 30_000;
+        while (!childIsDead()) {
+          if (Date.now() > deadline) throw new Error("child did not exit");
+          Bun.sleepSync(1);
+        }
+        // The waiter thread posts the exit task moments after the child dies; give it a generous
+        // head start before this process returns to its event loop.
+        Bun.sleepSync(50);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      // BUN_FEATURE_FLAG_FORCE_WAITER_THREAD is only honored when BUN_GARBAGE_COLLECTOR_LEVEL is
+      // also set; bunEnv sets the latter.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const events: unknown[][] = JSON.parse(stdout);
+    // 'message' comes first, as in node. 'exit' and 'disconnect' are independent notifications
+    // and may come in either order; 'close' follows both.
+    const [first, ...rest] = events;
+    expect(first).toEqual(["message", "hello"]);
+    expect(rest.sort()).toEqual([["close", 3], ["disconnect"], ["exit", 3]]);
+    expect(events.at(-1)).toEqual(["close", 3]);
     expect(exitCode).toBe(0);
   });
 });

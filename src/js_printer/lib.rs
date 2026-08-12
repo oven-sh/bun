@@ -4788,14 +4788,12 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(binding.loc);
                     self.print_symbol(b.r#ref);
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if tlm.is_export {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
                 }
@@ -4905,14 +4903,14 @@ pub(crate) mod __gated_printer {
                                                     if str.slice8()
                                                         == self.name_for_symbol(id.r#ref)
                                                     {
-                                                        if Self::MAY_HAVE_MODULE_INFO {
+                                                        if Self::MAY_HAVE_MODULE_INFO
+                                                            && tlm.is_export
+                                                        {
                                                             if let Some(mi) = self.module_info() {
                                                                 let name_id = mi.str(str.slice8());
-                                                                if tlm.is_export {
-                                                                    mi.add_export_info_local(
-                                                                        name_id, name_id,
-                                                                    );
-                                                                }
+                                                                mi.add_export_info_local(
+                                                                    name_id, name_id,
+                                                                );
                                                             }
                                                         }
                                                         self.maybe_print_default_binding_value(
@@ -4938,16 +4936,14 @@ pub(crate) mod __gated_printer {
                                                     str.slice16(),
                                                     self.name_for_symbol(id.r#ref),
                                                 ) {
-                                                    if Self::MAY_HAVE_MODULE_INFO {
+                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
-                                                            if tlm.is_export {
-                                                                mi.add_export_info_local(
-                                                                    name_id, name_id,
-                                                                );
-                                                            }
+                                                            mi.add_export_info_local(
+                                                                name_id, name_id,
+                                                            );
                                                         }
                                                     }
                                                     self.maybe_print_default_binding_value(
@@ -5054,12 +5050,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(local_name);
                     self.print_func(&s.func);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.func.flags.contains(G::FnFlags::IsExport) {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if s.func.flags.contains(G::FnFlags::IsExport) {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 
@@ -5085,12 +5079,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(name_str);
                     self.print_class(&s.class);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.is_export {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(name_str);
-                            if s.is_export {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 

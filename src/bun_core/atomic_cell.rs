@@ -487,7 +487,7 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
 /// **Migration note:** until [`claim`](Self::claim) is called, `get()` does
 /// *not* assert (matching `RacyCell`). This lets a static be initialized on
 /// the spawning thread, then claimed from the worker thread's entry point.
-/// `test/internal/source-lints/thread-cell-claimed.test.ts` requires that `claim()` for every static.
+/// `test/internal/source-lints/thread-cell-claimed.test.ts` requires a `claim()` for every static.
 #[repr(C)]
 pub struct ThreadCell<T: ?Sized> {
     #[cfg(debug_assertions)]

@@ -60,9 +60,8 @@ const tracked: Set<string> | null = (() => {
 
 // `deref(`, `deref_nn(`, `deref_from_thread(`, `deref_with_context(`, and the
 // `rc_` variants, however path-qualified, plus `ScopedRef::adopt(` /
-// `ScopedRef::<T>::adopt(`. The lookbehinds drop `fn deref(self)` items (a
-// by-value receiver is a definition, not a call) and `Deref::deref(self)`.
-const RELEASE = String.raw`(?:(?<!\bfn\s+)(?<!Deref::)\b(?:rc_)?deref(?:_nn|_from_thread|_with_context)?|\bScopedRef(?:::<[^>]*>)?::adopt)\s*\(\s*`;
+// `ScopedRef::<T>::adopt(`.
+const RELEASE = String.raw`(?:\b(?:rc_)?deref(?:_nn|_from_thread|_with_context)?|\bScopedRef(?:::<[^>]*>)?::adopt)\s*\(\s*`;
 
 // The receiver as the first argument: bare `self` or `&mut *self`, followed by
 // the end of the argument. The terminator keeps `self.field`, `self.as_ptr()`
@@ -70,6 +69,17 @@ const RELEASE = String.raw`(?:(?<!\bfn\s+)(?<!Deref::)\b(?:rc_)?deref(?:_nn|_fro
 const RECEIVER = String.raw`(?:&\s*mut\s+\*\s*)?self\s*[,)]`;
 
 const BANNED = new RegExp(RELEASE + RECEIVER, "g");
+
+// What may precede a match that is not a release: `fn deref(self)` is an item
+// with a by-value receiver, and `Deref::deref(self)` / `<T as Deref>::deref(self)`
+// borrow. Checked on the text before the match rather than with lookbehinds
+// at the head of BANNED, which would cost the regex its literal-prefix scan
+// (about 6 s instead of under 0.1 s over the tree).
+const NOT_A_RELEASE_BEFORE = /(?:\bfn\s+|Deref>?::)$/;
+
+function isRelease(stripped: string, index: number): boolean {
+  return !NOT_A_RELEASE_BEFORE.test(stripped.slice(Math.max(0, index - 64), index));
+}
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Each is a release through the receiver that is being converted
@@ -88,7 +98,7 @@ const ALLOW: Record<string, number> = {
 };
 
 function findReleases(stripped: string): number[] {
-  return Array.from(stripped.matchAll(BANNED), m => m.index);
+  return Array.from(stripped.matchAll(BANNED), m => m.index).filter(index => isRelease(stripped, index));
 }
 
 function lineOf(text: string, offset: number): number {
@@ -160,6 +170,7 @@ test("the pattern matches the banned spellings and nothing else", () => {
     "fn deref(&self) -> &T {",
     "core::ops::Deref::deref(self)",
     "Deref::deref(self)",
+    "<Wrapper as Deref>::deref(self)",
     "ThreadSafe::adopt(self)",
     "some_other_deref(self)",
     "self.deref_mut()",

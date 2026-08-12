@@ -1019,7 +1019,8 @@ mod platform {
         let timeout_seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
             .get()
             .unwrap_or(10);
-        command.extend_from_slice(b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
+        command
+            .extend_from_slice(b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
         command.extend_from_slice(timeout_seconds.to_string().as_bytes());
         command.extend_from_slice(
             b" & sp=$!; wait \"$sp\" && kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",

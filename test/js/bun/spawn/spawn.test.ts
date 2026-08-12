@@ -612,7 +612,7 @@ for (let [gcTick, label] of [
         });
 
         it.concurrent("should allow reading stdout after a few milliseconds", async () => {
-          async function readLate() {
+          for (let i = 0; i < 50; i++) {
             const proc = Bun.spawn({
               cmd: ["git", "--version"],
               stdout: "pipe",
@@ -623,10 +623,6 @@ for (let [gcTick, label] of [
             const out = await proc.stdout.text();
             expect(out).toStartWith("git version");
             expect(await proc.exited).toBe(0);
-          }
-          // 50 iterations, 10 at a time (git is ~25ms per spawn on Windows).
-          for (let batch = 0; batch < 5; batch++) {
-            await Promise.all(Array.from({ length: 10 }, readLate));
           }
         });
       });
@@ -675,6 +671,9 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix 
 function sleepingChild(seconds: number) {
   return isWindows ? [bunExe(), "-e", `Bun.sleepSync(${seconds * 1000})`] : [shellExe(), "-c", `sleep ${seconds}`];
 }
+// What `exited` resolves to for one of those children when it may have been
+// kill()ed: 0 if it finished before the SIGTERM landed, otherwise 128 + SIGTERM.
+const sleepingChildExitValues = [0, 128 + 15];
 
 describe("spawn unref and kill should not hang", () => {
   const cmd = sleepingChild(0.001);
@@ -693,7 +692,7 @@ describe("spawn unref and kill should not hang", () => {
     }
 
     for (const exitCode of await Promise.all(promises)) {
-      expect(exitCode).toBeNumber();
+      expect(exitCode).toBeOneOf(sleepingChildExitValues);
     }
   });
   it.concurrent("unref", async () => {
@@ -720,7 +719,7 @@ describe("spawn unref and kill should not hang", () => {
       proc.kill();
       proc.unref();
 
-      expect(await proc.exited).toBeNumber();
+      expect(await proc.exited).toBeOneOf(sleepingChildExitValues);
     }
   });
   it.concurrent("unref and kill", async () => {
@@ -733,7 +732,7 @@ describe("spawn unref and kill should not hang", () => {
       });
       proc.unref();
       proc.kill();
-      expect(await proc.exited).toBeNumber();
+      expect(await proc.exited).toBeOneOf(sleepingChildExitValues);
     }
   });
 
@@ -791,7 +790,7 @@ async function runTest(sleep: number, order = ["sleep", "kill", "unref", "exited
         }
 
         case "exited": {
-          expect(await proc.exited).toBeNumber();
+          expect(await proc.exited).toBeOneOf(sleepingChildExitValues);
           break;
         }
 
@@ -1388,10 +1387,11 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
 });
 
 describe("onDisconnect", () => {
-  // Not concurrent: on the waiter-thread path (the FORCE_WAITER_THREAD re-run of
-  // this file) a message the child sends right before exiting is dropped when the
-  // parent handles the exit before it reads the socket, and a concurrent sibling
-  // blocking the event loop (spawnSync) makes that happen every time.
+  // Not concurrent until #37849 is fixed: on the waiter-thread path (the
+  // FORCE_WAITER_THREAD re-run of this file) a message the child sends right before
+  // exiting is dropped when the parent handles the exit before it reads the socket,
+  // and a concurrent sibling blocking the event loop (spawnSync) makes that happen
+  // every time.
   it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
 
@@ -1535,7 +1535,7 @@ describe("option combinations", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // Not concurrent for the same reason as "ipc delivers message" above.
+  // Not concurrent for the same reason as "ipc delivers message" above (#37849).
   it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
     let received: unknown;
     let disconnectCalled = false;

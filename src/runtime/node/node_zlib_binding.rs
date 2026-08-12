@@ -195,7 +195,7 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
-pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
+pub(crate) trait CompressionStreamImpl: Sized + Taskable + jsc::JsClass + 'static {
     type Stream: CompressionContext;
 
     // Field accessors (interior-mutability cells; all `&self`).
@@ -238,8 +238,22 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
+    /// Project the embedded `WorkPoolTask` out of `this` without going through
+    /// a reference to the field; inverse of [`from_task`](Self::from_task).
+    /// This is what `write` hands the pool: the pointer keeps `this`'s
+    /// provenance, which `from_task` relies on (`task().as_ptr()` would only
+    /// cover the task field).
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn task_of(this: *mut Self) -> *mut WorkPoolTask;
+
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
-    /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
+    ///
+    /// # Safety
+    /// `task` must have been produced by [`task_of`](Self::task_of) on a
+    /// still-live `Self`; the result carries whatever provenance that `this`
+    /// had.
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
 
     // Intrusive refcount.
@@ -251,8 +265,10 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// allocation's full write provenance (routing through `&self` and casting
     /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
     /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
-    /// `finalize`) holds a `*mut T` derived from the original `m_ctx`
-    /// allocation; the bracketed `ref_()`/`deref()` in `write_sync` can never
+    /// `release_unrun`, `finalize`) holds the original `m_ctx` pointer:
+    /// `finalize` is handed it by the GC, the other two get back the pointer
+    /// `write` posted, which it takes from the wrapper (`T::from_js`) for this
+    /// reason; the bracketed `ref_()`/`deref()` in `write_sync` can never
     /// hit zero while the JS wrapper's +1 is still live, so its
     /// `(&T as *const T).cast_mut()` provenance is sufficient (only the
     /// `Cell<u32>` is touched).
@@ -420,6 +436,14 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let _ = (in_off, in_len, out_off, out_len);
 
         Self::throw_unless_idle(this, global_this)?;
+        // The pool posts this pointer back to `run_from_js_thread` /
+        // `release_unrun`, whose trailing `T::deref` may free through it, so it
+        // has to be the wrapper's `m_ctx` itself (see `deref`), not a pointer
+        // derived from the `&T` receiver. The thunk downcast `this_value` to
+        // produce `this`, so this lookup yields the same object.
+        let this_ptr: *mut T =
+            T::from_js(this_value).expect("write: this_value is not this handle's wrapper");
+        debug_assert!(core::ptr::eq(this_ptr.cast_const(), this));
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
@@ -469,7 +493,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // The task is a field of this JS-owned stream: counted, so the VM waits
         // for it (see `VmHandle::embedded_work_scheduled`).
         this.loop_handle().embedded_work_scheduled();
-        WorkPool::schedule(this.task().as_ptr());
+        // SAFETY: `this_ptr` is `this`, live for the whole call.
+        WorkPool::schedule(unsafe { T::task_of(this_ptr) });
 
         Ok(JSValue::UNDEFINED)
     }
@@ -477,12 +502,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     // struct-init site in `write` above.
     fn async_job_run_task(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `T.task` — only ever invoked by the thread
-        // pool against a `T` scheduled in `write`, so provenance covers the
-        // full `T` allocation. Recover *mut T via container_of
-        // (`CompressionStreamImpl::from_task`). The task field is a
-        // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
-        // `offset_of!(T, task)` is the value's offset.
+        // SAFETY: the pool only calls this with the pointer `write` scheduled:
+        // `T::task_of` of the stream's `m_ctx` pointer, which the `ref_()` in
+        // `write` keeps alive. `from_task` hands that `m_ctx` pointer back.
         let this: *mut T = unsafe { T::from_task(task) };
         Self::async_job_run(this);
     }
@@ -1060,10 +1082,18 @@ macro_rules! __impl_compression_stream {
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]
+            unsafe fn task_of(this: *mut Self) -> *mut ::bun_jsc::WorkPoolTask {
+                // SAFETY: `this` is live (fn contract); `&raw mut` projects the
+                // field without forming a reference to it.
+                ::bun_jsc::JsCell::raw_get(unsafe { &raw mut (*this).task })
+            }
+
+            #[inline]
             unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
-                // SAFETY: `task` points at the `task` field of a live `Self`;
-                // `from_field_ptr!`
-                // computes the byte offset via `offset_of!(Self, task)`.
+                // SAFETY: fn contract — `task` came out of `task_of`, so it
+                // points at the `task` field with the enclosing object's
+                // provenance. `JsCell` is `repr(transparent)`, so the value
+                // sits at `offset_of!(Self, task)`.
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 

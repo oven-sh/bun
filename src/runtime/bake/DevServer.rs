@@ -2251,9 +2251,7 @@ fn check_route_failures(
     resp: DevResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // The trace below collects into `failures_added`, which still holds the
-    // failures of the last bundle (it is only reset when the next one starts).
-    // Those may belong to files this route never imports.
+    // Still holds the last bundle's failures, which this route may not import.
     dev.incremental_result.failures_added.clear();
     // Note: erase to a raw pointer so the deferred cleanup only fires on
     // scope exit when no other borrow of `dev` is live.
@@ -4392,9 +4390,7 @@ pub(super) fn finalize_bundle(
         dev.incremental_result.html_routes_soft_affected.clear();
         ctx.gts.clear();
 
-        // `trace_dependencies` appends every boundary it visits to this same
-        // list (their trace bit is set at that point, so visiting them again
-        // below is a no-op), so it must not be iterated through a borrow.
+        // `trace_dependencies` appends to this list while it is being walked.
         let mut i = 0;
         while i < dev.incremental_result.client_components_affected.len() {
             let index = dev.incremental_result.client_components_affected[i];
@@ -4994,32 +4990,23 @@ impl DevServer {
         Ok(())
     }
 
-    /// A "use client" file whose own imports failed to resolve. The failure
-    /// belongs to the client graph (the file was parsed for the browser, see
-    /// `get_log_for_resolution_failures`), but a boundary that bundles gets a
-    /// node on both sides: server-side importers attach their edges to the
-    /// server node, whose boundary flag makes import traces continue into the
-    /// client graph, and the client node is an HMR root so dependency traces
-    /// cross back to the server side. `finalize_bundle` only sets this up for
-    /// files that bundled, so do it here for the failed one; otherwise the
-    /// routes importing the file are never associated with its failure and get
-    /// served as if it had bundled.
+    /// A "use client" file whose imports failed to resolve. Its failure is on
+    /// the client graph node (`get_log_for_resolution_failures`); give it the
+    /// rest of a boundary's shape, which `finalize_bundle` only does for files
+    /// that bundled: the server node that server-side importers attach to and
+    /// that import traces cross into the client graph from, and the HMR root
+    /// flag that dependency traces cross back to the server graph from.
     pub(crate) fn handle_client_component_boundary_failure(
         &mut self,
         abs_path: &[u8],
     ) -> Result<(), AllocError> {
         let _g = self.graph_safety_lock.guard();
 
-        // This only looks the client node up: it was created for the
-        // resolution log, and its failure (inserted once the bundle finishes)
-        // is what marks it stale.
         let client_index = self.client_graph.insert_stale(abs_path, false)?;
         self.client_graph.bundled_files.values_mut()[client_index.get() as usize].is_hmr_root =
             true;
 
-        // Nothing gets bundled for the server node until the file is fixed, so
-        // it must stay stale (`insert_stale` alone cannot set the bit for an
-        // index past the bitset's current length).
+        // `insert_stale` cannot set the bit for an index past the bitset's length.
         let server_index = self.server_graph.insert_stale(abs_path, false)?;
         self.server_graph.ensure_stale_bit_capacity(true)?;
         self.server_graph

@@ -1198,9 +1198,7 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    /// Where parsing stopped. Less than the input length when the input has
-    /// trailing bytes that are not part of the version (whitespace, a range
-    /// operator, an invalid character).
+    /// Where parsing stopped; shorter than the input when trailing bytes are not part of the version.
     pub len: u32,
 }
 

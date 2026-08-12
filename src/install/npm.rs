@@ -1517,22 +1517,16 @@ impl FindResult<'_> {
     }
 }
 
-/// `install.minimumReleaseAgeExcludes` from bunfig. Same entry grammar as
-/// pnpm's `minimumReleaseAgeExclude`: `"name"` exempts every version of the
-/// package from the age gate, `"name@1.2.3"` and `"name@1.2.3 || 1.2.4"`
-/// exempt only the listed versions.
+/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
 #[derive(Clone, Default)]
 pub struct MinimumReleaseAgeExcludes {
     packages: Vec<&'static [u8]>,
-    /// One element per listed version. Matched with `Version::eql`, which
-    /// compares the prerelease tag by hash, so no string buffer is kept.
+    /// Matched with `Version::eql`, which compares tags by hash, so no string buffer is kept.
     versions: Vec<(&'static [u8], Semver::Version)>,
 }
 
 impl MinimumReleaseAgeExcludes {
-    /// Entries whose version list is not exclusively exact versions are
-    /// dropped with a warning rather than widened into a whole-package
-    /// exclusion, so `"foo@"` or `"foo@^1"` never exempts more than intended.
+    /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the bare name.
     pub(crate) fn parse(
         entries: &[&'static [u8]],
         log: &mut bun_ast::Log,
@@ -1587,8 +1581,7 @@ impl MinimumReleaseAgeExcludes {
     }
 }
 
-/// Anything other than a single complete version (a range, a dist-tag, an
-/// empty string, trailing garbage) is rejected.
+/// Ranges, dist-tags, empty input, and trailing bytes are all rejected.
 fn parse_exact_version(spec: &[u8]) -> Option<Semver::Version> {
     let spec = strings::trim(spec, &strings::WHITESPACE_CHARS);
     let parsed = Semver::Version::parse_utf8(spec);
@@ -1669,8 +1662,7 @@ impl PackageManifest {
         exclusions.is_some_and(|excludes| excludes.excludes_version(self.name(), version))
     }
 
-    /// `is_package_version_too_recent`, unless `result.version` itself is
-    /// listed in `exclusions`.
+    /// Too recent for the gate and not listed in `exclusions`.
     pub(crate) fn is_version_blocked_by_age_filter(
         &self,
         result: FindResult<'_>,
@@ -1715,10 +1707,7 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
-                // Excluded versions are handled like stable ones (`is_stable`
-                // below): no age gate, and they replace a newer `best_version`,
-                // which only ever holds an unstable fallback. Subjecting them to
-                // the stability check instead could walk past the listed version.
+                // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
                 if self.is_version_excluded_from_age_filter(version, exclusions) {
                     best_version = Some(FindResult { version, package });
                     break;

@@ -6060,8 +6060,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid page-aligned mmap'd region whose ownership
-/// is transferred to the returned Blob, and `mime` a NUL-terminated `'static`
-/// C string.
+/// is transferred to the returned Blob, and `mime` a NUL-terminated C string.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     global_this: &JSGlobalObject,

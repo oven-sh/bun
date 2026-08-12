@@ -283,6 +283,39 @@ for (const [variant, handler] of [
   });
 }
 
+// SIGINT while the watcher is parked after a watch exit: the handler's
+// deferred continuation can never fire there, so the watcher ends with the
+// completed run's exit code instead of trapping Ctrl+C forever.
+it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher", async () => {
+  using dir = tempDir("watch-sigint-parked", {
+    "index.ts": `process.on("SIGINT", () => { setTimeout(() => process.exit(7), 10); });\nconsole.log("READY");\nprocess.exit(3);\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stderrText = proc.stderr.text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  while (!out.includes("READY")) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
+    out += decoder.decode(value, { stream: true });
+  }
+
+  proc.kill("SIGINT");
+  expect(await proc.exited).toBe(3);
+  await reader.cancel();
+  expect(await stderrText).toBe("");
+});
+
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux

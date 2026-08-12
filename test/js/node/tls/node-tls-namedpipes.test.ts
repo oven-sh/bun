@@ -71,7 +71,9 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
       let client: ReturnType<typeof connect> | null = null;
       const server = createServer({ ...tls, minVersion: version, maxVersion: version }, socket => {
         socket.on("data", data => received.resolve(`${data} (${socket.getProtocol()})`));
+        socket.on("error", received.reject);
       });
+      server.on("tlsClientError", received.reject);
       try {
         const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
         server.listen(pipeName);
@@ -79,14 +81,14 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
 
         const socket = connect({ path: pipeName, ca: tls.cert, minVersion: version, maxVersion: version });
         client = socket;
+        socket.on("error", received.reject);
         socket.on("secureConnect", () => log.push(`secureConnect writableLength=${socket.writableLength}`));
         socket.write("Hello World!", err => {
           log.push(`write callback err=${err}`);
           written.resolve();
         });
 
-        const data = await received.promise;
-        await written.promise;
+        const [data] = await Promise.all([received.promise, written.promise]);
         expect({ received: data, log }).toEqual({
           received: `Hello World! (${version})`,
           log: ["secureConnect writableLength=12", "write callback err=null"],
@@ -98,15 +100,20 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
     });
 
     it.if(isWindows)("is failed, not delivered, when a 'secureConnect' listener destroys the socket", async () => {
-      const serverSocketClosed = Promise.withResolvers<void>();
+      // Settles once the server is done with the connection, whichever way the
+      // client's teardown lands there (clean close of the accepted socket, or a
+      // handshake it could no longer finish); either way every byte the client
+      // sent has been consumed by then.
+      const serverDone = Promise.withResolvers<void>();
       const writeOutcome = Promise.withResolvers<string>();
       const received: Buffer[] = [];
       let client: ReturnType<typeof connect> | null = null;
       const server = createServer({ ...tls, minVersion: version, maxVersion: version }, socket => {
         socket.on("data", (chunk: Buffer) => received.push(chunk));
         socket.on("error", () => {});
-        socket.on("close", () => serverSocketClosed.resolve());
+        socket.on("close", () => serverDone.resolve());
       });
+      server.on("tlsClientError", () => serverDone.resolve());
       try {
         const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
         server.listen(pipeName);
@@ -114,13 +121,11 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
 
         const socket = connect({ path: pipeName, ca: tls.cert, minVersion: version, maxVersion: version });
         client = socket;
-        socket.on("error", () => {});
+        socket.on("error", serverDone.reject);
         socket.write("parked", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
         socket.on("secureConnect", () => socket.destroy());
 
-        // The server socket closes only after consuming everything the client
-        // sent before destroying itself.
-        const [outcome] = await Promise.all([writeOutcome.promise, serverSocketClosed.promise]);
+        const [outcome] = await Promise.all([writeOutcome.promise, serverDone.promise]);
         expect({ outcome, serverReceived: Buffer.concat(received).toString() }).toEqual({
           outcome: "failed",
           serverReceived: "",

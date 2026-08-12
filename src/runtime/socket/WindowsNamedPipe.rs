@@ -398,8 +398,7 @@ impl WindowsNamedPipe {
                 .map(Into::into),
         });
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
-        // Flush writes parked during the handshake; a TLS 1.2 client sends
-        // nothing on completion, so no pipe write completion would do it.
+        // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
         if handshake_success && !self.is_shutdown() {
             (self.handlers.on_writable)(self.handlers.ctx);
         }

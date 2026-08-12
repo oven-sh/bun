@@ -189,8 +189,7 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
-        // Flush writes parked during the handshake (openssl.c's
-        // `ssl_write_wants_read`); a duplex emits no writable event of its own.
+        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }
@@ -560,8 +559,7 @@ impl UpgradedDuplex {
         }
     }
 
-    /// No engine yet (`start_tls` still queued; teardown never clears the slot)
-    /// is not shut down: writes made then are parked and flushed by `on_handshake`.
+    /// `None` means `start_tls` has not run yet (teardown never clears the slot), not shut down.
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
         self.wrapper_ref().is_some_and(|w| w.is_shutdown())

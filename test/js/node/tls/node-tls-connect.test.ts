@@ -869,6 +869,13 @@ describe("application data written over a Duplex transport before the handshake 
   }
   const synchronously = (push: () => void) => push();
   const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  // Resolves when `closing` emits 'close'; an 'error' on any of `failing` rejects instead.
+  function closeOf(closing: TLSSocket, failing: TLSSocket[] = [closing]) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    closing.on("close", () => resolve());
+    for (const socket of failing) socket.on("error", reject);
+    return promise;
+  }
 
   it("client write() issued right after tls.connect() reaches the server, in order", async () => {
     // The engine for a Duplex transport is created on a later event-loop
@@ -888,9 +895,10 @@ describe("application data written over a Duplex transport before the handshake 
       client.end();
     });
     client.on("data", () => {});
+    const closed = closeOf(client, [client, server]);
     client.write("one", err => log.push(`write callback err=${err}`));
     log.push(`write() returned writableLength=${client.writableLength}`);
-    await once(client, "close");
+    await closed;
 
     expect({ log, received: Buffer.concat(received).toString() }).toEqual({
       log: ["write() returned writableLength=3", "secureConnect writableLength=3", "write callback err=null"],
@@ -916,11 +924,13 @@ describe("application data written over a Duplex transport before the handshake 
     const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
     client.on("secureConnect", () => log.push(`secureConnect writableLength=${client.writableLength}`));
     client.on("data", () => {});
+    client.on("error", clientHelloWritten.reject);
+    const closed = closeOf(client, [client, server]);
     await clientHelloWritten.promise;
     log.push(`ClientHello written secureConnecting=${client.secureConnecting}`);
     client.write("one", err => log.push(`write callback err=${err}`));
     client.end();
-    await once(client, "close");
+    await closed;
 
     expect({ log, received: Buffer.concat(received).toString() }).toEqual({
       log: ["ClientHello written secureConnecting=true", "secureConnect writableLength=3", "write callback err=null"],
@@ -942,7 +952,7 @@ describe("application data written over a Duplex transport before the handshake 
     const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
     client.on("data", (chunk: Buffer) => received.push(chunk));
     client.on("end", () => client.end());
-    await once(client, "close");
+    await closeOf(client, [client, server]);
 
     expect({ log, received: Buffer.concat(received).toString() }).toEqual({
       log: ["secure writableLength=6", "write callback err=null"],
@@ -964,7 +974,7 @@ describe("application data written over a Duplex transport before the handshake 
     const client = tls.connect({ socket: clientSide });
     client.on("error", clientError.resolve);
     client.write("secret", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
-    const closed = new Promise<void>(resolve => client.on("close", () => resolve()));
+    const closed = closeOf(client, []);
 
     const [{ code: clientErrorCode }, outcome] = await Promise.all([clientError.promise, writeOutcome.promise, closed]);
     // 'close' is emitted a macrotask after the teardown, so anything the engine
@@ -988,10 +998,9 @@ describe("application data written over a Duplex transport before the handshake 
     server.on("error", () => {});
 
     const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
-    client.on("error", () => {});
     client.write("parked", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
     client.on("secureConnect", () => client.destroy());
-    const closed = new Promise<void>(resolve => client.on("close", () => resolve()));
+    const closed = closeOf(client);
 
     const [outcome] = await Promise.all([writeOutcome.promise, closed]);
     expect({ outcome, serverReceived: Buffer.concat(received).toString() }).toEqual({
@@ -1006,10 +1015,9 @@ describe("application data written over a Duplex transport before the handshake 
     const writeOutcome = Promise.withResolvers<string>();
 
     const server = new TLSSocket(serverSide, serverContext());
-    server.on("error", () => {});
     server.write("banner", err => writeOutcome.resolve(err ? "failed" : "succeeded"));
     server.on("secure", () => server.destroy());
-    const closed = new Promise<void>(resolve => server.on("close", () => resolve()));
+    const closed = closeOf(server);
 
     const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
     client.on("error", () => {});

@@ -5883,9 +5883,7 @@ pub mod bv2_impl {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
-                // `ParseTask` retargets such a file to the browser, so its
-                // failure went to the client graph, while `on_parse_task_complete`
-                // only creates the server side of the boundary once a file resolves.
+                // Retargeted to the browser by `ParseTask`: the failure is on the client graph.
                 if let Some(dev) = this.dev_server {
                     if result.use_directive == crate::UseDirective::Client
                         && target == Target::Browser

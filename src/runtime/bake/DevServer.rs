@@ -4990,12 +4990,9 @@ impl DevServer {
         Ok(())
     }
 
-    /// A "use client" file whose imports failed to resolve. Its failure is on
-    /// the client graph node (`get_log_for_resolution_failures`); give it the
-    /// rest of a boundary's shape, which `finalize_bundle` only does for files
-    /// that bundled: the server node that server-side importers attach to and
-    /// that import traces cross into the client graph from, and the HMR root
-    /// flag that dependency traces cross back to the server graph from.
+    /// A "use client" file whose imports failed to resolve. The failure is on the client
+    /// node; this adds what `finalize_bundle` adds for a boundary that bundled, which is
+    /// what connects the file's server-side importers to that failure (and back).
     pub(crate) fn handle_client_component_boundary_failure(
         &mut self,
         abs_path: &[u8],

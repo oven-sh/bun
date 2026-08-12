@@ -881,8 +881,9 @@ async function expectBuildFailed(response: Promise<Response>, error: string) {
   expect(html.match(/<title>(.*)<\/title>/)?.[1]).toBe("Bun - Build Failed");
   // The page embeds the serialized failures as base64; the messages are
   // stored as plain text inside of it.
-  const serializedFailures = atob(html.match(/atob\("([^"]*)"\)/)![1]);
-  expect(serializedFailures).toContain(error);
+  const encoded = html.match(/atob\("([^"]*)"\)/)?.[1];
+  expect(encoded).toBeString();
+  expect(atob(encoded!)).toContain(error);
   expect(res.status).toBe(500);
 }
 

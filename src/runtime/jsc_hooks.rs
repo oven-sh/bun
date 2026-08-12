@@ -859,6 +859,12 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 // SAFETY: `el` is the live per-thread event loop.
                 unsafe { (*el).perform_gc() };
                 loop {
+                    // A watch exit leaves the preload promise pending forever;
+                    // stop spinning and let the watcher loop take over.
+                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+                    if unsafe { &*vm }.watch_exit_requested {
+                        break;
+                    }
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
                     // read-only FFI call on a live JSC heap cell.

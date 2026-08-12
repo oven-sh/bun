@@ -308,16 +308,11 @@ impl StatWatcherScheduler {
         }
     }
 
-    /// JS thread, from the event-loop timer. Takes the pointer, not `&mut self`:
-    /// the pool shares the scheduler from the `schedule` onwards, before this
-    /// returns.
-    ///
     /// # Safety
-    /// `this` is the live scheduler whose `event_loop_timer` fired.
+    /// `this` is the live scheduler whose `event_loop_timer` fired, on the JS
+    /// thread.
     pub(crate) unsafe fn timer_callback(this: *mut Self) {
-        // SAFETY: fn contract; `event_loop_timer` is JS-thread-only and the rest
-        // is atomic. Here and below, no reference into `*this` outlives its
-        // statement.
+        // SAFETY: fn contract; `event_loop_timer` is JS-thread-only.
         let cleared_or_shutting_down = unsafe {
             let timer = &raw mut (*this).event_loop_timer;
             let has_been_cleared = (*timer).state == EventLoopTimerState::CANCELLED

@@ -179,11 +179,9 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    /// io thread. Takes the pointer, not `&mut self`: the pool owns the write
-    /// again from the `schedule` onwards, before this returns.
-    ///
     /// # Safety
-    /// `this` is the live `WriteFile` whose `io_poll` fired.
+    /// `this` is the live `WriteFile` whose `io_poll` fired; the pool owns it
+    /// again once this returns.
     pub(crate) unsafe fn on_ready(this: *mut Self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         // SAFETY: fn contract; no reference into `*this` outlives its statement.
@@ -196,13 +194,11 @@ impl WriteFile {
         }
     }
 
-    /// io thread; same hand-off as [`on_ready`](Self::on_ready), in the
-    /// `io::FileAction::on_error` shape `on_request_writable` registers.
     pub(crate) fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         let this = this.cast::<WriteFile>();
-        // SAFETY: `this` is the live `*mut WriteFile` registered as the action's
-        // ctx (or recovered from its `io_poll` by the dispatch); as in `on_ready`.
+        // SAFETY: `this` is the live `WriteFile` the io thread handed to this
+        // hook; otherwise as in `on_ready`.
         unsafe {
             (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
             (*this).system_error = Some(err.to_system_error().into());

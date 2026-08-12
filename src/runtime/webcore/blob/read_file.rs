@@ -389,11 +389,9 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    /// io thread. Takes the pointer, not `&mut self`: the pool owns the read
-    /// again from the `schedule` onwards, before this returns.
-    ///
     /// # Safety
-    /// `this` is the live `ReadFile` whose `io_poll` fired.
+    /// `this` is the live `ReadFile` whose `io_poll` fired; the pool owns it
+    /// again once this returns.
     pub(crate) unsafe fn on_ready(this: *mut Self) {
         bloblog!("ReadFile.onReady");
         // SAFETY: fn contract; no reference into `*this` outlives its statement.
@@ -415,8 +413,6 @@ impl ReadFile {
         }
     }
 
-    /// io thread; same hand-off as [`on_ready`](Self::on_ready).
-    ///
     /// # Safety
     /// As for [`on_ready`](Self::on_ready).
     pub(crate) unsafe fn on_io_error(this: *mut Self, err: &bun_sys::Error) {

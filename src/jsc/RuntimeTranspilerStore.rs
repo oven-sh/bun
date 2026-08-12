@@ -589,11 +589,9 @@ impl TranspilerJob {
         )
     }
 
-    /// JS thread. Takes the pointer, not `&mut self`: the pool owns the job
-    /// from the `schedule` onwards, before this returns.
-    ///
     /// # Safety
-    /// `this` is a fully initialised job that has not been scheduled yet.
+    /// `this` is a fully initialised, unscheduled job; the pool owns it once
+    /// this returns.
     unsafe fn schedule(this: *mut Self) {
         // SAFETY: fn contract; no reference into `*this` outlives its statement.
         unsafe {

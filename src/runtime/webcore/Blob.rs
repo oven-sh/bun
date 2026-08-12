@@ -7042,9 +7042,9 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
-    /// The deferred close started by `do_close`, including its hand-back to the
-    /// pool. Supplied per impl by [`impl_file_closer!`]: `offset_of!` cannot
-    /// name fields on a trait `Self`.
+    /// Intrusive backref: Rust `offset_of!` cannot name
+    /// fields on a trait `Self`, so each concrete impl supplies its own
+    /// container_of recovery (no default body).
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
@@ -7092,7 +7092,7 @@ pub trait FileCloser: Sized {
 /// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
 /// The type must also carry `bun_threading::intrusive_work_task!` and
 /// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
-/// used by the close round trip's trampolines.
+/// used by the two trampolines.
 macro_rules! impl_file_closer {
     ($T:ident) => {
         impl crate::webcore::blob::FileCloser for $T {
@@ -7123,12 +7123,10 @@ macro_rules! impl_file_closer {
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
                 use ::bun_io::IntrusiveIoRequest as _;
 
-                // io thread: the fd is closed. Stays a raw pointer, as the pool
-                // owns the job again from the `schedule` onwards.
+                // io thread: the fd is closed; the pool finishes the job.
                 fn on_done(ctx: *mut ()) {
                     let this = ctx.cast::<$T>();
-                    // SAFETY: `ctx` is the live `*mut $T` registered below; no
-                    // reference into `*this` outlives its statement.
+                    // SAFETY: `ctx` is the live `*mut $T` registered below.
                     unsafe {
                         (*this)
                             .io_poll
@@ -7142,11 +7140,9 @@ macro_rules! impl_file_closer {
                     }
                 }
 
-                // Pool thread: finish the job now that its fd is closed.
                 fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
                     use ::bun_threading::IntrusiveWorkTask as _;
-                    // SAFETY: `task` is the field `on_done` scheduled, projected
-                    // from the live parent's pointer; recover parent.
+                    // SAFETY: `task` is the live parent's field that `on_done` scheduled.
                     let this = unsafe { $T::from_task_ptr(task) };
                     // SAFETY: `this` is the live parent (see above); scoped access.
                     unsafe { (*this).close_after_io = false };

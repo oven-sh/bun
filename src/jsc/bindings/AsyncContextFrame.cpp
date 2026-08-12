@@ -96,16 +96,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-// Event loop work is dispatched assuming no async context is installed: a
-// callback scheduled while none was active is stored unwrapped
-// (withAsyncContextIfNeeded above) and AsyncContextSwapScope does nothing for
-// an undefined context, so such callbacks run in whatever the slot holds.
-// Native code that dispatches event loop work from inside a JS frame
-// (waitForPromise, a microtask checkpoint) clears the frame's context with
-// this pair around the dispatch. `needsCleanup` carries the enterWith()
-// cleanup arming (jsCleanupLater), which a microtask run during the dispatch
-// would otherwise consume, leaving the restored context with nothing to clear
-// it later.
+// Pair behind bun_jsc::event_loop::SuspendedAsyncContext. needsCleanup is the enterWith() cleanup arming (jsCleanupLater), which a microtask run while suspended would otherwise consume.
 extern "C" JSC::EncodedJSValue AsyncContextFrame__suspend(JSGlobalObject* lexicalGlobalObject, bool* needsCleanup)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

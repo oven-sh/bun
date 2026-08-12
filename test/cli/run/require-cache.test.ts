@@ -1,26 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isBroken, isIntelMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isBroken, isIntelMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Shared by the "don't leak the output source code" fixtures below.
 //
 // The leak they guard against (the transpiled source, or the whole module, kept
 // alive once per load) is measured as the bytes mimalloc currently has handed
-// out, summed over every heap; JSC allocates through mimalloc as well. RSS is
-// not a usable signal for these loops: each load of index.js creates a ~2 MB
-// CodeBlock metadata table that is reported to the GC while collection is
-// deferred, so whether a collection actually runs between loads depends on
-// concurrent JIT timing, and mimalloc keeps pages mapped for a while after the
-// blocks in them are freed. Together those moved RSS by 60-500 MB between two
-// gc(true) calls with nothing retained (the alpine and macOS CI failures of this
-// file), while liveBytes() stayed within 7 MB.
+// out, summed over every heap; in release builds JSC allocates through mimalloc
+// as well. RSS is not a usable signal for these loops: each load of index.js
+// creates a ~2 MB CodeBlock metadata table that is reported to the GC while
+// collection is deferred, so whether a collection actually runs between loads
+// depends on concurrent JIT timing, and mimalloc keeps pages mapped for a while
+// after the blocks in them are freed. Together those moved RSS by 60-500 MB
+// between two gc(true) calls with nothing retained (the alpine and macOS CI
+// failures of this file), while liveBytes() stayed within 7 MB.
 //
-// ASAN builds allocate through the system allocator, which the heap walk does
-// not see, so they keep the RSS bound.
+// Leaking one copy of index.js's output per load adds at least ~44 MB in the
+// smallest fixture (100 KB x 400 loads; the long-export-name fixtures add
+// hundreds of MB). The noise floor is one load's worth of compilation state
+// that the concurrent JIT thread has not let go of yet when the second
+// measurement is taken (it never shows up with BUN_JSC_useConcurrentJIT=0):
+// ~3.5 MB on x64 and up to ~6.5 MB on aarch64 in CI.
+//
+// Whether JSC's allocations are in the heaps the walk sees is a property of the
+// WebKit build (ASAN builds and WebKit built without USE_MIMALLOC, e.g. the
+// debug prebuilts, use another allocator), so the prelude checks it with a flat
+// JS string of 32 MB, the same kind of allocation as a retained source. Where
+// that string is invisible the fixture falls back to comparing RSS, at the
+// looser bound those builds were already using.
 const leakFixturePrelude = `
           const { heapStats } = require("bun:jsc");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const MB = 1024 * 1024;
+          const maxLiveGrowth = 24 * MB;
           function liveBytes() {
             let bytes = 0;
             for (const heap of heapStats({ dump: true }).mimallocDump.heaps) {
@@ -28,25 +41,27 @@ const leakFixturePrelude = `
             }
             return bytes;
           }
+          const liveBeforeProbe = liveBytes();
+          let probe = "a".repeat(32 * MB);
+          const walkSeesJSC = liveBytes() - liveBeforeProbe >= maxLiveGrowth;
+          probe = undefined;
           function measure() {
             gc(true);
             return { live: liveBytes(), rss: rss() };
           }
 `;
 
-// Leaking one copy of index.js's output per load adds at least ~44 MB in the
-// smallest fixture (100 KB x 400 loads; the long-export-name fixtures add
-// hundreds of MB). The noise floor is one load's worth of compilation state
-// that the concurrent JIT thread has not let go of yet when the second
-// measurement is taken (it never shows up with BUN_JSC_useConcurrentJIT=0):
-// ~3.5 MB on x64 and up to ~6.5 MB on aarch64 in CI.
-function leakFixtureCheck(asanRssMB: number) {
+function leakFixtureCheck(fallbackRssMB: number) {
   return `
           const after = measure();
           const liveDiff = after.live - baseline.live;
           const rssDiff = after.rss - baseline.rss;
-          console.log("live diff", (liveDiff / 1024 / 1024).toFixed(1), "MB,", "RSS diff", (rssDiff / 1024 / 1024) | 0, "MB");
-          if (${isASAN} ? rssDiff > ${asanRssMB} * 1024 * 1024 : liveDiff > 24 * 1024 * 1024) {
+          console.log(
+            "live", (baseline.live / MB).toFixed(1), "->", (after.live / MB).toFixed(1), "MB (diff", (liveDiff / MB).toFixed(1), "MB),",
+            "RSS diff", (rssDiff / MB) | 0, "MB,",
+            walkSeesJSC ? "checking live bytes" : "allocator walk does not see JSC allocations in this build, checking RSS",
+          );
+          if (walkSeesJSC ? liveDiff > maxLiveGrowth : rssDiff > ${fallbackRssMB} * MB) {
             throw new Error("Memory leak detected");
           }
 `;

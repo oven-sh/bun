@@ -273,35 +273,38 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
-devTest("import() with an options object returns the module namespace", {
+devTest("import() with an options object returns the namespace and forwards the options", {
   // Every import() in a dev server module is lowered to hmr.dynamicImport().
-  // Modules the dev server did not bundle (builtins, externals, URLs) fall
-  // through to a real import(), which must be returned to the caller when
-  // import options are present, the same as when they are absent.
+  // Modules the dev server did not bundle (builtins, externals, absolute paths)
+  // fall through to a real import(), which must receive the options and whose
+  // promise must be handed back to the caller.
   framework: minimalFramework,
   files: {
     "dep.ts": `
       export const x = 1;
     `,
+    "data.json": `{"a":1}`,
     "routes/index.ts": `
+      import * as path from "node:path";
       export default async function (req, meta) {
-        const builtin = await import("node:path");
         const builtinWithOptions = import("node:path", { with: {} });
-        const specifier = "node:" + "path";
-        const computedWithOptions = import(specifier, { with: {} });
+        // Computed, so the bundler cannot resolve it; type: "text" is only
+        // honored if the options object reaches the real import().
+        const dataFile = path.join(process.cwd(), "data.json");
+        const computedWithOptions = import(dataFile, { with: { type: "text" } });
         const bundledWithOptions = import("../dep", { with: {} });
         return Response.json({
           builtinWithOptions: [
             builtinWithOptions instanceof Promise,
-            (await builtinWithOptions) === builtin,
+            (await builtinWithOptions) === path,
           ],
           computedWithOptions: [
             computedWithOptions instanceof Promise,
-            (await computedWithOptions) === builtin,
+            (await computedWithOptions)?.default,
           ],
           bundledWithOptions: [
             bundledWithOptions instanceof Promise,
-            (await bundledWithOptions).x,
+            (await bundledWithOptions)?.x,
           ],
         });
       }
@@ -310,8 +313,36 @@ devTest("import() with an options object returns the module namespace", {
   async test(dev) {
     expect(await dev.fetch("/").json()).toEqual({
       builtinWithOptions: [true, true],
-      computedWithOptions: [true, true],
+      computedWithOptions: [true, '{"a":1}'],
       bundledWithOptions: [true, 1],
+    });
+  },
+});
+devTest("import() with an options object returns the namespace (client runtime)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      // Computed, so the bundler leaves it to the runtime; a literal data: URL
+      // would be bundled like any other module.
+      const specifier = "data:text/javascript," + encodeURIComponent("export default 1;");
+      const computedWithOptions = import(specifier, { with: {} });
+      const bundledWithOptions = import("./dep", { with: {} });
+      console.log({
+        computedWithOptions: [typeof computedWithOptions?.then, (await computedWithOptions)?.default],
+        bundledWithOptions: [typeof bundledWithOptions?.then, (await bundledWithOptions)?.x],
+      });
+    `,
+    "dep.ts": `
+      export const x = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      computedWithOptions: ["function", 1],
+      bundledWithOptions: ["function", 1],
     });
   },
 });

@@ -56,6 +56,8 @@ pub struct ExecState {
 pub struct EbusyState {
     pub(crate) tasks: Vec<*mut ShellCpTask>,
     pub(crate) idx: usize,
+    /// Exit code of the exec phase (tasks that failed outright); raised to 1
+    /// by `print_shell_cp_task` for every deferred task that is not ignorable.
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
@@ -209,7 +211,8 @@ impl Cp {
     /// Windows-only post-processing of tasks that failed with EBUSY: if some
     /// other task already succeeded
     /// for the same absolute src/tgt, the EBUSY is benign and the task is
-    /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
+    /// dropped; otherwise its error is surfaced via `print_shell_cp_task`,
+    /// which also fails the builtin.
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
@@ -316,10 +319,15 @@ impl Cp {
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
             let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.err = Some(e);
+            match &mut Self::state_mut(interp, cmd).state {
+                State::Exec(exec) => exec.err = Some(e),
+                // A deferred task that turned out not to be ignorable. The
+                // exit code was already derived from `ExecState::err` when
+                // this phase started, so the failure is recorded directly.
+                #[cfg(windows)]
+                State::Ebusy(eb) => eb.main_exit_code = 1,
+                _ => {}
             }
-            // `e` drops here when not stored.
             s
         });
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())

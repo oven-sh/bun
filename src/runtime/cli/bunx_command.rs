@@ -463,8 +463,18 @@ impl BunxCommand {
 
             if is_stale {
                 let _ = target_package_json.close();
-                // If delete fails, oh well. Hope installation takes care of it.
-                let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                // Delete only while holding the exclusive lock, so the tree
+                // (lock file included) never vanishes under a process that
+                // is installing into or about to run from it. Contended or
+                // unlockable → skip; the reinstall refreshes the tree. If
+                // delete fails, oh well. Hope installation takes care of it.
+                if let Some(_lock) = Self::lock_cache_dir(
+                    tempdir_name,
+                    bun_sys::FileLockMode::Exclusive,
+                    /* nonblocking */ true,
+                ) {
+                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                }
                 return Err(crate::Error::NeedToInstall);
             }
             let _ = target_package_json.close();
@@ -669,24 +679,24 @@ impl BunxCommand {
     }
 
     /// The lock taken on `.bunx-lock` only serializes anything if the path
-    /// still names the inode we locked — the stale-tree cleanup deletes the
-    /// whole cache dir, lock file included, so a lock on an unlinked inode
-    /// guards nothing. On Windows an open file can't be replaced out from
-    /// under us, so the first successful lock is always valid.
-    #[cfg(unix)]
+    /// still names the file we locked — the stale-tree cleanup deletes the
+    /// whole cache dir, lock file included (Windows included: `bun_sys`
+    /// opens with `FILE_SHARE_DELETE` and deletes with POSIX semantics), so
+    /// a lock on an unlinked file guards nothing. Compare identity via
+    /// `fstat` on the held fd and on a freshly opened probe fd: both map to
+    /// ino/dev on POSIX and NTFS file index/volume serial on Windows.
     fn lock_file_identity_ok(fd: Fd, path_z: &ZStr) -> bool {
-        match (bun_sys::fstat(fd), bun_sys::stat(path_z)) {
+        let probe = match bun_sys::openat(Fd::cwd(), path_z, O::RDONLY | O::CLOEXEC, 0) {
+            Ok(fd) => fd,
+            Err(_) => return false,
+        };
+        let probe_file = bun_sys::File::from_fd(probe);
+        match (bun_sys::fstat(fd), bun_sys::fstat(probe_file.fd())) {
             (Ok(held), Ok(on_disk)) => {
                 held.st_ino == on_disk.st_ino && held.st_dev == on_disk.st_dev
             }
             _ => false,
         }
-    }
-
-    #[cfg(not(unix))]
-    #[inline(always)]
-    fn lock_file_identity_ok(_fd: Fd, _path_z: &ZStr) -> bool {
-        true
     }
 
     /// Width of the zero-padded decimal timestamp stored in the lock file.
@@ -700,7 +710,10 @@ impl BunxCommand {
         let mut buf = [0u8; Self::LOCK_TIMESTAMP_LEN];
         let mut cursor: &mut [u8] = &mut buf[..];
         write!(cursor, "{:020}", bun_core::time::timestamp()).expect("unreachable");
-        let _ = bun_sys::pwrite(lock.fd(), &buf, 0);
+        // Best-effort: on failure waiters reinstall, so only log it.
+        if let Err(err) = bun_sys::pwrite(lock.fd(), &buf, 0) {
+            bun_output::scoped_log!(bunx, "failed to record install completion: {}", err);
+        }
     }
 
     /// Whether a concurrent `bun x` finished installing into this directory

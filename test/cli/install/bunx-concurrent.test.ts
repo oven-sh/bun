@@ -1,6 +1,6 @@
 import { gzipSync, spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/37830
 // Concurrent `bun x <pkg>` processes share one install directory
@@ -117,15 +117,15 @@ test("concurrent bunx spawns of the same package do not corrupt the shared insta
 
   // A fresh temp dir gives this run its own bunx install dir
   // (<tmpdir>/bunx-<uid>-pkg-37830@latest) and a cold install cache.
-  const tmp = tmpdirSync();
-  const cache = tmpdirSync();
-  const cwd = tmpdirSync();
+  using tmp = tempDir("bunx-concurrent-tmp", {});
+  using cache = tempDir("bunx-concurrent-cache", {});
+  using cwd = tempDir("bunx-concurrent-cwd", {});
   const env = {
     ...bunEnv,
-    TMPDIR: tmp,
-    BUN_TMPDIR: tmp,
-    TEMP: tmp,
-    BUN_INSTALL_CACHE_DIR: cache,
+    TMPDIR: String(tmp),
+    BUN_TMPDIR: String(tmp),
+    TEMP: String(tmp),
+    BUN_INSTALL_CACHE_DIR: String(cache),
     npm_config_registry: `http://localhost:${server.port}/`,
   };
 
@@ -134,7 +134,7 @@ test("concurrent bunx spawns of the same package do not corrupt the shared insta
     spawn({
       cmd: [bunExe(), "x", "pkg-37830"],
       env,
-      cwd,
+      cwd: String(cwd),
       stdout: "pipe",
       stderr: "pipe",
     }),

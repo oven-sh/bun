@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
+import { computeFlags } from "../../../scripts/build/flags.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
@@ -102,6 +103,36 @@ describe("WebKit prebuilt URL", () => {
     expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
     );
+  });
+
+  test("linux lto: WebKit joins the LTO unit, so whole-program devirtualization is on", () => {
+    const cfg = resolveLinuxRelease({ lto: true });
+    expect(cfg.webkitLto).toBe(true);
+    const flags = computeFlags(cfg);
+    expect(flags.cxxflags).toContain("-flto=thin");
+    expect(flags.cxxflags).toContain("-fwhole-program-vtables");
+    expect(flags.ldflags).toContain("-Wl,--lto-whole-program-visibility");
+  });
+
+  test("freebsd lto: no -lto prebuilt, so JSC stays native and WPD stays off while bun's own code still ThinLTOs", () => {
+    const cfg = resolveConfig(
+      { os: "freebsd", arch: "x64", buildType: "Release", ci: true, freebsdSysroot: "/fake/freebsd-sysroot" },
+      mockToolchain(),
+    );
+    // ci release defaults LTO on for freebsd, like linux.
+    expect(cfg.lto).toBe(true);
+    expect(cfg.crossLangLto).toBe(true);
+    expect(cfg.webkitLto).toBe(false);
+    expect(prebuiltUrlOf(cfg)).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-freebsd-amd64.tar.gz`,
+    );
+    const flags = computeFlags(cfg);
+    expect(flags.cxxflags).toContain("-flto=thin");
+    expect(flags.cflags).toContain("-flto=thin");
+    expect(flags.ldflags).toContain("-flto=thin");
+    for (const list of [flags.cxxflags, flags.cflags, flags.ldflags]) {
+      expect(list.some(f => f.includes("whole-program"))).toBe(false);
+    }
   });
 
   test("--webkit-version=<sha> uses the plain autobuild-<sha> tag", () => {

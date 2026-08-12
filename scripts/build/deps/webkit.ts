@@ -60,7 +60,7 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
   if (cfg.debug) s += "-debug";
-  else if (cfg.lto) s += "-lto";
+  else if (cfg.webkitLto) s += "-lto";
   if (cfg.asan) s += "-asan";
   return s;
 }
@@ -251,7 +251,7 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=thin");
+    if (cfg.webkitLto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

@@ -2632,10 +2632,12 @@ class Http2Stream extends Duplex {
     }
   }
 
-  // node's onStreamTrailers, which sends empty trailers itself when nothing listens. A close()d stream
-  // is ended rather than asked: its writable has to finish for close()'s RST_STREAM to go out.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L484-L493 (onStreamTrailers):
+  // a closed stream is not asked (close()'s RST_STREAM follows on its own); with no listener the
+  // stream sends empty trailers itself, which is what makes a later sendTrailers() fail.
   [kWantTrailers](native) {
-    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 || this.listenerCount("wantTrailers") === 0) {
+    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0) return;
+    if (this.listenerCount("wantTrailers") === 0) {
       this.#sentTrailers = {};
       native.noTrailers(this.#id);
     } else {

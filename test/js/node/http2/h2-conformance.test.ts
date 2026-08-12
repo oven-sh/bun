@@ -904,12 +904,14 @@ function frameSummary(f: Frame) {
   return { type: f.type, flags: f.flags, length: f.length };
 }
 
-// A waitForTrailers stream whose body finished without a 'wantTrailers' listener is ended by
-// node itself (onStreamTrailers calls stream.sendTrailers({})): an empty END_STREAM DATA frame
-// goes out and the trailers count as sent, so a later sendTrailers() must fail with
-// ERR_HTTP2_TRAILERS_ALREADY_SENT rather than put a trailer HEADERS frame on the half-closed
-// stream (§8.1: the trailer section is the last frame of the message).
-describe("trailers after the stream was ended without a 'wantTrailers' listener (RFC 9113 §8.1)", () => {
+// node's onStreamTrailers (lib/internal/http2/core.js): once the body of a waitForTrailers stream is
+// out, a stream without a 'wantTrailers' listener is ended by node itself via sendTrailers({}), so an
+// empty END_STREAM DATA frame goes out and the trailers count as sent: a later sendTrailers() must
+// fail with ERR_HTTP2_TRAILERS_ALREADY_SENT rather than put a trailer HEADERS frame on the
+// half-closed stream (§8.1: the trailer section is the last frame of the message). A stream that is
+// closed by then, or that a listener close()s instead of sending trailers, is not completed at all:
+// no END_STREAM frame, nothing recorded as sent, and close()'s RST_STREAM(NO_ERROR) ends it.
+describe("trailer block requests without a listener or on a closing stream (RFC 9113 §8.1)", () => {
   test("client: a late sendTrailers() throws ERR_HTTP2_TRAILERS_ALREADY_SENT and sends nothing", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
@@ -990,9 +992,8 @@ describe("trailers after the stream was ended without a 'wantTrailers' listener 
     }
   });
 
-  // node's onStreamTrailers returns without emitting once the stream is closed (a listener could
-  // only throw ERR_HTTP2_INVALID_STREAM). Like the _final path, the stream is still ended with the
-  // empty END_STREAM DATA frame, and close()'s RST_STREAM (sent once the writable finishes) follows.
+  // onStreamTrailers returns without emitting once the stream is closed (a listener could only
+  // throw ERR_HTTP2_INVALID_STREAM); close()'s RST_STREAM goes out once the writable finishes.
   test("client: 'wantTrailers' is not emitted on a stream close()d while its last chunk was still buffered", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
@@ -1021,16 +1022,87 @@ describe("trailers after the stream was ended without a 'wantTrailers' listener 
       const rst = await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
       expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
       expect(wantTrailers).toBe(0);
+      expect(req.sentTrailers).toBeUndefined();
       expect(raw.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
         { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
         { type: FrameType.DATA, flags: 0, length: 1 },
         { type: FrameType.DATA, flags: 0, length: 1 },
-        { type: FrameType.DATA, flags: 0x1 /* END_STREAM */, length: 0 },
         { type: FrameType.RST_STREAM, flags: 0, length: 4 },
       ]);
     } finally {
       client.destroy();
       raw.close();
+    }
+  });
+
+  test("client: a 'wantTrailers' listener that close()s the stream ends it with RST_STREAM(NO_ERROR) alone", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      const events: string[] = [];
+      req.on("wantTrailers", () => {
+        events.push("wantTrailers");
+        req.close();
+      });
+      req.on("finish", () => events.push("finish"));
+      const closed = once(req, "close");
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      req.end("hello");
+
+      const rst = await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
+      await closed;
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      expect(events).toEqual(["wantTrailers", "finish"]);
+      expect(req.sentTrailers).toBeUndefined();
+      expect(raw.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
+        { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: 5 },
+        { type: FrameType.RST_STREAM, flags: 0, length: 4 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("server: a 'wantTrailers' listener that close()s the stream ends it with RST_STREAM(NO_ERROR) alone", async () => {
+    const outcome = Promise.withResolvers<{ events: string[]; sentTrailers: unknown }>();
+    const srv = http2.createServer();
+    srv.on("stream", (stream: any) => {
+      const events: string[] = [];
+      stream.on("error", (err: Error) => outcome.reject(err));
+      stream.on("wantTrailers", () => {
+        events.push("wantTrailers");
+        stream.close();
+      });
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => outcome.resolve({ events, sentTrailers: stream.sentTrailers }));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("ok");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      const rst = await c.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      expect(await outcome.promise).toEqual({ events: ["wantTrailers", "finish"], sentTrailers: undefined });
+      expect(c.frames.filter(f => f.streamId === 1).map(frameSummary)).toEqual([
+        { type: FrameType.HEADERS, flags: 0x4 /* END_HEADERS */, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: 2 },
+        { type: FrameType.RST_STREAM, flags: 0, length: 4 },
+      ]);
+    } finally {
+      c.destroy();
+      srv.close();
     }
   });
 });

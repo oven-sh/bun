@@ -2068,8 +2068,6 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// The object the clause items are read from: a binding this statement
-        /// already declared, or else the module itself.
         fn print_internal_bun_import_value(
             &mut self,
             import: &S::Import,
@@ -2705,8 +2703,7 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
-                        // Set by the linker for default and namespace imports;
-                        // the Bun object itself has no "default".
+                        // The Bun object has no "default" property; __toESM() adds it.
                         let wrap_with_to_esm =
                             record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
                         if wrap_with_to_esm {

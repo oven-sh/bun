@@ -168,10 +168,9 @@ pub(crate) fn convert_stmts_for_chunk(
                             .flags
                             .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
                         {
+                            // A "bun" import prints as an unhoisted var, too late for __reExport()
                             let is_bun_builtin = record.tag == ImportRecordTag::Bun;
                             let re_exported_module: Expr = if is_bun_builtin {
-                                // A "bun" import prints as a non-hoisted var, which would
-                                // land after the "__reExport()" call below.
                                 Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,

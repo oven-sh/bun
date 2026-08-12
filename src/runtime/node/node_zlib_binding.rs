@@ -242,11 +242,11 @@ pub(crate) trait CompressionStreamImpl:
 
     // Intrusive refcount.
     fn ref_(&self);
-    /// Decrement the intrusive refcount; frees `*this` at zero, so a call that
-    /// can reach zero passes the wrapper's `m_ctx` pointer, not a cast `&self`.
+    /// Decrement the intrusive refcount; frees `*this` when it hits zero.
     ///
-    /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
-    /// in `constructor()`. After this returns, `*this` may have been freed.
+    /// SAFETY: `this` must point to a live `Self` allocated in `constructor()`
+    /// and, unless the call cannot reach zero, be that allocation's own pointer
+    /// (the wrapper's `m_ctx`). After this returns, `*this` may have been freed.
     unsafe fn deref(this: *mut Self);
 
     // Per-class codegen (`T.js.*` cached-property accessors).

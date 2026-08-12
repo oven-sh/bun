@@ -164,5 +164,6 @@ unsafe impl Send for Resolved {}
 /// to the HTTP thread — projecting a shared `&` to an interior field from the
 /// DNS worker would alias that exclusive borrow under Stacked Borrows. A
 /// dedicated `Sync` static sidesteps that without weakening the singleton
-/// accessor's `&mut` contract.
+/// accessor's `&mut` contract; `SHARED` in `HTTPThread.rs` is the same
+/// arrangement for everything request owners on other threads hand over.
 static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());

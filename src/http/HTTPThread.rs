@@ -84,16 +84,16 @@ use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 /// The HTTP thread's inbox: everything other threads hand to it, plus the loop
-/// pointer they wake it through. Producers (the JS thread via the associated
-/// `HttpThread::schedule*` fns and [`shutdown_for_exit`], DNS workers via
-/// `h3_client::PendingConnect`) and the consuming HTTP thread
-/// ([`HttpThread::drain_events`]) all hold only `&SHARED`, and every field is
-/// interior-mutable, so none of this is covered by the `&'static mut
-/// HttpThread` the HTTP thread holds across `process_events` for the life of
-/// the process. [`HttpThread`] itself is HTTP-thread-only: `on_start` claims
-/// [`HTTP_THREAD`](crate::HTTP_THREAD), so a debug build panics if
-/// `http_thread()` is ever called from anywhere else. (Same split as
-/// `h3_client::PendingConnect`'s `RESOLVED`.)
+/// pointer they wake it through. Producers (whichever thread owns a request,
+/// via the associated `HttpThread::schedule*` fns and `shutdown_for_exit`; DNS
+/// workers via `h3_client::PendingConnect`) and the consuming HTTP thread
+/// (`drain_events`, `dealloc_in_flight_for_exit`) all hold only `&SHARED`, and
+/// every field is interior-mutable, so none of this is covered by the
+/// `&'static mut HttpThread` the HTTP thread holds across `process_events` for
+/// the life of the process. `HttpThread` itself is HTTP-thread-only: `on_start`
+/// claims `HTTP_THREAD`, so a debug build panics if `http_thread()` is ever
+/// called from anywhere else. `h3_client::PendingConnect`'s `RESOLVED` is the
+/// same split for the h3 DNS handoff.
 struct Shared {
     queued_tasks: Queue,
     queued_shutdowns: Guarded<Vec<ShutdownMessage>>,
@@ -116,9 +116,8 @@ static SHARED: Shared = Shared {
     uws_loop: AtomicPtr::new(core::ptr::null_mut()),
 };
 
-/// State owned by the HTTP thread. Only reachable through
-/// [`http_thread()`](crate::http_thread), on the HTTP thread; state that other
-/// threads touch lives in [`Shared`].
+/// State owned by the HTTP thread. Only reachable through `http_thread()`, on
+/// the HTTP thread; state that other threads touch lives in `Shared`.
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
     /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
@@ -1121,9 +1120,11 @@ impl HttpThread {
         if batch.len == 0 {
             return;
         }
-        // Nothing drains `SHARED` until `init()` has spawned the thread, so a
-        // task scheduled before that would leave its owner waiting forever;
-        // fail loudly instead (`async_http::preconnect` once skipped `init`).
+        // Every caller is expected to `init()` first; a task scheduled by one
+        // that forgot would sit in the queue until something else happened to
+        // start the thread (`async_http::preconnect` once skipped `init`), so
+        // fail loudly instead. The message entry points above don't need this:
+        // they only ever refer to requests that already went through here.
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
             "HTTPThread::schedule() called before HTTPThread::init()"

@@ -489,9 +489,10 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
 /// thread, then claimed from the worker thread's entry point. A static that
 /// is never claimed is just a `RacyCell` with a misleading type, so
 /// `test/internal/source-lints/thread-cell-claimed.test.ts` requires a
-/// `claim()` for every `ThreadCell` static: route cross-thread callers away
-/// from the cell (e.g. into a separate `Sync` static, as `bun_http` does for
-/// its HTTP thread) before switching a `RacyCell` over.
+/// `claim()` for every `ThreadCell` static. Before switching a `RacyCell`
+/// over, cross-thread callers therefore have to either move to a separate
+/// `Sync` static (`bun_http`'s HTTP thread) or be confined to the fields
+/// [`get_unchecked`](Self::get_unchecked) documents (`bun_io`'s request loop).
 #[repr(C)]
 pub struct ThreadCell<T: ?Sized> {
     #[cfg(debug_assertions)]

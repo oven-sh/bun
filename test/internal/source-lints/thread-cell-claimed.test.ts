@@ -7,14 +7,13 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `bun_core::ThreadCell<T>` is `RacyCell<T>` plus a debug-only owner latch:
 // once the owning thread calls `CELL.claim()`, every `CELL.get()` from another
 // thread panics in debug builds. A `ThreadCell` static that is never claimed
-// has no latch at all, so the "thread-confined" claim its type makes is
-// unchecked and cross-thread callers accumulate silently. That is how
-// `bun_http`'s `HTTP_THREAD` ended up with the JS thread materialising
-// `&'static mut HttpThread` (via `http_thread()`) for every fetch abort, body
-// write and stream resume while the HTTP thread held its own `&'static mut`
-// across `process_events` for the life of the process. The fix moved the
-// cross-thread state into a separate `Sync` static and claimed the cell; this
-// lint keeps every `ThreadCell` static claimed so the latch stays armed.
+// has no latch at all, so the thread confinement its type advertises goes
+// unchecked and cross-thread callers accumulate silently. `bun_http`'s
+// `HTTP_THREAD` went unclaimed long enough for the JS thread to be handed
+// `&'static mut HttpThread` on every fetch abort, body write and stream resume
+// while the HTTP thread held its own `&'static mut` for the life of the
+// process. This lint requires a `claim()` for every `ThreadCell` static so
+// the latch stays armed.
 //
 // Claims are looked up within the declaring crate (the directory of the
 // nearest `Cargo.toml`): `bun_io` declares `LOOP` and claims it in the same
@@ -52,7 +51,7 @@ function crateOf(source: string): string {
   return crateDirs.find(dir => source.startsWith(dir + "/")) ?? path.posix.dirname(source);
 }
 
-// `static NAME: ThreadCell<` with any path prefix (`bun_core::ThreadCell`,
+// `static [mut] NAME: ThreadCell<` with any path prefix (`bun_core::ThreadCell`,
 // `crate::atomic_cell::ThreadCell`) and any visibility; the type may start on
 // the line after the colon.
 const DECLARATION = /\bstatic\s+(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(?:[\w:]+::)?ThreadCell\s*</g;
@@ -108,6 +107,6 @@ test("DECLARATION still matches real ThreadCell statics", () => {
   expect(declared.length).toBeGreaterThan(0);
 });
 
-test("every ThreadCell static is claim()ed by its owning thread", () => {
+test("every ThreadCell static is claim()ed somewhere in its crate", () => {
   expect(unclaimed).toEqual([]);
 });

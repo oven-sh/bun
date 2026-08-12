@@ -950,8 +950,9 @@ impl Drop for HTTPClient<'_> {
 // type: `init_once` writes it before spawning the thread, `on_start` `claim()`s
 // it, and from then on debug builds panic on access from any other thread.
 // Other threads never need it — everything they hand to the HTTP thread goes
-// through the `Sync` static in `HTTPThread.rs` (the associated
-// `HTTPThread::schedule*` fns and `shutdown_for_exit`).
+// through `Sync` statics instead (`SHARED` in `HTTPThread.rs`, behind the
+// associated `HTTPThread::schedule*` fns and `shutdown_for_exit`; `RESOLVED` in
+// `h3_client/PendingConnect.rs`).
 pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =

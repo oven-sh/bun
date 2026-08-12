@@ -282,14 +282,9 @@ impl Drop for SpawnSyncEventLoop {
 impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context and point the VM's
     /// event loop handle at this loop. Returns the handle that was current, for
-    /// [`cleanup`](Self::cleanup).
-    ///
-    /// The caller keeps that value rather than this struct: spawnSync can nest
-    /// (a test timing out inside spawnSync makes the test runner carry on with
-    /// the following tests, which may spawnSync again), and both levels share
-    /// the one loop stored in the VM's rare data. A single saved slot here
-    /// would be overwritten by the inner call and leave the VM pointing at this
-    /// loop for good after the outer call returned.
+    /// [`cleanup`](Self::cleanup); it lives on the caller's frame because
+    /// spawnSync calls nest (the test runner's timeout path runs further tests
+    /// inside a wait) and every level shares this one struct.
     #[must_use = "pass this to cleanup() or the VM keeps running on the spawnSync loop"]
     pub fn prepare(
         &mut self,

@@ -27,24 +27,15 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-/// The one place a loop pointer handed to (or retained by) a `FilePoll` is
-/// dereferenced.
-///
-/// `FilePoll` takes loops as `*mut Loop` rather than `&mut Loop` because it
-/// keeps the pointer in `counted_loop` until the poll is unregistered: a
-/// pointer derived from a caller's `&mut` reborrow would be invalidated by the
-/// next `&mut Loop` anyone forms in between, whereas the handles callers pass
-/// (`EventLoopCtx::loop_` and the like) are the loop's own pointer.
+/// Single deref site for the loop pointers `FilePoll` is given (see
+/// [`FilePoll::register`]) and keeps in `counted_loop`.
 #[cfg(not(windows))]
 #[inline]
 fn loop_mut<'a>(loop_: *mut Loop) -> &'a mut Loop {
     debug_assert!(!loop_.is_null());
-    // SAFETY: `loop_` is the thread's loop or `Bun.spawnSync`'s private loop
-    // (owned by the VM's rare data); both outlive every poll registered on
-    // them, and the pointer carries the handle's own provenance (see above).
-    // The event loop is single-threaded, and every caller consumes the borrow
-    // with a counter adjustment or a field read before anything else can reach
-    // the loop.
+    // SAFETY: a loop outlives every poll registered on it, and the event loop
+    // is single-threaded; every caller drops the borrow after one counter
+    // update or field read.
     unsafe { &mut *loop_ }
 }
 
@@ -321,19 +312,14 @@ pub struct FilePoll {
 
     pub(crate) allocator_type: AllocatorType,
 
-    /// The loop whose `num_polls`/`active` this poll is counted in (and whose
-    /// epoll/kqueue fd it is registered with), null while not registered.
-    ///
-    /// Callers hand every register/unregister the loop that is *current*
-    /// (`EventLoopCtx::loop_`), and `Bun.spawnSync` points that at its
-    /// private loop for the duration of the call. A poll torn down
-    /// while the private loop is current (a GC sweep finalizing a reader, a
-    /// test body run by the test runner's timeout path) must still be
-    /// removed from, and uncounted on, the loop it was registered with:
-    /// decrementing the private loop instead lets its `num_polls` reach 0
-    /// while a child's pidfd is still registered, and `us_loop_run_bun_tick`
-    /// then returns without polling, so that spawnSync spins and never sees
-    /// the child exit.
+    /// The loop this poll is registered with and counted on; null while not
+    /// registered. Callers pass whichever loop is current, and while
+    /// `Bun.spawnSync` waits that is its private loop, so a poll torn down
+    /// during the wait (GC, or tests the runner moves on to after a timeout)
+    /// has to be taken off this loop rather than the current one: a count
+    /// taken off the private loop makes `us_loop_run_bun_tick` stop polling
+    /// and spawnSync spin. `KeepAlive`, `timer::All` and
+    /// `jsc::EventLoop::uws_loop` record their loop for the same reason.
     counted_loop: *mut Loop,
 }
 
@@ -493,9 +479,7 @@ impl FilePoll {
                 || self.flags.contains(Flags::PollProcess))
     }
 
-    /// The loop a register/unregister must act on: the one this poll is
-    /// already counted on (see `counted_loop`), otherwise the current one the
-    /// caller passed.
+    /// `counted_loop` while registered, otherwise the loop the caller passed.
     fn counted_or(&self, current: *mut Loop) -> *mut Loop {
         if self.counted_loop.is_null() {
             current

@@ -87,13 +87,10 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
-    /// The uws loop this `EventLoop` instance drives: the thread's loop for the
-    /// VM's embedded loops (set by `ensure_waker`), the private loop for a
-    /// `Bun.spawnSync` loop. `concurrent_ref` is folded into this loop, not into
-    /// `vm.event_loop_handle`: spawnSync points the latter at its private loop
-    /// while it waits, and a `MessagePort`/`BroadcastChannel` torn down during
-    /// that wait (a GC sweep, the test runner moving on after a timeout) has to
-    /// release its ref on the loop that holds it.
+    /// The uws loop this instance drives (the thread's, set by `ensure_waker`;
+    /// the private one for a `Bun.spawnSync` loop), which `concurrent_ref` is
+    /// folded into. `vm.event_loop_handle` is not used for that because
+    /// spawnSync repoints it while it waits (see `bun_io::FilePoll::counted_loop`).
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
@@ -622,20 +619,17 @@ impl EventLoop {
         }
     }
 
-    /// The loop this instance's keep-alive refs are counted on (see
-    /// [`Self::uws_loop`]). Unlike [`Self::usockets_loop`] this does not follow
-    /// `vm.event_loop_handle`, which `Bun.spawnSync` repoints while it waits.
-    /// An embedded loop that has not run `ensure_waker` yet is driven by the
-    /// thread's loop.
+    /// [`Self::uws_loop`], or the thread's loop before `ensure_waker` has run.
+    /// Unlike [`Self::usockets_loop`] this does not follow `vm.event_loop_handle`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn own_uws_loop(&self) -> &mut uws::Loop {
         let loop_ = self.uws_loop.map_or_else(uws::Loop::get, NonNull::as_ptr);
-        // SAFETY: the thread's loop lives as long as the thread; a spawnSync
-        // loop's private uws loop is destroyed together with its `EventLoop`
-        // (`SpawnSyncEventLoop::drop`). The loop is a separate allocation, so the
-        // `&mut` aliases no field of `self`, and it is only reborrowed from the
-        // owning JS thread, for the duration of one counter update.
+        // SAFETY: the loop is live at every call site: `VirtualMachine::teardown`
+        // folds for the last time before freeing the thread's loop, and
+        // `SpawnSyncEventLoop` destroys its `EventLoop` before its uws loop. It
+        // is a separate allocation from `self`, reborrowed on the owning thread
+        // for one counter update.
         unsafe { &mut *loop_ }
     }
 

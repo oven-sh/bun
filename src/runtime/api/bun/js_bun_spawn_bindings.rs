@@ -1063,9 +1063,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // The handle that was current before `prepare()` is kept on this frame
-    // (not in the shared `SpawnSyncEventLoop`) so that a spawnSync nested
-    // inside this one's wait restores the right handle at each level.
     let mut previous_loop_handle: VmEventLoopHandle = None;
     // For IS_SYNC, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it

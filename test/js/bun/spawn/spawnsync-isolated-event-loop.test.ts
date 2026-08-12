@@ -160,27 +160,22 @@ describe.concurrent("spawnSync isolated event loop", () => {
   });
 });
 
-// While Bun.spawnSync waits, the VM's "current" uws loop is spawnSync's private
-// loop. A ref that was taken on the main loop and released during that wait
-// used to be subtracted from the private loop instead, so the private loop's
-// poll count could read 0 while the child's pidfd was still registered;
-// us_loop_run_bun_tick then returns without polling and spawnSync spins
-// forever, never observing the exit (seen as `bun test --parallel` workers
-// stuck inside spawnSync of a local bun child until the batch is killed, and
-// as #34069).
+// While Bun.spawnSync waits, the VM's current uws loop is spawnSync's private
+// loop. A ref taken on the main loop and released during the wait used to come
+// off the private loop instead; once that loop's poll count reads 0 it is never
+// polled again and spawnSync spins without ever seeing the child exit (CI
+// workers stuck in spawnSync of a local bun child, #34069).
 //
-// The test runner's timeout path is the one place that runs JS inside a
-// spawnSync wait: when a test whose callback has already left the stack times
-// out inside spawnSync, the runner carries on with the following tests right
-// there. In each fixture below, test `a` enters a spawnSync that its per-test
-// timeout interrupts (bun test kills the dangling child, which is what lets the
-// spawnSync return once the private loop gets polled) and the tests after it
-// run inside that wait. `a`'s spawnSync holds exactly one poll on the private
-// loop, so a single misdirected release in `b` zeroes the count and `a` never
-// returns: the inner `bun test` then spins instead of exiting and this test
-// times out. These tests are deliberately not concurrent: bun test only kills
-// the processes of a timed-out test when that test is not sharing a concurrent
-// group, and that is what cleans up such a spinning child.
+// JS only runs inside a spawnSync wait through the test runner's timeout path:
+// when a test times out inside spawnSync after its callback left the stack, the
+// runner carries on with the following tests right there. So in each fixture
+// test `a` enters a spawnSync that its per-test timeout interrupts (bun test
+// kills the dangling child, which lets the spawnSync return once its loop gets
+// polled) and the following tests run inside the wait. That spawnSync holds
+// exactly one poll on the private loop, so a single misdirected release in `b`
+// makes `a` spin forever and this test time out. Not concurrent on purpose:
+// bun test only kills a timed-out test's processes when the test is not in a
+// concurrent group, and that is what cleans up a spinning inner `bun test`.
 describe.skipIf(isWindows)("refs taken on the main loop and a spawnSync wait", () => {
   async function runFixture(setup: string, insideWait: string, extraTests = "") {
     using dir = tempDir("spawnsync-loop-refs", {

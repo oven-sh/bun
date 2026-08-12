@@ -14,10 +14,8 @@ use bun_uws_sys::Loop;
 /// event loop alive. This is not reference counted — only Active / Inactive.
 pub struct KeepAlive {
     status: Status,
-    /// The loop `ref_()` counted this on, null while inactive. The ctx passed
-    /// to `unref()` names whichever loop is current at that moment, which
-    /// during `Bun.spawnSync` is its private loop; the ref has to come off the
-    /// loop it was put on (see `FilePoll::counted_loop`).
+    /// The loop `ref_()` counted this on, null while inactive; the unref has to
+    /// come off the same loop (see `FilePoll::counted_loop`).
     #[cfg(not(windows))]
     loop_: *mut Loop,
 }
@@ -61,11 +59,9 @@ impl KeepAlive {
     fn take_refd_loop(&mut self) -> &'static mut Loop {
         let loop_ = core::mem::replace(&mut self.loop_, core::ptr::null_mut());
         debug_assert!(!loop_.is_null(), "KeepAlive active without a loop");
-        // SAFETY: set from a live loop in `ref_()` when `status` became
-        // `Active`; both the thread's loop and spawnSync's private loop (owned
-        // by the VM's RareData) outlive everything ref'd on them. Single
-        // event-loop thread, and the callers consume the borrow with one
-        // counter adjustment before anything else can reach the loop.
+        // SAFETY: set in `ref_()` from a loop that outlives everything ref'd on
+        // it; single event-loop thread, and the callers drop the borrow after
+        // one counter update.
         unsafe { &mut *loop_ }
     }
 
@@ -93,9 +89,7 @@ impl KeepAlive {
         #[cfg(not(windows))]
         {
             let loop_ = self.take_refd_loop();
-            // The pending counter is drained by the thread's own loop when it
-            // next ticks; a ref that sits on any other loop (spawnSync's
-            // private one) has no next tick to wait for.
+            // Only the thread's loop drains the pending counter on its next tick.
             if core::ptr::eq(loop_, Loop::get()) {
                 event_loop_ctx.increment_pending_unref_counter();
             } else {

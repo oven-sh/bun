@@ -609,10 +609,8 @@ pub(crate) struct All {
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
-    /// The loop `active_timer_count` going positive ref'd; the matching unref
-    /// has to land on the same loop even if the caller's `vm.uws_loop()` has
-    /// since been pointed at `Bun.spawnSync`'s private loop (a timer being
-    /// cancelled or swept by GC while a spawnSync is in progress).
+    /// The loop ref'd when `active_timer_count` went positive; the unref has
+    /// to come off the same loop (see `FilePoll::counted_loop`).
     #[cfg(not(windows))]
     timer_refd_loop: *mut bun_uws_sys::Loop,
     #[cfg(windows)]
@@ -637,27 +635,15 @@ pub(crate) struct All {
     pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
-/// Drop the loop ref recorded by the matching `ref_()` in
-/// `increment_timer_ref` / `increment_immediate_ref`. `current` is the loop the
-/// caller would have used; it only differs from the recorded one while
-/// `Bun.spawnSync` has the VM pointed at its private loop.
+/// Balance the `ref_()` taken when a ref count went positive, on the loop it
+/// was taken on.
 #[cfg(not(windows))]
-fn unref_refd_loop(refd: &mut *mut bun_uws_sys::Loop, current: *mut bun_uws_sys::Loop) {
-    let recorded = core::mem::replace(refd, core::ptr::null_mut());
-    debug_assert!(
-        !recorded.is_null(),
-        "timer ref count went positive without a loop ref"
-    );
-    let loop_ = if recorded.is_null() {
-        current
-    } else {
-        recorded
-    };
-    // SAFETY: `recorded` was the VM's live uws loop when the ref was taken
-    // (the thread's loop, or spawnSync's private loop owned by the VM's
-    // RareData), and both outlive this per-thread timer state; `current` is
-    // the caller's live loop.
-    unsafe { &mut *loop_ }.unref();
+fn unref_refd_loop(refd: &mut *mut bun_uws_sys::Loop) {
+    let mut loop_ = core::ptr::NonNull::new(core::mem::replace(refd, core::ptr::null_mut()))
+        .expect("timer ref count went positive without ref'ing a loop");
+    // SAFETY: recorded from the VM's live loop when the ref was taken, and
+    // `VirtualMachine::teardown` cancels all timers before it frees any loop.
+    unsafe { loop_.as_mut() }.unref();
 }
 
 impl All {
@@ -1179,7 +1165,7 @@ impl All {
             }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            unref_refd_loop(&mut self.immediate_refd_loop, uws_loop);
+            unref_refd_loop(&mut self.immediate_refd_loop);
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
@@ -1225,7 +1211,7 @@ impl All {
             self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            unref_refd_loop(&mut self.timer_refd_loop, uws_loop);
+            unref_refd_loop(&mut self.timer_refd_loop);
             #[cfg(windows)]
             self.uv_timer.unref();
         }

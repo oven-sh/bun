@@ -66,6 +66,13 @@ function withIndexGetter(get: () => unknown, enumerable = true) {
   return array;
 }
 
+/** `[1, 2]` whose index 1 is a non-enumerable data property. */
+function withNonEnumerableIndex() {
+  const array = [1, 2];
+  Object.defineProperty(array, 1, { enumerable: false });
+  return array;
+}
+
 function selfReferencingObject() {
   const object: Record<string, unknown> = {};
   object.self = object;
@@ -629,6 +636,25 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // node reads indexes with a[i], so enumerability does not matter to it. Strict mode has
+  // its own entry point and does the same; assert.deepEqual is Bun.deepEquals, which like
+  // jest only sees enumerable indexes.
+  {
+    name: "an array with a non-enumerable index getter and a plain array",
+    a: () => withIndexGetter(() => 2, false),
+    b: () => [1, 2],
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "an array with a non-enumerable index and a plain array",
+    a: withNonEnumerableIndex,
+    b: () => [1, 2],
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
 
   // Cycles.
   {
@@ -752,15 +778,12 @@ describe("util.isDeepStrictEqual", () => {
     expect(calls).toEqual({ a: 1, b: 1 });
   });
 
-  // node reads the dense part of an array with a[i], which does not care about
-  // enumerability; jest-style comparisons (expect, Bun.deepEquals) skip these.
-  test("reads a non-enumerable index getter too, like node's a[i]", () => {
+  test("compares a non-enumerable index getter by its value, like node's a[i]", () => {
     const hiddenTwo = withIndexGetter(() => 2, false);
     const hiddenThree = withIndexGetter(() => 3, false);
     expect(util.isDeepStrictEqual(hiddenTwo, [1, 2])).toBe(true);
     expect(util.isDeepStrictEqual(hiddenThree, [1, 2])).toBe(false);
     expect(util.isDeepStrictEqual(hiddenTwo, [1, ,])).toBe(false);
-    expect(() => assert.deepStrictEqual(hiddenTwo, [1, 2])).not.toThrow();
   });
 
   test("propagates an index getter that throws", () => {

@@ -280,12 +280,19 @@ function emitRequestCloseNT(self) {
   self.emit("close");
 }
 
+// Both listen() outcomes are deferred with process.nextTick like Node's
+// net.Server. A setTimeout here lands in the bun:test fake timer heap while
+// jest.useFakeTimers() is active and never fires on its own.
 function emitListeningNextTick(self, hostname, port) {
   if ((self.listening = !!self[serverSymbol])) {
     // TODO: remove the arguments
     // Note does not pass any arguments.
     self.emit("listening", null, hostname, port);
   }
+}
+
+function emitListenErrorNextTick(self, err) {
+  self.emit("error", err);
 }
 
 // Node.js only requests a client certificate when `requestCert: true`.
@@ -684,7 +691,7 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
-    setTimeout(() => server.emit("error", err), 1);
+    process.nextTick(emitListenErrorNextTick, server, err);
   }
 
   return this;
@@ -1144,7 +1151,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 

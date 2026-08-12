@@ -1,4 +1,7 @@
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 
 test("we can go back in time", () => {
@@ -113,4 +116,53 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
   // null => exited on its own; non-null => killed by the spawn timeout (spun).
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+describe.each([
+  ["net", () => net.createServer()],
+  ["http", () => http.createServer()],
+])("%s.Server#listen() while fake timers are active", (_, createServer) => {
+  test("emits 'listening' without fake time being advanced", async () => {
+    jest.useFakeTimers();
+    try {
+      const server = createServer();
+      try {
+        const listening = once(server, "listening");
+        server.listen(0, "127.0.0.1");
+        // The deferred emit must not be a timer, or it would sit in the fake heap.
+        expect(jest.getTimerCount()).toBe(0);
+        await listening;
+        expect(server.listening).toBe(true);
+        expect(server.address()).toMatchObject({ address: "127.0.0.1", port: expect.any(Number) });
+      } finally {
+        server.close();
+      }
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("emits 'error' for a port that is in use without fake time being advanced", async () => {
+    const holder = createServer();
+    try {
+      holder.listen(0, "127.0.0.1");
+      await once(holder, "listening");
+      const { port } = holder.address() as net.AddressInfo;
+
+      jest.useFakeTimers();
+      try {
+        const server = createServer();
+        const errored = once(server, "error");
+        server.listen(port, "127.0.0.1");
+        expect(jest.getTimerCount()).toBe(0);
+        const [err] = await errored;
+        expect(err).toMatchObject({ code: "EADDRINUSE" });
+        expect(server.listening).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    } finally {
+      holder.close();
+    }
+  });
 });

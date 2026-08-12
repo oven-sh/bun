@@ -3848,7 +3848,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    process.nextTick(
+      emitErrorNextTick,
+      this,
+      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+    );
   }
   return this;
 };
@@ -3952,14 +3956,11 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  // Bun.listen has already bound, listened and registered the socket with the
+  // event loop, so like Node this only needs to be deferred to the next tick.
+  // A setTimeout here lands in the bun:test fake timer heap while
+  // jest.useFakeTimers() is active and never fires on its own.
+  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4144,7 +4145,7 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
-        setTimeout(emitErrorNextTick, 1, server, err);
+        process.nextTick(emitErrorNextTick, server, err);
       }
       return;
     }
@@ -4168,7 +4169,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

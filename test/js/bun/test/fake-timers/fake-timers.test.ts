@@ -1,3 +1,4 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -111,6 +112,103 @@ describe("advanceTimersToNextTimer", () => {
     vi.useRealTimers();
   });
 });
+describe.concurrent("sync APIs do not drain the microtask queue (jest parity)", () => {
+  // Jest's sync fake-timer APIs fire callbacks without flushing microtasks; a
+  // microtask scheduled inside a callback runs at the test's next real `await`,
+  // not before advanceTimersByTime() returns. The *Async variants opt into
+  // per-timer flushing.
+  //
+  // The ordering depends on event-loop enter/exit depth at the call site, which
+  // a prior test's real-time `await` can change, so assert in a subprocess.
+  async function runOrderingFixture({
+    timerCount,
+    api,
+    expected,
+  }: {
+    timerCount: 1 | 2;
+    api: string;
+    expected: string[];
+  }) {
+    const setups = Array.from(
+      { length: timerCount },
+      (_, i) =>
+        `setTimeout(() => { log.push("T${i + 1}"); Promise.resolve().then(() => log.push("P${i + 1}")); }, ${5 * (i + 1)});`,
+    ).join("\n      ");
+    using dir = tempDir("fake-timers-sync-microtask", {
+      "ordering.test.ts": `
+        import { jest, test } from "bun:test";
+        test("ordering", async () => {
+          jest.useFakeTimers();
+          const log = [];
+          ${setups}
+          jest.${api};
+          log.push("after-advance");
+          await Promise.resolve();
+          log.push("after-await");
+          console.log("ORDER=" + JSON.stringify(log));
+          jest.useRealTimers();
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "ordering.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const order = stdout.match(/^ORDER=(.*)$/m)?.[1];
+    expect({ order, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+      order: JSON.stringify(expected),
+      exitCode: 0,
+      stderr: undefined,
+    });
+  }
+
+  test("advanceTimersByTime", async () => {
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "advanceTimersByTime(10)",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
+  });
+
+  test("advanceTimersToNextTimer", async () => {
+    await runOrderingFixture({
+      timerCount: 1,
+      api: "advanceTimersToNextTimer()",
+      expected: ["T1", "after-advance", "P1", "after-await"],
+    });
+  });
+
+  test("runAllTimers", async () => {
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "runAllTimers()",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
+  });
+
+  test("runOnlyPendingTimers", async () => {
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "runOnlyPendingTimers()",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
+  });
+
+  test("microtask drain resumes after advanceTimersByTime returns", async () => {
+    vi.useFakeTimers();
+    setTimeout(() => {}, 10);
+    vi.advanceTimersByTime(10);
+    let ran = false;
+    queueMicrotask(() => (ran = true));
+    await Promise.resolve();
+    expect(ran).toBe(true);
+  });
+});
+
 describe("advanceTimersByTime", () => {
   test("setInterval", () => {
     vi.useFakeTimers();

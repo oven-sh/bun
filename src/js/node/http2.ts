@@ -3454,9 +3454,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_AUTHORITY] === undefined && parentRequestHeaders) {
       headers[HTTP2_HEADER_AUTHORITY] = parentRequestHeaders[HTTP2_HEADER_AUTHORITY];
     }
-    // Before the promised id is reserved, so that a pushStream() made from inside a value's
-    // toString() reserves and announces its stream first (see toWireHeaders). Like node, a throwing
-    // coercion throws from pushStream() itself rather than reaching the callback.
+    // Must precede getNextStream(): see toWireHeaders.
     const wireHeaders = toWireHeaders(headers);
     const pushId = parser.getNextStream();
     if (pushId === -1) {
@@ -4073,26 +4071,18 @@ function buildSensitiveNames(headers, sensitives) {
   return map;
 }
 
-// Objects are the only header values whose coercion runs user code (toString/valueOf/
-// Symbol.toPrimitive); primitives are left to the native validator, which keeps its exact error
-// behavior for undefined/null/symbol values.
+// Only objects run user code when coerced; primitives keep the native validator's exact errors.
 function coerceHeaderValue(value) {
   const type = typeof value;
   return (type === "object" && value !== null) || type === "function" ? `${value}` : value;
 }
 
-// The header block request()/pushStream() hand to the native encoder. The encoder coerces each
-// value while encoding, i.e. after the caller has taken a stream id, so a value whose toString()
-// calls request()/pushStream() again would take the next id yet reach the wire first (RFC 9113
-// §5.1.1 requires ids to increase on the wire; nghttp2 ignores the lower one), with the two blocks'
-// HPACK table updates interleaved. Like node's buildNgHeaderString, coerce everything in JS before
-// an id is taken. Native must only read storage this module created: the object form the callers
-// pass is already their own spread copy (plain data properties), so it is copied only when a value
-// needs coercing, while arrays (the caller's own) are always copied. The input is not mutated: the
-// object form backs sentHeaders, which node leaves uncoerced as well.
+// Coerces the header values in JS before the caller takes a stream id (node: buildNgHeaderString).
+// The native encoder coerces while encoding, so a value whose toString() re-enters request() or
+// pushStream() would take the next id yet reach the wire first (RFC 9113 §5.1.1). Arrays are always
+// copied so native never reads caller-owned storage; the input itself (sentHeaders) is not mutated.
 function toWireHeaders(headers) {
   if ($isArray(headers)) {
-    // Raw [name, value, ...] form: names are coerced natively as well.
     const list: any[] = [];
     for (let i = 0; i < headers.length; i++) {
       list[i] = coerceHeaderValue(headers[i]);
@@ -6432,10 +6422,8 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      // Before this request is queued or takes a stream id, so that a request() made from inside a
-      // value's toString() is submitted (or queued) ahead of this one (see toWireHeaders). The raw
-      // (array) form is kept because it preserves duplicate-header interleaving the object form
-      // cannot represent; `headers` itself backs sentHeaders and the diagnostics channels.
+      // Must precede both the pending queue and getNextStream(): see toWireHeaders. The raw (array)
+      // form keeps duplicate-header interleaving the object form cannot represent.
       const wireHeaders = toWireHeaders(rawHeadersList !== null ? rawHeadersList : headers);
 
       // A request made before the socket finished connecting, or while the peer's

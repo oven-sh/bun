@@ -306,7 +306,7 @@ As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on 
 ### Other Node.js compatibility changes
 
 - `new URL("not a url")` throws with the message `Invalid URL` and `code: "ERR_INVALID_URL"` (plus `input` / `base` properties), matching Node. 1.3's message was `"..." cannot be parsed as a URL`. Tests matching the old message need updating.
-- `assert.deepStrictEqual()` / `assert.strictEqual()` and `util.isDeepStrictEqual()` now compare prototypes and own enumerable properties the way Node does. Comparisons that 1.3 incorrectly passed (an `Array` subclass against a plain array, a `Buffer` against a `Uint8Array`, a `Date` carrying extra own properties) now fail. `Bun.deepEquals()` and `bun:test` matchers are unchanged.
+- `assert.deepStrictEqual()` and `util.isDeepStrictEqual()` now compare prototypes and own enumerable properties the way Node does. Comparisons that 1.3 incorrectly passed (an `Array` subclass against a plain array, a `Buffer` against a `Uint8Array`, a `Date` carrying extra own properties) now fail. `Bun.deepEquals()` and `bun:test` matchers are unchanged.
 - An exception thrown inside a `node:fs`, `node:dns`, or `crypto.pbkdf2()` callback is reported as `uncaughtException`, not `unhandledRejection`.
 - `node:http`: after an explicit `res.writeHead()`, `res.end(chunk)` sends the body chunked instead of computing a `Content-Length`, as Node does. `http.Server` now enforces `maxConnections` and emits `"drop"`.
 - `node:cluster` and `child_process` IPC: internal `{ cmd: "NODE_..." }` messages are delivered to the `"internalMessage"` event instead of `"message"`.

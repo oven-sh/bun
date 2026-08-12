@@ -69,6 +69,9 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
 // Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
 new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
+// Testing hook for test/js/web/clipboard/clipboard.test.ts: seconds the clipboard helper
+// (`xclip` etc., src/runtime/webcore/clipboard.rs) may run before its watchdog kills it.
+platform_specific_new!(pub BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: unsigned, posix = "BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT", windows = None, { default: 10 });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });

@@ -347,40 +347,6 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
 impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let job = Self::build(cx, off, js);
-        // SAFETY: live until one of the three releases; the pool owns it now.
-        WorkPool::schedule(unsafe { &raw mut (*job).task });
-    }
-
-    /// As [`schedule`](Self::schedule), but for work that needs its own
-    /// executor (a FIFO thread). `dispatch` receives the intrusive task and
-    /// the job's off-thread part. The executor has the off-thread part to
-    /// itself until it invokes `(task.callback)(task)`, which it must do
-    /// exactly once, on any thread, as a pool worker would; after that it
-    /// touches neither pointer. Doing the blocking work on the off-thread
-    /// part *before* the callback keeps it outside the VM [`Borrow`] the
-    /// callback takes, which teardown would otherwise wait on (see
-    /// [`VmHandle::borrow`](crate::vm_handle::VmHandle::borrow)); [`run`]
-    /// then has only the result to hand back.
-    ///
-    /// [`run`]: JobContext::run
-    pub fn schedule_with(
-        cx: &JsThread<'_>,
-        off: C::OffThread,
-        js: C::Js,
-        dispatch: impl FnOnce(*mut WorkPoolTask, *mut C::OffThread),
-    ) {
-        let job = Self::build(cx, off, js);
-        // SAFETY: as in `schedule`; the executor owns it now, and nothing else
-        // reaches `off` until the callback (teardown releases only the JS side).
-        dispatch(unsafe { &raw mut (*job).task }, unsafe {
-            &raw mut (*job).off
-        });
-    }
-
-    /// JS thread: allocate the job, link it into the VM's live list, and take
-    /// the loop keep-alive. The caller hands `task` to an executor.
-    fn build(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> *mut Self {
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -406,7 +372,8 @@ impl<C: JobContext> Job<C> {
             js: JsSide::new(js, cx),
         }));
         cx.vm().jobs().push(job.cast());
-        job
+        // SAFETY: live until one of the three releases; the pool owns it now.
+        WorkPool::schedule(unsafe { &raw mut (*job).task });
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {

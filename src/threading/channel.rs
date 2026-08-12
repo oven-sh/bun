@@ -51,14 +51,6 @@ impl<T: Copy, const N: usize> Channel<T, StaticBuffer<T, N>> {
     }
 }
 
-impl<T: Copy> Channel<T, DynamicBuffer<T>> {
-    /// Unbounded: `write_item` never blocks; it fails only on OOM.
-    #[inline]
-    pub fn init_dynamic() -> Self {
-        Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
-    }
-}
-
 // `T: Copy` because `LinearFifo::write`/`read` are slice-copy based. All
 // in-tree channel payloads are POD; revisit if a non-`Copy` T appears.
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {

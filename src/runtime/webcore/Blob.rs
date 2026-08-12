@@ -6123,6 +6123,8 @@ impl ClipboardBlobReadHandler {
                 let code = e.code.get().to_utf8_bytes();
                 let message = e.message.get().to_utf8_bytes();
                 let text = match (code.is_empty(), message.is_empty()) {
+                    // fs errors already read "ENOENT: no such file or directory, ...".
+                    (false, false) if message.starts_with(&code) => message,
                     (false, false) => {
                         let mut joined = code;
                         joined.extend_from_slice(b": ");

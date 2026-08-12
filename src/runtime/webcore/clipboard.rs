@@ -1,7 +1,9 @@
 //! Native `navigator.clipboard` platform I/O (https://w3c.github.io/clipboard-apis/).
 //! WebCore (`src/jsc/bindings/webcore/Clipboard.cpp`) owns every promise/JS value; this
-//! side runs bytes + an opaque `ClipboardRequest*` on a dedicated serial thread and hands
-//! it back once.
+//! side takes bytes + an opaque `ClipboardRequest*` to the work pool as a `Job` and hands
+//! the request back once. Operations are not ordered with respect to each other: a caller
+//! that needs one to land before the next awaits it, as with any other process using the
+//! OS clipboard.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -9,7 +11,6 @@ use core::ptr;
 use bun_jsc::job::JsAffine;
 use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsThread};
-use bun_threading::WorkPoolTask;
 
 /// The job's JS side: the `WebCore::ClipboardRequest` reference that owns the
 /// completion. Consumed exactly once on the JS thread by `complete`/`fail`,
@@ -79,8 +80,8 @@ impl Drop for RequestHandle {
 }
 
 /// The job's off-thread reference to the same request: keeps the cancel flag
-/// readable on the clipboard thread however long the op waits, independent of
-/// the JS side, which teardown may release first.
+/// readable on the pool thread however long the op waits, independent of the
+/// JS side, which teardown may release first.
 struct CancelProbe(*mut c_void);
 
 // SAFETY: the request is ThreadSafeRefCounted and the flag is atomic; the
@@ -135,53 +136,6 @@ unsafe extern "C" {
     fn Bun__Clipboard__requestDeref(request: *mut c_void);
     /// Whether the JS thread cancelled this request (atomic; safe off-thread).
     fn Bun__Clipboard__requestIsCancelled(request: *mut c_void) -> bool;
-}
-
-/// A `Job` crossing to the clipboard thread: its intrusive task and the
-/// off-thread part the executor works on before invoking the task.
-#[derive(Clone, Copy)]
-struct QueuedTask {
-    task: *mut WorkPoolTask,
-    off: *mut ClipboardOp,
-}
-// SAFETY: the hand-off `Job::schedule_with` documents; `ClipboardOp` is
-// `Send` and the clipboard thread is its only user until the callback.
-unsafe impl Send for QueuedTask {}
-
-/// One FIFO thread runs every job (`Job::schedule_with`), so ops commit in
-/// schedule order, which the multi-worker pool would not guarantee, and a
-/// blocking backend never occupies it. The platform op runs before the
-/// job's callback, so no VM borrow is held while a helper blocks and a
-/// worker's teardown never waits on the clipboard. `None` while the thread
-/// cannot be spawned (retried on the next call).
-fn serial_queue() -> Option<&'static bun_threading::Channel<QueuedTask>> {
-    use core::sync::atomic::{AtomicBool, Ordering};
-    static QUEUE: std::sync::OnceLock<bun_threading::Channel<QueuedTask>> =
-        std::sync::OnceLock::new();
-    static SPAWNED: AtomicBool = AtomicBool::new(false);
-    static SPAWN_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
-    let queue = QUEUE.get_or_init(bun_threading::Channel::init_dynamic);
-    if !SPAWNED.load(Ordering::Acquire) {
-        let _guard = SPAWN_LOCK.lock_guard();
-        if !SPAWNED.load(Ordering::Relaxed) {
-            std::thread::Builder::new()
-                .name("Bun Clipboard".into())
-                .spawn(move || {
-                    while let Ok(QueuedTask { task, off }) = queue.read_item() {
-                        // SAFETY: `off` is exclusively ours until the callback,
-                        // which consumes the task exactly once like a pool worker;
-                        // neither pointer is used afterwards.
-                        unsafe {
-                            (*off).execute();
-                            ((*task).callback)(task);
-                        }
-                    }
-                })
-                .ok()?;
-            SPAWNED.store(true, Ordering::Release);
-        }
-    }
-    Some(queue)
 }
 
 /// Single source of truth for `ClipboardItem.supports` / `write()` validation.
@@ -239,36 +193,25 @@ struct ClipboardOp {
     probe: CancelProbe,
 }
 
-impl ClipboardOp {
-    /// Clipboard thread, before the job's callback, so nothing VM-related is
-    /// held while a backend blocks.
-    fn execute(&mut self) {
-        // Set by a superseding write (its AbortError must not be a lie) or by
-        // the VM tearing down (nothing should act on its behalf). A settled
-        // or released promise ignores the empty outcome.
-        if self.probe.is_cancelled() {
-            self.outcome = Some(Outcome::Representations(Vec::new()));
-            return;
-        }
-        self.outcome = Some(match &self.op {
-            Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
-                Ok(None) => Outcome::Representations(Vec::new()),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-            Op::Read => match platform::read_all(SUPPORTED) {
-                Ok(present) => Outcome::Representations(present),
-                Err(unavailable) => Outcome::Failed(unavailable),
-            },
-            Op::Write(items) => {
-                let borrowed: Vec<(Mime, &[u8])> =
-                    items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                match platform::write_types(&borrowed) {
-                    Ok(()) => Outcome::Representations(Vec::new()),
-                    Err(unavailable) => Outcome::Failed(unavailable),
-                }
-            }
-        });
+/// Held across a write's cancel check and platform transaction. A write()
+/// superseded by a later one has already rejected with AbortError
+/// (https://w3c.github.io/clipboard-apis/#dom-clipboard-write) and its flag
+/// is set before the successor is scheduled, so under this lock it either
+/// commits before the successor's transaction or sees the flag and skips;
+/// on two pool threads without it, the aborted write could land last.
+static WRITE_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+
+fn write(items: &[(Mime, Vec<u8>)], probe: &CancelProbe) -> Outcome {
+    let _serialized = WRITE_LOCK.lock_guard();
+    // Superseded (its promise already rejected) or abandoned by a VM
+    // tearing down; either way the result goes nowhere.
+    if probe.is_cancelled() {
+        return Outcome::Representations(Vec::new());
+    }
+    let borrowed: Vec<(Mime, &[u8])> = items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
+    match platform::write_types(&borrowed) {
+        Ok(()) => Outcome::Representations(Vec::new()),
+        Err(unavailable) => Outcome::Failed(unavailable),
     }
 }
 
@@ -278,15 +221,27 @@ impl JobContext for ClipboardJob {
     type OffThread = ClipboardOp;
     type Js = RequestHandle;
 
-    /// The executor already ran `execute`; only the result is handed back, so
-    /// the carrier's borrow lasts an instant.
-    fn run(_: &mut ClipboardOp, _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(this: &mut ClipboardOp, _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+        this.outcome = Some(match &this.op {
+            Op::Write(items) => write(items, &this.probe),
+            // Abandoned by a VM tearing down: nothing will see the result.
+            _ if this.probe.is_cancelled() => Outcome::Representations(Vec::new()),
+            Op::ReadText => match platform::read_type(Mime::TextPlain) {
+                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
+                Ok(None) => Outcome::Representations(Vec::new()),
+                Err(unavailable) => Outcome::Failed(unavailable),
+            },
+            Op::Read => match platform::read_all(SUPPORTED) {
+                Ok(present) => Outcome::Representations(present),
+                Err(unavailable) => Outcome::Failed(unavailable),
+            },
+        });
         Some(done)
     }
 
     fn then(this: ClipboardOp, request: RequestHandle, cx: &JsThread<'_>) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        match this.outcome.expect("execute() filled the outcome") {
+        match this.outcome.expect("run() filled the outcome") {
             Outcome::Representations(items) => request.complete(global, &items),
             Outcome::Failed(unavailable) => request.fail(global, unavailable),
         }
@@ -295,20 +250,12 @@ impl JobContext for ClipboardJob {
 }
 
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
-    // No clipboard thread: reject rather than run unserialized on the pool.
-    let Some(queue) = serial_queue() else {
-        request.fail(global, Unavailable::Platform);
-        return;
-    };
     let off = ClipboardOp {
         op,
         outcome: None,
         probe: CancelProbe::new(request.0),
     };
-    Job::<ClipboardJob>::schedule_with(&global.js_thread(), off, request, |task, off| {
-        // Fails only on OOM; the queue is never closed.
-        bun_core::handle_oom(queue.write_item(QueuedTask { task, off }));
-    });
+    Job::<ClipboardJob>::schedule(&global.js_thread(), off, request);
 }
 
 /// # Safety
@@ -611,7 +558,8 @@ mod platform {
     }
 
     /// Wraps a UTF-8 HTML fragment in the `CF_HTML` envelope: a fixed-width
-    /// header whose numbers are byte offsets into the whole payload.
+    /// header whose numbers are byte offsets into the payload, which browsers
+    /// NUL-terminate because consumers exist that read it with `strlen`.
     /// https://learn.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
     fn build_cf_html(fragment: &[u8]) -> Vec<u8> {
         const PREFIX: &str = "<html>\r\n<body>\r\n<!--StartFragment-->";
@@ -627,6 +575,7 @@ mod platform {
         .into_bytes();
         out.extend_from_slice(fragment);
         out.extend_from_slice(SUFFIX.as_bytes());
+        out.push(0);
         out
     }
 
@@ -658,15 +607,27 @@ mod platform {
         Some(payload[start..end].to_vec())
     }
 
-    /// Exclusive clipboard access; a single `OpenClipboard` fails spuriously
-    /// while any other process holds it, so retry briefly.
-    struct ClipboardGuard;
+    /// One transaction per process at a time. The handles `GetClipboardData`
+    /// returns belong to the clipboard and are only valid until it is closed,
+    /// and `OpenClipboard(NULL)` does not keep another thread of the same
+    /// process out, so two pool threads reading at once corrupt the heap.
+    static TRANSACTION: bun_threading::Mutex = bun_threading::Mutex::new();
+
+    /// The open clipboard. A single `OpenClipboard` fails spuriously while
+    /// another process holds it (clipboard managers do, right after every
+    /// change), so it is retried briefly.
+    struct ClipboardGuard {
+        _transaction: bun_threading::MutexGuard,
+    }
 
     impl ClipboardGuard {
         fn open() -> Option<ClipboardGuard> {
+            let transaction = TRANSACTION.lock_guard();
             for attempt in 0..5u32 {
                 if win32::OpenClipboard(ptr::null_mut()) != 0 {
-                    return Some(ClipboardGuard);
+                    return Some(ClipboardGuard {
+                        _transaction: transaction,
+                    });
                 }
                 win32::Sleep(5 * (attempt + 1));
             }
@@ -691,6 +652,7 @@ mod platform {
 
     impl Drop for ClipboardGuard {
         fn drop(&mut self) {
+            // Closes first; the transaction lock (a field) is released after.
             let _ = win32::CloseClipboard();
         }
     }
@@ -764,14 +726,30 @@ mod platform {
             };
             let bytes = copy_global(&locked, mime == Mime::TextPlain);
             drop(locked);
-            if mime != Mime::TextHtml {
-                return Ok(Some(bytes));
-            }
-            // CF_HTML is NUL-padded UTF-8; an unparsable envelope reads as absent.
-            let end = bun_core::strings::index_of_char_usize(&bytes, 0).unwrap_or(bytes.len());
-            return Ok(cf_html_fragment(&bytes[..end]));
+            return Ok(match mime {
+                Mime::TextPlain => Some(bytes),
+                Mime::ImagePng => Some(trim_png(bytes)),
+                Mime::TextHtml => {
+                    // CF_HTML is NUL-terminated UTF-8; an unparsable envelope
+                    // reads as absent.
+                    let end =
+                        bun_core::strings::index_of_char_usize(&bytes, 0).unwrap_or(bytes.len());
+                    cf_html_fragment(&bytes[..end])
+                }
+            });
         }
         Ok(None)
+    }
+
+    /// `GlobalSize` includes the allocator's rounding past the producer's
+    /// bytes. A PNG stream ends with its IEND chunk, whose type and CRC are
+    /// constant (https://www.w3.org/TR/png-3/#11IEND), so cut after it.
+    fn trim_png(mut bytes: Vec<u8>) -> Vec<u8> {
+        const IEND: &[u8] = b"IEND\xAE\x42\x60\x82";
+        if let Some(at) = bun_core::strings::last_index_of(&bytes, IEND) {
+            bytes.truncate(at + IEND.len());
+        }
+        bytes
     }
 
     pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
@@ -1014,14 +992,15 @@ mod platform {
         command.push(b'\'');
     }
 
-    /// Runs one helper through `/bin/sh` with a 10s watchdog (a hung X11 selection owner
-    /// blocks forever): killed → exit 124, missing → 127. `None` ⇔ `/bin/sh` unspawnable.
+    /// Runs one helper through `/bin/sh` under a watchdog (a hung X11 selection owner blocks
+    /// forever; 10s unless the testing hook shortens it): killed → exit 124, missing → 127.
+    /// `None` ⇔ `/bin/sh` unspawnable.
     fn run_helper(
         argv: &[Box<[u8]>],
         redirect_from: Option<&[u8]>,
         capture_stdout: bool,
     ) -> Option<spawn_sync::Result> {
-        let mut command = Vec::<u8>::with_capacity(192);
+        let mut command = Vec::<u8>::with_capacity(256);
         for (i, part) in argv.iter().enumerate() {
             if i > 0 {
                 command.push(b' ');
@@ -1034,8 +1013,16 @@ mod platform {
         }
         // The watchdog group is fully redirected so nothing holds the helper's
         // captured stdout open, and its TERM trap means nothing outlives it.
+        // It only kills once `sleep` has actually run to completion: on a PATH
+        // without `sleep`, the helper runs unbounded rather than being killed
+        // at once.
+        let timeout_seconds = env_var::BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT
+            .get()
+            .unwrap_or(10);
+        command.extend_from_slice(b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep ");
+        command.extend_from_slice(timeout_seconds.to_string().as_bytes());
         command.extend_from_slice(
-            b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep 10 & sp=$!; wait \"$sp\"; kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
+            b" & sp=$!; wait \"$sp\" && kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
         let stdio = |capture: bool| {
             if capture {

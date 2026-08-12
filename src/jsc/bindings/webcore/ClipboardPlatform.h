@@ -26,7 +26,7 @@ struct ClipboardRepresentation {
 // One outstanding platform clipboard operation. The backend's job holds two
 // references: its JS side owns the completion (run or released on the JS
 // thread only), and its off-thread side keeps the cancel flag readable on the
-// clipboard thread for as long as the op can still run. Whichever side drops
+// pool thread for as long as the op can still run. Whichever side drops
 // last may be off the JS thread, hence ThreadSafeRefCounted; by then the
 // completion has already been run or released on the JS thread.
 class ClipboardRequest : public ThreadSafeRefCounted<ClipboardRequest> {
@@ -51,14 +51,14 @@ public:
 
     // JS thread, VM going away: release the promise and clipboard the
     // completion captured while their heap is alive, and cancel, so an op the
-    // clipboard thread has not reached yet does nothing on the dead VM's behalf.
+    // pool has not reached yet does nothing on the dead VM's behalf.
     void abandon()
     {
         m_completion = {};
         cancel();
     }
 
-    // The clipboard thread checks this before touching the platform, so a
+    // The backend job checks this before touching the platform, so a
     // superseded write (whose AbortError must not be a lie) or an abandoned op
     // never reaches the OS clipboard.
     void cancel() { m_cancelled.store(true, std::memory_order_relaxed); }

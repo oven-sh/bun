@@ -106,7 +106,7 @@ extern "C" void Bun__Clipboard__requestDeref(WebCore::ClipboardRequest* request)
     request->deref();
 }
 
-// Read on the clipboard thread (atomic); the off-thread reference keeps `request` alive.
+// Read on a pool thread (atomic); the off-thread reference keeps `request` alive.
 extern "C" bool Bun__Clipboard__requestIsCancelled(WebCore::ClipboardRequest* request)
 {
     return request->isCancelled();

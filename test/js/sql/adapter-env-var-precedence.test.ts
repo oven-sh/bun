@@ -2,11 +2,13 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
     export interface PostgresOrMySQLOptions {
       sslMode?: number;
+      query?: string;
     }
   }
 }
@@ -424,6 +426,64 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
 
       unlinkSync(sock.unix);
+    });
+
+    // parseOptions only keeps a socket path that exists on disk, so these point
+    // at a file in a temp dir; for option parsing a regular file is enough.
+    describe("unix socket option", () => {
+      const adapters: Array<"postgres" | "mysql" | "mariadb"> = ["postgres", "mysql", "mariadb"];
+
+      test.each(adapters)("%s: `socket` selects the unix socket", adapter => {
+        using dir = tempDir("sql-socket-option", { "db.sock": "" });
+        const sock = join(String(dir), "db.sock");
+
+        const options = new SQL({ adapter, socket: sock });
+        expect(options.options.path).toBe(sock);
+      });
+
+      test.each(adapters)("%s: `socket` option combines with a connection string", adapter => {
+        using dir = tempDir("sql-socket-option-url", { "db.sock": "" });
+        const sock = join(String(dir), "db.sock");
+
+        const options = new SQL(`${adapter}://user:pass@dbhost/appdb`, { socket: sock });
+        expect({
+          adapter: options.options.adapter,
+          hostname: options.options.hostname,
+          username: options.options.username,
+          path: options.options.path,
+        }).toEqual({ adapter, hostname: "dbhost", username: "user", path: sock });
+      });
+
+      test.each([
+        ["postgres", "path"],
+        ["postgres", "socket"],
+        ["mysql", "path"],
+        ["mysql", "socket"],
+        ["mariadb", "path"],
+        ["mariadb", "socket"],
+      ] as const)("%s: ?%s= in the connection string selects the unix socket", (adapter, key) => {
+        using dir = tempDir("sql-socket-query", { "db.sock": "" });
+        const sock = join(String(dir), "db.sock");
+
+        const options = new SQL(`${adapter}://user:pass@localhost/appdb?${key}=${sock}`);
+        expect({
+          adapter: options.options.adapter,
+          path: options.options.path,
+          // Unknown query keys are forwarded to the server (postgres startup
+          // parameters / mysql connection attributes); the socket key must not be.
+          query: options.options.query,
+        }).toEqual({ adapter, path: sock, query: "" });
+      });
+
+      test("`path` wins when both `path` and `socket` are given", () => {
+        using dir = tempDir("sql-socket-both", { "a.sock": "", "b.sock": "" });
+        const options = new SQL({
+          adapter: "mysql",
+          path: join(String(dir), "a.sock"),
+          socket: join(String(dir), "b.sock"),
+        });
+        expect(options.options.path).toBe(join(String(dir), "a.sock"));
+      });
     });
 
     test.skipIf(isWindows)("postgres URL with a host uses the pathname as the database name, not a socket path", () => {

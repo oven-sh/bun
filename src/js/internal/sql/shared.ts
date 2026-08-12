@@ -1791,13 +1791,14 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || (url.hostname ? "" : url.pathname);
+    path ||= options.path || options.socket || (url.hostname ? "" : url.pathname);
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
+      } else if (lowerKey === "path" || lowerKey === "socket") {
         path = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
@@ -1844,7 +1845,7 @@ function parseOptions(
     }
   }
 
-  path ||= options.path || "";
+  path ||= options.path || options.socket || "";
 
   if (adapter === "postgres") {
     // add /.s.PGSQL.${port} if the unix domain socket is listening on that path

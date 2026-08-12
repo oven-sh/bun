@@ -4303,8 +4303,9 @@ describe.concurrent("http2 raw-headers arrays with array values", () => {
     }
   });
 
-  // Each element is validated like a single value: the same ERR_HTTP2_INVALID_HEADER_VALUE the
-  // object form raises for these elements.
+  // Elements follow the rule the encoder already applies to array elements in the object form: a null
+  // element, or one containing CR/LF/NUL, throws ERR_HTTP2_INVALID_HEADER_VALUE from the call itself,
+  // for request() and respond() alike.
   for (const [label, element] of [
     ["containing LF", "a\nb"],
     ["that is null", null],

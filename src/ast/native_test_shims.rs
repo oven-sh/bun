@@ -6,8 +6,7 @@ use core::ffi::c_void;
 
 use bun_alloc::mimalloc::Heap;
 
-/// Unreachable: the test binary references neither `mi_heap_new` nor `mi_heap_main`, so no
-/// test can hold an arena.
+/// Nothing here references `mi_heap_new` or `mi_heap_main`, so no arena exists to get here.
 fn no_mimalloc_in_test_binary(symbol: &str) -> ! {
     unreachable!("{symbol} called, but bun_ast's test binary does not link mimalloc")
 }

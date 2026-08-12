@@ -215,7 +215,14 @@ export const globalFlags: Flag[] = [
 
   // ─── OHOS cross-compilation ───
   {
-    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`, `-D__MUSL__`, `-D__OHOS__`, `-mbranch-protection=none`, `-mno-outline-atomics`],
+    flag: c => [
+      `--target=aarch64-linux-ohos`,
+      `--sysroot=${c.ohosSysroot!}`,
+      `-D__MUSL__`,
+      `-D__OHOS__`,
+      `-mbranch-protection=none`,
+      `-mno-outline-atomics`,
+    ],
     when: c => c.ohos && c.arm64,
     desc: "OHOS target triple + sysroot + musl libc (no PAC/BTI/outline-atomics for OHOS device compat)",
   },
@@ -354,12 +361,12 @@ export const globalFlags: Flag[] = [
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && !c.ohos && c.debug,
     desc: "Full debug info, zstd-compressed",
   },
   {
     flag: ["-g", "-gz=zstd"],
-    when: c => c.unix && c.release && !c.lto,
+    when: c => c.unix && !c.ohos && c.release && !c.lto,
     desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
   },
   {
@@ -1224,16 +1231,17 @@ export const linkerFlags: Flag[] = [
     desc: "OHOS: allow iostream stub duplicate; mimalloc override disabled",
   },
   {
-    flag: c => [
-      `-L${c.ohosCrossLibs!}/libcxx/lib`,
-      `-L${c.ohosCrossLibs!}/libcxxabi/lib`,
-      `-L${c.ohosCrossLibs!}/libunwind/lib`,
-      c.ohosIcuDir ? `-L${c.ohosIcuDir}/lib` : "",
-      "-lc++",
-      "-lc++abi",
-      "-lunwind",
-      "-lc",
-    ].filter(f => f !== ""),
+    flag: c =>
+      [
+        `-L${c.ohosCrossLibs!}/libcxx/lib`,
+        `-L${c.ohosCrossLibs!}/libcxxabi/lib`,
+        `-L${c.ohosCrossLibs!}/libunwind/lib`,
+        c.ohosIcuDir ? `-L${c.ohosIcuDir}/lib` : "",
+        "-lc++",
+        "-lc++abi",
+        "-lunwind",
+        "-lc",
+      ].filter(f => f !== ""),
     when: c => c.ohos,
     desc: "OHOS: link the cross-compiled libc++ + libc++abi + libunwind + dynamic libc",
   },

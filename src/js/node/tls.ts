@@ -1159,16 +1159,22 @@ function buildSharedCreds(server) {
   ));
 }
 
-// Matches like node's default SNICallback: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
-function matchContext(contexts: Map<string, typeof InternalSecureContext>, servername: string) {
+// An addContext() entry, matched like node's: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
+type ServerContext = { re: RegExp; context: InstanceType<typeof InternalSecureContext> };
+
+function contextMatcher(hostname: string): RegExp {
+  const source = RegExpPrototypeSymbolReplace.$call(
+    /\*/g,
+    RegExpPrototypeSymbolReplace.$call(/([.^$+?\-\\[\]{}])/g, hostname, "\\$1"),
+    "[^.]*",
+  );
+  return new RegExp(`^${source}$`);
+}
+
+function matchContext(contexts: Map<string, ServerContext>, servername: string) {
   let match;
-  for (const { 0: name, 1: context } of contexts) {
-    const source = RegExpPrototypeSymbolReplace.$call(
-      /\*/g,
-      RegExpPrototypeSymbolReplace.$call(/([.^$+?\-\\[\]{}])/g, name, "\\$1"),
-      "[^.]*",
-    );
-    if (RegExpPrototypeExec.$call(new RegExp(`^${source}$`), servername) !== null) match = context;
+  for (const { 1: entry } of contexts) {
+    if (RegExpPrototypeExec.$call(entry.re, servername) !== null) match = entry.context;
   }
   return match;
 }
@@ -1227,7 +1233,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  const contexts: Map<string, typeof InternalSecureContext> = new Map();
+  const contexts: Map<string, ServerContext> = new Map();
 
   this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
@@ -1238,7 +1244,7 @@ function Server(options, secureConnectionListener): void {
     }
     // Kept like node's _contexts: reloaded by the next listen(), matched for connections wrapped below.
     contexts.delete(hostname); // a re-added name becomes the newest entry
-    contexts.set(hostname, context);
+    contexts.set(hostname, { re: contextMatcher(hostname), context });
     const handle = this._handle;
     // A cluster worker fed by the primary listens on node's faux handle, which has no SNI tree.
     if (handle && typeof handle.stop === "function") {

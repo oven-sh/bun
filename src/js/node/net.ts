@@ -3941,10 +3941,10 @@ Server.prototype[kRealListen] = function (
   }
 
   if (contexts) {
-    for (const [name, context] of contexts) {
+    for (const [name, { context }] of contexts) {
       // tls.ts stores the InternalSecureContext wrapper; the native side wants
       // the native SSL_CTX wrapper at `.context`.
-      addServerName(this._handle, name, context.context ?? context);
+      addServerName(this._handle, name, context.context);
     }
   }
 

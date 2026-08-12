@@ -858,7 +858,6 @@ class AsyncImportError extends Error {
   constructor(asyncId: string) {
     super(`Cannot load async module "${asyncId}" synchronously because it uses top-level await.`);
     this.asyncId = asyncId;
-    Object.defineProperty(this, "name", { value: "Error" });
   }
 }
 

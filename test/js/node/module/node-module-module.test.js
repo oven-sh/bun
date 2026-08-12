@@ -3,6 +3,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, findPackageJSON, isBuiltin, wrap } from "module";
 import path from "path";
+import { pathToFileURL } from "url";
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
@@ -46,6 +47,213 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  describe("findPackageJSON", () => {
+    // <root>/package.json
+    // <root>/node_modules/{dep (shadowed), hoisted}
+    // <root>/app/package.json            (has "exports", so it can self-reference)
+    // <root>/app/src/index.js            (the `base` used by most cases)
+    // <root>/app/nested/package.json     (a nested scope without a "name")
+    // <root>/app/node_modules/...        (the packages under test)
+    function fixture() {
+      const dir = tempDir("find-package-json", {
+        "package.json": JSON.stringify({ name: "root" }),
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", shadowed: true }),
+        "node_modules/hoisted/package.json": JSON.stringify({ name: "hoisted" }),
+        "app/package.json": JSON.stringify({ name: "app", exports: "./src/index.js" }),
+        "app/src/index.js": "",
+        "app/src/lib/util.js": "",
+        "app/nested/package.json": JSON.stringify({ type: "module" }),
+        "app/nested/mod.js": "",
+        "app/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "./lib/entry.js" }),
+        "app/node_modules/dep/lib/package.json": JSON.stringify({ type: "commonjs" }),
+        "app/node_modules/dep/lib/entry.js": "",
+        "app/node_modules/@scope/types-only/package.json": JSON.stringify({
+          name: "@scope/types-only",
+          types: "./index.d.ts",
+        }),
+        "app/node_modules/@scope/types-only/index.d.ts": "",
+        "app/node_modules/exports-only/package.json": JSON.stringify({
+          name: "exports-only",
+          exports: { "./sub": "./sub.js" },
+        }),
+        "app/node_modules/exports-only/sub.js": "",
+        "app/node_modules/no-manifest/index.js": "",
+        "app/node_modules/loose.js": "",
+      });
+      const p = (...segments) => path.join(String(dir), ...segments);
+      return { p, base: p("app", "src", "index.js"), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    }
+
+    test("bare specifier returns the package's root package.json without resolving its entry point", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      const dep = p("app", "node_modules", "dep", "package.json");
+      expect({
+        nearest: findPackageJSON("dep", base),
+        subpath: findPackageJSON("dep/lib/entry.js", base),
+        typesOnly: findPackageJSON("@scope/types-only", base),
+        exportsOnly: findPackageJSON("exports-only", base),
+        exportsOnlySubpath: findPackageJSON("exports-only/sub", base),
+        hoisted: findPackageJSON("hoisted", base),
+        selfReference: findPackageJSON("app", base),
+        packageWithoutManifest: findPackageJSON("no-manifest", base),
+      }).toEqual({
+        nearest: dep,
+        subpath: dep,
+        typesOnly: p("app", "node_modules", "@scope", "types-only", "package.json"),
+        exportsOnly: p("app", "node_modules", "exports-only", "package.json"),
+        exportsOnlySubpath: p("app", "node_modules", "exports-only", "package.json"),
+        hoisted: p("node_modules", "hoisted", "package.json"),
+        selfReference: p("app", "package.json"),
+        packageWithoutManifest: undefined,
+      });
+    });
+
+    test("a path or file URL returns the closest package.json", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      // dep's entry point lives in a nested scope, so unlike the bare specifier
+      // form (which returns dep's root package.json) the resolved entry point,
+      // e.g. from import.meta.resolve("dep"), belongs to dep/lib/package.json.
+      const entry = p("app", "node_modules", "dep", "lib", "entry.js");
+      const scopeOfEntry = p("app", "node_modules", "dep", "lib", "package.json");
+      expect({
+        relativeFile: findPackageJSON("./lib/util.js", base),
+        relativeFileInNestedScope: findPackageJSON("../nested/mod.js", base),
+        absolutePath: findPackageJSON(entry),
+        absolutePathIgnoresBase: findPackageJSON(entry, base),
+        fileURLString: findPackageJSON(pathToFileURL(entry).href),
+        fileURLObject: findPackageJSON(pathToFileURL(entry)),
+        packageJSONItself: findPackageJSON(p("app", "package.json")),
+      }).toEqual({
+        relativeFile: p("app", "package.json"),
+        relativeFileInNestedScope: p("app", "nested", "package.json"),
+        absolutePath: scopeOfEntry,
+        absolutePathIgnoresBase: scopeOfEntry,
+        fileURLString: scopeOfEntry,
+        fileURLObject: scopeOfEntry,
+        packageJSONItself: p("app", "package.json"),
+      });
+    });
+
+    test("a directory returns its own package.json, or the closest one above it", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      expect({
+        parent: findPackageJSON("..", base),
+        parentWithSlash: findPackageJSON("../", base),
+        currentDirectoryWithoutPackageJSON: findPackageJSON(".", base),
+        absoluteDirectory: findPackageJSON(p("app")),
+        absoluteDirectoryWithSlash: findPackageJSON(p("app", "nested") + path.sep),
+      }).toEqual({
+        parent: p("app", "package.json"),
+        parentWithSlash: p("app", "package.json"),
+        currentDirectoryWithoutPackageJSON: p("app", "package.json"),
+        absoluteDirectory: p("app", "package.json"),
+        absoluteDirectoryWithSlash: p("app", "nested", "package.json"),
+      });
+    });
+
+    test("the search never crosses a node_modules directory", () => {
+      using fx = fixture();
+      const { p } = fx;
+      expect({
+        fileDirectlyInNodeModules: findPackageJSON(p("app", "node_modules", "loose.js")),
+        fileInPackageWithoutManifest: findPackageJSON(p("app", "node_modules", "no-manifest", "index.js")),
+      }).toEqual({
+        fileDirectlyInNodeModules: undefined,
+        fileInPackageWithoutManifest: undefined,
+      });
+    });
+
+    test("base may be a path, a file URL string or a URL object; only its directory matters", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      const expected = p("app", "node_modules", "dep", "package.json");
+      expect({
+        path: findPackageJSON("dep", base),
+        fileURLString: findPackageJSON("dep", pathToFileURL(base).href),
+        fileURLObject: findPackageJSON("dep", pathToFileURL(base)),
+        // `import.meta.url` of a module that was never written to disk.
+        nonExistentSibling: findPackageJSON("dep", p("app", "src", "whatever.ext")),
+        relativeToNonExistentSibling: findPackageJSON("./lib/util.js", p("app", "src", "whatever.ext")),
+      }).toEqual({
+        path: expected,
+        fileURLString: expected,
+        fileURLObject: expected,
+        nonExistentSibling: expected,
+        relativeToNonExistentSibling: p("app", "package.json"),
+      });
+    });
+
+    test("without a base, specifiers are resolved from the current working directory", async () => {
+      using fx = fixture();
+      const { p } = fx;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { findPackageJSON } = require("node:module");
+           console.log(JSON.stringify([findPackageJSON("dep"), findPackageJSON("./lib/util.js"), findPackageJSON("..")]));`,
+        ],
+        cwd: p("app", "src"),
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        p("app", "node_modules", "dep", "package.json"),
+        p("app", "package.json"),
+        p("app", "package.json"),
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("throws ERR_MODULE_NOT_FOUND when the specifier does not resolve", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      const notFound = message => expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND", message });
+      expect(() => findPackageJSON("missing", base)).toThrow(
+        notFound(`Cannot find package 'missing' imported from ${base}`),
+      );
+      expect(() => findPackageJSON("@scope/missing/sub.js", base)).toThrow(
+        notFound(`Cannot find package '@scope/missing' imported from ${base}`),
+      );
+      expect(() => findPackageJSON("./missing.js", base)).toThrow(
+        notFound(`Cannot find module './missing.js' imported from ${base}`),
+      );
+      expect(() => findPackageJSON("../missing/", base)).toThrow(
+        notFound(expect.stringContaining("Cannot find module")),
+      );
+      expect(() => findPackageJSON(p("missing", "index.js"))).toThrow(
+        notFound(expect.stringContaining("Cannot find module")),
+      );
+      // Self-referencing requires an "exports" field, like it does for import.
+      expect(() => findPackageJSON("root", base)).toThrow(notFound(`Cannot find package 'root' imported from ${base}`));
+    });
+
+    // The fixtures Node.js uses for this in test/parallel/test-find-package-json.js:
+    // each sub-package's index exports findPackageJSON("..", <its own location>).
+    test("crawls up from a module's own location (Node.js fixtures)", async () => {
+      const nested = path.join(import.meta.dir, "..", "test", "fixtures", "packages", "nested");
+      const cjs = require(path.join(nested, "sub-pkg-cjs", "index.js"));
+      const { default: esm } = await import(path.join(nested, "sub-pkg-esm", "index.js"));
+      expect({ cjs, esm }).toEqual({
+        cjs: path.join(nested, "package.json"),
+        esm: path.join(nested, "package.json"),
+      });
+    });
+
+    test("validates its arguments like Node.js", () => {
+      expect(findPackageJSON).toHaveLength(1);
+      expect(() => findPackageJSON()).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+      for (const invalid of [null, {}, [], Symbol(), () => {}, true, false, 1, 0]) {
+        expect(() => findPackageJSON("", invalid)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      }
+    });
   });
 
   test("module.globalPaths exists", () => {

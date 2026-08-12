@@ -2203,48 +2203,9 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
     ) -> ResultUnion {
         let mut import_path = unremapped_import_path;
-        let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
-            Err(_) => return ResultUnion::NotFound,
-            Ok(Some(d)) => d,
-            Ok(None) => 'dir: {
-                // It is possible to resolve with a source file that does not exist:
-                // A. Bundler plugin refers to a non-existing `resolveDir`.
-                // B. `createRequire()` is called with a path that does not exist. This was
-                //    hit in Nuxt, specifically the `vite-node` dependency [1].
-                //
-                // Normally it would make sense to always bail here, but in the case of
-                // resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
-                // should still query "/project/node_modules" and "/node_modules"
-                //
-                // For case B in Node.js, they use `_resolveLookupPaths` in
-                // combination with `_nodeModulePaths` to collect a listing of
-                // all possible parent `node_modules` [2]. Bun has a much smarter
-                // approach that caches directory entries, but it (correctly) does
-                // not cache non-existing directories. To successfully resolve this,
-                // Bun finds the nearest existing directory, and uses that as the base
-                // for `node_modules` resolution. Since that directory entry knows how
-                // to resolve concrete node_modules, this iteration stops at the first
-                // existing directory, regardless of what it is.
-                //
-                // The resulting `source_dir_info` cannot resolve relative files.
-                //
-                // [1]: https://github.com/oven-sh/bun/issues/16705
-                // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
-                debug_assert!(is_package_path(import_path));
-                let mut closest_dir = source_dir;
-                // `dirname` returns `None` once the entire directory tree
-                // has been visited. `None` is theoretically impossible since
-                // the drive root should always exist.
-                while let Some(current) = bun_paths::dirname(closest_dir) {
-                    match self.dir_info_cached(current) {
-                        Err(_) => return ResultUnion::NotFound,
-                        Ok(Some(dir)) => break 'dir dir,
-                        Ok(None) => {}
-                    }
-                    closest_dir = current;
-                }
-                return ResultUnion::NotFound;
-            }
+        debug_assert!(is_package_path(import_path));
+        let Ok(Some(mut source_dir_info)) = self.closest_existing_dir_info(source_dir) else {
+            return ResultUnion::NotFound;
         };
 
         if self.care_about_browser_field {
@@ -4165,6 +4126,152 @@ impl<'a> Resolver<'a> {
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
+    }
+
+    /// `dir_info_cached` for `dir`, falling back to the closest ancestor that
+    /// exists when `dir` itself does not.
+    ///
+    /// It is possible to resolve with a source file that does not exist:
+    /// A. Bundler plugin refers to a non-existing `resolveDir`.
+    /// B. `createRequire()` is called with a path that does not exist. This was
+    ///    hit in Nuxt, specifically the `vite-node` dependency [1].
+    ///
+    /// Normally it would make sense to always bail here, but in the case of
+    /// resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
+    /// should still query "/project/node_modules" and "/node_modules"
+    ///
+    /// For case B in Node.js, they use `_resolveLookupPaths` in
+    /// combination with `_nodeModulePaths` to collect a listing of
+    /// all possible parent `node_modules` [2]. Bun has a much smarter
+    /// approach that caches directory entries, but it (correctly) does
+    /// not cache non-existing directories. To successfully resolve this,
+    /// Bun finds the nearest existing directory, and uses that as the base
+    /// for `node_modules` resolution. Since that directory entry knows how
+    /// to resolve concrete node_modules, this iteration stops at the first
+    /// existing directory, regardless of what it is.
+    ///
+    /// The resulting `DirInfo` cannot resolve relative files, so this is only
+    /// suitable for package-path lookups.
+    ///
+    /// `Ok(None)` is theoretically impossible since the drive root should
+    /// always exist.
+    ///
+    /// [1]: https://github.com/oven-sh/bun/issues/16705
+    /// [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
+    fn closest_existing_dir_info(&mut self, dir: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
+        let mut current = dir;
+        loop {
+            if let Some(dir_info) = self.dir_info_cached(current)? {
+                return Ok(Some(dir_info));
+            }
+            match bun_paths::dirname(current) {
+                Some(parent) => current = parent,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// `node:module`'s `findPackageJSON()`.
+    ///
+    /// For a bare specifier this is the root `package.json` of the package that
+    /// `import`ing it from `source_dir` would load (self-reference first, then
+    /// each enclosing `node_modules`). Only the package directory is located;
+    /// its entry point is never resolved, so packages that ship only types or
+    /// only subpath exports still have an answer.
+    ///
+    /// Anything else names a file or directory (relative to `source_dir`) and
+    /// yields the `package.json` closest to it: the directory's own, otherwise
+    /// the nearest ancestor's, stopping at a `node_modules` directory since
+    /// nothing above one owns the files inside it.
+    ///
+    /// `Ok(None)` means the package or path exists but no `package.json`
+    /// applies to it; [`Error::ModuleNotFound`](crate::Error::ModuleNotFound)
+    /// means the specifier does not resolve at all.
+    pub fn find_package_json(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> crate::CrateResult<Option<&'static PackageJSON>> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+
+        if !is_package_path(specifier) {
+            let Some(abs_path) = self
+                .fs_ref()
+                .abs_buf_checked(&[source_dir, specifier], &mut buf)
+            else {
+                return Err(crate::Error::ModuleNotFound);
+            };
+            let dir_info = match self.dir_info_cached(abs_path)? {
+                Some(dir_info) => dir_info,
+                None => {
+                    let parent = match bun_paths::dirname(abs_path) {
+                        Some(parent_dir) => self.dir_info_cached(parent_dir)?,
+                        None => None,
+                    };
+                    let Some(parent) = parent else {
+                        return Err(crate::Error::ModuleNotFound);
+                    };
+                    if parent
+                        .get_entry(self.generation, bun_paths::basename(abs_path))
+                        .is_none()
+                    {
+                        return Err(crate::Error::ModuleNotFound);
+                    }
+                    parent
+                }
+            };
+            return Ok(Self::closest_package_json(dir_info));
+        }
+
+        let Some(package_name) =
+            crate::package_json::Package::parse_name(specifier).filter(|name| !name.is_empty())
+        else {
+            return Err(crate::Error::ModuleNotFound);
+        };
+        let Some(source_dir_info) = self.closest_existing_dir_info(source_dir)? else {
+            return Err(crate::Error::ModuleNotFound);
+        };
+
+        // https://nodejs.org/api/packages.html#self-referencing-a-package-using-its-name
+        if let Some(package_json) = Self::closest_package_json(source_dir_info) {
+            if package_json.name.as_ref() == package_name && package_json.exports.is_some() {
+                return Ok(Some(package_json));
+            }
+        }
+
+        let mut dir_info = source_dir_info;
+        loop {
+            if dir_info.has_node_modules() {
+                if let Some(package_dir) = self.fs_ref().abs_buf_checked(
+                    &[dir_info.abs_path, b"node_modules", package_name],
+                    &mut buf,
+                ) {
+                    if let Some(package_dir_info) = self.dir_info_cached(package_dir)? {
+                        return Ok(package_dir_info.package_json());
+                    }
+                }
+            }
+            match dir_info.get_parent() {
+                Some(parent) => dir_info = parent,
+                None => return Err(crate::Error::ModuleNotFound),
+            }
+        }
+    }
+
+    /// The `package.json` in `dir_info` or the nearest ancestor, not crossing a
+    /// `node_modules` directory.
+    fn closest_package_json(dir_info: DirInfoRef) -> Option<&'static PackageJSON> {
+        let mut current = Some(dir_info);
+        while let Some(dir_info) = current {
+            if dir_info.is_node_modules() {
+                return None;
+            }
+            if let Some(package_json) = dir_info.package_json() {
+                return Some(package_json);
+            }
+            current = dir_info.get_parent();
+        }
+        None
     }
 
     // NOTE: `follow_symlinks` is `true` at every call

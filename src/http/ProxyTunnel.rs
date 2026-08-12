@@ -320,13 +320,17 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         HTTPStage::ProxyHeaders => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData proxy_headers");
+            // `hctx` is the pool the finished tunnel is released into. It must
+            // be the context that owns the outer socket (the per-config custom
+            // context when `tls` needs one, see `HTTPThread::connect`), which
+            // is also the only pool the next request with that config searches.
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    let hctx = &raw mut crate::http_thread().https_context;
+                    let hctx = this.get_ssl_ctx::<true>();
                     this.handle_on_data_headers::<true>(decoded_data, hctx, socket);
                 }
                 &Socket::Tcp(socket) => {
-                    let hctx = &raw mut crate::http_thread().http_context;
+                    let hctx = this.get_ssl_ctx::<false>();
                     this.handle_on_data_headers::<false>(decoded_data, hctx, socket);
                 }
                 Socket::None => {}
@@ -551,14 +555,18 @@ fn on_close(ctx: *mut HTTPClient) {
 /// `&mut ProxyTunnel` across this call (they are reborrowed inside via the
 /// module's `client_from_ctx` invariant — see ALIASING NOTE above).
 fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>) {
+    // Same context rule as the ProxyHeaders arm of `on_data`: the tunnel is
+    // pooled into whichever context `progress_update` is handed.
     match ProxyTunnel::socket_of(proxy) {
         &Socket::Ssl(socket) => {
-            let hctx = &raw mut crate::http_thread().https_context;
-            client_from_ctx(ctx).progress_update::<true>(hctx, socket);
+            let client = client_from_ctx(ctx);
+            let hctx = client.get_ssl_ctx::<true>();
+            client.progress_update::<true>(hctx, socket);
         }
         &Socket::Tcp(socket) => {
-            let hctx = &raw mut crate::http_thread().http_context;
-            client_from_ctx(ctx).progress_update::<false>(hctx, socket);
+            let client = client_from_ctx(ctx);
+            let hctx = client.get_ssl_ctx::<false>();
+            client.progress_update::<false>(hctx, socket);
         }
         Socket::None => {}
     }

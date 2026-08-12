@@ -726,10 +726,11 @@ impl<'a> Transpiler<'a> {
     /// and unreadable-file errors) unless the log level is `info` or lower.
     ///
     /// For the loader's owner only: [`Self::init`] when it adopts the
-    /// process-wide loader, and `init_runtime_state` (runtime/jsc_hooks.rs)
-    /// when a new VM is handed one (`bun test`, Workers). A `Transpiler` that
-    /// borrows another VM's loader (`Bun.build`'s, on the bundle thread;
-    /// `Bun.Transpiler`'s, with its own log level) must leave it alone.
+    /// process-wide loader, and the VMs that create their own loader
+    /// (`bun test` in test_command.rs, Workers in web_worker.rs). A
+    /// `Transpiler` built on a loader that belongs to another VM must leave it
+    /// alone: `Bun.build`'s transpiler and the macro VM run on other threads,
+    /// and `Bun.Transpiler` has its own log level.
     pub fn apply_log_level_to_env_loader(&mut self) {
         let quiet = !self.log().level.at_least(bun_ast::Level::Info);
         self.env_mut().quiet = quiet;

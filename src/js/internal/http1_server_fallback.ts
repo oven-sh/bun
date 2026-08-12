@@ -268,8 +268,7 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req = null;
   let pendingUpgrade = null;
-  // Node's state.keepAliveTimeoutSet: the socket timeout currently armed is the keep-alive idle
-  // timeout from armKeepAliveTimeout(), not server.timeout.
+  // Node's state.keepAliveTimeoutSet.
   let keepAliveTimeoutSet = false;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
@@ -283,8 +282,7 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
-    // Node's resetSocketTimeout: the connection is busy again, so the keep-alive idle timeout
-    // gives way to server.timeout (none by default) until this request's response finishes.
+    // Node's resetSocketTimeout.
     if (keepAliveTimeoutSet) {
       keepAliveTimeoutSet = false;
       socket.setTimeout(server.timeout || 0);
@@ -324,8 +322,6 @@ function connectionListenerHTTP1(server, socket, options) {
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
-    // Read per request (Node's parserOnIncoming does too) so the advertised value
-    // is the one armKeepAliveTimeout() enforces once this response finishes.
     const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
@@ -338,12 +334,8 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
-    // node's resOnFinish: release the socket once the response completes so the next
-    // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned), then
-    // either end a connection the response headers committed to closing (Node's
-    // res._last; the request-side Connection: close case was already ended by
-    // onfinished above) or start the keep-alive idle clock.
+    // Node's resOnFinish: detach (the next response's assignSocket would otherwise throw
+    // ERR_HTTP_SOCKET_ASSIGNED), then the res._last branch or the keep-alive branch.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
       if (this[kMustCloseConnection]) {
@@ -459,8 +451,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  // Node's socketOnTimeout: a 'timeout' listener on the request still being received, on the
-  // response in flight or on the server takes over; otherwise the connection is destroyed.
+  // Node's socketOnTimeout.
   function onHttp1SocketTimeout() {
     const reqTimeout = req && !req.complete && req.emit("timeout", socket);
     const res = socket._httpMessage;
@@ -468,12 +459,8 @@ function connectionListenerHTTP1(server, socket, options) {
     const serverTimeout = server.emit("timeout", socket);
     if (!reqTimeout && !resTimeout && !serverTimeout) socket.destroy();
   }
-  // The keep-alive branch of Node's resOnFinish: with no request in flight, the connection may
-  // stay idle for the advertised keepAliveTimeout (plus keepAliveTimeoutBuffer, so a client that
-  // reuses it right at the advertised deadline is not reset) before onHttp1SocketTimeout closes
-  // it. Nothing to arm when onfinished already ended the connection for a request that asked
-  // for Connection: close (writableEnded), or on a Duplex without setTimeout (emit('connection')
-  // callers); Node skips both the same way.
+  // The keep-alive branch of Node's resOnFinish. writableEnded: onfinished already ended the
+  // connection for a request that sent Connection: close.
   function armKeepAliveTimeout() {
     if (
       socket[kHttp1ActiveRequests] !== 0 ||
@@ -500,8 +487,7 @@ function connectionListenerHTTP1(server, socket, options) {
       parser.close();
     } catch {}
   });
-  // Node's connectionListenerInternal: server.setTimeout() applies from the moment the
-  // connection is accepted, not only once a request is in flight.
+  // Node's connectionListenerInternal: server.timeout applies from accept on.
   const { timeout: serverTimeout } = server;
   if (serverTimeout && typeof socket.setTimeout === "function") socket.setTimeout(serverTimeout);
 }

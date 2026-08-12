@@ -516,6 +516,27 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         directory_watchers
             .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
 
+        // The slot is never received again, so what it owns is released here:
+        // its content, and its failure, which `index_failures` publishes as
+        // removed later in this bundle.
+        let mut file =
+            core::mem::take(&mut self.bundled_files.values_mut()[file_index.get() as usize]);
+        let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[file_index.get() as usize]);
+        self.free_file_content(key.slice(), &mut file, FreeCssMode::UnrefCss);
+        file.kind = FileKind::Unknown;
+        if file.failed {
+            file.failed = false;
+            let owner = serialized_failure::OwnerPacked::new(SIDE, file_index.get());
+            let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
+            let kv = kv.unwrap_or_else(|| {
+                bun_core::Output::panic(format_args!(
+                    "Missing SerializedFailure in IncrementalGraph",
+                ))
+            });
+            self.dev_incremental_result().failures_removed.push(kv.1);
+        }
+        self.bundled_files.values_mut()[file_index.get() as usize] = file;
+
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
         // Tombstoned slots are not reused; a free-list is a pending idea.

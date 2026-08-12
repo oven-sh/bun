@@ -358,6 +358,162 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+/**
+ * Decodes concatenated `SerializedFailure`s (see
+ * src/runtime/bake/dev_server/serialized_failure.rs). This is the layout of
+ * both the "added" tail of a `MessageId.errors` packet and the payload embedded
+ * in the "Build Failed" page.
+ */
+function decodeSerializedFailures(bytes: Uint8Array) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 0;
+  const u32 = () => {
+    const value = view.getUint32(pos, true);
+    pos += 4;
+    return value;
+  };
+  const string32 = () => {
+    const length = u32();
+    const text = new TextDecoder().decode(bytes.subarray(pos, pos + length));
+    pos += length;
+    return text;
+  };
+  const logData = () => {
+    const text = string32();
+    // A zero line means there is no location.
+    if (u32() !== 0) {
+      u32(); // column
+      u32(); // length
+      string32(); // line text
+    }
+    return text;
+  };
+  const failures: { owner: number; file: string; messages: string[] }[] = [];
+  while (pos < bytes.byteLength) {
+    const owner = u32();
+    const file = string32();
+    const messages: string[] = [];
+    for (let messageCount = u32(); messageCount > 0; messageCount--) {
+      pos += 1; // ErrorKind
+      messages.push(logData());
+      for (let noteCount = u32(); noteCount > 0; noteCount--) {
+        logData();
+      }
+    }
+    failures.push({ owner, file, messages });
+  }
+  return failures;
+}
+/** Decodes a `MessageId.errors` packet from the HMR socket. */
+function decodeErrorsPacket(data: Uint8Array) {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const removedCount = view.getUint32(1, true);
+  const removed: number[] = [];
+  for (let i = 0; i < removedCount; i++) {
+    removed.push(view.getUint32(5 + i * 4, true));
+  }
+  return { removed, added: decodeSerializedFailures(data.subarray(5 + removedCount * 4)) };
+}
+// When a client component boundary is demoted, the server graph deletes the
+// client graph's node for it (disconnectAndDeleteFile). If that node was
+// failing, its failure used to stay behind in dev.bundling_failures: error
+// overlays were never told to drop it and every later "Build Failed" page
+// listed it again.
+devTest("removing 'use client' from a failing component retracts its bundling failure", {
+  // separateSSRGraph is required for the failure to be owned by the client
+  // graph's node, which is the node that gets deleted on demotion.
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response('marker: ' + typeof Comp.marker);
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+  },
+  async test(dev) {
+    const errorPackets: ReturnType<typeof decodeErrorsPacket>[] = [];
+    dev.on("hmr", (data: Uint8Array) => {
+      if (data[0] === "e".charCodeAt(0)) errorPackets.push(decodeErrorsPacket(data));
+    });
+    // Subscribe the harness socket to the errors topic as well. Every
+    // `dev.write` below resolves only after a later message on this socket,
+    // so by then any errors packet from that rebuild has been recorded.
+    dev.socket!.send("sre");
+
+    // Comp.ts is bundled as a client component boundary: the route sees a
+    // client reference object instead of the string.
+    await dev.fetch("/").equals("marker: object");
+    expect(errorPackets).toEqual([]);
+
+    // Break the component while it is still a boundary. The unresolvable
+    // import is attributed to the client graph's node.
+    await dev.write(
+      "components/Comp.ts",
+      `
+        "use client";
+        import './missing';
+        export const marker = "initial";
+      `,
+      { errors: null },
+    );
+    expect(errorPackets).toEqual([
+      {
+        removed: [],
+        added: [
+          {
+            owner: expect.any(Number),
+            file: "components/Comp.ts",
+            messages: ['Could not resolve: "./missing"'],
+          },
+        ],
+      },
+    ]);
+    const compOwner = errorPackets[0].added[0].owner;
+    errorPackets.length = 0;
+
+    // Demote the component and fix it in the same edit. Only the server
+    // re-bundles the file; the client graph's node is deleted along with
+    // the failure it owned, which must be announced as removed.
+    await dev.write("components/Comp.ts", `export const marker = "plain";`);
+    expect(errorPackets).toEqual([{ removed: [compOwner], added: [] }]);
+    await dev.fetch("/").equals("marker: string");
+
+    // An unrelated failure later on renders every failure the dev server
+    // still tracks. The retracted one must not be among them.
+    await dev.write(
+      "routes/index.ts",
+      `
+        import * as Comp from '../components/Comp';
+        import './does-not-exist';
+        export default function (req, meta) {
+          return new Response('marker: ' + typeof Comp.marker);
+        }
+      `,
+      { errors: null },
+    );
+    const response = await dev.fetch("/");
+    expect(response.status).toBe(500);
+    const [, encodedFailures] = (await response.text()).match(/atob\("([^"]*)"\)/)!;
+    expect(decodeSerializedFailures(Buffer.from(encodedFailures, "base64"))).toEqual([
+      {
+        owner: expect.any(Number),
+        file: "routes/index.ts",
+        messages: ['Could not resolve: "./does-not-exist"'],
+      },
+    ]);
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

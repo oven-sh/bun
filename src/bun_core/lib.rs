@@ -685,6 +685,12 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 ///   threaded event loop: the callback is the unique re-entry point for `*ctx`
 ///   while it runs. **Do not** use this for arbitrary pointer reinterpretation
 ///   (struct-layout punning, lifetime laundering) — that is not the contract.
+/// - Not for a callback that consumes `*ctx` (a completion that frees the
+///   request): every method called on the returned reference receives it as
+///   a protected argument, and freeing the allocation inside such a call is
+///   UB even if the reference is never used again. Such a callback dispatches
+///   on the raw `*mut T` instead, as the c-ares thunks in
+///   `bun_cares_sys::c_ares` do.
 #[inline(always)]
 #[track_caller]
 pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {

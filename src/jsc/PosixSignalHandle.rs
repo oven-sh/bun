@@ -239,6 +239,16 @@ pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }
 
+/// Whether a user-delivered signal's JS handlers are running right now.
+/// `process.exit()` in such a handler must really exit even under `--watch`
+/// (node's watcher dies with the child on Ctrl+C), so the keepalive branch
+/// consults this.
+pub fn is_emitting_signal_for_js() -> bool {
+    IS_EMITTING_SIGNAL_FOR_JS.load(Ordering::Relaxed)
+}
+
+static IS_EMITTING_SIGNAL_FOR_JS: AtomicBool = AtomicBool::new(false);
+
 /// Runs the JS handlers of the configured `--watch-kill-signal` synchronously,
 /// mirroring node delivering that signal to the watched child before restart.
 /// SIGKILL/SIGSTOP are uncatchable in node, so nothing is emitted for them.
@@ -256,7 +266,9 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
 
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
+        IS_EMITTING_SIGNAL_FOR_JS.store(true, Ordering::Relaxed);
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
+        IS_EMITTING_SIGNAL_FOR_JS.store(false, Ordering::Relaxed);
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
         if !fired && number == SIGINT_NUMBER && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0

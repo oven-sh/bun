@@ -4140,19 +4140,40 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
-// Reads one Content-Length framed response off the client half of a duplexPair.
+// Reads one Content-Length framed response off the client half of a duplexPair; rejects if the
+// response is framed any other way or the connection goes away first.
 function readResponseBody(clientSide: ReturnType<typeof duplexPair>[0]): Promise<string> {
-  const { promise, resolve } = Promise.withResolvers<string>();
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
   let raw = "";
-  clientSide.on("data", function onData(chunk) {
+  function settle(body?: string, error?: Error) {
+    clientSide.off("data", onData);
+    clientSide.off("close", onClose);
+    clientSide.off("error", onError);
+    if (error) reject(error);
+    else resolve(body!);
+  }
+  function onData(chunk: Buffer) {
     raw += chunk.toString("latin1");
     const headersEnd = raw.indexOf("\r\n\r\n");
     if (headersEnd === -1) return;
+    const contentLength = /\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd));
+    if (!contentLength) {
+      settle(undefined, new Error(`expected a Content-Length framed response, got: ${JSON.stringify(raw)}`));
+      return;
+    }
     const body = raw.slice(headersEnd + 4);
-    if (body.length < Number(/\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd))![1])) return;
-    clientSide.off("data", onData);
-    resolve(body);
-  });
+    if (body.length < Number(contentLength[1])) return;
+    settle(body);
+  }
+  function onClose() {
+    settle(undefined, new Error(`connection closed before the response completed, got: ${JSON.stringify(raw)}`));
+  }
+  function onError(error: Error) {
+    settle(undefined, error);
+  }
+  clientSide.on("data", onData);
+  clientSide.on("close", onClose);
+  clientSide.on("error", onError);
   return promise;
 }
 

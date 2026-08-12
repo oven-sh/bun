@@ -4324,21 +4324,40 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
     await new Promise(resolve => client.once("secureConnect", resolve));
     return { client, serverSocket: await accepted };
   }
+  // Reads one Content-Length framed response; rejects if the response is framed any other way or
+  // the connection goes away first (which is what a wrongly destroyed connection looks like here).
   function readHttp1Body(client) {
     const { promise, resolve, reject } = Promise.withResolvers();
     let raw = "";
-    client.on("data", function onData(chunk) {
+    function settle(body, error) {
+      client.off("data", onData);
+      client.off("close", onClose);
+      client.off("error", onError);
+      if (error) reject(error);
+      else resolve(body);
+    }
+    function onData(chunk) {
       raw += chunk.toString("latin1");
       const headersEnd = raw.indexOf("\r\n\r\n");
       if (headersEnd === -1) return;
+      const contentLength = /\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd));
+      if (!contentLength) {
+        settle(undefined, new Error(`expected a Content-Length framed response, got: ${JSON.stringify(raw)}`));
+        return;
+      }
       const body = raw.slice(headersEnd + 4);
-      if (body.length < Number(/\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd))[1])) return;
-      client.off("data", onData);
-      resolve(body);
-    });
-    client.once("close", () =>
-      reject(new Error(`connection closed before a response arrived, got: ${JSON.stringify(raw)}`)),
-    );
+      if (body.length < Number(contentLength[1])) return;
+      settle(body);
+    }
+    function onClose() {
+      settle(undefined, new Error(`connection closed before the response completed, got: ${JSON.stringify(raw)}`));
+    }
+    function onError(error) {
+      settle(undefined, error);
+    }
+    client.on("data", onData);
+    client.on("close", onClose);
+    client.on("error", onError);
     return promise;
   }
 

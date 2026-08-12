@@ -39,8 +39,9 @@ pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
-    ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
+    AnyRefCounted, CellRefCounted, OwnedRef, RefCount, RefCounted, RefPtr, ScopedRef,
+    ThreadSafeRefCount, ThreadSafeRefCounted, destroy_box_with, finalize_js_box,
+    finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -625,6 +626,20 @@ where
     pub fn ref_guard(self) -> ScopedRef<T> {
         // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`.
         unsafe { ScopedRef::new(self.0.as_ptr()) }
+    }
+
+    /// Take a ref to keep, as an [`OwnedRef`]: for parking `this` in a field
+    /// or a queue while an operation it started is in flight. Dropping the
+    /// returned value later is the matching release.
+    ///
+    /// Safe for the same reason as [`ref_guard`](Self::ref_guard): `new`
+    /// established that the pointee is live, and the pointer is the one the
+    /// dispatch handed us, which is the one its `deref()` expects.
+    #[inline]
+    pub fn owned_ref(self) -> OwnedRef<T> {
+        // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`,
+        // via the root pointer the callback was dispatched with.
+        unsafe { OwnedRef::acquire(self.0.as_ptr()) }
     }
 }
 

@@ -327,9 +327,10 @@ describe("FileHandle", () => {
     expectNodeResultShape(await fd.read({ buffer: buf, length: 4, position: 0 }), { bytesRead: 4, buffer: buf });
     expectNodeResultShape(await fd.read(buf, 0, 0, 0), { bytesRead: 0, buffer: buf });
 
+    // No arguments: node allocates a 16 KiB buffer and reads from the current position (0 here,
+    // the reads above were all positional). This file is far larger than that, so the read fills it.
     const result = await fd.read();
-    expectNodeResultShape(result, { bytesRead: result.bytesRead, buffer: result.buffer });
-    expect(result.buffer).toBeInstanceOf(Buffer);
+    expectNodeResultShape(result, { bytesRead: 16384, buffer: expect.any(Buffer) });
     expect(result.buffer.byteLength).toBe(16384);
   });
 

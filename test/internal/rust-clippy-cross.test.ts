@@ -1,9 +1,10 @@
 // The CI Clippy job lints the host target, and scripts/rust-clippy-cross.ts
-// lints the targets in scripts/rust-clippy-cross-budgets.json, where every
-// crate has a budget of remaining hits. This pins the one crate that is not
-// allowed any on any of those targets: bun_core is the root of the crate
-// graph, so a hit in its cfg-gated code is what used to make `cargo clippy`
-// on a Windows host fail before reporting anything about any other crate.
+// lints the targets in scripts/rust-clippy-cross-budgets.json against per-file
+// budgets of the remaining hits. This runs the plain deny-level lint of one
+// crate for each of those targets, the way `cargo clippy -p bun_core` runs on
+// such a machine: bun_core is the root of the crate graph, so a hit in its
+// cfg-gated code used to make that command fail on a Windows host before it
+// reported anything about any other crate.
 //
 // Skipped where the workspace is not resolvable (test-only CI lanes run a
 // prebuilt binary and have neither vendor/lolhtml nor the configure output;

@@ -8,17 +8,20 @@
  * linted only if somebody runs clippy on such a machine. This lints the whole
  * workspace with `--target` for every triple in rust-clippy-cross-budgets.json
  * (clippy needs the triple's `rust-std` and nothing else, so it works from any
- * host) and counts the diagnostics per crate.
+ * host) and counts the diagnostics per `<file> <lint>`.
  *
- * The JSON file is the budget: the number of hits each crate still has on that
- * target (unlisted crate = 0). A crate over its budget is a regression in the
- * change that added the hit, to be fixed there (raising an entry is the
- * exception and needs the same justification as an `#[allow]`); a crate under
- * it must have its entry lowered, which is what `--update` does (it rewrites
- * the file from the current tree). The counts depend only on the sources, so
- * CI's run on the merge commit agrees with a local run on the same tree.
- * Adding a target is adding its triple to the file with `{}` and running
- * `--update`; the Clippy workflow installs the std of every listed triple.
+ * The JSON file is the budget: per target, the hits each (file, lint) pair
+ * still has; anything not listed is allowed none, same shape as
+ * test/internal/source-lints/dead-code-escape-limits.json. A pair over its
+ * budget fails and prints exactly that pair's diagnostics, so the new hit is
+ * what shows up (and what the workflow annotates); raising an entry for it
+ * needs the same justification as an `#[allow]`. A pair under its budget fails
+ * too, until `--update` rewrites the file from the current tree, so the file
+ * tracks the real state and only shrinks otherwise. The counts depend on the
+ * sources alone: CI's run on the merge commit reports the same numbers as a
+ * local run on the same tree. To add a target, add its triple to the file as
+ * `{}` and run `--update`; the workflow reads the triples to install from the
+ * same file.
  *
  * Lints are capped to warnings for the run (`--cap-lints=warn`), which is what
  * makes one `--workspace` invocation lint every crate: under the workspace's
@@ -43,23 +46,21 @@ import { resolve } from "node:path";
 const repo = resolve(import.meta.dirname, "..");
 const budgetsPath = resolve(import.meta.dirname, "rust-clippy-cross-budgets.json");
 
+/** triple -> `<file> <lint>` -> allowed hits */
 type Budgets = Record<string, Record<string, number>>;
 
 /** One `cargo --message-format=json` line; only the fields used here. */
 interface CargoMessage {
   reason: string;
-  package_id?: string;
-  message?: { level: string; code: unknown; rendered: string };
+  message?: {
+    level: string;
+    code: { code: string } | null;
+    rendered: string;
+    spans: { file_name: string; is_primary: boolean }[];
+  };
 }
 
-/** Package name from a cargo package id: `path+file:///x/src/sys#bun_sys@0.0.0` or, when the directory is named like the package, `path+file:///x/src/bun_core#0.0.0`. */
-function packageName(packageId: string): string {
-  const [location, fragment = ""] = packageId.split("#");
-  const at = fragment.indexOf("@");
-  return at !== -1 ? fragment.slice(0, at) : location.slice(location.lastIndexOf("/") + 1);
-}
-
-/** Lints the workspace for `triple`; returns the rendered lint diagnostics per crate, or null (after printing the compiler errors) if something did not compile. */
+/** Lints the workspace for `triple`; returns the rendered diagnostics per `<file> <lint>`, or null (after printing the compiler errors) if something did not compile. */
 function lint(triple: string): Map<string, string[]> | null {
   const cmd = [
     "cargo",
@@ -78,26 +79,28 @@ function lint(triple: string): Map<string, string[]> | null {
 
   // With --cap-lints=warn every lint arrives as a warning; an error is a real
   // compile failure (the target is broken, which `rust:check-all` would show too).
-  const byCrate = new Map<string, string[]>();
+  const hits = new Map<string, string[]>();
   const errors: string[] = [];
   const seen = new Set<string>();
   for (const line of proc.stdout.toString().split("\n")) {
     if (!line.startsWith("{")) continue;
     const msg: CargoMessage = JSON.parse(line);
-    if (msg.reason !== "compiler-message" || !msg.package_id || !msg.message) continue;
-    const { level, code, rendered } = msg.message;
+    if (msg.reason !== "compiler-message" || !msg.message) continue;
+    const { level, code, rendered, spans } = msg.message;
     if (level === "error") errors.push(rendered);
     // `code` is null on the per-crate "N warnings emitted" summary.
     if (level !== "warning" || code === null) continue;
-    const crate = packageName(msg.package_id);
     // A crate that proc-macros or build scripts also depend on is compiled for
     // the host as well as for the target (bun_output_tags: three times), and
     // every configuration reports the same hit again.
-    const key = `${crate}\0${rendered}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    let list = byCrate.get(crate);
-    if (!list) byCrate.set(crate, (list = []));
+    if (seen.has(rendered)) continue;
+    seen.add(rendered);
+    // rustc prints paths relative to the workspace root; Windows hosts print
+    // them with backslashes.
+    const file = (spans.find(span => span.is_primary) ?? spans[0])?.file_name.replaceAll("\\", "/") ?? "(no span)";
+    const key = `${file} ${code.code}`;
+    let list = hits.get(key);
+    if (!list) hits.set(key, (list = []));
     list.push(rendered);
   }
   if (proc.exitCode !== 0) {
@@ -105,23 +108,21 @@ function lint(triple: string): Map<string, string[]> | null {
     console.error(`\x1b[31m[error]\x1b[0m cargo clippy failed for ${triple} (exit ${proc.exitCode})`);
     return null;
   }
-  return byCrate;
+  return hits;
 }
 
-/** Compares one target's counts with its budget; returns the problems, each already formatted for the user. */
-function checkBudget(budget: Record<string, number>, counts: Map<string, number>): string[] {
+/** Prints the diagnostics of every key over its budget; returns one line per key whose count differs from the budget. */
+function checkBudget(budget: Record<string, number>, hits: Map<string, string[]>): string[] {
   const problems: string[] = [];
-  for (const crate of [...new Set([...Object.keys(budget), ...counts.keys()])].sort()) {
-    const allowed = budget[crate] ?? 0;
-    const actual = counts.get(crate) ?? 0;
-    if (actual > allowed) {
+  for (const key of [...new Set([...Object.keys(budget), ...hits.keys()])].sort()) {
+    const allowed = budget[key] ?? 0;
+    const rendered = hits.get(key) ?? [];
+    if (rendered.length > allowed) {
+      console.log(rendered.join(""));
+      problems.push(`${key}: ${rendered.length} hits, budget is ${allowed} (all ${rendered.length} are printed above)`);
+    } else if (rendered.length < allowed) {
       problems.push(
-        `${crate}: ${actual} clippy hits, budget is ${allowed}; the crate's hits are printed above. ` +
-          "If none of the extra ones come from your change, the budget file is behind main: rebase first.",
-      );
-    } else if (actual < allowed) {
-      problems.push(
-        `${crate}: ${actual} clippy hits, budget is ${allowed}; run \`bun run rust:clippy-cross --update\``,
+        `${key}: ${rendered.length} hits, budget is ${allowed}; run \`bun run rust:clippy-cross --update\``,
       );
     }
   }
@@ -153,25 +154,23 @@ if (import.meta.main) {
 
   let failed = false;
   for (const triple of triples.length > 0 ? triples : Object.keys(budgets)) {
-    const diagnostics = lint(triple);
-    if (!diagnostics) {
+    const hits = lint(triple);
+    if (!hits) {
       failed = true;
       continue;
     }
-    const counts = new Map([...diagnostics].map(([crate, list]) => [crate, list.length]));
+    const total = [...hits.values()].reduce((n, list) => n + list.length, 0);
     if (update) {
-      budgets[triple] = Object.fromEntries([...counts].sort(([a], [b]) => (a < b ? -1 : 1)));
+      budgets[triple] = Object.fromEntries(
+        [...hits].sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, list]) => [key, list.length]),
+      );
+      console.log(`\x1b[36m[${triple}]\x1b[0m ${total} hits in ${hits.size} file/lint pairs`);
       continue;
     }
-    const budget = budgets[triple];
-    for (const [crate, rendered] of diagnostics) {
-      if (rendered.length > (budget[crate] ?? 0)) console.log(rendered.join(""));
-    }
-    const problems = checkBudget(budget, counts);
+    const problems = checkBudget(budgets[triple], hits);
     for (const problem of problems) console.error(`\x1b[31m[${triple}]\x1b[0m ${problem}`);
     if (problems.length > 0) failed = true;
-    else
-      console.log(`\x1b[32m[${triple}]\x1b[0m within budget (${[...counts.values()].reduce((a, b) => a + b, 0)} hits)`);
+    else console.log(`\x1b[32m[${triple}]\x1b[0m within budget (${total} hits in ${hits.size} file/lint pairs)`);
   }
 
   if (update) {

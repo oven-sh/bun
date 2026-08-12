@@ -990,6 +990,9 @@ describe("property lookup throws while being formatted", () => {
     // initializers throw while the rest of the object is still being formatted.
     // Archive and version are listed after them and must still be printed.
     const [stdout, , exitCode] = await run(`
+      // Loads node:util's inspect now. On Windows, Bun.env has an inspect.custom
+      // hook, and the formatter cannot load that module once Symbol is gone.
+      Bun.inspect({ [Bun.inspect.custom]: () => "" });
       globalThis.Symbol = 0;
       const text = Bun.inspect(Bun);
       console.log(text.includes("Archive: [class Archive]"), text.includes("version:"));

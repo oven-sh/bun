@@ -455,18 +455,17 @@ function closeIdleHttp1Connections(server) {
   if (!connections) return;
   for (const socket of connections) {
     if (socket[kHttp1ActiveRequests] || socket.destroyed) continue;
-    if (!socket.writableLength) {
-      socket.destroy();
-      continue;
-    }
-    // Node destroys here too, but its OutgoingMessage has uncorked the whole response into the
-    // transport by the time end() returns. This file's handle writes the response piecewise and a
-    // TLS socket completes each write a tick later, so a response ended in this tick is still
-    // queued in the Writable and destroy() would drop it (the client gets the head, no body).
-    // This is net.Socket#destroySoon() spelled out, so it also works on a plain Duplex.
-    if (socket.writable) socket.end();
-    socket.once("finish", socket.destroy);
+    // Unlike Node's OutgoingMessage, the handle above hands the response to the transport one
+    // write at a time (a tick apart on TLS), so a response ended this tick may still be queued here.
+    if (socket.writableLength) destroySoon(socket);
+    else socket.destroy();
   }
+}
+
+// net.Socket#destroySoon(); a Duplex fed in through server.emit("connection") need not have it.
+function destroySoon(socket) {
+  if (socket.writable) socket.end();
+  socket.once("finish", socket.destroy);
 }
 
 function closeAllHttp1Connections(server) {

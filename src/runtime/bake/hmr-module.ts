@@ -616,7 +616,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  // A set like `toReload`: a boundary reached from several replaced modules is disposed of once.
+  const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -652,7 +653,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
@@ -662,7 +663,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
 
@@ -739,7 +740,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Dispose all modules
-  if (toDispose.length > 0) {
+  if (toDispose.size > 0) {
     const disposePromises: Promise<void>[] = [];
     for (const mod of toDispose) {
       mod.state = State.Stale;

@@ -444,6 +444,42 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+devTest("import.meta.hot.dispose runs once when one update replaces two modules the boundary imports", {
+  // Both replaced modules propagate up to `index`, which must be disposed of
+  // and re-evaluated once. Disposing of it a second time used to throw
+  // (its dispose list is cleared after running), turning the update into a
+  // full reload.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./d";
+      import "./e";
+      console.log("index evaluated");
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+    "e.ts": `
+      export const e = "e1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index evaluated");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("d.ts", `export const d = "d2";`);
+      await dev.write("e.ts", `export const e = "e2";`);
+    }
+    await c.expectMessage("index disposed", "index evaluated");
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

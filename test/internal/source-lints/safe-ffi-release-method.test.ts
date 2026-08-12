@@ -31,25 +31,38 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // Sibling guards: unsound-erased-box.test.ts, frozen-nonnull-reborrow.test.ts.
 
 // `pub` (any visibility) method, not `unsafe` (`pub unsafe fn` does not match because
-// `unsafe` sits between `pub` and `fn`), taking `&self` / `&mut self`, whose body
-// starts by handing `self` (or a projection of it) to a shim whose name ends in a
-// free or refcount-release verb. The shim must be a bare identifier: extern shims
-// are declared in the file that wraps them and called unqualified, whereas a
-// path-qualified call (`bun_opaque::opaque_deref(self.ptr)`, `Async::actually_deinit(self, id)`)
-// is a Rust helper that merely takes `self` as context. Sockets' `close` shims are a
-// different lifecycle (the library frees the socket later, from its event loop) and
-// are deliberately not matched either.
+// `unsafe` sits between `pub` and `fn`), taking `&self` / `&mut self`, whose first
+// statement hands `self` (or a projection of it) to a shim whose name ends in a free
+// or refcount-release verb. The statement may be wrapped in `unsafe { .. }`: that is
+// what the body looks like once the shim itself is declared the recommended way
+// (`fn X__deinit(*mut X)` in the extern block), so a lint that skipped it would only
+// ever see shims still declared `safe fn`. Full-line comments (`// SAFETY: ..`) are
+// stripped first, so they may sit anywhere in between.
+//
+// Deliberately not matched, so a new instance in one of these shapes is a review
+// matter rather than a lint failure: path-qualified calls
+// (`bun_opaque::opaque_deref(self.ptr)`, `Async::actually_deinit(self, id)` are Rust
+// helpers that merely take `self` as context; extern shims are declared in the file
+// that wraps them and called bare), release calls after a first statement that does
+// something else, non-`pub` fns (a private forwarder is the Drop-only pattern), and
+// sockets' `close` shims (a different lifecycle: the library frees the socket later,
+// from its event loop).
 const RELEASE_FORWARDER =
-  /\bpub(?:\([^)]*\))?\s+fn\s+(\w+)\s*\(\s*(&(?:mut\s+)?self)\b[^)]*\)[^{;]*\{\s*(\w+_(?:deinit|destroy|delete|free|dealloc|deref|unref|release))\s*\(\s*self\b/g;
+  /\bpub(?:\([^)]*\))?\s+fn\s+(\w+)\s*\(\s*(&(?:mut\s+)?self)\b[^)]*\)[^{;]*\{\s*(?:unsafe\s*\{\s*)?(\w+_(?:deinit|destroy|delete|free|dealloc|deref|unref|release))\s*\(\s*self\b/g;
 
-// Instances that predate this lint and are being removed separately (FetchHeaders
-// and SourceProvider become Drop-owned handles in #33820; AbortSignal is tracked on
-// its own). Ratchet: delete the entry together with the method (the test below
+// Instances that predate this lint and are tracked separately: FetchHeaders and
+// SourceProvider become Drop-owned handles in #33820; AbortSignal and the three
+// libarchive methods (each has a Drop-owning wrapper that derefs to the handle, so
+// `owner.read_free()` followed by the owner's drop is a double free) have their own
+// fixes pending. Ratchet: delete the entry together with the method (the test below
 // fails on a stale entry). Prefer converting a new instance over adding one here.
 const ALLOW = new Set([
   "src/jsc/AbortSignal.rs: unref -> WebCore__AbortSignal__unref",
   "src/jsc/FetchHeaders.rs: deref -> WebCore__FetchHeaders__deref",
   "src/jsc/SourceProvider.rs: deref -> JSC__SourceProvider__deref",
+  "src/libarchive/lib.rs: read_free -> archive_read_free",
+  "src/libarchive/lib.rs: write_free -> archive_write_free",
+  "src/libarchive/lib.rs: free -> archive_entry_free",
 ]);
 
 // Strip `//` comments without disturbing line numbers (`[ \t]*`, not `\s*`, so the
@@ -77,20 +90,26 @@ test("matches the unsound shape and not the sound ones", () => {
         pub fn deinit(&mut self) {
             URL__deinit(self)
         }
+        pub fn deinit_via_unsafe_shim(&mut self) {
+            // SAFETY: (a claim the signature cannot back up)
+            unsafe { URL__deinit(self) }
+        }
     }
     impl Headers {
         pub(crate) fn deref(&self) -> u32 { WebCore__Headers__deref(self.0) }
     }
     impl Archive {
-        pub fn free(&self, mode: Mode) {
-            archive_read_free(self.as_mut_ptr(), mode)
+        pub fn read_free(&self) -> Result {
+            // SAFETY: self came from archive_read_new(); not used after this.
+            unsafe { archive_read_free(self.as_mut_ptr()) }
         }
     }
   `;
-  expect(scan("x.rs", unsound).map(o => o.key)).toEqual([
-    "x.rs: deinit -> URL__deinit",
-    "x.rs: deref -> WebCore__Headers__deref",
-    "x.rs: free -> archive_read_free",
+  expect(scan("x.rs", unsound).map(o => o.display)).toEqual([
+    "x.rs:3: pub fn deinit(&mut self, ..) forwards self to URL__deinit",
+    "x.rs:6: pub fn deinit_via_unsafe_shim(&mut self, ..) forwards self to URL__deinit",
+    "x.rs:12: pub fn deref(&self, ..) forwards self to WebCore__Headers__deref",
+    "x.rs:15: pub fn read_free(&self, ..) forwards self to archive_read_free",
   ]);
 
   const sound = `
@@ -101,6 +120,10 @@ test("matches the unsound shape and not the sound ones", () => {
         }
         pub fn protocol(&self) -> String {
             URL__protocol(self)
+        }
+        pub fn read_close(&self) -> Result {
+            // SAFETY: self came from archive_read_new().
+            unsafe { archive_read_close(self.as_mut_ptr()) }
         }
         pub fn release_weak_refs(&self) {
             JSC__VM__releaseWeakRefs(self)

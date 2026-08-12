@@ -662,8 +662,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           toDispose.push(mod);
         }
       }
-      // Nothing to patch in a module that failed to evaluate: its next load evaluates it again.
-      // Its importers failed along with it, so the walk continues through it.
+      // Nothing to patch in a failed module: its next load evaluates it again. Its importers failed with it.
       else if (mod.state === State.Error) {
         mod.state = State.Stale;
         mod.failure = null;

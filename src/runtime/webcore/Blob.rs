@@ -4255,9 +4255,17 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
     }
 }
 
+/// Heap-promotes a Blob that C++ wraps directly (`WebCore::Blob`, `Blob__create`)
+/// instead of via `BlobExt::to_js`. `Blob__estimatedSize` only reads the cached
+/// size (it also runs on the GC thread), so it has to be computed here.
+fn new_for_bindings(blob: Blob) -> *mut Blob {
+    blob.calculate_estimated_byte_size();
+    Blob::new(blob)
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    new_for_bindings(this.dupe_with_content_type(true))
 }
 
 #[unsafe(no_mangle)]
@@ -5997,28 +6005,44 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
 
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
+unsafe fn blob_from_bytes(global_this: &JSGlobalObject, ptr: *const u8, len: usize) -> Blob {
+    if ptr.is_null() || len == 0 {
+        return Blob::init_empty(global_this);
+    }
+    // SAFETY: caller guarantees [ptr, ptr+len) is valid.
+    let bytes = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+    Blob::init_with_store(Store::init(bytes), global_this)
+}
+
+/// # Safety
+/// `mime` must be a NUL-terminated C string.
+unsafe fn set_content_type_from_cstr(blob: &Blob, mime: *const c_char) {
+    // SAFETY: forwarded from caller's contract.
+    let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
+    if !mime_slice.is_empty() {
+        blob.content_type
+            .set(BlobContentType::Owned(mime_slice.into()));
+        blob.content_type_was_set.set(true);
+    }
+}
+
+/// # Safety
+/// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromBytes(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
 ) -> *mut Blob {
-    if ptr.is_null() || len == 0 {
-        return Blob::new(Blob::init_empty(global_this));
-    }
-    // SAFETY: caller guarantees [ptr, ptr+len) is valid.
-    let bytes = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-    let store = Store::init(bytes);
-    Blob::new(Blob::init_with_store(store, global_this))
+    // SAFETY: forwarded from caller's contract.
+    new_for_bindings(unsafe { blob_from_bytes(global_this, ptr, len) })
 }
 
-/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
-/// string literal with process lifetime (not freed by deinit — the caller
-/// passes one of the image/* constants).
+/// Same as Blob__fromBytes but stamps content_type (copied out of `mime`).
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
-/// NUL-terminated `'static` C string.
+/// NUL-terminated C string.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     global_this: &JSGlobalObject,
@@ -6027,20 +6051,10 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     mime: *const c_char,
 ) -> *mut Blob {
     // SAFETY: forwarded from caller's contract.
-    let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
-    // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
-    let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
-    if !mime_slice.is_empty() {
-        // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;
-        // we are the sole owner until this function returns it.
-        unsafe {
-            (*blob)
-                .content_type
-                .set(BlobContentType::Owned(mime_slice.into()));
-            (*blob).content_type_was_set.set(true);
-        }
-    }
-    blob
+    let blob = unsafe { blob_from_bytes(global_this, ptr, len) };
+    // SAFETY: forwarded from caller's contract.
+    unsafe { set_content_type_from_cstr(&blob, mime) };
+    new_for_bindings(blob)
 }
 
 /// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;
@@ -6069,19 +6083,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
         let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
+        let blob = Blob::init_with_store(store, global_this);
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
-        let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
-        if !mime_slice.is_empty() {
-            // SAFETY: `blob` was just produced by heap::alloc in Blob::new.
-            unsafe {
-                (*blob)
-                    .content_type
-                    .set(BlobContentType::Owned(mime_slice.into()));
-                (*blob).content_type_was_set.set(true);
-            }
-        }
-        blob
+        unsafe { set_content_type_from_cstr(&blob, mime) };
+        new_for_bindings(blob)
     }
 }
 

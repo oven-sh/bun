@@ -13,9 +13,9 @@
  *   <command line>:11:34: error: missing terminating '"' character
  *     #define REPORTED_NODEJS_VERSION \"1.2.3\"
  *
- * These tests run the real flag tables, compile.ts and a direct dep through
- * a Ninja instance and read back both files. Configure-time logic only:
- * nothing is compiled, so they run on every host.
+ * These tests run the real flag tables, compile.ts, a direct dep and a
+ * nested-cmake dep through a Ninja instance and read back both files.
+ * Configure-time logic only: nothing is compiled, so they run on every host.
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
@@ -24,7 +24,7 @@ import { join } from "node:path";
 
 import { cc, cxx, pch, registerCompileRules, registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
-import { computeFlags } from "../../scripts/build/flags.ts";
+import { computeDepFlags, computeFlags } from "../../scripts/build/flags.ts";
 import { Ninja, type CompileCommand } from "../../scripts/build/ninja.ts";
 import { registerDepRules, resolveDep, type Dependency } from "../../scripts/build/source.ts";
 
@@ -97,6 +97,21 @@ function syntheticDep(srcDir: string): Dependency {
   };
 }
 
+/**
+ * A nested-cmake dep. Its flags reach the compiler through one more layer:
+ * they are pasted into CMAKE_C_FLAGS, which cmake copies into the inner
+ * build's commands, and that whole -D argument is itself one word of the
+ * outer cmake command line.
+ */
+function syntheticCmakeDep(srcDir: string): Dependency {
+  return {
+    name: "synthcm",
+    source: () => ({ kind: "local", path: srcDir }),
+    build: () => ({ kind: "nested-cmake", args: {}, pic: true, extraCFlags: ['-DSYNTHCM_NAME="a b"'] }),
+    provides: () => ({ libs: ["synthcm"], includes: [] }),
+  };
+}
+
 /** An argv entry that still carries shell syntax: an escaped quote or a posix quote character. */
 const SHELL_SYNTAX = /\\"|'/;
 
@@ -109,16 +124,17 @@ interface Emitted {
 }
 
 /**
- * Emit the PCH, one bun C++ edge using it, one bun C edge and the synthetic
- * dep, then write build.ninja + compile_commands.json like configure does.
- * The build dir (and the dep source tree inside it) contains a space so the
- * paths need quoting too. `hostOs` selects the quoting flavour compile.ts
- * applies; the target stays the test host's so the real tables are used.
+ * Emit the PCH, one bun C++ edge using it, one bun C edge and both synthetic
+ * deps, then write build.ninja + compile_commands.json like configure does.
+ * The build dir (and the dep source trees inside it) contains a space so the
+ * paths need quoting too. `hostOs` selects the quoting flavour the emitters
+ * apply; the target stays the test host's so the real tables are used.
  */
 async function emit(hostOs: "linux" | "windows"): Promise<Emitted> {
   using dir = tempDir("build-flags", {
     "build dir/synth/synth.c": "",
     "build dir/synth/synth-gen.c": "",
+    "build dir/synthcm/CMakeLists.txt": "",
   });
   const resolved = configFor(join(String(dir), "build dir"));
   const cfg: Config = {
@@ -138,6 +154,7 @@ async function emit(hostOs: "linux" | "windows"): Promise<Emitted> {
   cxx(n, cfg, "src/jsc/bindings/BunProcess.cpp", { flags: bunFlags, pch: pchFile, pchHeader: wrapperHeader });
   cc(n, cfg, "src/example.c", { flags: bunFlags });
   resolveDep(n, cfg, syntheticDep(join(cfg.buildDir, "synth")), new Map());
+  resolveDep(n, cfg, syntheticCmakeDep(join(cfg.buildDir, "synthcm")), new Map());
   await n.write();
 
   const ninja = readFileSync(join(cfg.buildDir, "build.ninja"), "utf8");
@@ -228,7 +245,7 @@ describe("compile flags are bare argv in compile_commands.json and quoted only i
   });
 
   test.skipIf(isWindows)("sh splits every build.ninja flags variable back into exactly that argv", async () => {
-    const { ninja, compileCommands, bunFlags } = await emit("linux");
+    const { cfg, ninja, compileCommands, bunFlags } = await emit("linux");
 
     for (const file of ["BunProcess.cpp", "example.c", "synth.c"]) {
       const entry = entryFor(compileCommands, file);
@@ -243,6 +260,11 @@ describe("compile flags are bare argv in compile_commands.json and quoted only i
       "-w",
       '-DGEN_BANNER="gen tool"',
     ]);
+    // Nested cmake: the outer sh yields cmake one -DCMAKE_C_FLAGS=<fragment>
+    // argument, and the inner build's sh later splits <fragment> itself.
+    const cmakeArgs = await shWords(edgeVar(ninja, "deps/synthcm/CMakeCache.txt", "args"));
+    const fragment = cmakeArgs.find(a => a.startsWith("-DCMAKE_C_FLAGS="))!.slice("-DCMAKE_C_FLAGS=".length);
+    expect(await shWords(fragment)).toEqual([...computeDepFlags(cfg).cflags, "-fPIC", '-DSYNTHCM_NAME="a b"']);
   });
 
   test("unix hosts single-quote exactly the arguments that need it", async () => {

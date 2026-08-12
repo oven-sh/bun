@@ -290,7 +290,8 @@ export interface NestedCmakeBuild {
   args: Record<string, string>;
   /**
    * Extra C flags appended to CMAKE_C_FLAGS for this dep (beyond global
-   * dep flags). APPENDED, not replacing globals.
+   * dep flags). APPENDED, not replacing globals. Same unquoted-argv contract
+   * as DirectBuild.cflags; emitNestedCmake quotes them into the cmake value.
    */
   extraCFlags?: string[];
   extraCxxFlags?: string[];
@@ -1191,13 +1192,9 @@ function emitNestedCmake(
   // Compiler flags — GLOBAL flags only. These are the dep-safe subset:
   // CPU target, optimization level, debug info, visibility, sections.
   // NO -Werror, NO bun-specific constexpr limits.
-  //
-  // The tables hold bare argv (see ComputedFlags); CMAKE_<LANG>_FLAGS is a
-  // command-line fragment cmake pastes into the inner build's commands, so
-  // each argument is quoted here for the host that runs them.
   const depFlags = computeDepFlags(cfg);
-  let cflags = quoteArgs(depFlags.cflags, hostWin);
-  let cxxflags = quoteArgs(depFlags.cxxflags, hostWin);
+  const cflags = [...depFlags.cflags];
+  const cxxflags = [...depFlags.cxxflags];
 
   // PIC handling:
   //   spec.pic=true  → add -fPIC (non-windows), also tell cmake
@@ -1208,21 +1205,26 @@ function emitNestedCmake(
   // are guarded — no-op there.
   if (spec.pic) {
     if (!cfg.windows) {
-      cflags += " -fPIC";
-      cxxflags += " -fPIC";
+      cflags.push("-fPIC");
+      cxxflags.push("-fPIC");
     }
     args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
   } else if (cfg.darwin) {
-    cflags += " -fno-pic -fno-pie";
-    cxxflags += " -fno-pic -fno-pie";
+    cflags.push("-fno-pic", "-fno-pie");
+    cxxflags.push("-fno-pic", "-fno-pie");
   }
 
   // Dep-specific extra flags. Appended to globals, not replacing them.
-  if (spec.extraCFlags) cflags += " " + spec.extraCFlags.join(" ");
-  if (spec.extraCxxFlags) cxxflags += " " + spec.extraCxxFlags.join(" ");
+  cflags.push(...(spec.extraCFlags ?? []));
+  cxxflags.push(...(spec.extraCxxFlags ?? []));
 
-  args.push(`-DCMAKE_C_FLAGS=${cflags}`);
-  args.push(`-DCMAKE_CXX_FLAGS=${cxxflags}`);
+  // Everything above is bare argv (see ComputedFlags). CMAKE_<LANG>_FLAGS is
+  // a command-line fragment that cmake pastes into the inner build's compile
+  // commands, so it is quoted here for the host that will run those; the
+  // dep_configure edge below then quotes the whole -D argument once more for
+  // the cmake invocation itself.
+  args.push(`-DCMAKE_C_FLAGS=${quoteArgs(cflags, hostWin)}`);
+  args.push(`-DCMAKE_CXX_FLAGS=${quoteArgs(cxxflags, hostWin)}`);
 
   // Dep-specific -D args go LAST so a dep can override anything above
   // if it really needs to. (Rare — we don't expect deps to fight the

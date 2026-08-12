@@ -619,7 +619,7 @@ impl JSBundleCompletionTask {
             (*this).cancelled.store(true, Ordering::Release);
             let l = (*this).bundle_loop.load(Ordering::Acquire);
             if !l.is_null() {
-                bun_uws::us_wakeup_loop(l);
+                bun_uws::Loop::wakeup(l);
             }
         }
     }

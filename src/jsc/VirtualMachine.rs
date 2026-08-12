@@ -1018,7 +1018,10 @@ impl VirtualMachine {
     ///
     /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
     /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
-    /// so the returned `&mut` cannot alias any field of `self`.
+    /// so the returned `&mut` cannot alias any field of `self`. The one thing
+    /// other threads do to this loop, wake it, goes through `EventLoop::wakeup`,
+    /// which reads `event_loop_handle` as a raw pointer instead of calling this:
+    /// the `&mut` returned here is live across the poll they are waking.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
@@ -1187,8 +1190,8 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
-    pub fn wakeup(&mut self) {
-        self.event_loop_mut().wakeup();
+    pub fn wakeup(&self) {
+        self.event_loop_shared().wakeup();
     }
 
     pub fn on_quiet_unhandled_rejection_handler_capture_value(

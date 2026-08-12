@@ -597,10 +597,6 @@ impl Loop {
         let _ = unsafe { uv_run(self, RunMode::NoWait) };
     }
     #[inline]
-    pub fn wakeup(&mut self) {
-        self.wq_async.send();
-    }
-    #[inline]
     pub fn dump_active_handles(&mut self, stream: *mut c_void) {
         // SAFETY: self is a live loop.
         unsafe { uv_print_active_handles(self, stream) };

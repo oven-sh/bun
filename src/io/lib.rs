@@ -2162,15 +2162,8 @@ pub mod waker {
         }
 
         pub fn wake(&self) {
-            // See `wait()` — this is the cross-thread wake path; forming a
-            // `&mut WindowsLoop` here would alias the event-loop thread's
-            // borrow held across `us_loop_run`. Pass the raw pointer to the
-            // thread-safe C wake (`uv_async_send`) instead.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
-            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe {
-                bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
-            };
+            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
+            unsafe { bun_uws_sys::WindowsLoop::wakeup(self.loop_ref().as_const_ptr().cast_mut()) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.

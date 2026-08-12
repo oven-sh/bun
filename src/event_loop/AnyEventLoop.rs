@@ -84,6 +84,17 @@ impl AnyEventLoop {
         }
     }
 
+    /// Make the poll in progress on this loop (or the next one) return. Any
+    /// thread (`PackageManager::wake_raw` calls it from task threads while the
+    /// owning thread is inside `tick_raw`), hence `&self`; neither arm forms a
+    /// reference to the uws loop itself.
+    pub fn wakeup(&self) {
+        match self {
+            AnyEventLoop::Js { owner } => owner.wakeup(),
+            AnyEventLoop::Mini(mini) => mini.wakeup(),
+        }
+    }
+
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
     /// [`EventLoopHandle::from_any`].
     #[inline]
@@ -175,7 +186,7 @@ impl AnyEventLoop {
 
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
-// these four methods. `AnyEventLoop` forwards through `from_any` instead of
+// these three methods. `AnyEventLoop` forwards through `from_any` instead of
 // duplicating each `match`.
 impl AnyEventLoop {
     #[inline]
@@ -195,12 +206,6 @@ impl AnyEventLoop {
     #[inline]
     pub fn native_loop(&mut self) -> *mut bun_io::Loop {
         bun_io::uws_to_native(self.r#loop())
-    }
-
-    #[inline]
-    pub fn wakeup(&mut self) {
-        // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
     }
 }
 

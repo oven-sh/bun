@@ -392,9 +392,9 @@ impl HttpThread {
     /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
     /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
     /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
+    /// every caller — `wakeup()` is the sole cross-thread entry and passes the
+    /// raw pointer to `uws::Loop::wakeup` instead. Centralises the raw
+    /// `&mut *self.uws_loop` upgrade repeated in `process_events`.
     #[inline]
     fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
         // SAFETY: see INVARIANT above.
@@ -1097,10 +1097,7 @@ impl HttpThread {
         // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+            unsafe { uws::Loop::wakeup(self.uws_loop) };
         }
     }
 

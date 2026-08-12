@@ -357,20 +357,18 @@ where
                 css::ComposesState::DisallowNested(info) => {
                     options.warn_fmt(
                         format_args!("\"composes\" is not allowed inside nested selectors"),
-                        info.line,
-                        info.column,
+                        info,
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
                     options.warn_fmt_with_notes(
                         format_args!("\"composes\" only works inside single class selectors"),
-                        source_location.line,
-                        source_location.column,
+                        source_location,
                         Box::new([bun_ast::Data {
                             text: b"The parent selector is not a single class selector because of the syntax here:"
                                 .as_slice()
                                 .into(),
-                            location: Some(info.to_logger_location(options.filename)),
+                            location: Some(options.logger_location(info)),
                         }]),
                     );
                 }

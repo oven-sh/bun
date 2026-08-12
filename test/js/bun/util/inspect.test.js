@@ -928,3 +928,72 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("property lookups that throw while formatting", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("skips a lazy property whose initializer throws and keeps walking", async () => {
+    const fixture = `
+      // These initializers need Symbol too; reify them up front so that Bun.$
+      // is the only property whose initializer throws during the walk.
+      Bun.sql; Bun.postgres; Bun.SQL;
+      globalThis.Symbol = [];
+      let threw = false;
+      try { Bun.$; } catch { threw = true; }
+      console.log("initializer throws:", threw);
+      const out = Bun.inspect(Bun);
+      // Archive and allocUnsafe are the static properties right after $ in
+      // Bun's table; write is near the end.
+      console.log(JSON.stringify(["$", "Archive", "allocUnsafe", "write"].filter(k => out.includes("\\n  " + k + ": "))));
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: 'initializer throws: true\n["Archive","allocUnsafe","write"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("skips an inherited property whose Proxy get trap throws", async () => {
+    const fixture = `
+      const proto = new Proxy({ first: 1, second: 2 }, {
+        get(target, key, receiver) {
+          if (key === "first") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: "{\n  own: 0,\n  second: 2,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("stops walking at a Proxy whose getPrototypeOf trap throws", async () => {
+    const fixture = `
+      const proto = new Proxy({}, {
+        getPrototypeOf() { throw new Error("getPrototypeOf trap"); },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: "{\n  own: 0,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

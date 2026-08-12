@@ -207,6 +207,7 @@ impl PackageManager {
                     &mut buf,
                     package_name,
                     installed_version,
+                    &crate::Integrity::default(),
                 ) {
                     Ok(p) => p,
                     Err(err) => {

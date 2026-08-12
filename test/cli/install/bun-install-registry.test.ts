@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -25,6 +25,16 @@ import {
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
+
+/** Folder name of an npm cache entry: `<name>@<version>@@localhost@@@1_integrity=<first 12 digest bytes as hex>` */
+function cacheFolderName(name: string, version: string, integrity: string) {
+  const digest = Buffer.from(integrity.replace(/^sha\d+-/, ""), "base64");
+  return `${name}@${version}@@localhost@@@1_integrity=${digest.subarray(0, 12).toString("hex")}`;
+}
+async function fixtureIntegrity(name: string, version: string): Promise<string> {
+  const manifest = await file(join(import.meta.dir, "registry", "packages", name, "package.json")).json();
+  return manifest.versions[version].dist.integrity;
+}
 
 expect.extend({
   toBeValidBin,
@@ -115,9 +125,43 @@ describe("auto-install", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
-    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1")))).toBe(
-      join(packageDir, ".bun-cache", "is-number@2.0.0@@localhost@@@1"),
+    const folderName = cacheFolderName("is-number", "2.0.0", await fixtureIntegrity("is-number", "2.0.0"));
+    expect(
+      resolve(await readlink(join(packageDir, ".bun-cache", "is-number", folderName.slice("is-number@".length)))),
+    ).toBe(join(packageDir, ".bun-cache", folderName));
+  });
+
+  test("does not run a cached package that was stored for a different integrity", async () => {
+    const cacheDir = join(packageDir, ".bun-cache");
+    // an entry (and its version index link) as stored without a recorded integrity
+    const otherEntry = join(cacheDir, "is-number@2.0.0@@localhost@@@1");
+    await mkdir(join(cacheDir, "is-number"), { recursive: true });
+    await write(
+      join(otherEntry, "package.json"),
+      JSON.stringify({ name: "is-number", version: "0.0.0-not-from-registry" }),
     );
+    await write(join(otherEntry, "index.js"), "module.exports = require('./package.json');");
+    await symlink(otherEntry, join(cacheDir, "is-number", "2.0.0@@localhost@@@1"), "junction");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--install=fallback", "--print", "require('is-number').version"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("2.0.0");
+    expect(exitCode).toBe(0);
+
+    expect(
+      await exists(join(cacheDir, cacheFolderName("is-number", "2.0.0", await fixtureIntegrity("is-number", "2.0.0")))),
+    ).toBeTrue();
+    expect(await file(join(otherEntry, "package.json")).json()).toEqual({
+      name: "is-number",
+      version: "0.0.0-not-from-registry",
+    });
   });
 });
 
@@ -3172,6 +3216,11 @@ test("--config cli flag works", async () => {
 });
 
 test("it should invalid cached package if package.json is missing", async () => {
+  const cacheEntry = join(
+    packageDir,
+    ".bun-cache",
+    cacheFolderName("no-deps", "2.0.0", await fixtureIntegrity("no-deps", "2.0.0")),
+  );
   await Promise.all([
     write(
       packageJson,
@@ -3189,10 +3238,7 @@ test("it should invalid cached package if package.json is missing", async () => 
 
   // node_modules and cache should be populated
   expect(
-    await Promise.all([
-      readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
-    ]),
+    await Promise.all([readdirSorted(join(packageDir, "node_modules", "no-deps")), readdirSorted(cacheEntry)]),
   ).toEqual([
     ["index.js", "package.json"],
     ["index.js", "package.json"],
@@ -3208,14 +3254,11 @@ test("it should invalid cached package if package.json is missing", async () => 
   expect(out).not.toContain("+ no-deps@2.0.0");
 
   // with cache package.json deleted, install is a no-op and cache is untouched
-  await rm(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1", "package.json"));
+  await rm(join(cacheEntry, "package.json"));
   ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
   expect(out).not.toContain("+ no-deps@2.0.0");
   expect(
-    await Promise.all([
-      readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
-    ]),
+    await Promise.all([readdirSorted(join(packageDir, "node_modules", "no-deps")), readdirSorted(cacheEntry)]),
   ).toEqual([["index.js", "package.json"], ["index.js"]]);
 
   // now with node_modules package.json deleted, the package AND the cache should
@@ -3224,14 +3267,54 @@ test("it should invalid cached package if package.json is missing", async () => 
   ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
   expect(out).toContain("+ no-deps@2.0.0");
   expect(
-    await Promise.all([
-      readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
-    ]),
+    await Promise.all([readdirSorted(join(packageDir, "node_modules", "no-deps")), readdirSorted(cacheEntry)]),
   ).toEqual([
     ["index.js", "package.json"],
     ["index.js", "package.json"],
   ]);
+});
+
+describe.each(["hoisted", "isolated"] as const)("cache entry identity (%s linker)", linker => {
+  test("a cache entry stored for a different integrity is not used", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: false, linker },
+    });
+    const cacheDir = join(packageDir, ".bun-cache");
+    const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+    const integrity = await fixtureIntegrity("no-deps", "2.0.0");
+    const cacheEntry = join(cacheDir, cacheFolderName("no-deps", "2.0.0", integrity));
+
+    // entries for the same name@version stored without / for another integrity
+    const otherEntries = [
+      join(cacheDir, "no-deps@2.0.0@@localhost@@@1"),
+      join(cacheDir, cacheFolderName("no-deps", "2.0.0", "sha512-" + Buffer.alloc(64, 7).toString("base64"))),
+    ];
+    for (const entry of otherEntries) {
+      await write(join(entry, "package.json"), JSON.stringify({ name: "no-deps", version: "2.0.0" }));
+      await write(join(entry, "index.js"), "module.exports = 'not from the registry';");
+    }
+
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "2.0.0" } }));
+
+    let { out } = await runBunInstall(testEnv, packageDir);
+    expect(out).toContain("+ no-deps@2.0.0");
+    const installedIndexJs = await file(join(packageDir, "node_modules", "no-deps", "index.js")).text();
+    expect(installedIndexJs).toStartWith("module.exports = require(`./package.json`);");
+    expect(await file(join(cacheEntry, "index.js")).text()).toBe(installedIndexJs);
+    expect(await readdirSorted(join(packageDir, "node_modules", "no-deps"))).toEqual(["index.js", "package.json"]);
+    for (const entry of otherEntries) {
+      expect(await file(join(entry, "index.js")).text()).toBe("module.exports = 'not from the registry';");
+    }
+
+    // the matching entry is reused as-is
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await write(join(cacheEntry, "index.js"), "module.exports = 'from cache';");
+    ({ out } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+    expect(out).toContain("+ no-deps@2.0.0");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "index.js")).text()).toBe(
+      "module.exports = 'from cache';",
+    );
+  });
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {

@@ -1659,7 +1659,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
-  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("9d05c118f06c3b4c.git");
+  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("89529d5f052b327e.git");
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",

@@ -33,6 +33,17 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
+pub const FINGERPRINT_LEN: usize = 12;
+
+/// First 8 bytes of SHA-256 over `bytes`, for naming cache entries after a URL.
+pub fn sha256_prefix_u64(bytes: &[u8]) -> u64 {
+    let mut hasher = Crypto::SHA256::init();
+    hasher.update(bytes);
+    let mut digest = [0u8; SHA256_DIGEST_LEN];
+    hasher.r#final(&mut digest);
+    u64::from_be_bytes(digest[..8].try_into().expect("infallible: size matches"))
+}
+
 const DIGEST_BUF_LEN: usize = {
     let mut m = SHA1_DIGEST_LEN;
     if SHA512_DIGEST_LEN > m {
@@ -169,6 +180,15 @@ impl Integrity {
 
     pub(crate) fn slice(&self) -> &[u8] {
         &self.value[0..self.tag.digest_len()]
+    }
+
+    /// Leading digest bytes used to tell cache entries for the same
+    /// name@version apart; `None` when there is no supported digest.
+    pub fn fingerprint(&self) -> Option<&[u8]> {
+        if !self.tag.is_supported() {
+            return None;
+        }
+        Some(&self.value[..FINGERPRINT_LEN])
     }
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).

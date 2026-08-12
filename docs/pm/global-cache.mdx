@@ -3,7 +3,7 @@ title: "Global cache"
 description: "How Bun stores and manages packages in its global cache"
 ---
 
-Bun stores every package downloaded from the registry in a global cache at `~/.bun/install/cache`, or the path set by the `BUN_INSTALL_CACHE_DIR` environment variable. Packages live in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
+Bun stores every package downloaded from the registry in a global cache at `~/.bun/install/cache`, or the path set by the `BUN_INSTALL_CACHE_DIR` environment variable. Packages live in subdirectories named like `${name}@${version}`, followed by a fingerprint of the tarball's integrity hash when the registry or lockfile provides one, so multiple versions of a package can be cached.
 
 <Accordion title="Configuring cache behavior">
 

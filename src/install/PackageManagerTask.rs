@@ -105,7 +105,11 @@ impl Id {
         self.0
     }
 
-    pub(crate) fn for_npm_package(package_name: &[u8], package_version: semver::Version) -> Id {
+    pub(crate) fn for_npm_package(
+        package_name: &[u8],
+        package_version: semver::Version,
+        integrity: &crate::Integrity,
+    ) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"npm-package:");
         hasher.update(package_name);
@@ -117,6 +121,9 @@ impl Id {
                 core::mem::size_of::<semver::Version>(),
             )
         });
+        if let Some(fingerprint) = integrity.fingerprint() {
+            hasher.update(fingerprint);
+        }
         Id(hasher.final_())
     }
 
@@ -134,13 +141,10 @@ impl Id {
         Id(hasher.final_())
     }
 
-    // These cannot change:
-    // We persist them to the filesystem.
+    // Persisted to the filesystem: this is the name of the bare clone in the cache directory.
     pub(crate) fn for_git_clone(url: &[u8]) -> Id {
-        let mut hasher = Wyhash11::init(0);
-        hasher.update(url);
         // @truncate to u61 then widen to u64 — keep low 61 bits
-        Id((4u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
+        Id((4u64 << 61) | (crate::integrity::sha256_prefix_u64(url) & ((1u64 << 61) - 1)))
     }
 
     pub(crate) fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {

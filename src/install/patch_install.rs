@@ -340,8 +340,11 @@ impl PatchTask {
                             .npm
                             .version
                     };
-                    let task_id =
-                        TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
+                    let task_id = TaskId::for_npm_package(
+                        manager.lockfile.str(&pkg_name),
+                        pkg_npm_version,
+                        &manager.lockfile.packages.items_meta()[pkg_id as usize].integrity,
+                    );
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
@@ -787,12 +790,14 @@ impl PatchTask {
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
+        let integrity = pkg_manager.lockfile.packages.items_meta()[pkg_id as usize].integrity;
 
         let mut folder_path_buf = PathBuffer::uninit();
         let stuff = package_manager::compute_cache_dir_and_subpath(
             pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
+            &integrity,
             &mut folder_path_buf,
             Some(patch_hash),
         );

@@ -156,6 +156,7 @@ impl PackageManager {
                             self,
                             name,
                             pkg.resolution.npm().version,
+                            &pkg.meta.integrity,
                             patch_hash,
                         )
                     }

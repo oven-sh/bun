@@ -362,7 +362,11 @@ pub fn enqueue_package_for_download(
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueuePackageForDownloadError> {
-    let task_id = Task::Id::for_npm_package(name, version);
+    let task_id = Task::Id::for_npm_package(
+        name,
+        version,
+        &this.lockfile.packages.items_meta()[package_id as usize].integrity,
+    );
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
     }
@@ -2097,6 +2101,7 @@ fn get_or_put_resolved_package_with_find_result(
             let task_id = Task::Id::for_npm_package(
                 this.lockfile.str(&name),
                 package.resolution.npm().version,
+                &package.meta.integrity,
             );
             debug_assert!(!this.network_dedupe_map.contains(&task_id));
 

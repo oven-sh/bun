@@ -33,8 +33,12 @@ console.log(minify("print(6 * 7)").code);
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4@@@1", "package.json"))).toBeTrue();
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([
+    "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031",
+  ]);
+  expect(
+    await exists(join(run_dir, ".cache", "uglify-js", "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031", "package.json")),
+  ).toBeTrue();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited1).toBe(0);
@@ -58,7 +62,9 @@ console.log(minify("print(6 * 7)").code);
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([
+    "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031",
+  ]);
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited2).toBe(0);
@@ -98,11 +104,17 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
-    "\nmodule.exports = ",
-  );
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([
+    "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713",
+  ]);
+  expect(
+    await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "package.json")),
+  ).toBeTrue();
+  expect(
+    await file(
+      join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "index.js"),
+    ).text(),
+  ).toContain("\nmodule.exports = ");
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual([
     "directory: package/",
@@ -131,11 +143,17 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
-    "\nmodule.exports = ",
-  );
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([
+    "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713",
+  ]);
+  expect(
+    await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "package.json")),
+  ).toBeTrue();
+  expect(
+    await file(
+      join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "index.js"),
+    ).text(),
+  ).toContain("\nmodule.exports = ");
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual([
     "directory: package/",

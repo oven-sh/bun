@@ -476,6 +476,7 @@ impl ExtractTarball {
                         &mut bufs.folder_name_buf,
                         name,
                         self.resolution.npm().version,
+                        &self.integrity,
                         None,
                     )
                     .as_bytes()

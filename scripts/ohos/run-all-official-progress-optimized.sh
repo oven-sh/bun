@@ -193,7 +193,7 @@ run_test() {
       WT=600
       BT="--expose-internals --smol --timeout 600000"
       ;;
-    */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts)
+    */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts|*/websocket/websocket-server.test.ts)
       WT=$((TMOUT * 3))       # 1800s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
@@ -528,7 +528,7 @@ while IFS= read -r f; do
   case "$f" in
     */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/spawn/spawn.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
       _wt=$((TMOUT * 4)) ;;
-    */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts)
+    */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts|*/websocket/websocket-server.test.ts)
       _wt=$((TMOUT * 3)) ;;
     *leak*|*no-orphans*|*spawn-pipe-leak*|*serve-body-leak*|*handle-leak*)
       _wt=$((TMOUT * 2)) ;;

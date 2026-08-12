@@ -4322,8 +4322,7 @@ pub(super) fn finalize_bundle(
 
     let mut has_route_bits_set = false;
 
-    // Unlike the payload below, this must not depend on anybody listening for
-    // hot updates: the cached `meta.styles` of these routes are stale either way.
+    // Unlike the payload below, this must not depend on anybody listening for hot updates.
     let mut framework_route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
     for request in &dev.incremental_result.framework_routes_affected {
         let route = dev.router.route_ptr(request.route_index());

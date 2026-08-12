@@ -6780,7 +6780,7 @@ class Http2SecureServer extends tls.Server {
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
-    this[kOptions] = { settings: settings || {}, allowHTTP1: options.allowHTTP1 === true };
+    this[kOptions] = { settings: settings || {} };
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
@@ -6832,11 +6832,11 @@ class Http2SecureServer extends tls.Server {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3475-L3487
   close(callback?: Function) {
     super.close(callback);
-    if (this[kOptions].allowHTTP1) this.closeIdleConnections();
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) this.closeIdleConnections();
     closeAllSessions(this);
   }
   closeIdleConnections() {
-    if (this[kOptions].allowHTTP1) closeIdleHttp1Connections(this);
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) closeIdleHttp1Connections(this);
   }
 }
 function createServer(options, onRequestHandler) {

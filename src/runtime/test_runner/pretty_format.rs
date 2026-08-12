@@ -1415,6 +1415,8 @@ impl<'a> Formatter<'a> {
 
                                 // pretty-format prints a hole as a bare comma, so a hole and
                                 // an explicit `undefined` stay distinguishable in diffs/snapshots.
+                                // Own indices only, like Bun__deepEquals: an index inherited
+                                // from the prototype is a hole here too.
                                 let element = value.get_direct_index(self.global_this, i)?;
                                 if element.is_empty() {
                                     continue;

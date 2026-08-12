@@ -598,6 +598,10 @@ it("expect() diffs print an array hole as an empty slot, like jest", async () =>
       test("hole vs value", () => {
         expect([1, , 3]).toEqual([1, 2, 3]);
       });
+      test("hole vs the value inherited through the prototype", () => {
+        Array.prototype[1] = "proto";
+        expect([1, , 3]).toStrictEqual([1, "proto", 3]);
+      });
     `,
   });
   await using proc = spawn({
@@ -628,6 +632,17 @@ it("expect() diffs print an array hole as an empty slot, like jest", async () =>
       [
         1,
     -   2,
+    +   ,
+        3,
+      ]
+
+    - Expected  - 1
+    + Received  + 1
+    error: expect(received).toStrictEqual(expected)
+
+      [
+        1,
+    -   "proto",
     +   ,
         3,
       ]

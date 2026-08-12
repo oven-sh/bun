@@ -434,7 +434,23 @@ test("array holes in inline snapshots", () => {
     ]
   `);
 
-  // An index backed by an accessor is present, not a hole; the getter runs like in jest.
+  // Only own indices count, which is also what toEqual/toStrictEqual compare: an index
+  // that is only reachable through the prototype is still a hole.
+  class Inherited extends Array {}
+  Inherited.prototype[1] = "proto";
+  const inherited = Inherited.of(1, 2, 3);
+  delete inherited[1];
+  expect(1 in inherited).toBe(true);
+  expect(inherited[1]).toBe("proto");
+  expect(inherited).toMatchInlineSnapshot(`
+    [
+      1,
+      ,
+      3,
+    ]
+  `);
+
+  // An index backed by an own accessor is present, not a hole; the getter runs like in jest.
   const accessor = [1, 2];
   Object.defineProperty(accessor, 1, { get: () => "from getter", enumerable: true });
   expect(accessor).toMatchInlineSnapshot(`

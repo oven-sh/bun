@@ -716,6 +716,16 @@ impl BunxCommand {
         }
     }
 
+    /// Stamp the completion time and release the exclusive lock. The stamp
+    /// must be the last write before release: a waiter that arrived while
+    /// the holder ran its post-install probes compares its own start time
+    /// against it, and an earlier stamp can land in the previous second.
+    fn release_install_lock(install_lock: &mut Option<bun_sys::File>) {
+        if let Some(lock) = install_lock.take() {
+            Self::mark_install_completed(&lock);
+        }
+    }
+
     /// Whether a concurrent `bun x` finished installing into this directory
     /// at or after `wait_start`. Rerunning `bun add` then (`--force` for
     /// dist-tag installs) would mutate the tree out from under the process
@@ -1664,14 +1674,6 @@ impl BunxCommand {
             }
         }
 
-        // Stamp on the skip path too: a skipping waiter holds the exclusive
-        // lock past the recorded second, and without a refresh a chain of
-        // skippers can make a late arriver's wait_start exceed the stored
-        // time and force-reinstall under processes already running the tree.
-        if let Some(lock) = &install_lock {
-            Self::mark_install_completed(lock);
-        }
-
         absolute_in_cache_dir = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
             write!(
@@ -1709,7 +1711,7 @@ impl BunxCommand {
             // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
-                drop(install_lock.take());
+                Self::release_install_lock(&mut install_lock);
                 Run::run_binary(
                     ctx,
                     stored,
@@ -1770,7 +1772,7 @@ impl BunxCommand {
                         // Same TOCTOU hardening as the post-install probe above.
                         if Self::is_trusted_cached_binary(destination, uid) {
                             let stored = fs.dirname_store.append_slice(out)?;
-                            drop(install_lock.take());
+                            Self::release_install_lock(&mut install_lock);
                             Run::run_binary(
                                 ctx,
                                 stored,

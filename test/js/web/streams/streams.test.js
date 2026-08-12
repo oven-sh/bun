@@ -1292,6 +1292,38 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       },
     );
 
+    // Or from the re-pull that an async pull()'s settlement issues for a read that queued up
+    // behind it: once that read is served, a further flush by the re-pull finds nothing waiting.
+    it.each([
+      ["returns synchronously", () => {}],
+      ["returns a promise", () => Promise.resolve()],
+    ])(
+      "flushed by a settlement re-pull (which %s) after it served its read are served to the next read()",
+      async (_, finishRePull) => {
+        const { promise: firstPull, resolve: settleFirstPull } = Promise.withResolvers();
+        const { rs, state } = makeSource((c, pulls) => {
+          if (pulls === 1) return firstPull;
+          if (pulls !== 2) return;
+          c.write("a");
+          c.flush(); // into the read that queued up while the first pull() was pending
+          c.write("b");
+          c.flush(); // nothing is waiting any more
+          return finishRePull();
+        });
+        const reader = rs.getReader();
+        const first = reader.read();
+        const second = reader.read();
+        state.ctrl.write("x");
+        state.ctrl.flush();
+        expect(decode((await first).value)).toBe("x");
+        settleFirstPull();
+        expect({ second: decode((await second).value), pulls: state.pulls }).toEqual({ second: "a", pulls: 2 });
+        await macrotask();
+        const third = reader.read();
+        expect({ third: await valueOrStalled(third), pulls: state.pulls }).toEqual({ third: "b", pulls: 3 });
+      },
+    );
+
     // The converse: a read only drains the sink when a flush was left holding bytes. A pull()
     // that writes without flushing keeps relying on the end-of-tick flush, so bytes written
     // later in the same tick still share its chunk.
@@ -1305,6 +1337,16 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
 
       it("on a fresh stream", async () => {
         const { rs, state } = makeSource(c => c.write("a"));
+        expect(await readBatchesWithSameTickWrite(rs.getReader(), state)).toBe("ab");
+      });
+
+      it("when the pull() flush()ed before writing", async () => {
+        // A flush() that found nothing buffered defers nothing, even inside pull() (it used to
+        // make the read drain as soon as pull() returned, splitting "a" off).
+        const { rs, state } = makeSource(c => {
+          c.flush();
+          c.write("a");
+        });
         expect(await readBatchesWithSameTickWrite(rs.getReader(), state)).toBe("ab");
       });
 

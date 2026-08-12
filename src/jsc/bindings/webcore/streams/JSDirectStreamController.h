@@ -68,9 +68,7 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed : 1 { false };
-    // write() buffered bytes that flushDirectSink has not taken out yet.
-    bool m_sinkHoldsWrites : 1 { false };
-    // A flush found nothing waiting for those bytes; onPull drains them into the read it adds.
+    // A flush found bytes but nothing waiting for them; onPull drains them into the read it adds.
     bool m_flushDeferred : 1 { false };
     // An async pull()'s returned promise has not yet settled; cleared by its settlement
     // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight

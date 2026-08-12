@@ -9,6 +9,7 @@
 #include "JSReadRequest.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
+#include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
@@ -30,6 +31,7 @@
 #include <wtf/text/StringBuilder.h>
 
 extern "C" void Bun__Process__queueNextTick2(Zig::GlobalObject*, JSC::EncodedJSValue func, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+extern "C" bool ArrayBufferSink__hasBufferedBytes(void* sinkPtr); // src/runtime/webcore/ArrayBufferSink.rs
 
 namespace WebCore {
 
@@ -366,11 +368,22 @@ static JSValue endDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
     return {};
 }
 
+// Whether flushDirectSink would currently produce bytes.
+static bool directSinkHoldsBytes(JSDirectStreamController* controller)
+{
+    if (controller->m_sinkKind != DirectSinkKind::ArrayBuffer)
+        return false;
+    auto* sink = dynamicDowncast<JSArrayBufferSink>(controller->m_arrayBufferSink.get());
+    if (!sink)
+        return false;
+    void* sinkPtr = sink->wrapped();
+    return sinkPtr && ArrayBufferSink__hasBufferedBytes(sinkPtr);
+}
+
 // `sink.flush()`: only the ArrayBuffer sink produces bytes; the Text/Array sinks return 0.
-// onFlush calls this once it has a consumer for the result, which is what both flags wait for.
+// onFlush calls this once it has a consumer for the result, which is what m_flushDeferred waits for.
 static JSValue flushDirectSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
-    controller->m_sinkHoldsWrites = false;
     controller->m_flushDeferred = false;
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
@@ -705,7 +718,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
     if (m_closed || (m_sinkKind == DirectSinkKind::ArrayBuffer && !m_arrayBufferSink))
         return;
     // Stands unless a consumer below takes the bytes (flushDirectSink clears it again).
-    m_flushDeferred = m_sinkHoldsWrites;
+    m_flushDeferred = directSinkHoldsBytes(this);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(stream->m_reader.get());
     if (!reader)
         return;
@@ -869,9 +882,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
         return JSValue::encode(jsNumber(0));
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    // An empty chunk comes back as 0 and buffered nothing.
-    if (!(wrote.isNumber() && wrote.asNumber() == 0))
-        controller->m_sinkHoldsWrites = true;
     controller->armEndOfTickFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(wrote);

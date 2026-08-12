@@ -127,6 +127,7 @@ describe("bundler", () => {
     },
     run: { stdout: "true true function" },
   });
+  // https://github.com/oven-sh/bun/issues/20670 (--bytecode defaults to this format)
   itBundled("bun/ReExportDefaultFromBunCJS", {
     target: "bun",
     format: "cjs",

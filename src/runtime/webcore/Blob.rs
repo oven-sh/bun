@@ -7138,7 +7138,10 @@ macro_rules! impl_file_closer {
                     // here finishes; the io thread does not touch it after this
                     // call, and each access ends at its own statement.
                     unsafe {
-                        (*this).io_poll.flags.remove(::bun_io::Flags::WasEverRegistered);
+                        (*this)
+                            .io_poll
+                            .flags
+                            .remove(::bun_io::Flags::WasEverRegistered);
                         (*this).task = ::bun_jsc::WorkPoolTask {
                             node: Default::default(),
                             callback: on_close_io_request,

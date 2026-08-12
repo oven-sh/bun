@@ -8896,6 +8896,30 @@ impl H2FrameParser {
                         continue;
                     }
 
+                    let elements = if value_js.js_type().is_array() {
+                        Some(value_js.array_iterator(global_object)?)
+                    } else {
+                        None
+                    };
+                    let field_count = elements.as_ref().map_or(1, |items| items.len);
+                    // node (buildNgHeaderString): [] sends nothing and is not an occurrence.
+                    if field_count == 0 {
+                        continue;
+                    }
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
+                        if field_count > 1 || single_value_headers[idx] {
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
                     } else {
@@ -8953,57 +8977,29 @@ impl H2FrameParser {
                         Ok(None)
                     };
 
-                    if value_js.js_type().is_array() {
-                        let mut value_iter = value_js.array_iterator(global_object)?;
-                        // node (buildNgHeaderString): [] sends nothing and is not an occurrence.
-                        if value_iter.len == 0 {
-                            continue;
-                        }
-                        if let Some(idx) = this.single_value_index_checked(validated_name) {
-                            if value_iter.len > 1 || single_value_headers[idx] {
-                                let exception = global_object.to_type_error(
-                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                    format_args!(
-                                        "Header field \"{}\" must only have a single value",
-                                        BStr::new(validated_name)
-                                    ),
-                                );
-                                return Err(global_object.throw_value(exception));
+                    match elements {
+                        Some(mut items) => {
+                            while let Some(item) = items.next()? {
+                                if item.is_empty_or_undefined_or_null() {
+                                    return Err(global_object
+                                        .err(
+                                            JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                            format_args!(
+                                                "Invalid value for header \"{}\"",
+                                                BStr::new(validated_name)
+                                            ),
+                                        )
+                                        .throw());
+                                }
+                                if let Some(ret) = encode_value(item)? {
+                                    return Ok(ret);
+                                }
                             }
-                            single_value_headers[idx] = true;
                         }
-                        while let Some(item) = value_iter.next()? {
-                            if item.is_empty_or_undefined_or_null() {
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                            if let Some(ret) = encode_value(item)? {
+                        None => {
+                            if let Some(ret) = encode_value(value_js)? {
                                 return Ok(ret);
                             }
-                        }
-                    } else {
-                        if let Some(idx) = this.single_value_index_checked(validated_name) {
-                            if single_value_headers[idx] {
-                                let exception = global_object.to_type_error(
-                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                    format_args!(
-                                        "Header field \"{}\" must only have a single value",
-                                        BStr::new(validated_name)
-                                    ),
-                                );
-                                return Err(global_object.throw_value(exception));
-                            }
-                            single_value_headers[idx] = true;
-                        }
-                        if let Some(ret) = encode_value(value_js)? {
-                            return Ok(ret);
                         }
                     }
                 }

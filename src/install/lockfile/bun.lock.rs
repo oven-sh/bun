@@ -3003,16 +3003,13 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// True for peer edges the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. Two exemptions, matching
+/// (`install_peer`) and binds by version there. One exemption, matching
 /// `enqueue_dependency_with_main_and_success_fn`: optional peers return
 /// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// `process_subtree` instead, which is exactly what the printed tree's path
+/// walk reproduces, so they keep it.
 fn is_deferred_peer(dep: &Dependency) -> bool {
-    dep.behavior.is_peer()
-        && !dep.behavior.is_optional_peer()
-        && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().version.is_star())
+    dep.behavior.is_peer() && !dep.behavior.is_optional_peer()
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's

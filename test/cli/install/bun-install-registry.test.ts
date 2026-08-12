@@ -3818,6 +3818,61 @@ describe("hoisting", async () => {
 
       expect(await hoistedADepVersion()).toBe("1.0.10");
     });
+
+    test("peer * binds to the same version when bun.lock is loaded as when it was resolved", async () => {
+      // Nothing above `peer-a-dep-star` provides a-dep, so the isolated linker
+      // installs the peer from the version the edge resolved to and keys the
+      // store entry by it. The root of the printed tree holds a-dep@1.0.1 (from
+      // uses-a-dep-1), while the resolver picks the highest a-dep, 1.0.5. The
+      // second install loads bun.lock and has to arrive at the same 1.0.5, or it
+      // creates a second store entry for peer-a-dep-star.
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+            dependencies: { "uses-a-dep-1": "1.0.0", "uses-a-dep-5": "1.0.0" },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg", "package.json"),
+          JSON.stringify({ name: "pkg", dependencies: { "peer-a-dep-star": "1.0.0" } }),
+        ),
+      ]);
+      const store = join(packageDir, "node_modules", ".bun");
+
+      async function install() {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--save-text-lockfile", "--linker", "isolated"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return {
+          err,
+          out,
+          entries: (await readdirSorted(store)).filter(entry => entry.startsWith("peer-a-dep-star@")),
+        };
+      }
+
+      const first = await install();
+      expect(first.err).toContain("Saved lockfile");
+      expect(first.entries).toHaveLength(1);
+      expect(await file(join(store, first.entries[0], "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        version: "1.0.5",
+      });
+
+      const second = await install();
+      expect(second.err).not.toContain("Saved lockfile");
+      expect(second.out).toContain("(no changes)");
+      expect(second.entries).toEqual(first.entries);
+    });
   });
 
   test("hoisting/using incorrect peer dep after install", async () => {

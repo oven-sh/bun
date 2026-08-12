@@ -1005,6 +1005,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         let rejectMissingHost = false;
         let reachedRequestsLimit = false;
         if (!is_upgrade) {
+          const maxRequestsPerSocket = server.maxRequestsPerSocket;
           if (
             server.requireHostHeader &&
             (dispatchBits & DISPATCH_HAS_HOST) === 0 &&
@@ -1016,18 +1017,18 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // a request that fell through to normal dispatch instead must still
             // honor requireHostHeader, like Node.js.
             rejectMissingHost = true;
-          } else if (typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0) {
+          } else if (typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
             const requestCount = (socket._requestCount || 0) + 1;
             socket._requestCount = requestCount;
-            http_res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+            http_res._maxRequestsPerSocket = maxRequestsPerSocket;
             // At (or beyond) the limit the response advertises Connection:
             // close, like Node.js - including the over-limit 503 dropRequest
             // answer, which would otherwise claim keep-alive right before the
             // socket is destroyed. Closing the socket here instead would race
             // already-pipelined requests, which still need to be dispatched so
             // they can be answered with 503 via dropRequest.
-            http_res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= requestCount;
-            reachedRequestsLimit = server.maxRequestsPerSocket < requestCount;
+            http_res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestCount;
+            reachedRequestsLimit = maxRequestsPerSocket < requestCount;
           }
         }
 

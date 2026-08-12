@@ -167,9 +167,7 @@ pub trait PosixPipeWriter {
                 self.on_write(amt, WriteStatus::Drained);
             }
             WriteResult::Err(err) => {
-                // Same rule as `.drained`: `on_error` runs the parent's error
-                // callback and then `close()`, either of which may free the
-                // writer, so nothing may touch `self` after this returns.
+                // Like `.drained`, this may free the writer; `self` is dead after it.
                 self.on_error(err);
             }
             WriteResult::Done(amt) => {
@@ -178,14 +176,10 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Writes as much of `get_buffer()` as the fd accepts and reports the
-    /// outcome to the caller; it never dispatches a callback itself (`&self`
-    /// enforces that). A write error is returned as `Err` even when earlier
-    /// iterations drained some bytes: the caller's error report
-    /// (`on_error` -> `close()`) is terminal for the parent, so there is no
-    /// one left to tell about the partial progress, and reporting it through
-    /// `on_write` after `on_error` would run against a closed (possibly
-    /// already freed) parent.
+    /// Only writes; the caller dispatches the callbacks (`&self` enforces it).
+    /// An error is `Err` even after a partial drain: the caller's `on_error`
+    /// closes the parent, so the drained count has nobody left to go to, and
+    /// parents rely on no `on_write` arriving after `on_error`.
     fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
         let _ = received_hup; // autofix
 
@@ -200,8 +194,6 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            // `try_write` does not mutate `self`, so `get_buffer()` is stable
-            // across iterations.
             match self.try_write(force_sync, &self.get_buffer()[drained..limit]) {
                 WriteResult::Pending(pending) => {
                     drained += pending;

@@ -208,10 +208,8 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
-    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any)
-    /// for the caller to `deref()` once it has closed the writer. Clearing
-    /// `started` here makes the `on_close` that close triggers skip its own
-    /// release of the same +1.
+    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
+    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {

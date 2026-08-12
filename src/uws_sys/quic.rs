@@ -30,9 +30,17 @@ pub use self::header::Qpack;
 unsafe extern "C" {
     // safe: no args; idempotent C-side initialization with no preconditions.
     pub(crate) safe fn us_quic_global_init();
+    // safe: atomic store of a plain int; no preconditions.
+    safe fn us_quic_set_socket_buffer_size_for_testing(bytes: core::ffi::c_int);
 }
 
 #[inline]
 pub fn global_init() {
     us_quic_global_init()
+}
+
+/// `bun:internal-for-testing` only; documented on the C function in quic.h.
+#[inline]
+pub fn set_socket_buffer_size_for_testing(bytes: core::ffi::c_int) {
+    us_quic_set_socket_buffer_size_for_testing(bytes)
 }

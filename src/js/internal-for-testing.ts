@@ -757,6 +757,13 @@ export const fetchH3Internals = {
   },
 };
 
+export const quicInternals = {
+  /** SO_RCVBUF / SO_SNDBUF quic.c requests for QUIC UDP sockets created afterwards (process-wide); 0 keeps the kernel default. */
+  setSocketBufferSize: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetQuicSocketBufferSize", 1) as (
+    bytes: number,
+  ) => void,
+};
+
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };

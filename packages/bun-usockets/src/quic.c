@@ -849,6 +849,47 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
     (void) on;
 }
 
+/* Kernel default UDP socket buffers are sized for request/response datagram
+ * traffic: Linux net.core.rmem_default (208 KiB) queues fewer than 100
+ * full-size QUIC packets once skb overhead is charged; Windows (128 KiB) is
+ * no better. lsquic hands the kernel up to a cwnd per engine tick and one
+ * socket carries every connection, so the tail of any larger burst is
+ * dropped by the receiving socket before lsquic sees it and each such burst
+ * is a loss event. 4 MiB is in line with other QUIC stacks and below macOS's
+ * default kern.ipc.maxsockbuf. Linux clamps the request to
+ * net.core.{r,w}mem_max (then doubles it), so an untuned host gets 2x the
+ * default and a tuned one the full amount. */
+#define US_QUIC_SOCKET_BUFFER_SIZE (4 * 1024 * 1024)
+
+static int us_quic_socket_buffer_request = US_QUIC_SOCKET_BUFFER_SIZE;
+
+void us_quic_set_socket_buffer_size_for_testing(int bytes) {
+    __atomic_store_n(&us_quic_socket_buffer_request, bytes, __ATOMIC_SEQ_CST);
+}
+
+/* Buffers are only ever raised. setsockopt succeeds even when the kernel
+ * clamps the request below a socket's (administratively raised) default and
+ * the old value cannot be restored afterwards, so what the request actually
+ * yields is measured on a throwaway socket first and a socket that already
+ * has at least that much is left alone. Best effort: any failure leaves the
+ * socket at its default. Called once ls->local is known so the probe uses the
+ * family the kernel just accepted for the real socket. */
+static void us_quic_set_socket_buffers(us_quic_listen_socket_t *ls) {
+    int request = __atomic_load_n(&us_quic_socket_buffer_request, __ATOMIC_SEQ_CST);
+    if (request <= 0) return;
+    LIBUS_SOCKET_DESCRIPTOR probe = bsd_create_socket(ls->local.ss_family, SOCK_DGRAM, 0, NULL);
+    if (probe == LIBUS_SOCKET_ERROR) return;
+    for (int is_recv = 0; is_recv <= 1; is_recv++) {
+        int granted = 0, current = 0;
+        if (bsd_socket_buffer_size(probe, is_recv, request, &granted) != 0 ||
+            bsd_socket_buffer_size(probe, is_recv, 0, &granted) != 0 ||
+            us_udp_socket_buffer_size(ls->udp, is_recv, 0, &current) != 0 ||
+            current >= granted) continue;
+        us_udp_socket_buffer_size(ls->udp, is_recv, request, &current);
+    }
+    bsd_close_socket(probe);
+}
+
 us_quic_listen_socket_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size)
@@ -869,6 +910,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    us_quic_set_socket_buffers(ls);
 
     ls->next = ctx->listeners;
     ctx->listeners = ls;
@@ -1225,6 +1267,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     us_quic_set_dontfrag(ls->udp);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    us_quic_set_socket_buffers(ls);
     ls->next = ctx->listeners;
     ctx->listeners = ls;
     ctx->client_udp = ls;

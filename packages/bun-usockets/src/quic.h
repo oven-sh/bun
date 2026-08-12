@@ -46,6 +46,11 @@ struct us_quic_header_t {
  * via a thread-safe static local so quic.c stays free of pthread/call_once. */
 void us_quic_global_init(void);
 
+/* bun:internal-for-testing only. Overrides the SO_RCVBUF / SO_SNDBUF size
+ * requested for every QUIC UDP socket created from now on (listeners and the
+ * client endpoint); 0 leaves new sockets at the kernel default. */
+void us_quic_set_socket_buffer_size_for_testing(int bytes);
+
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s);

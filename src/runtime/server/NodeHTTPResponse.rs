@@ -22,9 +22,10 @@ use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
-/// Intrusive ref-counted; `ref_count` is managed by `ref_` / `deref` below
-/// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a
-/// `.classes.ts` wrapper). `deinit` runs when count hits zero.
+/// Intrusive ref-counted (`#[derive(CellRefCounted)]` supplies `ref_()` and
+/// `unsafe fn deref(*mut Self)`; FFI rule — `*mut NodeHTTPResponse` is the
+/// m_ctx payload of a `.classes.ts` wrapper). [`Self::deinit`] frees the
+/// allocation when the count hits zero.
 ///
 /// `#[JsClass(no_constructor)]` wires the import-side `${T}__fromJS` /
 /// `__fromJSDirect` / `__create` externs into a `JsClass` impl plus an
@@ -33,6 +34,8 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct NodeHTTPResponse {
     pub(crate) ref_count: Cell<u32>,
 
@@ -80,9 +83,6 @@ pub struct NodeHTTPResponse {
 
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
 }
-
-// Intrusive refcount methods (`ref_` / `deref`) are hand-rolled below over the
-// `ref_count` field; `deinit` is the destructor invoked when count hits zero.
 
 bitflags! {
     #[repr(transparent)]
@@ -331,10 +331,17 @@ fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) 
 // generated is local. Body discharges its own preconditions; a safe
 // `extern "C" fn` coerces to the `DeferredRepeatingTask` pointer at `post_task`.
 extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
-    // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
-    // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
-    // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
+    let this = ctx.cast::<NodeHTTPResponse>();
+    // For the ref `register_auto_flush` took for the task. `unregister_auto_flush`
+    // removes the task before releasing it, so it is still held here; the guard
+    // releases it after `on_auto_flush` (`&self`) has returned, since that
+    // release may free the allocation.
+    // SAFETY: `ctx` is the response registered by `register_auto_flush`, fed
+    // back unchanged by `DeferredTaskQueue::run` on the JS thread; `adopt`
+    // consumes the task's ref on drop.
+    let _task_ref = unsafe { bun_ptr::ScopedRef::<NodeHTTPResponse>::adopt(this) };
+    // SAFETY: `_task_ref` holds the allocation alive for the call.
+    unsafe { (*this.cast_const()).on_auto_flush() }
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
@@ -752,10 +759,16 @@ impl NodeHTTPResponse {
 
         server.on_request_complete();
 
-        if had_async_promise {
-            self.deref();
+        // SAFETY: `self` is the live m_ctx allocation; this frame owns the
+        // server-handler ref (witnessed by `had_async_promise`) and the
+        // IS_REQUEST_PENDING ref it releases here, and `self` is not used
+        // after the last release, which may free the allocation.
+        unsafe {
+            if had_async_promise {
+                Self::deref(self.as_ctx_ptr());
+            }
+            Self::deref(self.as_ctx_ptr());
         }
-        self.deref();
     }
 
     pub(crate) fn mark_request_as_done_if_necessary(&self) {
@@ -1121,7 +1134,10 @@ impl NodeHTTPResponse {
         // JS (string coercions, drain callbacks), which could drop the last
         // reference to this response mid-call.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        this.ref_();
+        // SAFETY: `self` is the live m_ctx payload (the wrapper's ref is held
+        // for the duration of this host call); the guard's own ref is released
+        // when it drops, after the last use of `this` below.
+        let _keep_alive = unsafe { bun_ptr::ScopedRef::<Self>::new(self.as_ctx_ptr()) };
 
         let raw_response = this.raw_response.get();
         let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
@@ -1148,9 +1164,6 @@ impl NodeHTTPResponse {
             }
         }
 
-        // Explicit `.get()` so the inherent refcount `NodeHTTPResponse::deref`
-        // is selected, matching cork() (see its note).
-        this.get().deref();
         result
     }
 }
@@ -1349,7 +1362,9 @@ impl NodeHTTPResponse {
             self.mark_request_as_done_if_necessary();
             self.raw_response.set(None);
         }
-        self.deref();
+        // SAFETY: releases the ref taken by `self.ref_()` above; `self` is the
+        // live m_ctx allocation and is not used after this, which may free it.
+        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onClose")]
@@ -1502,9 +1517,13 @@ impl NodeHTTPResponse {
 fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let arguments = callframe.arguments_as_array::<2>();
-    // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback;
+    // its m_ctx pointer is what the release at the tail goes through.
+    let this_ptr: *mut NodeHTTPResponse = arguments[1].as_::<NodeHTTPResponse>().unwrap();
+    // SAFETY: `as_` returned the payload of the wrapper cell the callframe
+    // holds, and that wrapper owns a ref for as long as it is alive. R-2:
+    // shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
+    let this: &NodeHTTPResponse = unsafe { &*this_ptr };
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1537,7 +1556,10 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
     }
 
     if had_promise {
-        this.deref();
+        // SAFETY: releases the server-handler ref the promise token stood for;
+        // `this_ptr` is live because the wrapper in the callframe still holds
+        // its own ref.
+        unsafe { NodeHTTPResponse::deref(this_ptr) };
     }
     JSValue::UNDEFINED
 }
@@ -1546,9 +1568,11 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
 fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     let arguments = callframe.arguments_as_array::<2>();
     let err = arguments[0];
-    // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    // arguments[1] is the JSNodeHTTPResponse cell from the reject callback;
+    // its m_ctx pointer is what the release at the tail goes through.
+    let this_ptr: *mut NodeHTTPResponse = arguments[1].as_::<NodeHTTPResponse>().unwrap();
+    // SAFETY: see `node_http_request_on_resolve`.
+    let this: &NodeHTTPResponse = unsafe { &*this_ptr };
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1588,7 +1612,8 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
 
     let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
     if had_promise {
-        this.deref();
+        // SAFETY: see `node_http_request_on_resolve`.
+        unsafe { NodeHTTPResponse::deref(this_ptr) };
     }
     JSValue::UNDEFINED
 }
@@ -1750,7 +1775,10 @@ impl NodeHTTPResponse {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.mark_request_as_done_if_necessary();
             }
-            self.deref();
+            // SAFETY: releases the ref taken by `self.ref_()` above; `self` is
+            // the live m_ctx allocation and is not used after this, which may
+            // free it.
+            unsafe { Self::deref(self.as_ctx_ptr()) };
         }
     }
 
@@ -1844,19 +1872,19 @@ impl NodeHTTPResponse {
 
     fn on_drain_corked(&self, offset: u64) {
         scoped_log!(NodeHTTPResponse, "onDrainCorked({})", offset);
-        self.ref_();
-        // defer this.deref(); — moved to tail.
+        // SAFETY: `self` is the live m_ctx allocation; the guard's own ref keeps
+        // it alive across the onwritable callback and is released on every exit
+        // below, after the last use of `self`.
+        let _keep_alive = unsafe { bun_ptr::ScopedRef::<Self>::new(self.as_ctx_ptr()) };
 
         let this_value = self.get_this_value();
         let Some(on_writable) = js::on_writable_get_cached(this_value) else {
-            self.deref();
             return;
         };
         // Slot may hold UNDEFINED (WantMore) or anything the `.onwritable`
         // setter stored; non-cells can't be callable or AsyncContextFrame,
         // so skip instead of surfacing a spurious "not a function" uncaught.
         if !on_writable.is_cell() {
-            self.deref();
             return;
         }
         let vm = vm_get();
@@ -1869,8 +1897,6 @@ impl NodeHTTPResponse {
             JSValue::UNDEFINED,
             &[JSValue::js_number_from_uint64(offset)],
         );
-
-        self.deref();
     }
 
     fn on_drain(&self, offset: u64, response: uws::AnyResponse) -> bool {
@@ -2373,8 +2399,9 @@ impl NodeHTTPResponse {
         self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
     }
 
+    /// Deferred-task body; `on_auto_flush_trampoline` releases the task's ref
+    /// once this returns.
     fn on_auto_flush(&self) -> bool {
-        // defer this.deref(); — moved to tail.
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
@@ -2382,18 +2409,19 @@ impl NodeHTTPResponse {
             }
         }
         self.auto_flusher.get().registered.set(false);
-        self.deref();
         false
     }
 
     // R-2: inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
     // — that helper now takes `&T`, but this type has its own
-    // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
-    // stays.
+    // `on_auto_flush_trampoline` (which owns the ref taken here) so the inline
+    // body stays.
     fn register_auto_flush(&self) {
         if self.auto_flusher.get().registered.get() {
             return;
         }
+        // Released by `on_auto_flush_trampoline` or `unregister_auto_flush`,
+        // whichever runs.
         self.ref_();
         debug_assert!(!self.auto_flusher.get().registered.get());
         self.auto_flusher.get().registered.set(true);
@@ -2417,7 +2445,10 @@ impl NodeHTTPResponse {
             .unregister_task(ctx);
         debug_assert!(removed);
         self.auto_flusher.get().registered.set(false);
-        self.deref();
+        // SAFETY: releases the ref `register_auto_flush` took, which the task
+        // just removed above can no longer release; `self` is the live m_ctx
+        // allocation and is not used after this.
+        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     pub(crate) fn flush_headers(
@@ -2573,10 +2604,12 @@ impl NodeHTTPResponse {
         // that forced `self` to memory and blocked inlining/regalloc of the
         // cork prologue.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
-        // alive across re-entry.
-        this.ref_();
-        // defer this.deref(); — moved to tail.
+        // BACKREF: `this` is the live `m_ctx` heap payload; the guard's ref
+        // keeps it alive across re-entry and is released once `ret` has been
+        // computed, after the last use of `this`.
+        // SAFETY: `self` is that payload, and the wrapper's own ref is held for
+        // the duration of this host call.
+        let _keep_alive = unsafe { bun_ptr::ScopedRef::<Self>::new(self.as_ctx_ptr()) };
 
         // Snapshot before re-entry; `raw_response` is `Copy`.
         let raw_response = this.raw_response.get();
@@ -2603,95 +2636,54 @@ impl NodeHTTPResponse {
             Ok(result)
         };
 
-        // BACKREF: `this` held alive by the `ref_()` above; this is the
-        // balancing release. Explicit `.get()` so the inherent refcount
-        // `NodeHTTPResponse::deref(&self)` is selected, not `<BackRef as Deref>::deref`.
-        this.get().deref();
         ret
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
         // The JS wrapper is being collected; drop the raw backref so a late
         // body delivery cannot read through a dead cell.
-        self.armed_this_value.set(JSValue::ZERO);
-        bun_ptr::finalize_js_box_noop(self);
+        bun_ptr::finalize_js_box(self, |this| this.armed_this_value.set(JSValue::ZERO));
     }
 
-    /// Called by intrusive RefCount when count reaches zero.
-    fn deinit(&self) {
-        debug_assert!(!self.body_read_ref.get().has);
-        debug_assert!(!self.poll_ref.get().has);
-        debug_assert!(!self.pending_pinned_write.get().is_some());
-        let flags = self.flags.get();
-        debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
-        debug_assert!(
-            flags.contains(Flags::SOCKET_CLOSED)
-                || flags.contains(Flags::REQUEST_HAS_COMPLETED)
-                // A tunneled response can be finalized while its socket lives.
-                || flags.contains(Flags::TUNNELED)
-        );
+    /// `CellRefCounted::destroy` target: the last ref was just released.
+    ///
+    /// Takes the allocation's pointer rather than `&self`: a reference
+    /// receiver stays live (and protected) until the function returns, so
+    /// freeing the allocation underneath it is undefined behaviour even when
+    /// nothing reads it afterwards. The shared borrow below ends before the
+    /// free.
+    ///
+    /// # Safety
+    /// `this` is the `heap::into_raw` allocation from
+    /// `NodeHTTPResponse__createForJS` and its refcount is zero.
+    unsafe fn deinit(this: *mut Self) {
+        {
+            // SAFETY: caller contract — the allocation is still live; this
+            // borrow is dropped before the free below.
+            let response = unsafe { &*this };
+            debug_assert!(!response.body_read_ref.get().has);
+            debug_assert!(!response.poll_ref.get().has);
+            debug_assert!(!response.pending_pinned_write.get().is_some());
+            let flags = response.flags.get();
+            debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
+            debug_assert!(
+                flags.contains(Flags::SOCKET_CLOSED)
+                    || flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                    // A tunneled response can be finalized while its socket lives.
+                    || flags.contains(Flags::TUNNELED)
+            );
 
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.clear_and_free());
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
-        self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            response
+                .buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
+            response.poll_ref.with_mut(|r| r.unref(vm_get()));
+            response.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
-        self.promise.with_mut(|p| p.deinit());
-        // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
-        // refcount is zero so no other references remain — `self` is the unique
-        // owner at count==0, so the `*const → *mut` cast is sound.
-        unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
-    }
-
-    // Intrusive refcount helpers.
-    #[inline]
-    fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    #[inline]
-    pub(crate) fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            self.deinit();
+            response.promise.with_mut(|p| p.deinit());
         }
-    }
-}
-
-// `AnyRefCounted` bridge so `bun_ptr::finalize_js_box*` / `RefPtr` accept this
-// type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
-// `&self`-receiver `deref()` above is called from ~10 sites that route through
-// `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
-// is a separate sweep.
-impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
-    type DestructorCtx = ();
-    #[inline]
-    unsafe fn rc_ref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; touches only the
-        // interior-mutable `Cell<u32>` field.
-        unsafe { (*this).ref_() }
-    }
-    #[inline]
-    unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
-        // SAFETY: caller contract — `this` is live; `deref()` touches only
-        // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
-        unsafe { (*this).deref() }
-    }
-    #[inline]
-    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_count.get() == 1 }
-    }
-    #[inline]
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
-    }
-    #[cfg(debug_assertions)]
-    #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
+        // SAFETY: caller contract — `this` came from `heap::into_raw` and no
+        // ref (or borrow, see above) of it remains.
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 

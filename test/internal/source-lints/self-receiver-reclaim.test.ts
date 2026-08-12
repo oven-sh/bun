@@ -6,8 +6,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // A method must not reclaim its own receiver's allocation: `heap::take` /
 // `heap::destroy` / `Box::from_raw` applied to `self` or to a pointer spelled
-// from `self` (`ptr::from_mut(self)`, `self as *mut _`, `&raw mut *self`, ...)
-// inside a `&self` / `&mut self` method is banned.
+// from `self` (`ptr::from_mut(self)`, `self as *mut _`, `&raw mut *self`,
+// `self.as_ctx_ptr()`, ...) inside a `&self` / `&mut self` method is banned.
 //
 // Two things are wrong with that shape, independently of whether the receiver
 // really is a heap allocation:
@@ -26,7 +26,13 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     `this: *mut Self` (see `ReadBytesHandler::on_read_bytes` in
 //     src/runtime/webcore/Blob.rs, `ReadFileCompletion::run` in
 //     src/runtime/webcore/blob/read_file.rs, and the comments on `deinit` in
-//     src/sql_jsc/postgres/PostgresSQLConnection.rs).
+//     src/sql_jsc/postgres/PostgresSQLConnection.rs and
+//     src/runtime/server/NodeHTTPResponse.rs).
+//
+// `self.as_ctx_ptr()` counts as one of those spellings: `bun_ptr::AsCtxPtr` is
+// blanket-implemented, and its result is `self`'s own address with (per its
+// doc) shared provenance, meant for C-shaped ctx slots, not for freeing.
+// `NodeHTTPResponse::deinit(&self)` used to free itself through it.
 //
 // Scope: the single-expression spellings below, with `self` as the receiver.
 // A self-derived pointer stashed in a local and freed later, a helper that
@@ -69,6 +75,11 @@ const SELF_AS_POINTER = [
   String.raw`self\s+as\s+\*(?:mut|const)\b`,
   String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
   String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
+  // `self.as_ctx_ptr()` / `AsCtxPtr::as_ctx_ptr(self)` (bun_ptr's blanket
+  // "`self`'s address as `*mut Self`"). `self.field.as_ctx_ptr()` is a
+  // field's pointee and stays out, like the other `self.` forms.
+  String.raw`self\s*\.\s*as_ctx_ptr\s*\(\s*\)`,
+  String.raw`(?:[\w:]+::)?as_ctx_ptr\s*\(\s*self\s*\)`,
 ].join("|");
 
 const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
@@ -133,9 +144,14 @@ test("the pattern recognizes the spellings it claims to", () => {
     "drop(unsafe { Box::from_raw(&mut *self) });",
     "unsafe { heap::destroy(core::ptr::addr_of_mut!(*self)) }",
     "unsafe { Box::from_non_null(NonNull::from(self)) }",
+    // `NodeHTTPResponse::deinit(&self)`, as it was before it took the pointer.
+    "unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };",
+    "unsafe { bun_core::heap::destroy(bun_ptr::AsCtxPtr::as_ctx_ptr(self)) };",
+    "drop(unsafe { Box::from_raw(self.as_ctx_ptr()) });",
     // rustfmt-wrapped calls.
     "unsafe {\n    bun_core::heap::take(\n        std::ptr::from_mut::<Blob>(self),\n    )\n}",
     "unsafe {\n    bun_core::heap::destroy(\n        self,\n    )\n}",
+    "unsafe {\n    drop(bun_core::heap::take(\n        self.as_ctx_ptr(),\n    ))\n}",
   ];
   const allowed = [
     // Freeing something the receiver owns is fine.
@@ -145,15 +161,20 @@ test("the pattern recognizes the spellings it claims to", () => {
     "drop(unsafe { Box::from_raw(self.walker) });",
     "drop(unsafe { Box::from_raw(&raw mut *self.inner) });",
     "unsafe { heap::take(std::ptr::from_mut(self.inner)) }",
+    "unsafe { drop(bun_core::heap::take(self.route.as_ctx_ptr())) };",
     // Raw-pointer receivers and other parameters are the intended shape /
     // out of scope.
     "unsafe { drop(bun_core::heap::take(this)) };",
     "unsafe { heap::take(self_ptr) }",
     "unsafe { bun_core::heap::destroy(std::ptr::from_mut::<Blob>(self_)) };",
     "unsafe { heap::take(ptr::from_mut(other)) }",
+    "unsafe { heap::destroy(owner.as_ctx_ptr()) }",
     // Producing a pointer from `self` without reclaiming it is fine.
     "let this = std::ptr::from_ref::<Blob>(self).cast_mut();",
     "Self::finalize(core::ptr::from_mut(self));",
+    "raw_response.on_data(on_data_shim, self.as_ctx_ptr());",
+    "unsafe { Self::deref(self.as_ctx_ptr()) };",
+    "let _keep_alive = unsafe { bun_ptr::ScopedRef::<Self>::new(self.as_ctx_ptr()) };",
   ];
   expect(banned.filter(s => !matches(s))).toEqual([]);
   expect(allowed.filter(matches)).toEqual([]);

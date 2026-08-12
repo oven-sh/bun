@@ -1518,8 +1518,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { (*vm).drain_microtasks() };
         }
         if !is_async && !node_http_response.is_null() {
-            // SAFETY: out-param ref taken in C++; synchronous path drops it.
-            unsafe { &*node_http_response }.deref();
+            // SAFETY: releases the server-handler ref `createForJS` handed back
+            // through the out-param (the async path hands it to the promise
+            // reactions instead); `node_http_response` is that allocation and
+            // nothing here uses it afterwards, so it may be freed by this.
+            unsafe { NodeHTTPResponse::deref(node_http_response) };
         }
     }
 

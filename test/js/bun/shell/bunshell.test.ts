@@ -3109,59 +3109,108 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
-describe("stdin redirect whose pipe is closed after the command has exited", () => {
-  // `< ${buf}` streams the bytes into the child over a pipe. A child that
-  // exits without reading its stdin leaves that write pending, and it only
-  // fails (and the stdin side of the command only closes) once the pipe's
-  // read end is gone. The child below hands its stdin to a helper process
-  // that outlives it without reading from it, so the exit code and the
-  // stdout/stderr EOFs are always processed first and the stdin close is
-  // what has to complete the command.
-  const SIZE = 1 << 20; // bigger than any pipe buffer: the write never drains
+describe("stdin redirect still held open by a helper after the command's process has exited", () => {
+  // `< ${buf}` is pumped into the child over a pipe. The child hands its stdin
+  // to a detached helper and exits without reading any of it, and the helper
+  // only acts once the test has seen the child disappear, so the exit code and
+  // the stdout/stderr EOFs have been processed by the time the stdin side
+  // closes: that close is what has to complete the command. The helper either
+  // just exits (the pending write fails) or drains the redirect, which it must
+  // receive in full: the shell keeps pumping for whoever still holds the pipe.
+  const SIZE = 1 << 20; // bigger than any pipe buffer, so the write is still pending when the child exits
+  const helper = (afterRelease: string) => `
+    const deadline = Date.now() + 60_000;
+    while (!(await Bun.file(process.env.RELEASE_FILE).exists()) && Date.now() < deadline) await Bun.sleep(5);
+    ${afterRelease}
+  `;
+  const exitingHelper = helper("");
+  const drainingHelper = helper(`await Bun.write(process.env.COUNT_FILE, String((await Bun.stdin.bytes()).length));`);
   const childCode = `
-    const holder = Bun.spawn({
-      cmd: [process.execPath, "-e", "setTimeout(() => {}, 500)"],
+    Bun.spawn({
+      cmd: [process.execPath, "-e", process.env.HELPER_CODE],
       stdin: "inherit",
       stdout: "ignore",
       stderr: "ignore",
       detached: true,
-    });
-    holder.unref();
+    }).unref();
+    await Bun.write(process.env.PID_FILE, String(process.pid));
     console.log("child stdout");
     console.error("child stderr");
     process.exitCode = 3;
   `;
-  const cases: Array<[string, () => Buffer | Blob]> = [
+
+  async function until<T>(poll: () => T | Promise<T>): Promise<T> {
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      const value = await poll();
+      if (value) return value;
+      if (Date.now() > deadline) throw new Error("condition not met within 30s");
+      await Bun.sleep(5);
+    }
+  }
+  async function fileContents(path: string) {
+    return (await Bun.file(path).exists()) ? Bun.file(path).text() : "";
+  }
+  function hasExited(pid: number) {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  async function run(helperCode: string, command: (env: Record<string, string | undefined>) => $.ShellPromise) {
+    using dir = tempDir("shell-stdin-held-open", {});
+    const env = {
+      ...bunEnv,
+      HELPER_CODE: helperCode,
+      PID_FILE: join(String(dir), "pid"),
+      RELEASE_FILE: join(String(dir), "release"),
+      COUNT_FILE: join(String(dir), "count"),
+    };
+    const running = command(env).then(r => r); // `$` is lazy; start it now.
+    const pid = Number(await until(() => fileContents(env.PID_FILE)));
+    await until(() => hasExited(pid));
+    await Bun.write(env.RELEASE_FILE, "");
+    const result = await running;
+    const out: Record<string, unknown> = {
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    };
+    if (helperCode === drainingHelper) out.bytesRead = Number(await until(() => fileContents(env.COUNT_FILE)));
+    return out;
+  }
+
+  const redirects: Array<[string, () => Buffer | Blob]> = [
     ["Buffer", () => Buffer.alloc(SIZE, "a")],
     ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
   ];
 
-  test.concurrent.each(cases)("%s", async (_name, input) => {
-    const result = await $`${BUN} -e ${childCode} < ${input()}`.quiet();
-    expect({
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-      exitCode: result.exitCode,
-    }).toEqual({ stdout: "child stdout\n", stderr: "child stderr\n", exitCode: 3 });
+  test.concurrent.each(redirects)("helper exits without reading: %s", async (_name, input) => {
+    const out = await run(exitingHelper, env => $`${BUN} -e ${childCode} < ${input()}`.env(env).quiet().nothrow());
+    expect(out).toEqual({ stdout: "child stdout\n", stderr: "child stderr\n", exitCode: 3 });
+  });
+
+  test.concurrent.each(redirects)("helper drains the redirect: %s", async (_name, input) => {
+    const out = await run(drainingHelper, env => $`${BUN} -e ${childCode} < ${input()}`.env(env).quiet().nothrow());
+    expect(out).toEqual({ stdout: "child stdout\n", stderr: "child stderr\n", exitCode: 3, bytesRead: SIZE });
   });
 
   test.concurrent("inside a pipeline", async () => {
     const upper = "process.stdout.write((await Bun.stdin.text()).toUpperCase())";
-    const result = await $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} | ${BUN} -e ${upper}`.quiet();
-    expect({
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-      exitCode: result.exitCode,
-    }).toEqual({ stdout: "CHILD STDOUT\n", stderr: "child stderr\n", exitCode: 0 });
+    const out = await run(exitingHelper, env =>
+      $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} | ${BUN} -e ${upper}`.env(env).quiet().nothrow(),
+    );
+    expect(out).toEqual({ stdout: "CHILD STDOUT\n", stderr: "child stderr\n", exitCode: 0 });
   });
 
   test.concurrent("as the left side of ||", async () => {
-    const result = await $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} || echo failed`.quiet();
-    expect({
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-      exitCode: result.exitCode,
-    }).toEqual({ stdout: "child stdout\nfailed\n", stderr: "child stderr\n", exitCode: 0 });
+    const out = await run(exitingHelper, env =>
+      $`${BUN} -e ${childCode} < ${Buffer.alloc(SIZE, "a")} || echo failed`.env(env).quiet().nothrow(),
+    );
+    expect(out).toEqual({ stdout: "child stdout\nfailed\n", stderr: "child stderr\n", exitCode: 0 });
   });
 });
 

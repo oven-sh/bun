@@ -22,13 +22,15 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
     const POLL_OWNER_TAG: bun_io::PollTag;
+    /// Called once, from the writer's close; the writer does not touch the process
+    /// afterwards, so the impl may free `*this` (and run arbitrary code doing so).
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
 }
 
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
-/// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
 // Cleanup lives in `impl Drop` below; the final Box free is
 // the derive's default destructor (`drop(heap::take(this))`).
 #[derive(bun_ptr::RefCounted)]
@@ -38,7 +40,7 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     pub(crate) writer: IOWriter<P>,
     pub(crate) stdio_result: StdioResult,
     pub source: Source,
-    /// BACKREF: parent process is notified on close; never owned/destroyed here.
+    /// BACKREF: parent process, notified (and nulled) on close; never owned/destroyed here.
     pub(crate) process: *mut P,
     pub(crate) event_loop: EventLoopHandle,
     /// True while `start()`'s `+1` ref is outstanding.
@@ -270,9 +272,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // frees that storage so no dangling slice survives the close.
         self.buffer = RawSlice::EMPTY;
         self.source.detach();
-        // SAFETY: `process` is a backref to the owning process, guaranteed alive
-        // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
+        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
+        // SAFETY: the owning process keeps this backref alive until it has been told
+        // the writer closed, which is this (single) call; it may be freed by it, and
+        // the field is already nulled so nothing here can use it afterwards.
+        unsafe { P::on_close_io(process, StdioKind::Stdin) };
         #[cfg(windows)]
         if release_start_ref {
             // SAFETY: `started` was the token for start()'s outstanding +1;

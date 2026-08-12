@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -698,4 +698,110 @@ function extractCssUrl(backgroundImage: string): string {
     throw new Error("No url found in background-image: " + backgroundImage);
   }
   return url[2];
+}
+
+const cssImports = (...files: string[]) => files.map(file => `import "../${file}";`).join("\n");
+const routeRespondingWithStyles = (...cssFiles: string[]) => `
+  ${cssImports(...cssFiles)}
+  export default function (req, meta) {
+    return Response.json(meta.styles);
+  }
+`;
+
+// `meta.styles` is computed from the import graph on a route's first request
+// and cached on the route bundle. Until the last part of this test nothing is
+// subscribed to hot updates (only `dev.fetch` and the harness's watch
+// synchronization socket talk to the server), which used to leave that cache
+// in place forever.
+devTest("framework route styles follow the css imports of the route and its layout", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes[0], layouts: true }],
+  },
+  files: {
+    "routes/_layout.ts": ``,
+    "routes/index.ts": routeRespondingWithStyles("one.css"),
+    "routes/other.ts": routeRespondingWithStyles(),
+    "one.css": `.one { color: red; }`,
+    "two.css": `.two { color: red; }`,
+    "three.css": `.three { color: red; }`,
+    "four.css": `.four { color: red; }`,
+  },
+  async test(dev) {
+    expect(await routeStyles(dev, "/")).toEqual(["one.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual([]);
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("one.css", "two.css"));
+    const withTwo = await routeStyles(dev, "/");
+    expect(withTwo.toSorted()).toEqual(["one.css", "two.css"]);
+
+    // The same two imports swapped: the route's edges in the graph stay the
+    // same, only their order changes.
+    await dev.write("routes/index.ts", routeRespondingWithStyles("two.css", "one.css"));
+    expect(await routeStyles(dev, "/")).toEqual(withTwo.toReversed());
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("two.css"));
+    expect(await routeStyles(dev, "/")).toEqual(["two.css"]);
+
+    // The layout's stylesheets belong to both routes, and both routes have a
+    // cached list by now.
+    await dev.write("routes/_layout.ts", cssImports("three.css"));
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["three.css", "two.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual(["three.css"]);
+
+    // Now with a hot update subscriber looking at "/", first while an
+    // unrelated route has a bundling error and then after it is fixed.
+    using _hmr = await viewRouteOverHmr(dev, "/");
+    await dev.write("routes/other.ts", `export default function (`);
+    expect((await dev.fetch("/other")).status).toBe(500);
+    await dev.write("routes/index.ts", routeRespondingWithStyles("four.css"));
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["four.css", "three.css"]);
+
+    await dev.write("routes/other.ts", routeRespondingWithStyles("one.css"));
+    expect((await routeStyles(dev, "/other")).toSorted()).toEqual(["one.css", "three.css"]);
+    await dev.write("routes/index.ts", routeRespondingWithStyles());
+    expect(await routeStyles(dev, "/")).toEqual(["three.css"]);
+  },
+});
+
+/** Fetches a route written with `routeRespondingWithStyles` and resolves each stylesheet url to its file name. */
+async function routeStyles(dev: Dev, route: string): Promise<string[]> {
+  const hrefs: string[] = await dev.fetch(route).json();
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await dev.fetch(href).text();
+      const header = css.match(/^\/\* (.*) \*\/\n/);
+      if (!header) throw new Error(`${href} does not start with a file name comment:\n${css}`);
+      return header[1];
+    }),
+  );
+}
+
+/**
+ * Performs the handshake the HMR runtime performs in a browser: subscribes to
+ * hot updates and errors, then tells the dev server which route is being
+ * viewed. Resolves once the server has acknowledged the route.
+ */
+async function viewRouteOverHmr(dev: Dev, route: string): Promise<Disposable> {
+  const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+  ws.binaryType = "arraybuffer";
+  const viewing = Promise.withResolvers<void>();
+  ws.onerror = () => viewing.reject(new Error("hmr websocket errored"));
+  ws.onclose = () => viewing.reject(new Error("hmr websocket closed"));
+  ws.onmessage = event => {
+    const data = new Uint8Array(event.data as ArrayBuffer);
+    if (data[0] === "V".charCodeAt(0)) {
+      ws.send("she");
+      ws.send("n" + route);
+    } else if (data[0] === "n".charCodeAt(0)) {
+      viewing.resolve();
+    }
+  };
+  await viewing.promise;
+  return {
+    [Symbol.dispose]() {
+      ws.onclose = null;
+      ws.close();
+    },
+  };
 }

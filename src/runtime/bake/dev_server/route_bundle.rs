@@ -27,8 +27,13 @@ pub enum State {
 
 pub struct Framework {
     pub(crate) route_index: framework_router::RouteIndex,
+    /// Only depends on the router, which does not change after startup.
     pub(crate) cached_module_list: jsc::StrongOptional,
+    /// Embeds `client_script_generation`; cleared by `invalidate_client_bundle`.
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
+    /// `meta.styles`, traced through the route's server files and the client
+    /// components they reach. Cleared by `invalidate_client_bundle` and, when
+    /// any of the route's server files were re-bundled, by `finalize_bundle`.
     pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
@@ -100,6 +105,12 @@ impl Data {
             Data::Html(_) => unreachable!("expected .framework"),
         }
     }
+    pub(crate) fn framework_mut(&mut self) -> &mut Framework {
+        match self {
+            Data::Framework(f) => f,
+            Data::Html(_) => unreachable!("expected .framework"),
+        }
+    }
     /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {
@@ -116,6 +127,11 @@ impl Data {
 }
 
 impl RouteBundle {
+    /// Called when a client-side file of the route was re-bundled. Drops the
+    /// client bundle along with what the route serves that is derived from
+    /// it: the bundle URL and `meta.styles` of a framework route, the rendered
+    /// page of an HTML route. They are rebuilt on the next request.
+    ///
     /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
@@ -133,7 +149,10 @@ impl RouteBundle {
             u32::from_ne_bytes(buf)
         };
         match &mut self.data {
-            Data::Framework(fw) => fw.cached_client_bundle_url.clear_without_deallocation(),
+            Data::Framework(fw) => {
+                fw.cached_client_bundle_url.clear_without_deallocation();
+                fw.cached_css_file_array.clear_without_deallocation();
+            }
             Data::Html(html) => html.cached_response = None,
         }
     }

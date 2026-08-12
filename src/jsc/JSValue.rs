@@ -425,7 +425,7 @@ impl JSValue {
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     ///
-    /// Source-inlined body of `JSC__JSValue__jsType` (bindings.cpp:2755) so the
+    /// Inlined in Rust (rather than an FFI shim into bindings.cpp) so the
     /// 2-insn fast path survives no-LTO targets (e.g. aarch64-musl, where
     /// cross-language LTO is disabled — config.ts:631). With the FFI shim the
     /// call cannot inline into Rust callers and shows up as a separate symbol;

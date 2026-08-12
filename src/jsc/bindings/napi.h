@@ -318,11 +318,6 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
-    bool hasFinalizers() const
-    {
-        return !m_finalizers.isEmpty();
-    }
-
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
@@ -406,11 +401,6 @@ public:
                 NAPI_ABORT("A Node-API function that may affect GC state was called from a finalizer during garbage collection");
             }
         }
-    }
-
-    bool isVMTerminating() const
-    {
-        return this->vm().hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)

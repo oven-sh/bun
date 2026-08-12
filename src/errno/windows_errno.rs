@@ -617,6 +617,10 @@ impl SystemErrnoInit for Win32Error {
 }
 
 impl SystemErrno {
+    /// Length of the dense head of the enum (the sparse `UV_*` range follows).
+    /// Only the exhaustive round-trip test iterates it; runtime code on Windows
+    /// validates tags through the `init_*` constructors instead.
+    #[cfg(test)]
     pub(crate) const MAX: usize = 138;
 
     /// Windows' libuv-mapped errno set spells this `ENOTSUP`; alias the POSIX

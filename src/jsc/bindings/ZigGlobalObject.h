@@ -213,7 +213,6 @@ public:
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* FileSink() const { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
@@ -235,30 +234,24 @@ public:
     JSC::JSValue JSReadableArrayBufferSinkControllerPrototype() const { return m_JSArrayBufferControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* HTTPResponseSinkStructure() const { return m_JSHTTPResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTTPResponseSink() { return m_JSHTTPResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTTPResponseSinkPrototype() const { return m_JSHTTPResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::Structure* JSReadableHTTPResponseSinkController() { return m_JSHTTPResponseController.getInitializedOnMainThread(this); }
 
     JSC::Structure* HTTPSResponseSinkStructure() const { return m_JSHTTPSResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTTPSResponseSink() { return m_JSHTTPSResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* HTMLRewriterSinkStructure() const { return m_JSHTMLRewriterSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTMLRewriterSink() { return m_JSHTMLRewriterSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTMLRewriterSinkPrototype() const { return m_JSHTMLRewriterSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
@@ -277,11 +270,9 @@ public:
 
     JSC::Structure* NodeVMSourceTextModuleStructure() const { return m_NodeVMSourceTextModuleClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMSourceTextModule() const { return m_NodeVMSourceTextModuleClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue NodeVMSourceTextModulePrototype() const { return m_NodeVMSourceTextModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* NodeVMSyntheticModuleStructure() const { return m_NodeVMSyntheticModuleClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
     WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
@@ -290,8 +281,6 @@ public:
     // clearAll() instead.
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
-
-    JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
@@ -753,7 +742,6 @@ public:
         return m_memoryFootprintStructure.getInitializedOnMainThread(this);
     }
 
-    JSObject* navigatorObject();
     JSFunction* nativeMicrotaskTrampoline() const { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     String agentClusterID() const;
@@ -842,7 +830,6 @@ public:
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
-    bool hasNapiFinalizers() const;
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
 
 private:

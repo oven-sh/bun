@@ -7,9 +7,10 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
-//! have been moved up into `bun_runtime`, and the few that only need an opaque
-//! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
+//! constructed those types (e.g. `output_file_jsc`, the `Blob::Store` array
+//! buffer deallocator) have been moved up into `bun_runtime`, and the few that
+//! only need an opaque borrow (e.g. `DOMFormData::for_each`) are generic over
+//! the caller's `Blob`.
 
 #![allow(deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]
@@ -1502,7 +1503,6 @@ pub trait StringJsc {
     fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_core::String {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String> {
@@ -1522,9 +1522,6 @@ impl StringJsc for bun_core::String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         bun_string_jsc::to_type_error_instance(self, global)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_range_error_instance(self, global)
     }
 }
 

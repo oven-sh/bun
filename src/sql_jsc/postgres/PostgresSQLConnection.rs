@@ -1054,8 +1054,7 @@ impl PostgresSQLConnection {
     }
 }
 
-// The attribute emits the JSC-callconv shim under the exported symbol.
-#[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]
+#[bun_jsc::host_fn]
 pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for

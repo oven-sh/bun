@@ -234,7 +234,6 @@
 
 using namespace Bun;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
@@ -2888,26 +2887,6 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(classInfo());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    Zig::GlobalObject* bunGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    return JSValue::encode(
-        bunGlobalObject->JSDOMFileConstructor());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
-}
-
 // `console.Console` or `import { Console } from 'console';`
 JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
@@ -3074,18 +3053,6 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     return JSC::JSValue::encode(result);
 }
 
-JSC::JSObject* GlobalObject::navigatorObject()
-{
-    return this->m_navigatorObject.get(this);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    return JSC::JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
-}
-
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
@@ -3100,11 +3067,6 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
 BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
 BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
-
-JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
-{
-    return uncheckedDowncast<Zig::GlobalObject>(globalObject)->performanceObject();
-}
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
@@ -4181,17 +4143,6 @@ napi_env GlobalObject::makeNapiEnvForFFI()
         .reserved = {},
     });
     return &out.leakRef();
-}
-
-bool GlobalObject::hasNapiFinalizers() const
-{
-    for (const auto& env : m_napiEnvs) {
-        if (env->hasFinalizers()) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 // `bun test --isolate`: the old global is about to be gcUnprotect()'d and

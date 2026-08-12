@@ -176,8 +176,6 @@ function header() {
                 void finishCreation(JSC::VM&);
             };
 
-JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
-
         `;
   }
 
@@ -366,13 +364,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObj
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 
-}
-
-JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    return JSC::JSValue::encode(globalObject->${name}());
 }
 
 size_t ${className}::estimatedSize(JSCell* cell, JSC::VM& vm) {

@@ -31,10 +31,4 @@ export default {
   get inspect() {
     return load().inspect;
   },
-  get format() {
-    return load().format;
-  },
-  get formatWithOptions() {
-    return load().formatWithOptions;
-  },
 };

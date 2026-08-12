@@ -126,14 +126,6 @@ public:
     void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
-    template<typename... Arguments>
-    void postCrossThreadTask(Arguments&&... arguments)
-    {
-        postTask([crossThreadTask = createCrossThreadTask(arguments...)](ScriptExecutionContext&) mutable {
-            crossThreadTask.performTask();
-        });
-    }
-
     JSC::VM& vm() { return *m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
 

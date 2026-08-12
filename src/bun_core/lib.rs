@@ -589,10 +589,6 @@ impl OutputSink {
 bun_dispatch::link_interface! {
     pub ErrnoNames[Sys] {
         fn name(errno: i32) -> Option<&'static str>;
-        fn max_dense() -> u32;
-        // Raw Win32 `GetLastError()` code → `SystemErrno` tag name.
-        // Always `None` on non-Windows.
-        fn win32_name(code: u32) -> Option<&'static str>;
     }
 }
 

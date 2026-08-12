@@ -18,7 +18,7 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{AsCtxPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
@@ -1357,43 +1357,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         !tcp.is_closed() && !tcp.is_shutdown()
     }
 
-    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
-        // See write_binary_data() — tunnel.write() can re-enter fail().
-        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
-        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
-        // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
-        // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &*this_ptr };
-
-        if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        }
-
-        // Cast the JSValue to a Blob.
-        // `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
-        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
-        // `from_js`/`shared_view` trampoline through extern fns to avoid the
-        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
-        let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() else {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        };
-        let opcode = Opcode::from_raw(op);
-        // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
-        // the JSValue is rooted by the caller for the duration of this call.
-        let data = unsafe { (*blob).shared_view() };
-        if data.is_empty() {
-            let _ = this.send_data(Copy::Bytes(&[]), !this.has_backpressure(), opcode);
-            return;
-        }
-
-        this.send_frame(Copy::Bytes(data), data.len(), opcode);
-    }
-
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
@@ -1854,7 +1817,6 @@ macro_rules! export_websocket_client {
         init_with_tunnel = $init_with_tunnel:ident,
         memory_cost = $memory_cost:ident,
         write_binary_data = $write_binary_data:ident,
-        write_blob = $write_blob:ident,
         write_string = $write_string:ident $(,)?
     ) => {
         #[unsafe(no_mangle)]
@@ -1925,10 +1887,6 @@ macro_rules! export_websocket_client {
             WebSocket::<$ssl>::write_binary_data(this, ptr, len, op)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $write_blob(this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8) {
-            WebSocket::<$ssl>::write_blob(this, blob_value, op)
-        }
-        #[unsafe(no_mangle)]
         pub extern "C" fn $write_string(
             this: *mut WebSocket<$ssl>,
             str_: *const ZigString,
@@ -1949,7 +1907,6 @@ export_websocket_client!(
     init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
     memory_cost = Bun__WebSocketClient__memoryCost,
     write_binary_data = Bun__WebSocketClient__writeBinaryData,
-    write_blob = Bun__WebSocketClient__writeBlob,
     write_string = Bun__WebSocketClient__writeString,
 );
 export_websocket_client!(
@@ -1962,7 +1919,6 @@ export_websocket_client!(
     init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
     memory_cost = Bun__WebSocketClientTLS__memoryCost,
     write_binary_data = Bun__WebSocketClientTLS__writeBinaryData,
-    write_blob = Bun__WebSocketClientTLS__writeBlob,
     write_string = Bun__WebSocketClientTLS__writeString,
 );
 

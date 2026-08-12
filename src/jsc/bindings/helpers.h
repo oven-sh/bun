@@ -235,11 +235,6 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
     builder.append({ untag(str.ptr), str.len });
 }
 
-static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsOwnedString(global->vm(), toString(str));
-}
-
 static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));

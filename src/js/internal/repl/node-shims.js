@@ -116,15 +116,6 @@ const BuiltinModule = {
     // Bare names; completion.js prefixes them with "node:" itself.
     return ["test"];
   },
-  exists(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
-  },
 };
 
 // ---- internal/modules/esm/get_format ----------------------------------------------
@@ -388,8 +379,6 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_ENUMERABLE,
-    SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
   getOwnNonIndexProperties,

@@ -79,10 +79,8 @@ impl ZigException {
         }
     }
 
-    // `ZigException__fromException` is declared in headers.h but has no C++
-    // body (bindings.cpp dropped it; the only producer is
-    // `JSC__JSValue__toZigException` which writes through an out-param), so
-    // there is intentionally no `from_exception` here.
+    // There is intentionally no `from_exception` here: the only producer is
+    // `JSC__JSValue__toZigException`, which writes through an out-param.
 
     pub(crate) fn add_to_error_list(
         &mut self,

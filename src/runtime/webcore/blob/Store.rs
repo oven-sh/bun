@@ -535,17 +535,3 @@ impl BytesExt for Bytes {
         }
     }
 }
-
-/// JSC `ArrayBuffer` external
-/// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
-/// `*mut Store` as the deallocator context; this releases that ref.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlobArrayBuffer_deallocator(
-    _bytes: *mut core::ffi::c_void,
-    blob: *mut core::ffi::c_void,
-) {
-    // SAFETY: `blob` is the non-null `*mut Store` C++ stashed as deallocator
-    // context (originating from `heap::alloc` / `StoreRef::into_raw`); it
-    // owns one outstanding reference being released here.
-    unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
-}

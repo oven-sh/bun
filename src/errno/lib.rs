@@ -375,41 +375,11 @@ fn system_errno_name(errno: i32) -> Option<&'static str> {
     }
 }
 
-/// Length of the dense `0..MAX` prefix of `SystemErrno` (on Windows, the
-/// dense head before the sparse UV_* range). Exposed so bun_core can pre-seed its
-/// interned `ERRNO_MAP` without a second hand-written per-OS length table.
-#[inline]
-const fn system_errno_max_dense() -> u32 {
-    SystemErrno::MAX as u32
-}
-
-/// Raw Win32 `GetLastError()` code → `SystemErrno` tag name, via the
-/// `Win32Error` mapping table. Restores `error.code` fidelity (ENOENT,
-/// EACCES, ...) for `?`-propagated `std::io::Error`s on Windows. Exists on all
-/// platforms because the `ErrnoNames` link-interface is platform-independent;
-/// always `None` off Windows.
-#[inline]
-fn win32_errno_name(code: u32) -> Option<&'static str> {
-    #[cfg(windows)]
-    {
-        let code = u16::try_from(code).ok()?;
-        SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
-            .map(<&'static str>::from)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = code;
-        None
-    }
-}
-
 // Wire the above into bun_core's `ErrnoNames` hook. `()` owner — pure
-// stateless functions; the handle is the const `ErrnoNames::SYS`.
+// stateless function; the handle is the const `ErrnoNames::SYS`.
 bun_core::link_impl_ErrnoNames! {
     Sys for () => |_this| {
         name(errno) => system_errno_name(errno),
-        max_dense() => system_errno_max_dense(),
-        win32_name(code) => win32_errno_name(code),
     }
 }
 
@@ -450,7 +420,7 @@ mod errno_name_tests {
     fn errno_table_full_range() {
         // Slot 0 is the SUCCESS hole.
         assert_eq!(system_errno_name(0), None);
-        let max = system_errno_max_dense();
+        let max = SystemErrno::MAX as u32;
         for i in 1..max {
             let name = system_errno_name(i as i32).expect("dense slot");
             assert_eq!(
@@ -482,25 +452,20 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
     }
 
-    /// `win32_errno_name` translation contract: known `GetLastError()` codes
-    /// map to POSIX names on Windows, unmapped/out-of-range codes are `None`,
-    /// and the helper is a constant `None` off Windows.
+    /// Known `GetLastError()` codes map to POSIX names; unmapped codes are
+    /// `None`.
+    #[cfg(windows)]
     #[test]
     fn win32_errno_names() {
-        #[cfg(windows)]
-        {
-            // ERROR_FILE_NOT_FOUND / ERROR_ACCESS_DENIED.
-            assert_eq!(win32_errno_name(2), Some("ENOENT"));
-            assert_eq!(win32_errno_name(5), Some("EPERM"));
-            // Unmapped Win32 code and the `u16::try_from` overflow fallback.
-            assert_eq!(win32_errno_name(0), None);
-            assert_eq!(win32_errno_name(u32::MAX), None);
-        }
-        #[cfg(not(windows))]
-        {
-            assert_eq!(win32_errno_name(2), None);
-            assert_eq!(win32_errno_name(u32::MAX), None);
-        }
+        let name = |code: u16| {
+            SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
+                .map(<&'static str>::from)
+        };
+        // ERROR_FILE_NOT_FOUND / ERROR_ACCESS_DENIED.
+        assert_eq!(name(2), Some("ENOENT"));
+        assert_eq!(name(5), Some("EPERM"));
+        assert_eq!(name(0), None);
+        assert_eq!(name(u16::MAX), None);
     }
 
     #[test]

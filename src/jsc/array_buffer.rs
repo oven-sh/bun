@@ -964,10 +964,9 @@ impl MarkedArrayBuffer {
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
-// LAYERING: `BlobArrayBuffer_deallocator` releases a
-// `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
-// export lives next to it at `bun_runtime::webcore::blob::Store` — `bun_jsc`
-// cannot own this symbol without a dep cycle. C++ links by name only.
+// LAYERING: the deallocator for `Blob::Store`-backed buffers lives next to
+// `Store` in `bun_runtime::webcore::Blob` — `bun_jsc` cannot name that type
+// without a dep cycle.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions

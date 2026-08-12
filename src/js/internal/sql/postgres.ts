@@ -567,14 +567,11 @@ class ListenSubscription {
   }
 }
 
-// Removing the last subscription deletes the entry synchronously, so a racing
-// listen() gets a new entry and a new round trip, and code resuming after an
-// await compares its entry against the map to learn whether it is still live.
-// Each listen() call is one registration, so a callback may appear more than
-// once and removal takes out a single occurrence.
+// One registration per listen() call, so a callback may appear more than once.
+// The entry is deleted with its last registration; code resuming after an await
+// compares its entry against the map to learn whether it is still the live one.
 class Channel {
-  // One listener is stored bare. The array is replaced, never mutated, so a
-  // dispatch in progress is unaffected by listen()/unlisten() from a callback.
+  // A lone listener is stored bare; arrays are replaced, never mutated, so a dispatch in progress is unaffected.
   listeners: Listener | readonly Listener[];
   onlisten: readonly OnListen[] | null = null;
   /** LISTEN round trip on the current connection; reset to null on disconnect. */

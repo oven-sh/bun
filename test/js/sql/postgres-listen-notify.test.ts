@@ -720,14 +720,16 @@ describe("arguments", () => {
     await expect(sql.listen("ch", () => {})).rejects.toThrow("PostgreSQL only");
     await expect(sql.notify("ch", "p")).rejects.toThrow("PostgreSQL only");
     await expect(sql.notify("ch")).rejects.toThrow("PostgreSQL only");
-    expect("unlisten" in sql).toBe(false);
   });
 
-  test("reserved connections expose listen() on the client's shared listen connection", async () => {
+  test("reserved connections expose listen() on the client's shared listen connection; unlisten lives on the subscription only", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
     using reserved = await sql.reserve();
+    expect("unlisten" in sql).toBe(false);
+    expect("unlisten" in reserved).toBe(false);
     const viaReserved = await reserved.listen("ch", () => {});
+    expect(typeof viaReserved.unlisten).toBe("function");
     const viaClient = await sql.listen("ch", () => {});
     expect(server.queries).toEqual(['LISTEN "ch"']);
     await viaReserved.unlisten();

@@ -94,11 +94,10 @@ it.skipIf(!isLinux)(
         proc.stdin.end();
       }
     }
-    const [, outcome] = Buffer.concat(stdout).toString().split("reading\n");
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect({ outcome: JSON.parse(outcome), stderr }).toEqual({
-      outcome: { code: "ECONNRESET", syscall: "recv" },
+    expect({ stdout: Buffer.concat(stdout).toString(), stderr }).toEqual({
+      stdout: "reading\n" + JSON.stringify({ code: "ECONNRESET", syscall: "recv" }),
       stderr: "",
     });
     expect(exitCode).toBe(0);

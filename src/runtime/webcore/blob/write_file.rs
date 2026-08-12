@@ -471,9 +471,16 @@ impl WriteFile {
         };
 
         #[cfg(target_os = "macos")]
-        {
-            self.is_named_pipe = self.could_block
-                && matches!(sys::fstat(fd), Ok(stat) if bun_sys::is_named_pipe(&stat));
+        if self.could_block {
+            match sys::fstat(fd) {
+                Ok(stat) => self.is_named_pipe = bun_sys::is_named_pipe(&stat),
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    self.on_finish();
+                    return;
+                }
+            }
         }
 
         // We have never supported offset in Bun.write().

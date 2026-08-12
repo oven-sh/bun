@@ -661,8 +661,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const stat = fs.fstatSync(fifo.writer);
 
-      expect({ pipe: JSON.parse(stdout), fifo: { isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }, stderr }).toEqual({
-        pipe: { isFIFO: true, hasDevice: !isMacOS },
+      expect({ pipe: stdout, fifo: { isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }, stderr }).toEqual({
+        pipe: JSON.stringify({ isFIFO: true, hasDevice: !isMacOS }) + "\n",
         fifo: { isFIFO: true, hasDevice: true },
         stderr: "",
       });

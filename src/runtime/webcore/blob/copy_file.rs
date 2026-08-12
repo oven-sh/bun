@@ -1115,12 +1115,9 @@ impl Default for ReadWriteLoop {
     }
 }
 
-/// What one step of the copy asks [`CopyFileWindows::finish`] to do with the task.
-///
-/// The steps are `&mut self` methods, so none of them may free the task: a reference argument
-/// has to stay dereferenceable until the call it was passed to returns. Each entry point
-/// (`init`, the libuv completions, the mkdirp hop) therefore keeps the heap pointer, runs one
-/// step through it, and hands the result to `finish`, the only place the task is freed.
+/// What a step of the copy asks [`CopyFileWindows::finish`] to do with the task. The steps take
+/// `&mut self`, which has to stay valid until they return, so none of them frees the task; the
+/// entry points hold the heap pointer and hand the step to `finish`, which does.
 #[cfg(windows)]
 #[must_use]
 enum Step {
@@ -1181,8 +1178,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 }
 
-/// Closes the descriptors `prepare_pathlike` opened (a `Bun.file(fd)` store's own descriptor is
-/// left alone); `read_buf` frees itself.
+/// Closes the descriptors `prepare_pathlike` opened; a store's own descriptor is left alone.
 #[cfg(windows)]
 impl Drop for ReadWriteLoop {
     fn drop(&mut self) {
@@ -1210,10 +1206,8 @@ impl Drop for ReadWriteLoop {
     }
 }
 
-/// The task holds one event-loop reference from `init` until it is dropped (every return to
-/// the loop while it exists has a request or pool task in flight), and its libuv request is
-/// cleaned up with it. `read_write_loop` closes its descriptors and the store references are
-/// released by the field drops.
+/// Releases the loop reference `init` took (a request or pool task is in flight whenever the
+/// task outlives a return to the loop); descriptors and store references go with the fields.
 #[cfg(windows)]
 impl Drop for CopyFileWindows<'_> {
     fn drop(&mut self) {
@@ -1222,25 +1216,18 @@ impl Drop for CopyFileWindows<'_> {
     }
 }
 
-/// Shared by the libuv completions (`on_read`, `on_write`, `on_copy_file`, `on_chmod`):
-/// recover the task that owns `req`, run one step on it, and let `finish` free it if that
-/// step ended the copy.
+/// Body of the libuv completions below: run `step` on the task that owns `req`, then `finish`.
 #[cfg(windows)]
 fn on_uv_complete<'a>(req: *mut libuv::fs_t, step: fn(&mut CopyFileWindows<'a>) -> Step) {
-    // SAFETY: `req->data` was set to the task pointer (whole-struct provenance) before
-    // scheduling. Recover the task from `data` rather than
-    // `from_field_ptr!(.., io_request, req)`: the `req` pointer libuv hands back was
-    // produced from a `&mut self.io_request` reborrow whose provenance covers only the
-    // `io_request` field, so `container_of`-style subtraction would yield a
-    // `*mut CopyFileWindows` with out-of-bounds provenance (UB under Stacked/Tree
-    // Borrows). The request is only accessed through the task from here on.
+    // SAFETY: `data` was set to the task pointer before the request was queued. It is used
+    // instead of `from_field_ptr!` because `req` only carries the `io_request` field's
+    // provenance; the request is accessed through the task from here on.
     let this: *mut CopyFileWindows<'a> = unsafe { (*req).data.cast::<CopyFileWindows<'a>>() };
-    // SAFETY: `this` is the live task that scheduled `req`; only a field address is taken.
+    // SAFETY: `this` is live; only a field address is taken.
     debug_assert!(unsafe { core::ptr::addr_of_mut!((*this).io_request) } == req);
-    // SAFETY: `this` is live and nothing else touches it while its completion runs. No step
-    // frees the task, so the exclusive borrow formed for this call ends when it returns.
+    // SAFETY: `this` is live and nothing else borrows it; no step frees it.
     let step = unsafe { step(&mut *this) };
-    // SAFETY: `this` is still live; `finish` is the only thing that frees it.
+    // SAFETY: `this` is still live; only `finish` frees it.
     unsafe { CopyFileWindows::finish(this, step) };
 }
 
@@ -1800,18 +1787,15 @@ impl<'a> CopyFileWindows<'a> {
         Step::Done(Ok(self.written_bytes))
     }
 
-    /// Takes `*mut Self`, not `&mut self`: a finished copy turns the pointer back into the
-    /// `Box` that `init` leaked and drops it here, and a `&mut self` argument would have to
-    /// stay dereferenceable until this returned.
+    /// Takes `*mut Self`, not `&mut self`: on [`Step::Done`] this reclaims the `Box` `init`
+    /// leaked and drops it, which a `&mut self` argument would have to outlive.
     ///
     /// # Safety
-    /// `this` must be the live task allocated in `init`, with no borrow of it outstanding.
-    /// If `step` is [`Step::Done`], `*this` is freed before this returns.
+    /// `this` is the live task from `init` and nothing borrows it; on `Done` it is freed here.
     unsafe fn finish(this: *mut Self, step: Step) {
         let Step::Done(result) = step else { return };
 
-        // SAFETY: caller contract — `this` is the allocation `init` leaked, and nothing
-        // borrows it: the step that reported `Done` has returned.
+        // SAFETY: caller contract.
         let mut task = unsafe { bun_core::heap::take(this) };
         let event_loop = task.event_loop;
         let mut promise = task.promise.take();
@@ -1826,8 +1810,7 @@ impl<'a> CopyFileWindows<'a> {
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(core::ptr::from_ref(event_loop).cast_mut())
         };
-        // Descriptors are closed and the loop reference is released before script can observe
-        // the settled promise.
+        // Descriptors are closed before script can observe the settled promise.
         drop(task);
         let _ = match settled {
             Ok(written) => promise.resolve(global_this, written),

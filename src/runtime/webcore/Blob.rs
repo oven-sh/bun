@@ -6849,11 +6849,8 @@ bun_jsc::jsc_host_abi! {
 // TODO: move to bun_sys?
 /// Generic file-open helper used by ReadFile/WriteFile/CopyFile state machines,
 /// modeled as a trait the target implements.
-///
-/// The open itself (`get_fd`) is POSIX-only: the Windows tasks (`ReadFileUV`,
-/// `WriteFileWindows`) are heap allocated and driven by libuv completions that
-/// may end up freeing them, so they open through libuv themselves, via the raw
-/// task pointer rather than a `&mut self` callback chain.
+/// `get_fd` is POSIX-only: the Windows tasks (`ReadFileUV`, `WriteFileWindows`)
+/// open through libuv themselves, since their completions may free them.
 pub trait FileOpener: Sized {
     /// Override if you need different open flags; defaults to RDONLY.
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;

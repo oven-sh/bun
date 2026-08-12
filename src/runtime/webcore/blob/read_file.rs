@@ -911,12 +911,9 @@ pub struct ReadFileUV<'a> {
     pub(crate) req: libuv::fs_t,
 }
 
-/// What one step of the read asks [`ReadFileUV::finish`] to do with the task.
-///
-/// The steps are `&mut self` methods, so none of them may free the task: a reference argument
-/// has to stay dereferenceable until the call it was passed to returns. `start_with_ctx` and
-/// the libuv completions therefore keep the heap pointer, run one step through it, and hand
-/// the result to `finish`, the only place the task is freed.
+/// What a step of the read asks [`ReadFileUV::finish`] to do with the task. The steps take
+/// `&mut self`, which has to stay valid until they return, so none of them frees the task; the
+/// entry points hold the heap pointer and hand the step to `finish`, which does.
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 #[must_use]
@@ -927,9 +924,8 @@ enum Step {
     Done,
 }
 
-/// The task holds one event-loop reference from `start_with_ctx` until it is dropped, and its
-/// libuv request is cleaned up with it; the store reference (and, for a read that never
-/// completed, the completion, which cancels itself) are released by the field drops.
+/// Releases the loop reference `start_with_ctx` took; the store reference (and the completion,
+/// which cancels itself if the read never finished) go with the fields.
 #[cfg(windows)]
 impl Drop for ReadFileUV<'_> {
     fn drop(&mut self) {
@@ -1041,16 +1037,13 @@ impl<'a> ReadFileUV<'a> {
             req: bun_core::ffi::zeroed(),
         });
         let this: *mut ReadFileUV = bun_core::heap::into_raw(this);
-        // SAFETY: `this` was allocated just above and nothing else holds it; `get_fd` does not
-        // free it.
+        // SAFETY: just allocated, nothing else holds it; `get_fd` does not free it.
         let step = unsafe { (*this).get_fd() };
-        // SAFETY: as above. Afterwards the task belongs to the libuv request chain until a
-        // later `finish` frees it, or it is already gone.
+        // SAFETY: as above; afterwards the task belongs to its libuv requests, or is gone.
         unsafe { Self::finish(this, step) };
     }
 
-    /// Resolves the fd to read from: a `Bun.file(fd)` store's descriptor is used as is, a
-    /// path is opened through libuv and continues in `on_open`.
+    /// Uses a `Bun.file(fd)` store's descriptor as is; opens a path through libuv (`on_open`).
     fn get_fd(&mut self) -> Step {
         if let PathOrFileDescriptor::Fd(fd) = &self.file_store.pathlike {
             self.opened_fd = *fd;
@@ -1091,34 +1084,29 @@ impl<'a> ReadFileUV<'a> {
         );
     }
 
-    /// Shared by the libuv completions below: recover the task that owns `req`, run one
-    /// step on it, and let `finish` free it if that step ended the read.
+    /// Body of the libuv completions below: run `step` on the task that owns `req`, then `finish`.
     fn on_uv_complete(req: *mut libuv::fs_t, step: fn(&mut Self) -> Step) {
-        // SAFETY: `req.data` was set to the task pointer before the request was queued
-        // (`get_fd`, `on_file_open`, `queue_read`), and `req` is the `fs_t` embedded in that
-        // task. The request is only accessed through the task from here on.
+        // SAFETY: `data` was set to the task pointer before the request was queued; the
+        // request is accessed through the task from here on.
         let this: *mut Self = unsafe { (*req).data.cast::<Self>() };
-        // SAFETY: `this` is the live task that queued `req`; only a field address is taken.
+        // SAFETY: `this` is live; only a field address is taken.
         debug_assert!(unsafe { core::ptr::addr_of_mut!((*this).req) } == req);
-        // SAFETY: `this` is live and nothing else touches it while its completion runs. No step
-        // frees the task, so the exclusive borrow formed for this call ends when it returns.
+        // SAFETY: `this` is live and nothing else borrows it; no step frees it.
         let step = unsafe { step(&mut *this) };
-        // SAFETY: `this` is still live; `finish` is the only thing that frees it.
+        // SAFETY: `this` is still live; only `finish` frees it.
         unsafe { Self::finish(this, step) };
     }
 
-    /// Takes `*mut Self`, not `&mut self`: a finished read turns the pointer back into the
-    /// `Box` that `start_with_ctx` leaked and drops it here, and a `&mut self` argument would
-    /// have to stay dereferenceable until this returned.
+    /// Takes `*mut Self`, not `&mut self`: on [`Step::Done`] this reclaims the `Box`
+    /// `start_with_ctx` leaked and drops it, which a `&mut self` argument would have to outlive.
     ///
     /// # Safety
-    /// `this` must be the live task allocated in `start_with_ctx`, with no borrow of it
-    /// outstanding. If `step` is [`Step::Done`], `*this` is freed before this returns.
+    /// `this` is the live task from `start_with_ctx` and nothing borrows it; on `Done` it is
+    /// freed here.
     unsafe fn finish(this: *mut Self, step: Step) {
         let Step::Done = step else { return };
         log!("ReadFileUV.finalize");
-        // SAFETY: caller contract — `this` is the allocation `start_with_ctx` leaked, and
-        // nothing borrows it: the step that reported `Done` has returned.
+        // SAFETY: caller contract.
         let mut task = unsafe { bun_core::heap::take(this) };
 
         let completion = task.completion.take().expect("a ReadFileUV completes once");
@@ -1137,8 +1125,7 @@ impl<'a> ReadFileUV<'a> {
             })
         };
 
-        // The completion may inspect the store, so it runs before `task` (which holds the
-        // store reference, the request and the loop reference) is dropped.
+        // The completion may inspect the store, which `task` holds a reference to.
         completion.complete(result);
         drop(task);
         log!("ReadFileUV.finalize destroy");

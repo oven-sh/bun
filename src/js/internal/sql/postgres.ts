@@ -704,7 +704,9 @@ class ListenConnection {
       throw err;
     }
 
-    if (onlisten !== undefined && this.#channels.get(channel) === entry) {
+    // Our registration pins the entry, so only close() can have removed it meanwhile.
+    if (this.#channels.get(channel) !== entry) throw this.#adapter.connectionClosedError();
+    if (onlisten !== undefined) {
       entry.addOnlisten(onlisten);
       invoke(onlisten);
     }

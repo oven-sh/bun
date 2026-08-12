@@ -679,6 +679,23 @@ describe("close()", () => {
     await subscription.unlisten();
   });
 
+  test("in the same tick as a listen() on the live connection rejects it before any LISTEN is sent", async () => {
+    await using server = await mockServer();
+    const sql = client(server.url);
+    await sql.listen("keep", () => {});
+    // Plain awaits: this continuation is inside the live connection's data callback (see the reconnect suite).
+    const outcome = sql
+      .listen("ch", () => {})
+      .then(
+        () => "resolved",
+        (err: Error) => err.message,
+      );
+    const closing = sql.close();
+    expect(await outcome).toBe("Connection closed");
+    await closing;
+    expect(server.queries).toEqual(['LISTEN "keep"']);
+  });
+
   test("during the handshake aborts it and rejects the listen()", async () => {
     const { port, server } = await neverAnsweringServer();
     try {

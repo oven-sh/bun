@@ -14,12 +14,6 @@ pub struct Cat {
     pub(crate) state: CatState,
 }
 
-/// An input is finished once the reader has reported done (`in_done`, with the
-/// read error's errno in `errno`, 0 on EOF) and every stdout chunk queued from
-/// it has completed (`chunks_done >= chunks_queued`); whichever callback
-/// observes both acts on `errno`. Queued chunks are never cancelled on a read
-/// error: a cancelled chunk completes without calling back, so nothing would
-/// be left to finish the command.
 #[derive(Default)]
 pub enum CatState {
     #[default]
@@ -28,7 +22,7 @@ pub enum CatState {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
-        /// Exit code once the queued chunks have drained.
+        /// Errno the reader finished with (0 on EOF); becomes the exit code.
         errno: ExitCode,
     },
     ExecFilepathArgs {
@@ -41,9 +35,8 @@ pub enum CatState {
         chunks_queued: usize,
         chunks_done: usize,
         in_done: bool,
-        /// Non-zero once the current file failed to read: the command ends
-        /// with it as the exit code once the queued chunks have drained,
-        /// instead of moving on to the next file.
+        /// Errno the current file's reader finished with (0 on EOF); non-zero
+        /// ends the command instead of moving on to the next file.
         errno: ExitCode,
     },
     WaitingWriteErr,
@@ -54,6 +47,80 @@ pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
+}
+
+impl CatState {
+    /// A stdout chunk queued from the input completed.
+    fn chunk_done(&mut self) -> Step {
+        match self {
+            CatState::ExecStdin { chunks_done, .. }
+            | CatState::ExecFilepathArgs { chunks_done, .. } => {
+                *chunks_done += 1;
+            }
+            CatState::WaitingWriteErr => return Step::Done(1),
+            CatState::Idle => panic!("Invalid state"),
+        }
+        self.input_step()
+    }
+
+    /// The input's reader finished, with `errno` (0 on EOF). The chunks it
+    /// queued are left to drain: a cancelled chunk never calls back.
+    fn reader_done(&mut self, errno: ExitCode) -> Step {
+        match self {
+            CatState::ExecStdin {
+                in_done,
+                errno: st_errno,
+                ..
+            }
+            | CatState::ExecFilepathArgs {
+                in_done,
+                errno: st_errno,
+                ..
+            } => {
+                *in_done = true;
+                *st_errno = errno;
+            }
+            CatState::WaitingWriteErr | CatState::Idle => return Step::Suspend,
+        }
+        self.input_step()
+    }
+
+    /// The input is over once its reader is done and every chunk it queued
+    /// has completed, whichever of the two happens last.
+    fn input_step(&mut self) -> Step {
+        match self {
+            CatState::ExecStdin {
+                in_done,
+                chunks_queued,
+                chunks_done,
+                errno,
+            } => {
+                if *in_done && *chunks_done >= *chunks_queued {
+                    Step::Done(*errno)
+                } else {
+                    Step::Suspend
+                }
+            }
+            CatState::ExecFilepathArgs {
+                in_done,
+                chunks_queued,
+                chunks_done,
+                errno,
+                reader,
+                ..
+            } => {
+                if !*in_done || *chunks_done < *chunks_queued {
+                    Step::Suspend
+                } else if *errno != 0 {
+                    *reader = None;
+                    Step::Done(*errno)
+                } else {
+                    Step::Next
+                }
+            }
+            CatState::WaitingWriteErr | CatState::Idle => unreachable!("checked by the callers"),
+        }
+    }
 }
 
 impl Cat {
@@ -276,41 +343,11 @@ impl Cat {
             return Builtin::done(interp, cmd, errno);
         }
 
-        let step = match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                errno,
-            } => {
-                *chunks_done += 1;
-                if *in_done && *chunks_done >= *chunks_queued {
-                    Step::Done(*errno)
-                } else {
-                    Step::Suspend
-                }
-            }
-            CatState::ExecFilepathArgs {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                errno,
-                reader,
-                ..
-            } => {
-                *chunks_done += 1;
-                if !*in_done || *chunks_done < *chunks_queued {
-                    Step::Suspend
-                } else if *errno != 0 {
-                    *reader = None;
-                    Step::Done(*errno)
-                } else {
-                    Step::Next
-                }
-            }
-            CatState::WaitingWriteErr => Step::Done(1),
-            _ => panic!("Invalid state"),
-        };
+        let step = Self::state_mut(interp, cmd).state.chunk_done();
+        Self::take_step(interp, cmd, step)
+    }
+
+    fn take_step(interp: &Interpreter, cmd: NodeId, step: Step) -> Yield {
         match step {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
@@ -349,47 +386,8 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
-        let step = match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                errno: st_errno,
-            } => {
-                *st_errno = errno;
-                *in_done = true;
-                if *chunks_done >= *chunks_queued {
-                    Step::Done(errno)
-                } else {
-                    Step::Suspend
-                }
-            }
-            CatState::ExecFilepathArgs {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                errno: st_errno,
-                reader,
-                ..
-            } => {
-                *st_errno = errno;
-                *in_done = true;
-                if *chunks_done < *chunks_queued {
-                    Step::Suspend
-                } else if errno != 0 {
-                    *reader = None;
-                    Step::Done(errno)
-                } else {
-                    Step::Next
-                }
-            }
-            CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
-        };
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        let step = Self::state_mut(interp, cmd).state.reader_done(errno);
+        Self::take_step(interp, cmd, step)
     }
 }
 

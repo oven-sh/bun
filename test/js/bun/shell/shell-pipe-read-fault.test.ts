@@ -453,7 +453,7 @@ async function expectCatReadFaultAfterChunk(via: "arg" | "redirect") {
     [],
     {
       BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
-      SHELL_FAIL_EPOLL_REARM_INO: String(statSync(fifo).ino),
+      SHELL_FAIL_EPOLL_REARM_INO: statSync(fifo, { bigint: true }).ino.toString(),
       CAT_FIFO: fifo,
       CAT_FIFO_VIA: via,
     },

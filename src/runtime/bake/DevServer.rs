@@ -4295,9 +4295,7 @@ pub(super) fn finalize_bundle(
                 ir.client_components_removed.as_slice(),
             )
         };
-        // `registerUpdate` is async. The runtime (hmr-runtime-server.ts) reports
-        // a module that throws while the update is applied, so the promise
-        // returned here is not observed.
+        // The returned promise is not observed: the runtime reports failed updates itself.
         if let Err(err) = dev.server_register_update_callback.get().unwrap().call(
             global,
             global.to_js_value(),

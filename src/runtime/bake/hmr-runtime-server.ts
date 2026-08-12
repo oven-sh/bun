@@ -159,12 +159,8 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    // The dev server does not observe the promise this function returns, so a
-    // module (or a hot callback) throwing while the update is applied has to be
-    // reported here; as an unhandled rejection it would end the process.
-    // Deliberately not awaited: requests deferred on this bundle are dispatched
-    // as soon as this function returns and read the manifest updated below, so
-    // that update should not wait for the reload to settle.
+    // Unhandled, a rejection here exits the process. Not awaited: requests deferred
+    // on this bundle run as soon as this returns and read the manifest updated below.
     replaceModules(modules).catch(err => {
       console.error(err);
     });

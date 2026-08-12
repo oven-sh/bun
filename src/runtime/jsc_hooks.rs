@@ -1369,8 +1369,9 @@ fn body_mixin_get_blob(
     Ok(None)
 }
 
-/// `process.exit(code)`. Main-thread is `noreturn`; in a
-/// worker it returns and the caller `panic!`s.
+/// `process.exit(code)`. `noreturn` on the main thread except under
+/// `bun run --watch` and in a worker, where it returns after requesting
+/// termination.
 ///
 /// # Safety
 /// `global` is the live VM global.

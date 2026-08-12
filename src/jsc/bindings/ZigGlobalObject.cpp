@@ -3010,6 +3010,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
+
+    // A `--watch` process.exit() ended this run: callbacks queued before it
+    // (process.nextTick in particular has no other gate) must not resume
+    // while the watcher waits for the next change.
+    if (Bun__VM__isWatchExitRequested(bunVM())) [[unlikely]]
+        return 1;
+
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
@@ -3215,6 +3222,15 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     }
 
     return false;
+}
+
+extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // The main thread builds the termination-exception singleton lazily
+    // (workers build it at startup), so create it before requesting.
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)

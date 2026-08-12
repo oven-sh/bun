@@ -301,6 +301,14 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
+    /// `bun run --watch` only: `process.exit()` keeps the watcher alive
+    /// instead of exiting. `--hot` (in-process re-eval, where one-shot exit
+    /// state would persist across runs) and `bun test --watch` leave it unset.
+    pub watch_exit_keepalive: bool,
+    /// `process.exit()` was called under [`Self::watch_exit_keepalive`]: the
+    /// run was unwound via a JSC termination exception and the event loop
+    /// stays quiet until the watcher re-execs on the next file change.
+    pub watch_exit_requested: bool,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
@@ -1260,7 +1268,11 @@ impl VirtualMachine {
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down || !self.script_allowed() {
+        // `watch_exit_requested`: callbacks queued before a `--watch`
+        // `process.exit()` must not resume. On Windows libuv fires JS timers
+        // inside `tick_possibly_forever` after the termination is cleared, so
+        // this status check is what stops them.
+        if self.is_shutting_down || self.watch_exit_requested || !self.script_allowed() {
             crate::ScriptExecutionStatus::Stopped
         } else {
             crate::ScriptExecutionStatus::Running
@@ -1298,6 +1310,11 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        // A `--watch` `process.exit()` ends the run, like an uncaught
+        // exception does via `unhandled_error_counter` below.
+        if self.watch_exit_requested {
+            return false;
+        }
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
@@ -1314,10 +1331,33 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
+        if self.watch_exit_requested {
+            return false;
+        }
         let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// Clears the sticky termination exception a `--watch` `process.exit()`
+    /// left pending, so the event loop can keep ticking while the watcher
+    /// waits. `watch_exit_requested` stays set until the re-exec.
+    /// `process.exit()` under [`Self::watch_exit_keepalive`]: unwind the run
+    /// via a JSC termination and leave the watcher alive. Inverse:
+    /// [`Self::clear_watch_exit_termination`].
+    pub fn request_watch_exit_termination(&mut self) {
+        self.watch_exit_requested = true;
+        // The main thread builds the termination-exception singleton lazily
+        // (workers build it at startup), so create it before firing the trap.
+        self.global().request_termination();
+        self.jsc_vm().notify_need_termination();
+    }
+
+    pub fn clear_watch_exit_termination(&mut self) {
+        if self.watch_exit_requested {
+            self.global().clear_termination_exception();
+        }
     }
 
     pub fn wakeup(&mut self) {
@@ -1649,8 +1689,14 @@ impl VirtualMachine {
             }
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
-            // `bun_runtime::node::process::exit` (main-thread `noreturn`).
+            // `bun_runtime::node::process::exit`, normally `noreturn` on the
+            // main thread.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
+            // Under `--watch`, `process_exit` returns after requesting
+            // termination; let that unwind instead of panicking.
+            if self.watch_exit_requested {
+                return true;
+            }
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
@@ -1667,12 +1713,17 @@ impl VirtualMachine {
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
             if self.exit_on_uncaught_exception && self.is_main_thread() {
                 self.run_error_handler(err, None);
-                // `process_exit` emits `exit`, re-entering here if a listener
-                // throws. No handler is running, so drop the recursion guard or
-                // that re-entry exits 7 ("handler threw") instead of 1.
+                // Outside `--watch`, `process_exit` emits `exit`, re-entering
+                // here if a listener throws. No handler is running, so drop
+                // the recursion guard or that re-entry exits 7 ("handler
+                // threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                // As above: `process_exit` may return under `--watch`.
+                if self.watch_exit_requested {
+                    return true;
+                }
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
@@ -1680,13 +1731,10 @@ impl VirtualMachine {
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
-        // Note: this reset must cover BOTH the FFI call and the
-        // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
+        // The flag must stay raised through the FFI call AND the
+        // `onUnhandledRejection` callback so re-entry trips the recursion
+        // guard above. That guard never re-enters this frame (it diverges or
+        // returns `true`), so a linear reset suffices.
         self.is_handling_uncaught_exception = false;
         handled
     }
@@ -1720,17 +1768,23 @@ impl VirtualMachine {
                     return;
                 }
                 self.tick();
-                if !self.script_allowed() {
+                // Also a watch exit during this tick: run no more JS.
+                if !self.script_allowed() || self.watch_exit_requested {
                     return;
                 }
                 self.auto_tick_active();
                 dispatch = true;
             }
 
-            // Same guards as on entry: a fatal throw or a stop requested during
-            // the inner drain must not re-dispatch. The main-thread case already
+            // Same guards as on entry: a fatal throw, a stop request, or a
+            // watch exit (possible inside `auto_tick_active`) during the
+            // inner drain must not re-dispatch. The main-thread case already
             // hard-exits via `exit_on_uncaught_exception`; this covers workers.
-            if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
+            if dispatch
+                && self.unhandled_error_counter == 0
+                && self.script_allowed()
+                && !self.watch_exit_requested
+            {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 
@@ -2244,10 +2298,11 @@ pub struct RuntimeHooks {
     /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
-    /// `process.exit(global, code)`. Main-thread is `noreturn`; in a worker
-    /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
-    /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
-    /// slot instead of the linker.
+    /// `process.exit(global, code)`. `noreturn` on the main thread EXCEPT
+    /// under `bun run --watch` and in a worker, where it returns after
+    /// requesting termination — callers must handle the returning case.
+    /// Lives in `bun_runtime::node` (forward-dep cycle), so
+    /// [`uncaught_exception`] reaches it through this slot.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
@@ -2964,6 +3019,11 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             loop {
+                // A watch exit leaves the entry promise pending forever; stop
+                // spinning and let the watcher loop take over.
+                if self.watch_exit_requested {
+                    break;
+                }
                 let Some(p) = self.pending_internal_promise else {
                     break;
                 };
@@ -4901,6 +4961,14 @@ impl VirtualMachine {
         }
         let str = bun_core::EncodedSlice::latin1(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
+    }
+
+    /// `node:vm` consults this before mapping a main-thread termination onto
+    /// its SIGINT/timeout errors: a `--watch` `process.exit()` termination
+    /// must propagate to the top of the run instead.
+    #[unsafe(export_name = "Bun__VM__isWatchExitRequested")]
+    pub extern "C" fn is_watch_exit_requested(&self) -> bool {
+        self.watch_exit_requested
     }
 
     /// Whether the per-test-isolation source provider cache is active.

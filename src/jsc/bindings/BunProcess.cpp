@@ -1340,6 +1340,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
+            // A termination (a `--watch` process.exit() in the callback, a
+            // worker being stopped) is not a throw: it stays pending and
+            // keeps unwinding; we fall through to `return true`.
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
             // if an exception is thrown in the uncaughtException handler, we abort
@@ -3711,9 +3714,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
-    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // WebWorker exit path it called requests JSC termination (guarded so it's a
-    // no-op when re-entered from a process.on('exit') handler).
+    // Main-thread Bun__Process__exit is noreturn, except under
+    // `bun run --watch` and in a worker, where it returns after requesting
+    // JSC termination (which then unwinds JS at the next safepoint).
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

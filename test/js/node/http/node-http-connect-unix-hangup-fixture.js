@@ -27,7 +27,8 @@ function maybeMeasure() {
   setTimeout(() => {
     const cpu = process.cpuUsage(cpu0);
     const cpuMs = (cpu.user + cpu.system) / 1000;
-    verdict = cpuMs < WINDOW_MS / 4 ? "idle" : "spun " + Math.round(cpuMs) + "ms cpu in " + WINDOW_MS + "ms";
+    // A spin burns >= the whole window; half leaves room for teardown + GC on debug/ASAN builds.
+    verdict = cpuMs < WINDOW_MS / 2 ? "idle" : "spun " + Math.round(cpuMs) + "ms cpu in " + WINDOW_MS + "ms";
     for (const socket of held) if (!socket.destroyed) socket.end();
     report();
   }, WINDOW_MS);

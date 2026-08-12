@@ -98,6 +98,25 @@ pub struct WriteFile {
 bun_threading::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
 
+/// What a pool-side step of a `WriteFile` ends in; see [`WriteFile::proceed`].
+#[cfg(not(windows))]
+#[derive(Clone, Copy)]
+enum Next {
+    WriteLoop,
+    WaitForWritable,
+    Finish,
+}
+
+/// Outcome of one `write(2)` in [`WriteFile::do_write`].
+#[cfg(not(windows))]
+enum WriteStep {
+    Wrote(usize),
+    /// `EAGAIN` on a pollable fd; the caller hands the file to the io thread.
+    WouldBlock,
+    /// `errno` / `system_error` are set.
+    Failed,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // FileOpener / FileCloser
 // ──────────────────────────────────────────────────────────────────────────
@@ -201,15 +220,20 @@ impl WriteFile {
         WorkPool::schedule(&raw mut this.task);
     }
 
+    /// io thread: the `io::RequestCallback` installed by `wait_for_writable`.
+    ///
+    /// # Safety
+    /// `io::RequestCallback`'s contract: `request` is the pointer
+    /// `wait_for_writable` scheduled.
     #[cfg(not(windows))]
-    pub(crate) fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
+    pub(crate) unsafe fn on_request_writable(request: *mut io::Request) -> io::Action {
         bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
-        request.scheduled = false;
-        // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
-        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        // SAFETY: `request` points to WriteFile.io_request (intrusive), so `this` is the
-        // live parent; `fd` copy and the `io_poll` field borrow are the only borrows formed.
-        let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
+        // SAFETY: fn contract — `request` is `&raw mut (*this).io_request` of a
+        // live `WriteFile`, so the parent is reachable through it.
+        let this = unsafe { WriteFile::from_io_request(request) };
+        // SAFETY: as above; the `fd` read ends here and `io_poll` is only
+        // projected, so no reference into the parent outlives this call.
+        let (fd, poll) = unsafe { ((*this).opened_fd, &raw mut (*this).io_poll) };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
             ctx: this.cast::<()>(),
@@ -219,13 +243,26 @@ impl WriteFile {
         })
     }
 
+    /// Hands `*this` to the io thread until `opened_fd` is writable; it comes
+    /// back through `on_ready` / `on_io_error`. The schedule is the last access
+    /// (see `update` for why this is pointer-shaped).
+    ///
+    /// # Safety
+    /// `this` is the live `WriteFile` this thread currently holds; the caller
+    /// must not touch it afterwards.
     #[cfg(not(windows))]
-    pub(crate) fn wait_for_writable(&mut self) {
-        self.close_after_io = true;
-        self.io_request
-            .store_callback_seq_cst(Self::on_request_writable);
-        if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
+    pub(crate) unsafe fn wait_for_writable(this: *mut Self) {
+        // SAFETY: fn contract. The `store_callback_seq_cst` reborrow ends with
+        // its statement; the request is projected (not reborrowed) for
+        // `schedule`, which needs the whole `WriteFile` reachable through it.
+        unsafe {
+            (*this).close_after_io = true;
+            (*this)
+                .io_request
+                .store_callback_seq_cst(Self::on_request_writable);
+            if !(*this).io_request.scheduled {
+                io::IoRequestLoop::schedule(&raw mut (*this).io_request);
+            }
         }
     }
 
@@ -286,8 +323,12 @@ impl WriteFile {
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
+    //
+    // Reports `WouldBlock` rather than waiting itself: the wait hands the file to
+    // the io thread, so it has to be the caller's last step, not happen under
+    // this `&mut self` with the caller about to read `errno`.
     #[cfg(not(windows))]
-    pub(crate) fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
+    fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
@@ -302,8 +343,8 @@ impl WriteFile {
         loop {
             match &result {
                 bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
                     self.total_written += *res;
+                    return WriteStep::Wrote(*res);
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == io::RETRY {
@@ -312,19 +353,15 @@ impl WriteFile {
                             // this is fine on kqueue, but not on epoll.
                             continue;
                         }
-                        self.wait_for_writable();
-                        return false;
+                        return WriteStep::WouldBlock;
                     } else {
                         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                         self.system_error = Some(err.to_system_error().into());
-                        return false;
+                        return WriteStep::Failed;
                     }
                 }
             }
-            break;
         }
-
-        true
     }
 
     pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
@@ -385,26 +422,56 @@ impl WriteFile {
             .is_path()
     }
 
+    /// Ends with one of two hand-overs: `do_close` gives `*this` to the io
+    /// thread, otherwise `io_task.finish()` gives it to the JS thread, which
+    /// frees it. Pointer-shaped for that reason (see `update`).
+    ///
+    /// # Safety
+    /// `this` is the live `WriteFile` this thread currently holds; the caller
+    /// must not touch it afterwards.
     #[cfg(not(windows))]
-    fn on_finish(&mut self) {
+    unsafe fn on_finish(this: *mut Self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
-        let close_after_io = self.close_after_io;
-        if self.do_close(self.is_allowed_to_close()) {
+        // SAFETY: fn contract; the read and the `is_allowed_to_close` reborrow
+        // end before `do_close`.
+        let (close_after_io, is_allowed_to_close_fd) =
+            unsafe { ((*this).close_after_io, (*this).is_allowed_to_close()) };
+        // SAFETY: fn contract, passed through; on `true` the io thread owns
+        // `*this` and nothing below runs.
+        if unsafe { Self::do_close(this, is_allowed_to_close_fd) } {
             return;
         }
         if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
+            // SAFETY: fn contract — `do_close` returned `false`, so `*this` is
+            // still ours; the `take` ends before `finish` posts the job.
+            if let Some(io_task) = unsafe { (*this).io_task.take() } {
                 io_task.finish();
             }
         }
     }
 
+    /// `FileOpener::get_fd`'s callback, reached from `JobContext::run`. Both
+    /// of those hand this frame `&mut self`, so unlike the pool re-entries
+    /// (`update`) a reference to the object is still live up the stack during
+    /// the hand-over; this frame at least finishes its own use of `self`
+    /// first and hands over through a pointer as its last act.
     #[cfg(not(windows))]
-    fn run_with_fd(&mut self, fd_: Fd) {
+    fn run_with_fd(&mut self, fd: Fd) {
+        let next = self.prepare_write(fd);
+        let this: *mut Self = self;
+        // SAFETY: `this` is the live `WriteFile` `get_fd` called us with, and
+        // this frame does not use `self` or `this` after the call.
+        unsafe { Self::proceed(this, next) }
+    }
+
+    /// The part of starting a write that happens before anything is handed
+    /// on: deciding whether the fd can block, preallocating, and the initial
+    /// writability check.
+    #[cfg(not(windows))]
+    fn prepare_write(&mut self, fd_: Fd) -> Next {
         if fd_ == Fd::INVALID || self.errno.is_some() {
-            self.on_finish();
-            return;
+            return Next::Finish;
         }
 
         let fd = self.opened_fd;
@@ -448,8 +515,7 @@ impl WriteFile {
         // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
-            self.wait_for_writable();
-            return;
+            return Next::WaitForWritable;
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -469,38 +535,80 @@ impl WriteFile {
             }
         }
 
-        self.do_write_loop();
+        Next::WriteLoop
     }
 
     fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
-        // (intrusive) registered in `on_writable`/`init`; recover parent.
-        let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On macOS, we use one-shot mode, so we don't need to unregister.
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: `this` is the live parent (see above); scoped access.
-            unsafe { (*this).close_after_io = false };
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&raw mut self.task` (intrusive) scheduled by `on_ready` /
+        // `on_io_error`; recover the parent, which is this thread's until
+        // `update` hands it on.
+        unsafe {
+            let this = WriteFile::from_task_ptr(task);
+            // On macOS, we use one-shot mode, so we don't need to unregister.
+            #[cfg(target_os = "macos")]
+            {
+                (*this).close_after_io = false;
+            }
+            Self::update(this);
         }
-        // SAFETY: `this` is the live parent (see above); exclusive borrow scoped to the call.
-        unsafe { (*this).do_write_loop() };
     }
 
-    pub(crate) fn update(&mut self) {
-        self.do_write_loop();
-    }
-
-    fn do_write_loop(&mut self) {
+    /// Pool thread re-entry (`do_write_loop_task`, `on_close_io_request`).
+    /// Pointer-shaped, like everything it calls, for the reason given on
+    /// `ReadFile::update`: every path below ends by handing `*this` to another
+    /// thread.
+    ///
+    /// # Safety
+    /// `this` is the live `WriteFile` this thread currently holds; the caller
+    /// must not touch it afterwards.
+    pub(crate) unsafe fn update(this: *mut Self) {
         #[cfg(windows)]
         {
-            return; // why
+            let _ = this;
+            // Windows writes go through WriteFileWindows; this is never scheduled.
         }
         #[cfg(not(windows))]
-        self.do_write_loop_posix();
+        {
+            // SAFETY: fn contract, passed through.
+            unsafe { Self::do_write_loop(this) }
+        }
     }
 
+    /// Performs the step a pool-side function decided on once its own
+    /// accesses to `*this` are over. `WriteLoop` writes until it has to hand
+    /// the object on; the other two are the hand-overs themselves.
+    ///
+    /// # Safety
+    /// As [`update`](Self::update).
     #[cfg(not(windows))]
-    fn do_write_loop_posix(&mut self) {
+    unsafe fn proceed(this: *mut Self, next: Next) {
+        // SAFETY: fn contract, passed through.
+        unsafe {
+            match next {
+                Next::WriteLoop => Self::do_write_loop(this),
+                Next::WaitForWritable => Self::wait_for_writable(this),
+                Next::Finish => Self::on_finish(this),
+            }
+        }
+    }
+
+    /// # Safety
+    /// As [`update`](Self::update).
+    #[cfg(not(windows))]
+    unsafe fn do_write_loop(this: *mut Self) {
+        // SAFETY: fn contract; the reborrow ends with the call, before
+        // `proceed` hands the object on through `this`.
+        let next = unsafe { (*this).write_until_blocked() };
+        // SAFETY: fn contract, passed through.
+        unsafe { Self::proceed(this, next) }
+    }
+
+    /// Writes until the write is complete (`Finish`: everything written, a
+    /// zero-length write, closing, or an error recorded in `errno`) or the fd
+    /// would block (`WaitForWritable`). Never produces `WriteLoop`.
+    #[cfg(not(windows))]
+    fn write_until_blocked(&mut self) -> Next {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
             // reshaped for borrowck — capture len/offset before mut borrow
@@ -508,31 +616,22 @@ impl WriteFile {
             let remain_len = remain_full.len() - off;
 
             if remain_len > 0 && self.errno.is_none() {
-                let mut wrote: usize = 0;
-                let continue_writing = self.do_write(off, remain_len, &mut wrote);
-                if !continue_writing {
-                    // Stop writing, we errored
-                    if self.errno.is_some() {
-                        self.on_finish();
-                        return;
-                    }
-
-                    // Stop writing, we need to wait for it to become writable.
-                    return;
-                }
+                let wrote = match self.do_write(off, remain_len) {
+                    WriteStep::Wrote(wrote) => wrote,
+                    WriteStep::WouldBlock => return Next::WaitForWritable,
+                    WriteStep::Failed => return Next::Finish,
+                };
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block
                     && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
                 {
-                    self.wait_for_writable();
-                    return;
+                    return Next::WaitForWritable;
                 }
 
                 if wrote == 0 {
                     // we are done, we received EOF
-                    self.on_finish();
-                    return;
+                    return Next::Finish;
                 }
 
                 continue;
@@ -541,7 +640,7 @@ impl WriteFile {
             break;
         }
 
-        self.on_finish();
+        Next::Finish
     }
 }
 

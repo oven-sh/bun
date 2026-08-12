@@ -11,6 +11,7 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -535,6 +536,81 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // A non-blocking FIFO that is already full when Bun.write() starts: the
+  // WriteFile is handed to the io thread before its first write(), again each
+  // time the pipe fills up while the payload drains, and (on Linux) once more
+  // to unregister the fd when it is done. The payload is at least 256 KiB so
+  // Bun.write() takes the WriteFile path rather than the synchronous one.
+  it.skipIf(isWindows)("Bun.write(Bun.file(fd)) to a full non-blocking FIFO waits for the reader", async () => {
+    const size = 256 * 1024;
+    using dir = tempDir("bun-write-fifo", {});
+    const fifo = join(String(dir), "out.fifo");
+    mkfifo(fifo);
+    // A reader has to exist for the child's O_NONBLOCK open of the write end to
+    // succeed; this one never reads, the readFile below does.
+    const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      const script = `
+        const fs = require("fs");
+        const fd = fs.openSync(process.env.FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const dest = Bun.file(fd);
+        // fstat()s the fd: Bun.write() only polls a destination it knows is not a regular file.
+        dest.size;
+        const chunk = Buffer.alloc(4096, "P");
+        let filled = 0;
+        try {
+          for (;;) filled += fs.writeSync(fd, chunk);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+        const written = Bun.write(dest, Buffer.alloc(${size}, "W"));
+        process.stderr.write("filled " + filled + "\\n");
+        process.stdout.write(String(await written));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, FIFO: fifo },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = proc.stdout.text();
+      const filled = Promise.withResolvers();
+      const stderr = (async () => {
+        let text = "";
+        for await (const chunk of proc.stderr) {
+          text += Buffer.from(chunk).toString();
+          const m = /^filled (\d+)\n/m.exec(text);
+          if (m) filled.resolve(Number(m[1]));
+        }
+        filled.reject(new Error(`child exited before filling the FIFO: ${text}`));
+        return text;
+      })();
+      // Only start draining once the child has filled the pipe and started the write.
+      const prefill = await filled.promise;
+      const data = await fs.promises.readFile(fifo);
+      const [resolved, stderrText, exitCode] = await Promise.all([stdout, stderr, proc.exited]);
+
+      expect({
+        prefilled: prefill > 0,
+        resolved,
+        stderr: stderrText,
+        length: data.length,
+        prefillIntact: data.subarray(0, prefill).equals(Buffer.alloc(prefill, "P")),
+        payloadIntact: data.subarray(prefill).equals(Buffer.alloc(size, "W")),
+      }).toEqual({
+        prefilled: true,
+        resolved: String(size),
+        stderr: `filled ${prefill}\n`,
+        length: prefill + size,
+        prefillIntact: true,
+        payloadIntact: true,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.closeSync(holder);
+    }
   });
 
   it("Bun.file(0) survives GC", async () => {

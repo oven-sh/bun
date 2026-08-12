@@ -1,6 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { bunEnv, bunExe } from "harness";
+import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -282,8 +283,9 @@ describe("AbortSignal.timeout", () => {
 describe("runtime timeouts are not fake timers", () => {
   // Outlives the 50ms timeout by a wide margin but still exits on its own, so a
   // timeout that never fires shows up as a normal exit instead of a hang.
+  const sleepArgs = ["-e", "await Bun.sleep(3000)"];
   const sleepingChild = () => ({
-    cmd: [bunExe(), "-e", "await Bun.sleep(3000)"],
+    cmd: [bunExe(), ...sleepArgs],
     env: bunEnv,
     stdout: "ignore" as const,
     stderr: "ignore" as const,
@@ -314,6 +316,18 @@ describe("runtime timeouts are not fake timers", () => {
       exitedDueToTimeout: true,
       signalCode: "SIGKILL",
     });
+  });
+
+  // node:child_process's sync functions hand their timeout to Bun.spawnSync.
+  test("child_process.spawnSync({ timeout }) times out while fake timers are active", () => {
+    vi.useFakeTimers();
+    const result = childProcessSpawnSync(bunExe(), sleepArgs, {
+      env: bunEnv,
+      stdio: "ignore",
+      timeout: 50,
+      killSignal: "SIGKILL",
+    });
+    expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
   });
 
   // Accepts connections and never answers, so only the client's own connection

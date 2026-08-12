@@ -2104,3 +2104,280 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
 pub struct in_addr {
     pub s_addr: u32,
 }
+
+// Run by `bun run rust:miri` (Tree Borrows): a request that frees itself in
+// its completion, the way every dns_jsc request type does, delivered through
+// each thunk and through the two `Channel` methods that complete a request
+// without calling c-ares. With any of those frames holding the request as a
+// reference, Miri rejects the free ("the strongly protected tag disallows
+// deallocations"); nothing here reaches a foreign function.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct Request {
+        completed: Rc<Cell<Option<Error>>>,
+    }
+
+    impl Request {
+        fn register() -> (*mut Request, Rc<Cell<Option<Error>>>) {
+            let completed = Rc::new(Cell::new(None));
+            let request = bun_core::heap::into_raw(Box::new(Request {
+                completed: Rc::clone(&completed),
+            }));
+            (request, completed)
+        }
+
+        fn complete(this: *mut Self, status: Option<Error>) {
+            // SAFETY: `this` is the pointer `register` leaked, delivered exactly
+            // once by the thunk under test.
+            let request = unsafe { bun_core::heap::take(this) };
+            request.completed.set(Some(
+                status.expect("every test completes with an error status"),
+            ));
+        }
+    }
+
+    impl HostentHandler for Request {
+        unsafe fn on_hostent(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            results: *mut struct_hostent,
+        ) {
+            assert!(results.is_null());
+            Self::complete(this, status);
+        }
+    }
+
+    impl HostentWithTtlsHandler for Request {
+        const PARSE: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error> =
+            hostent_with_ttls::parse_a;
+
+        unsafe fn on_hostent_with_ttls(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            results: Option<Box<hostent_with_ttls>>,
+        ) {
+            assert!(results.is_none());
+            Self::complete(this, status);
+        }
+    }
+
+    impl NameinfoHandler for Request {
+        unsafe fn on_nameinfo(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            info: Option<struct_nameinfo>,
+        ) {
+            assert!(info.is_none());
+            Self::complete(this, status);
+        }
+    }
+
+    impl AddrInfoHandler for Request {
+        unsafe fn on_addr_info(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            results: *mut AddrInfo,
+        ) {
+            assert!(results.is_null());
+            Self::complete(this, status);
+        }
+    }
+
+    impl ReplyHandler<struct_ares_txt_reply> for Request {
+        unsafe fn on_reply(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            results: *mut struct_ares_txt_reply,
+        ) {
+            assert!(results.is_null());
+            Self::complete(this, status);
+        }
+    }
+
+    impl AnyHandler for Request {
+        unsafe fn on_any(
+            this: *mut Self,
+            status: Option<Error>,
+            _timeouts: i32,
+            results: Option<Box<struct_any_reply>>,
+        ) {
+            assert!(results.is_none());
+            Self::complete(this, status);
+        }
+    }
+
+    // Wired the way dns_jsc wires a CNAME query: `Channel::resolve` hands the
+    // request to a `struct_hostent` thunk.
+    impl ResolveHandler for Request {
+        const LOOKUP_NAME: &'static [u8] = b"cname";
+        const NS_TYPE: NSType = NSType::ns_t_cname;
+        unsafe extern "C" fn raw_callback(
+            ctx: *mut c_void,
+            status: c_int,
+            timeouts: c_int,
+            buffer: *mut u8,
+            buffer_length: c_int,
+        ) {
+            // SAFETY: forwarding the thunk's own arguments.
+            unsafe {
+                struct_hostent::callback_wrapper_cname::<Request>(
+                    ctx,
+                    status,
+                    timeouts,
+                    buffer,
+                    buffer_length,
+                )
+            }
+        }
+    }
+
+    type ParseThunk = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
+
+    /// Delivers `status` through a reply-parsing thunk and returns what the
+    /// request was completed with (after it has freed itself).
+    fn deliver(thunk: ParseThunk, status: c_int) -> Error {
+        let (request, completed) = Request::register();
+        // SAFETY: `request` is a live `*mut Request` registered for exactly this
+        // delivery (registration contract); a non-success status never reads
+        // the (null) reply buffer.
+        unsafe { thunk(request.cast::<c_void>(), status, 0, ptr::null_mut(), 0) };
+        completed.get().expect("thunk completed the request")
+    }
+
+    #[test]
+    fn hostent_thunks_free_the_request() {
+        assert_eq!(
+            deliver(
+                struct_hostent::callback_wrapper_cname::<Request>,
+                ARES_ENOTFOUND
+            ),
+            Error::ENOTFOUND
+        );
+        assert_eq!(
+            deliver(
+                struct_hostent::callback_wrapper_ns::<Request>,
+                ARES_ESERVFAIL
+            ),
+            Error::ESERVFAIL
+        );
+        assert_eq!(
+            deliver(
+                struct_hostent::callback_wrapper_ptr::<Request>,
+                ARES_EREFUSED
+            ),
+            Error::EREFUSED
+        );
+
+        let (request, completed) = Request::register();
+        // SAFETY: as in `deliver`, for the thunk `ares_gethostbyaddr` calls back through.
+        unsafe {
+            struct_hostent::host_callback_wrapper::<Request>(
+                request.cast::<c_void>(),
+                ARES_ETIMEOUT,
+                0,
+                ptr::null_mut(),
+            )
+        };
+        assert_eq!(completed.get(), Some(Error::ETIMEOUT));
+    }
+
+    #[test]
+    fn hostent_with_ttls_thunk_frees_the_request() {
+        assert_eq!(
+            deliver(
+                hostent_with_ttls::callback_wrapper::<Request>,
+                ARES_ECONNREFUSED
+            ),
+            Error::ECONNREFUSED
+        );
+    }
+
+    #[test]
+    fn reply_thunk_frees_the_request() {
+        assert_eq!(
+            deliver(
+                ares_reply_callback::<struct_ares_txt_reply, Request>,
+                ARES_ETIMEOUT
+            ),
+            Error::ETIMEOUT
+        );
+    }
+
+    #[test]
+    fn any_thunk_frees_the_request() {
+        assert_eq!(
+            deliver(
+                struct_any_reply::callback_wrapper::<Request>,
+                ARES_ECANCELLED
+            ),
+            Error::ECANCELLED
+        );
+    }
+
+    #[test]
+    fn nameinfo_thunk_frees_the_request() {
+        let (request, completed) = Request::register();
+        // SAFETY: as in `deliver`, for the `ares_getnameinfo` thunk.
+        unsafe {
+            struct_nameinfo::callback_wrapper::<Request>(
+                request.cast::<c_void>(),
+                ARES_ENOTFOUND,
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        assert_eq!(completed.get(), Some(Error::ENOTFOUND));
+    }
+
+    #[test]
+    fn addr_info_thunk_frees_the_request() {
+        let (request, completed) = Request::register();
+        // SAFETY: as in `deliver`, for the `ares_getaddrinfo` thunk.
+        unsafe {
+            AddrInfo::callback_wrapper::<Request>(
+                request.cast::<c_void>(),
+                ARES_EDESTRUCTION,
+                0,
+                ptr::null_mut(),
+            )
+        };
+        assert_eq!(completed.get(), Some(Error::EDESTRUCTION));
+    }
+
+    /// `Channel` is a zero-sized opaque handle (asserted next to its
+    /// definition), so a `&mut Channel` needs no c-ares behind it; the two
+    /// tests below only take the paths that complete before calling c-ares.
+    fn channel() -> &'static mut Channel {
+        Channel::opaque_mut(ptr::NonNull::<Channel>::dangling().as_ptr())
+    }
+
+    #[test]
+    fn resolve_completes_an_overlong_name_before_returning() {
+        let (request, completed) = Request::register();
+        let name = [b'a'; 1023];
+        // SAFETY: registration contract; a name of 1023 bytes is rejected before
+        // `ares_query`, so the request is completed (and freed) inside this call.
+        unsafe { channel().resolve::<Request>(&name, request) };
+        assert_eq!(completed.get(), Some(Error::EBADNAME));
+    }
+
+    #[test]
+    fn get_host_by_addr_completes_an_unparsable_address_before_returning() {
+        let (request, completed) = Request::register();
+        // SAFETY: registration contract; an empty address skips both
+        // `ares_inet_pton` calls and `ares_gethostbyaddr`, so the request is
+        // completed (and freed) inside this call.
+        unsafe { channel().get_host_by_addr::<Request>(b"", request) };
+        assert_eq!(completed.get(), Some(Error::ENOTIMP));
+    }
+}

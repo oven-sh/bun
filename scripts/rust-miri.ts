@@ -33,6 +33,9 @@ const repo = resolve(import.meta.dirname, "..");
 const MIRI_CRATES = [
   "bun_ast",
   "bun_base64",
+  // Declares c-ares externs; its tests only take the paths that complete a
+  // request without calling one.
+  "bun_cares_sys",
   "bun_clap",
   "bun_collections",
   "bun_dispatch",

@@ -11,6 +11,7 @@ on:
       # The FFI-free crate set covered by MIRI_CRATES in scripts/rust-miri.ts
       - "src/ast/**"
       - "src/base64/**"
+      - "src/cares_sys/**"
       - "src/clap/**"
       - "src/collections/**"
       - "src/dispatch/**"

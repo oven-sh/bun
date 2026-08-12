@@ -94,7 +94,8 @@ const extraArgs = process.argv.slice(2);
 const passes: string[][] = [];
 if (extraArgs.length > 0) {
   passes.push(extraArgs);
-  if (!extraArgs.some(a => a.startsWith("--target")) && MIRI_WINDOWS_CRATES.some(c => extraArgs.includes(c))) {
+  const hasTarget = extraArgs.some(a => a === "--target" || a.startsWith("--target="));
+  if (!hasTarget && MIRI_WINDOWS_CRATES.some(c => extraArgs.includes(c))) {
     passes.push(["--target", WINDOWS_TARGET, ...extraArgs]);
   }
 } else {

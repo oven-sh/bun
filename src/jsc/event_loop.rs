@@ -156,6 +156,59 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    // safe: `&mut bool` is ABI-identical to the non-null `bool*` out-param C++
+    // fills unconditionally.
+    safe fn AsyncContextFrame__suspend(
+        global: &JSGlobalObject,
+        needs_cleanup: &mut bool,
+    ) -> JSValue;
+    safe fn AsyncContextFrame__resume(
+        global: &JSGlobalObject,
+        context: JSValue,
+        needs_cleanup: bool,
+    );
+}
+
+/// The AsyncLocalStorage context of the JS frame that is synchronously
+/// dispatching event loop work ([`EventLoop::wait_for_promise`], a microtask
+/// checkpoint), taken out of the global's async context slot for the duration
+/// of the dispatch and reinstalled on drop.
+///
+/// Dispatch assumes the slot is empty, as it is when the event loop itself
+/// dispatches: a callback scheduled with no context active is stored unwrapped
+/// and installs nothing when run, so it would otherwise observe the dispatching
+/// frame's context. Callbacks that did capture a context install their own and
+/// are unaffected. Callers that did not have a context get `None` and pay
+/// nothing beyond the slot read.
+#[must_use = "the context is reinstalled when this guard drops"]
+pub struct SuspendedAsyncContext<'a> {
+    global: &'a JSGlobalObject,
+    // Protected: the dispatch can run GC, and the frame that installed the
+    // context does not necessarily hold the array anywhere a GC root can see.
+    context: jsc::ProtectedJSValue,
+    needs_cleanup: bool,
+}
+
+impl<'a> SuspendedAsyncContext<'a> {
+    pub fn take(global: &'a JSGlobalObject) -> Option<Self> {
+        jsc::mark_binding();
+        let mut needs_cleanup = false;
+        let context = AsyncContextFrame__suspend(global, &mut needs_cleanup);
+        if context.is_undefined() {
+            return None;
+        }
+        Some(Self {
+            global,
+            context: context.protected(),
+            needs_cleanup,
+        })
+    }
+}
+
+impl Drop for SuspendedAsyncContext<'_> {
+    fn drop(&mut self) {
+        AsyncContextFrame__resume(self.global, self.context.value(), self.needs_cleanup);
+    }
 }
 
 impl JSGlobalObject {
@@ -163,9 +216,13 @@ impl JSGlobalObject {
     /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
     /// tasks, so this cannot re-enter the event loop.
     ///
+    /// This runs from inside the calling JS frame, so that frame's async
+    /// context is suspended for the drain (see [`SuspendedAsyncContext`]).
+    ///
     /// `Err` means JS was terminated; a termination exception is left pending.
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), JsTerminated> {
         jsc::mark_binding();
+        let _caller_context = SuspendedAsyncContext::take(self);
         match JSC__JSGlobalObject__drainMicrotasks(self) {
             drain_result::SUCCESS => Ok(()),
             drain_result::JS_TERMINATED => Err(JsTerminated::JSTerminated),
@@ -973,11 +1030,17 @@ impl EventLoop {
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
     /// terminated mid-wait) — a `JsError::Terminated` for the caller.
+    ///
+    /// When called from inside a JS frame (`expect().resolves`, a macro, a
+    /// plugin wait), everything dispatched while spinning runs with that
+    /// frame's async context suspended (see [`SuspendedAsyncContext`]); the
+    /// top-level drivers have no context installed and skip that.
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
+        let _caller_context = SuspendedAsyncContext::take(self.global_ref());
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
                 jsc_vm.ensure_termination_exception_pending();

@@ -96,6 +96,38 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// Event loop work is dispatched assuming no async context is installed: a
+// callback scheduled while none was active is stored unwrapped
+// (withAsyncContextIfNeeded above) and AsyncContextSwapScope does nothing for
+// an undefined context, so such callbacks run in whatever the slot holds.
+// Native code that dispatches event loop work from inside a JS frame
+// (waitForPromise, a microtask checkpoint) clears the frame's context with
+// this pair around the dispatch. `needsCleanup` carries the enterWith()
+// cleanup arming (jsCleanupLater), which a microtask run during the dispatch
+// would otherwise consume, leaving the restored context with nothing to clear
+// it later.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__suspend(JSGlobalObject* lexicalGlobalObject, bool* needsCleanup)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue context = asyncContextData->getInternalField(0);
+    *needsCleanup = globalObject->asyncHooksNeedsCleanup;
+    if (!context.isUndefined()) {
+        asyncContextData->putInternalField(globalObject->vm(), 0, jsUndefined());
+    }
+    return JSValue::encode(context);
+}
+
+extern "C" void AsyncContextFrame__resume(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encodedContext, bool needsCleanup)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(encodedContext));
+    if (globalObject->asyncHooksNeedsCleanup != needsCleanup) {
+        globalObject->asyncHooksNeedsCleanup = needsCleanup;
+        globalObject->resetOnEachMicrotaskTick();
+    }
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

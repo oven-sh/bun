@@ -1249,3 +1249,171 @@ describe("async generators", () => {
     expect(caughtStore).toBe("STORE_X");
   });
 });
+
+// expect(promise).resolves/.rejects, expect(asyncFn).toThrow() and async
+// expect.extend matchers block the calling frame and run the event loop from
+// inside it; HTMLRewriter.transform() runs a microtask checkpoint from inside
+// it when a handler returns a pending promise. Work that was scheduled with no
+// store is stored unwrapped and runs in whatever context is installed at
+// dispatch time, which in these cases used to be the blocked caller's store.
+describe("event loop work dispatched from inside a blocked frame", () => {
+  // Schedules a timer, an immediate and a microtask while no store is active
+  // and records the store each one observes. `settled` resolves once all
+  // three have run, so blocking on it forces them to run during the block.
+  function scheduleWithoutStore(als: AsyncLocalStorage<string>) {
+    const seen = { timer: "not run", immediate: "not run", microtask: "not run" };
+    const observe = (key: keyof typeof seen) => {
+      seen[key] = als.getStore() ?? "none";
+    };
+    const settled = Promise.all([
+      new Promise<void>(resolve => setTimeout(() => resolve(observe("timer")), 1)),
+      new Promise<void>(resolve => setImmediate(() => resolve(observe("immediate")))),
+      Promise.resolve().then(() => observe("microtask")),
+    ]);
+    return { seen, settled };
+  }
+
+  expect.extend({
+    _toSettle(received: Promise<unknown>) {
+      return received.then(() => ({ pass: true, message: () => "" }));
+    },
+  });
+
+  const blockUntilSettled = {
+    ".resolves": (settled: Promise<unknown>) => expect(settled).resolves.toBeArray(),
+    ".rejects": (settled: Promise<unknown>) =>
+      expect(
+        settled.then(() => {
+          throw new Error("settled");
+        }),
+      ).rejects.toThrow("settled"),
+    "async toThrow()": (settled: Promise<unknown>) =>
+      expect(async () => {
+        await settled;
+        throw new Error("settled");
+      }).toThrow("settled"),
+    // @ts-expect-error: _toSettle is registered above via expect.extend
+    "async expect.extend matcher": (settled: Promise<unknown>) => expect(settled)._toSettle(),
+  };
+
+  test.each(Object.entries(blockUntilSettled))(
+    "work scheduled without a store sees none while %s blocks inside run()",
+    async (_, block) => {
+      const als = new AsyncLocalStorage<string>();
+      const { seen, settled } = scheduleWithoutStore(als);
+      let callerAfterwards: string | undefined;
+      await als.run("caller", () => {
+        const blocked = block(settled);
+        callerAfterwards = als.getStore();
+        return blocked;
+      });
+      expect({ ...seen, callerAfterwards, outside: als.getStore() }).toEqual({
+        timer: "none",
+        immediate: "none",
+        microtask: "none",
+        callerAfterwards: "caller",
+        outside: undefined,
+      });
+    },
+  );
+
+  test("work that captured a store keeps it while the caller blocks", async () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen: Record<string, string> = {};
+    const observe = (key: string) => {
+      seen[key] = als.getStore() ?? "none";
+    };
+    const scheduled = als.run("scheduled", () =>
+      Promise.all([
+        new Promise<void>(resolve => setTimeout(() => resolve(observe("timer")), 1)),
+        Promise.resolve().then(() => observe("microtask")),
+      ]),
+    );
+    als.run("caller", () => {
+      const own = Promise.all([
+        scheduled,
+        new Promise<void>(resolve => setTimeout(() => resolve(observe("callerTimer")), 1)),
+        Promise.resolve().then(() => observe("callerMicrotask")),
+      ]);
+      expect(own).resolves.toBeArray();
+      observe("callerAfterwards");
+    });
+    expect(seen).toEqual({
+      timer: "scheduled",
+      microtask: "scheduled",
+      callerTimer: "caller",
+      callerMicrotask: "caller",
+      callerAfterwards: "caller",
+    });
+  });
+
+  test("enterWith() inside dispatched work does not replace the blocked caller's store", () => {
+    const als = new AsyncLocalStorage<string>();
+    const entered = new Promise<void>(resolve =>
+      setTimeout(() => {
+        als.enterWith("timer");
+        resolve();
+      }, 1),
+    );
+    let callerAfterwards: string | undefined;
+    als.run("caller", () => {
+      expect(entered).resolves.toBeUndefined();
+      callerAfterwards = als.getStore();
+    });
+    expect({ callerAfterwards, outside: als.getStore() }).toEqual({ callerAfterwards: "caller", outside: undefined });
+  });
+
+  test("enterWith() in the blocked frame survives the block and is still cleared on the next tick", async () => {
+    const als = new AsyncLocalStorage<string>();
+    let unblocked = false;
+    // Started before enterWith(), so it carries no store and reports whatever
+    // context is installed when it finally runs.
+    const ambientAfterwards = new Promise<string>(resolve => {
+      (function poll() {
+        if (unblocked) resolve(als.getStore() ?? "none");
+        else setImmediate(poll);
+      })();
+    });
+    const { seen, settled } = scheduleWithoutStore(als);
+
+    als.enterWith("caller");
+    expect(settled).resolves.toBeArray();
+    const callerAfterwards = als.getStore();
+    unblocked = true;
+    // enterWith() is undone after the next microtask runs; this is that microtask.
+    await Promise.resolve();
+
+    expect({ ...seen, callerAfterwards, ambientAfterwards: await ambientAfterwards }).toEqual({
+      timer: "none",
+      immediate: "none",
+      microtask: "none",
+      callerAfterwards: "caller",
+      ambientAfterwards: "none",
+    });
+  });
+
+  test("HTMLRewriter.transform() draining microtasks for an async handler", () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen = { unrelatedMicrotask: "not run", handlerAfterAwait: "not run" };
+    Promise.resolve().then(() => (seen.unrelatedMicrotask = als.getStore() ?? "none"));
+    const rewriter = new HTMLRewriter().on("p", {
+      async element(element) {
+        await null;
+        seen.handlerAfterAwait = als.getStore() ?? "none";
+        element.setInnerContent("rewritten");
+      },
+    });
+    let html: string | undefined;
+    let callerAfterwards: string | undefined;
+    als.run("caller", () => {
+      html = rewriter.transform("<p>original</p>");
+      callerAfterwards = als.getStore();
+    });
+    expect({ ...seen, html, callerAfterwards }).toEqual({
+      unrelatedMicrotask: "none",
+      handlerAfterAwait: "caller",
+      html: "<p>rewritten</p>",
+      callerAfterwards: "caller",
+    });
+  });
+});

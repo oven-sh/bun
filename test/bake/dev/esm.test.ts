@@ -361,6 +361,100 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+devTest("import() of a module that fails to evaluate rejects instead of throwing", {
+  // In the dev server, `import()` is lowered to `hmr.dynamicImport()`. Like a
+  // native `import()`, it must always hand back a promise: load failures have
+  // to reject it rather than escape as a synchronous exception.
+  framework: minimalFramework,
+  files: {
+    "ok.ts": `
+      export const value = "ok";
+    `,
+    "throws.ts": `
+      export const value = "unreachable";
+      throw new Error("boom esm");
+    `,
+    "throws-cjs.ts": `
+      module.exports = { value: "unreachable" };
+      throw new Error("boom cjs");
+    `,
+    "imports-thrower.ts": `
+      import "./throws-dep";
+      export const value = "unreachable";
+    `,
+    "throws-dep.ts": `
+      export const value = "unreachable";
+      throw new Error("boom dep");
+    `,
+    "imports-tla-thrower.ts": `
+      import "./tla-throws";
+      export const value = "unreachable";
+    `,
+    "tla-throws.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("boom tla");
+    `,
+    "proxy-cjs.ts": `
+      module.exports = new Proxy({}, {
+        ownKeys() {
+          throw new Error("boom ownKeys");
+        },
+      });
+    `,
+    "routes/index.ts": `
+      async function probe(run) {
+        let promise;
+        try {
+          promise = run();
+        } catch (e) {
+          return "threw synchronously: " + e.message;
+        }
+        if (!(promise instanceof Promise)) return "returned a non-promise";
+        return promise.then(
+          ns => "resolved: " + ns.value,
+          e => "rejected: " + e.message,
+        );
+      }
+      export default async function () {
+        const results = {};
+        results.ok = await probe(() => import("../ok"));
+        results.okAgain = await probe(() => import("../ok"));
+        results.esm = await probe(() => import("../throws"));
+        results.esmAgain = await probe(() => import("../throws"));
+        results.cjs = await probe(() => import("../throws-cjs"));
+        results.cjsAgain = await probe(() => import("../throws-cjs"));
+        results.dep = await probe(() => import("../imports-thrower"));
+        results.tla = await probe(() => import("../imports-tla-thrower"));
+        results.tlaAgain = await probe(() => import("../imports-tla-thrower"));
+        results.cjsProxy = await probe(() => import("../proxy-cjs"));
+        results.builtin = await probe(() => import("node:path").then(m => ({ value: typeof m.join })));
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      ok: "resolved: ok",
+      okAgain: "resolved: ok",
+      // First import evaluates the module; the second one hits its recorded failure.
+      esm: "rejected: boom esm",
+      esmAgain: "rejected: boom esm",
+      cjs: "rejected: boom cjs",
+      cjsAgain: "rejected: boom cjs",
+      // The failure comes from a static dependency of the imported module.
+      dep: "rejected: boom dep",
+      // The dependency uses top-level await, so the first import already
+      // rejected; the second one hits the recorded failure.
+      tla: "rejected: boom tla",
+      tlaAgain: "rejected: boom tla",
+      // The module evaluates fine; converting its exports to a namespace fails.
+      cjsProxy: "rejected: boom ownKeys",
+      // Not part of the bundle, so this falls through to the runtime's own import().
+      builtin: "resolved: function",
+    });
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

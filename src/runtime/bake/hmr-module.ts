@@ -134,11 +134,13 @@ export class HMRModule {
     }
   }
 
-  /** Lowered from `.e_import` (import(id)) */
-  dynamicImport(id: Id, opts?: ImportCallOptions) {
+  /** Lowered from `.e_import` (import(id)). Marked `async` because the loader
+   * throws synchronously when the module (or one of its dependencies) fails to
+   * evaluate, while a real `import()` always returns a promise and rejects it. */
+  async dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      if ((found as HMRModule).id === id) return getEsmExports(found as HMRModule);
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts

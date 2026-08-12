@@ -3769,7 +3769,9 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
-    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    if (session[kStrictSingleValueFields] !== false) {
+      assertSingleValueHeaders(rawHeadersList !== null ? rawHeadersList : headers);
+    }
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -4007,20 +4009,35 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 // node validates header constraints in JS before anything reaches the native encoder, so a
 // throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
 // rule here: duplicated single-value fields (across case variants) and multi-element arrays for
-// them throw before encoding starts.
+// them throw before encoding starts. Takes either the object form or the raw [name, value, ...]
+// list; the list is judged slot by slot, like the encoder will, so a slot the encoder skips
+// (undefined value, empty array) is not an occurrence whichever position it is in.
 function assertSingleValueHeaders(headers) {
   let seen = null;
+  if ($isArray(headers)) {
+    for (let i = 0; i < headers.length; i += 2) {
+      const name = headers[i];
+      const value = headers[i + 1];
+      if (typeof name !== "string" || value === undefined || ($isArray(value) && value.length === 0)) continue;
+      seen = noteSingleValueField(seen, name, value);
+    }
+    return;
+  }
   const keys = Object.keys(headers);
   for (let i = 0; i < keys.length; i++) {
-    const lower = keys[i].toLowerCase();
-    if (!kSingleValueHeaders.has(lower)) continue;
-    const value = headers[keys[i]];
-    if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {
-      throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
-    }
-    if (seen === null) seen = new SafeSet();
-    seen.add(lower);
+    seen = noteSingleValueField(seen, keys[i], headers[keys[i]]);
   }
+}
+
+function noteSingleValueField(seen, name, value) {
+  const lower = name.toLowerCase();
+  if (!kSingleValueHeaders.has(lower)) return seen;
+  if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {
+    throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
+  }
+  if (seen === null) seen = new SafeSet();
+  seen.add(lower);
+  return seen;
 }
 
 // Renders a received value the way node's determineSpecificType does for error messages.
@@ -6236,7 +6253,9 @@ class ClientHttp2Session extends Http2Session {
       }
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
-      if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+      if (this[kStrictSingleValueFields] !== false) {
+        assertSingleValueHeaders(rawHeadersList !== null ? rawHeadersList : headers);
+      }
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;

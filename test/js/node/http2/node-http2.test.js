@@ -4242,43 +4242,91 @@ describe("http2 raw-headers arrays with array values", () => {
     }
   });
 
-  it("request() applies the single-value rule to array values", async () => {
+  // The single-value rule counts what the encoder will send for the field: an array with several
+  // elements is several occurrences, an empty array (or an undefined value) is none, whichever slot
+  // of the list it is in; anything else is one. A violation throws from the call itself, before
+  // anything is encoded. Every row was checked against node v26.3.0.
+  const singleValue = {
+    name: "TypeError",
+    code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
+    message: 'Header field "content-type" must only have a single value',
+  };
+  const singleValueRows = [
+    { pairs: ["content-type", ["text/plain", "text/html"]], outcome: singleValue },
+    { pairs: ["content-type", ["text/plain"], "content-type", "text/html"], outcome: singleValue },
+    { pairs: ["content-type", "text/plain", "content-type", ["text/html"]], outcome: singleValue },
+    { pairs: ["content-type", "text/plain", "content-type", null], outcome: singleValue },
+    { pairs: ["Content-Type", "text/plain", "content-type", "text/html"], outcome: singleValue },
+    { pairs: ["content-type", [], "content-type", "text/html"], outcome: ["text/html"] },
+    { pairs: ["content-type", "text/html", "content-type", []], outcome: ["text/html"] },
+    { pairs: ["content-type", ["text/html"], "content-type", []], outcome: ["text/html"] },
+    { pairs: ["content-type", [], "content-type", [], "content-type", "text/html"], outcome: ["text/html"] },
+    { pairs: ["content-type", undefined, "content-type", "text/html"], outcome: ["text/html"] },
+    { pairs: ["Content-Type", "text/html", "content-type", []], outcome: ["text/html"] },
+  ];
+  const describeError = err => ({ name: err.constructor.name, code: err.code, message: err.message });
+  const contentTypeValues = rawHeaders => {
+    const values = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      if (rawHeaders[i] === "content-type") values.push(rawHeaders[i + 1]);
+    }
+    return values;
+  };
+
+  it("request() applies the single-value rule per slot of the list", async () => {
     let received;
     const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
-      received = nonPseudoFields(rawHeaders);
+      received = contentTypeValues(rawHeaders);
       stream.respond({ ":status": 200 });
       stream.end();
     });
     try {
-      const attempts = [
-        [":path", "/", "content-type", ["text/plain", "text/html"]],
-        [":path", "/", "content-type", ["text/plain"], "content-type", "text/html"],
-        [":path", "/", "content-type", "text/plain", "content-type", ["text/html"]],
-        [":path", ["/a", "/b"]],
-      ];
-      const thrown = attempts.map(raw => {
+      const outcomes = [];
+      for (const { pairs } of singleValueRows) {
+        let req;
         try {
-          client.request(raw);
-          return null;
+          req = client.request([":path", "/", ...pairs]);
         } catch (err) {
-          return { name: err.constructor.name, code: err.code, message: err.message };
+          outcomes.push(describeError(err));
+          continue;
         }
-      });
-      const singleValue = name => ({
-        name: "TypeError",
-        code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
-        message: `Header field "${name}" must only have a single value`,
-      });
-      expect(thrown).toEqual([
-        singleValue("content-type"),
-        singleValue("content-type"),
-        singleValue("content-type"),
-        singleValue(":path"),
-      ]);
+        await exchange(req);
+        outcomes.push(received);
+      }
+      expect(outcomes).toEqual(singleValueRows.map(row => row.outcome));
 
-      // An empty array sends nothing, so it does not count as an occurrence of the field either.
-      await exchange(client.request([":path", "/", "content-type", [], "content-type", "text/html"]));
-      expect(received).toEqual(["content-type", "text/html"]);
+      let pseudoOutcome = "returned";
+      try {
+        client.request([":path", ["/a", "/b"]]);
+      } catch (err) {
+        pseudoOutcome = describeError(err);
+      }
+      expect(pseudoOutcome).toEqual({ ...singleValue, message: 'Header field ":path" must only have a single value' });
+    } finally {
+      close();
+    }
+  });
+
+  it("respond() applies the single-value rule per slot of the list", async () => {
+    let row;
+    let respondError;
+    const { client, close } = await peers(stream => {
+      try {
+        stream.respond([":status", "200", ...row.pairs], { sendDate: false });
+      } catch (err) {
+        respondError = describeError(err);
+        stream.respond({ ":status": 200, "x-threw": "1" });
+      }
+      stream.end();
+    });
+    try {
+      const outcomes = [];
+      for (row of singleValueRows) {
+        respondError = undefined;
+        const { headers, rawHeaders } = await exchange(client.request({ ":path": "/" }));
+        outcomes.push(headers["x-threw"] ? respondError : contentTypeValues(rawHeaders));
+      }
+      expect(outcomes).toEqual(singleValueRows.map(r => r.outcome));
     } finally {
       close();
     }
@@ -4311,7 +4359,6 @@ describe("http2 raw-headers arrays with array values", () => {
     ["that is null", null],
   ]) {
     it(`request() and respond() reject an array element ${label}`, async () => {
-      const describeError = err => ({ name: err.constructor.name, code: err.code, message: err.message });
       const invalidValue = {
         name: "TypeError",
         code: "ERR_HTTP2_INVALID_HEADER_VALUE",

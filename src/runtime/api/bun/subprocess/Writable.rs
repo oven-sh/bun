@@ -69,23 +69,18 @@ impl<'a> Writable<'a> {
         unsafe { FileSink::deref(pipe.as_ptr()) };
     }
 
-    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
+    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`, pinned by
+    /// the ref this variant holds (`RefPtr` deliberately has no `DerefMut`).
     ///
-    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
-    /// blocks (`ref`/`unref`/`close`/`finalize` and `Subprocess::on_close_io`/
-    /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
-    /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
-    /// here is that `Writable::Buffer` holds the *only* strong ref for the
-    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
-    /// `buffer.deref()` only after the variant is overwritten), the writer
-    /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
-    /// and access is single-JS-mutator-thread.
+    /// Only for paths entered from JS, GC or process exit. The writer's own
+    /// callbacks (`on_close` → `on_close_io` included) run under a `&mut` to
+    /// its embedded `writer` field and must not use this.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn buffer_writer_mut<'b>(
         buffer: &'b RefPtr<StaticPipeWriter<'a>>,
     ) -> &'b mut StaticPipeWriter<'a> {
-        // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
+        // SAFETY: see fn doc; single JS thread.
         unsafe { &mut *buffer.as_ptr() }
     }
 

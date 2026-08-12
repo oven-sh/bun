@@ -164,17 +164,24 @@ pub(crate) type Poll = WriterImpl;
 
 /// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
 /// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
-/// can drop the last external ref without freeing `self` while PipeWriter is
-/// still on the stack.
+/// can drop the last external ref without freeing the `IOWriter` under
+/// PipeWriter; when they do, `_keepalive`'s drop frees it (`*writer` included)
+/// on the way out, which a `&mut Poll` argument would still be covering.
+///
+/// # Safety
+/// `writer` must be the live poll owner registered by `IOWriter::init`.
 #[cfg(not(windows))]
-pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
+pub(crate) unsafe fn on_poll(writer: *mut Poll, size_hint: isize, hup: bool) {
     use bun_io::pipe_writer::PosixPipeWriter;
-    let parent = writer.parent.expect("IOWriter writer.parent unset");
+    // SAFETY: caller contract; the borrow ends at the `;`.
+    let parent = unsafe { (*writer).parent }.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
-    // `writer` is a field of `*parent`, so the pointee is live. Re-enter via
+    // `*writer` is a field of `*parent`, so the pointee is live. Re-enter via
     // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
     let _keepalive = parent.keepalive();
-    writer.on_poll(size_hint, hup);
+    // SAFETY: caller contract, and `_keepalive` keeps `*writer` allocated until
+    // this call has returned.
+    unsafe { Poll::on_poll(writer, size_hint, hup) };
 }
 
 /// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can

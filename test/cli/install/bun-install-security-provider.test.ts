@@ -27,6 +27,14 @@ function test(
     packageJson?: object;
     customRegistry?: (urls: string[], ctx: TestContext) => any;
     concurrent?: boolean;
+    /** Extra files written into the project directory. */
+    files?: Record<string, string>;
+    /**
+     * Top-level `preload` for the project's bunfig.toml. `bun install` ignores
+     * it; the scanner subprocess, which runs in the project directory, runs it
+     * before scanner-entry does anything else.
+     */
+    bunfigPreload?: string;
   },
 ) {
   const itFn = options.concurrent === false ? it : it.concurrent;
@@ -55,7 +63,16 @@ function test(
           await write(scannerPath, s);
         }
 
-        const bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+        for (const [path, content] of Object.entries(options.files ?? {})) {
+          await write(path, content);
+        }
+
+        let bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+        if (options.bunfigPreload !== undefined) {
+          // Top-level keys have to precede the first table.
+          bunfig = `preload = ${JSON.stringify([options.bunfigPreload])}\n${bunfig}`;
+          await write("./bunfig.toml", bunfig);
+        }
         if (options.bunfigScanner !== false) {
           const scannerPath = options.bunfigScanner ?? "./scanner.ts";
           await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
@@ -725,6 +742,48 @@ describe("Large payload via ipc pipe", () => {
     barTarballBytes = await Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`).bytes();
   });
 
+  const packageJson = (() => {
+    const dependencies: Record<string, string> = {};
+
+    for (let i = 0; i < PKG_COUNT; i++) {
+      dependencies[pkgName(i)] = "0.0.2";
+    }
+    return {
+      name: "my-app",
+      version: "1.0.0",
+      dependencies,
+    };
+  })();
+
+  const customRegistry = (_urls: string[], ctx: TestContext) => {
+    return async (request: Request) => {
+      const url = request.url.replaceAll("%2f", "/");
+      expect(request.method).toBe("GET");
+      if (new URL(url).pathname.endsWith(".tgz")) {
+        return new Response(barTarballBytes);
+      }
+      expect(request.headers.get("accept")).toBe(
+        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+      );
+      expect(request.headers.get("npm-auth-type")).toBe(null);
+      expect(await request.text()).toBe("");
+      const name = new URL(url).pathname.replace(`/${ctx.id}/`, "");
+      return new Response(
+        JSON.stringify({
+          name,
+          versions: {
+            "0.0.2": {
+              name,
+              version: "0.0.2",
+              dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz?pad=${URL_PAD}` },
+            },
+          },
+          "dist-tags": { latest: "0.0.2" },
+        }),
+      );
+    };
+  };
+
   test("handles packages JSON larger than max arg length (>1MB)", {
     testTimeout: 60_000,
     scanner: async ({ packages }) => {
@@ -743,49 +802,10 @@ describe("Large payload via ipc pipe", () => {
       // hundreds of packages into node_modules is not what is under test here.
       return [{ package: packages[0].name, description: "abort after IPC payload check", level: "fatal", url: null }];
     },
-
-    packageJson: (() => {
-      const dependencies: Record<string, string> = {};
-
-      for (let i = 0; i < PKG_COUNT; i++) {
-        dependencies[pkgName(i)] = "0.0.2";
-      }
-      return {
-        name: "my-app",
-        version: "1.0.0",
-        dependencies,
-      };
-    })(),
+    packageJson,
     packages: [],
     fails: true,
-    customRegistry: (_urls, ctx) => {
-      return async (request: Request) => {
-        const url = request.url.replaceAll("%2f", "/");
-        expect(request.method).toBe("GET");
-        if (new URL(url).pathname.endsWith(".tgz")) {
-          return new Response(barTarballBytes);
-        }
-        expect(request.headers.get("accept")).toBe(
-          "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-        );
-        expect(request.headers.get("npm-auth-type")).toBe(null);
-        expect(await request.text()).toBe("");
-        const name = new URL(url).pathname.replace(`/${ctx.id}/`, "");
-        return new Response(
-          JSON.stringify({
-            name,
-            versions: {
-              "0.0.2": {
-                name,
-                version: "0.0.2",
-                dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz?pad=${URL_PAD}` },
-              },
-            },
-            "dist-tags": { latest: "0.0.2" },
-          }),
-        );
-      };
-    },
+    customRegistry,
     expect: ({ out }) => {
       const match = out.match(/Received JSON payload of (\d+) bytes from (\d+) packages/);
       expect(match).not.toBeNull();
@@ -794,6 +814,27 @@ describe("Large payload via ipc pipe", () => {
       expect(bytes).toBeGreaterThan(1024 * 1024);
       expect(count).toBe(PKG_COUNT);
       expect(out).toContain("abort after IPC payload check");
+    },
+  });
+
+  // The scanner process runs in the project directory, so a bunfig preload
+  // runs before scanner-entry reads its input: the child exits with most of
+  // the same >1MB payload as above (the test above asserts its size) still
+  // unwritten, and bun's next write to it fails with EPIPE. That is the
+  // writer's error path, as opposed to the drained path above; on it the
+  // scanner subprocess drops its last reference to the writer from inside the
+  // error's close notification.
+  test("scanner that exits before reading a >1MB payload is reported, not crashed on", {
+    testTimeout: 60_000,
+    scanner: async () => [],
+    files: { "exit-before-reading.ts": "process.exit(42);" },
+    bunfigPreload: "./exit-before-reading.ts",
+    packageJson,
+    packages: [],
+    customRegistry,
+    expectedExitCode: 1,
+    expect: ({ err }) => {
+      expect(err).toContain("Security scanner exited with code 42 without sending data");
     },
   });
 });

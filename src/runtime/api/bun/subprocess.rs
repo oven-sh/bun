@@ -495,7 +495,8 @@ impl Subprocess<'_> {
                     else {
                         unreachable!()
                     };
-                    Writable::buffer_writer_mut(&buffer).source.detach();
+                    // Called from inside the writer's own close (it detached the
+                    // source already), so no `buffer_writer_mut` here.
                     buffer.deref();
                 }
                 _ => {}

@@ -90,13 +90,15 @@ mod __pipe_reader_thread_confined {
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.
 ///
 /// `RefPtr` only exposes `&T` via `Deref`; the shell is single-threaded.
-/// Localises the `(*buffer.as_ptr()).method()` pattern at the five
+/// Localises the `(*buffer.as_ptr()).method()` pattern at the
 /// `Writable::Buffer` callsites.
 ///
 /// # Safety
 /// Caller must ensure no other `&`/`&mut StaticPipeWriter` to the same
-/// payload is live for the returned borrow. The `(&RefPtr<T>) -> &mut T`
-/// shape cannot encode this; `unsafe fn` keeps the obligation at the callsite.
+/// payload is live for the returned borrow; the writer's own callbacks
+/// (`on_close` → `on_close_io`) run under one, so they must not use this.
+/// The `(&RefPtr<T>) -> &mut T` shape cannot encode this; `unsafe fn` keeps
+/// the obligation at the callsite.
 #[inline]
 #[allow(clippy::mut_from_ref)]
 unsafe fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
@@ -409,8 +411,8 @@ impl ShellSubprocess {
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
-                        // SAFETY: single-threaded; sole borrow of the payload.
-                        unsafe { buffer_mut(&buffer) }.source.detach();
+                        // Called from inside the writer's own close (it detached
+                        // the source already), so no `buffer_mut` here.
                         buffer.deref();
                     }
                 }

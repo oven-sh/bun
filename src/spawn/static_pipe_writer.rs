@@ -63,10 +63,12 @@ pub type Poll<P> = IOWriter<P>;
 // BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
 // ──────────────────────────────────────────────────────────────────────────
 
+// `borrow = ptr`: `on_write` ends by releasing what is normally the writer's
+// last ref, so the handlers take the raw backref (see `on_write`).
 bun_io::impl_buffered_writer_parent! {
     for<P: StaticPipeWriterProcess> StaticPipeWriter<P>;
     poll_tag   = P::POLL_OWNER_TAG,
-    borrow     = mut,
+    borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
     on_close   = on_close,
@@ -199,11 +201,19 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub(crate) fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    /// Once the write is finished, closes the writer (on POSIX `on_close` →
+    /// `on_close_io` is where the owner drops its `create()` ref) and then
+    /// releases the ref that held it open, normally the last one. Raw, with
+    /// statement-scoped borrows only, so that final release frees `*this` with
+    /// no reference to it live (see `PosixPipeWriter`).
+    ///
+    /// # Safety
+    /// `this` must be the live writer; it may be gone when this returns.
+    pub(crate) unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             amount,
             // Local stringify — `WriteStatus` (upstream bun_io) has no `Debug` impl.
             match status {
@@ -212,72 +222,94 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WriteStatus::Pending => "pending",
             }
         );
-        let len = self.buffer.len();
-        self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
-        if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
-            // `started` is the token for start()'s outstanding +1. Clearing it
-            // before the deref makes this release mutually exclusive with the
-            // owner's close-time release (`Subprocess::take_pending_start_writer`,
-            // which also clears `started`). On POSIX, `writer.close()` →
-            // `Parent::on_close` may drop `create()`'s +1, so keep start()'s +1
-            // across it. `EndOfFile` is skipped because `PosixBufferedWriter::
-            // _on_write` still touches `self` after this returns on that status.
-            let release_start_ref = self.started && status != WriteStatus::EndOfFile;
-            if release_start_ref {
-                self.started = false;
+        // SAFETY: caller contract; borrows end at each `;`.
+        let claimed_start_ref = unsafe {
+            let buffer = (*this).buffer;
+            let remaining = RawSlice::new(&buffer.slice()[amount.min(buffer.len())..]);
+            (*this).buffer = remaining;
+            if status != WriteStatus::EndOfFile && !remaining.is_empty() {
+                return;
             }
-            self.writer.close();
-            if release_start_ref {
-                // SAFETY: start()'s +1 was still outstanding; `started` cleared above so no other site re-derefs.
-                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            // `started` is the token for start()'s outstanding +1; claiming it
+            // excludes the owners' close-time release (`take_pending_start_writer`).
+            core::mem::replace(&mut (*this).started, false)
+        };
+
+        if status == WriteStatus::EndOfFile {
+            // The writer delivers `on_close` itself after this report (the fd
+            // is already closed), so the owner's ref is still held and this
+            // release is not the last one; closing here would free `*this`
+            // under the writer's pending close instead.
+            if claimed_start_ref {
+                // SAFETY: caller contract; `started` was claimed above.
+                unsafe { RefCount::<Self>::deref(this) };
             }
+            return;
+        }
+
+        // SAFETY: caller contract. Something must hold `*this` across `close()`
+        // (the owner drops its ref in there): start()'s ref if still
+        // outstanding, else one taken here (the security scanner releases
+        // start()'s right after `start()`). The trailing release balances it
+        // and is the last use of `this`.
+        unsafe {
+            if !claimed_start_ref {
+                RefCount::<Self>::ref_(this);
+            }
+            (*this).writer.close();
+            RefCount::<Self>::deref(this);
         }
     }
 
-    pub(crate) fn on_error(&mut self, err: &bun_sys::Error) {
+    /// # Safety
+    /// `this` must be the live writer.
+    pub(crate) unsafe fn on_error(this: *mut Self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             err
         );
-        // Clear the buffer before detaching: `buffer` aliases `self.source`'s
-        // storage, and `detach()` frees it. `drain_buffered_data` calls
-        // on_error() then Parent::on_write(), which would otherwise re-slice
-        // the freed allocation.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
-        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
-        // Parent::on_write(); freeing here would UAF.
+        // No release here: the writer closes itself next, and after a partial
+        // drain still reports through `on_write`, which releases.
+        // SAFETY: caller contract; borrows end at each `;`. `buffer` aliases the
+        // storage `detach()` frees, and that `on_write` re-slices it, so it is
+        // cleared first.
+        unsafe {
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+        }
     }
 
-    pub(crate) fn on_close(&mut self) {
+    /// # Safety
+    /// `this` must be the live writer. On POSIX the owner's release in
+    /// `on_close_io` may be the last one (security scanner, EOF path); it is
+    /// the last thing done with `this` here.
+    pub(crate) unsafe fn on_close(this: *mut Self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
-            std::ptr::from_ref(self) as usize
+            this as usize
         );
-        // On Windows the error arm of `WindowsBufferedWriter::on_write_complete`
-        // reaches here via `close()` without ever calling `Parent::on_write`, so
-        // this is the last point `started` can be claimed for that path.
-        // `write()`'s +1 (held by that callback's scopeguard) keeps `self` live
-        // past the deref. POSIX must not release here: `drain_buffered_data`
-        // may call `on_error()` -> `close()` -> here and then `on_write()` on
-        // the same object, with no extra ref held.
-        #[cfg(windows)]
-        let release_start_ref = core::mem::replace(&mut self.started, false);
-        // `buffer` aliases `self.source`'s storage; clear it before detach()
-        // frees that storage so no dangling slice survives the close.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
-        // SAFETY: `process` is a backref to the owning process, guaranteed alive
-        // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
-        #[cfg(windows)]
-        if release_start_ref {
-            // SAFETY: `started` was the token for start()'s outstanding +1;
-            // cleared above so no other site re-derefs. Last use of `self`.
-            unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+        // Windows: the error arm of `WindowsBufferedWriter::on_write_complete`
+        // reaches here without an `on_write`, so start()'s ref is released here
+        // (write()'s ref, held by that callback, keeps the writer alive).
+        // POSIX: not here, because `drain_buffered_data` may reach here via
+        // `on_error()` and then still call `on_write()` on the same object.
+        // SAFETY: caller contract; borrows end at each `;`. `buffer` aliases the
+        // storage `detach()` frees; `process` (outlives its stdio writers) is
+        // copied out before the call that may free `*this`.
+        unsafe {
+            #[cfg(windows)]
+            let release_start_ref = core::mem::replace(&mut (*this).started, false);
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+            let process = (*this).process;
+            P::on_close_io(process, StdioKind::Stdin);
+            #[cfg(windows)]
+            if release_start_ref {
+                RefCount::<Self>::deref(this);
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -525,6 +525,31 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("a hot-reload event that invalidates nothing is processed once", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // Bundling the route puts the project directory on the watch list. Wait
+    // for the build's own synchronization message so it is not recorded below.
+    const built = dev.waitForHotReload(false);
+    await dev.fetch("/");
+    await built;
+
+    // mkdir is a single notification from every platform's watcher, so the
+    // dev server receives exactly one hot-reload event for it. Nothing imports
+    // the directory, so the event invalidates nothing and is reported with one
+    // SeenFiles. The first event of a batch used to be processed (and
+    // reported) twice.
+    const messages = await dev.watchSynchronizationMessagesFor(() => mkdirSync(dev.join("unrelated")));
+    expect(messages).toEqual(["SeenFiles"]);
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

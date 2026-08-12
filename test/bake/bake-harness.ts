@@ -279,6 +279,49 @@ export class Dev extends EventEmitter {
     });
   }
 
+  /**
+   * Runs `change` and returns the watch synchronization messages the dev
+   * server published while handling it, by name and in order. `change` must
+   * make the watcher report something (the project directory is watched once
+   * a route has been bundled), and the dev server publishes one `SeenFiles`
+   * per hot-reload event it processes that invalidates nothing.
+   *
+   * Once the first message arrives, batch mode is toggled on: the dev server
+   * acknowledges that on the same topic, and the acknowledgement is ordered
+   * after everything it published while processing `change`, so when it
+   * arrives the list is complete. Batch mode is toggled off again before
+   * returning.
+   */
+  async watchSynchronizationMessagesFor(change: () => void | Promise<void>): Promise<string[]> {
+    assert(this.batchingChanges === null, "watchSynchronizationMessagesFor cannot be used inside batchChanges");
+    const messages: WatchSynchronization[] = [];
+    const firstMessage = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
+    function onEvent(kind: WatchSynchronization) {
+      if (kind === WatchSynchronization.Started) {
+        batchStarted.resolve();
+        return;
+      }
+      messages.push(kind);
+      firstMessage.resolve();
+    }
+    this.on("watch_synchronization", onEvent);
+    try {
+      await change();
+      await firstMessage.promise;
+      this.socket!.send("H");
+      await batchStarted.promise;
+    } finally {
+      this.off("watch_synchronization", onEvent);
+    }
+    // Leaving batch mode is answered with ResultDidNotBundle (nothing was
+    // batched) or, if `change` did invalidate something, with a build.
+    const batchEnded = this.waitForHotReload(false);
+    this.socket!.send("H");
+    await batchEnded;
+    return messages.map(kind => WatchSynchronization[kind]);
+  }
+
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
     if (this.batchingChanges) {
       this.batchingChanges.write?.();

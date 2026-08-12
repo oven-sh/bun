@@ -45,9 +45,12 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // Scope: the argument of every `Batch::from(` call (however the type is
 // reached, including the `PoolBatch` / `ThreadPoolBatch` aliases), when it is
 // `&raw mut` / `&raw const` / `addr_of_mut!` / `addr_of!` of a field path whose
-// base is a binding rather than a `(*p)` deref. A local holding a pointer
-// projected elsewhere is out of scope, as is whether the pointer a function was
-// handed is itself whole-object (that is its caller's business). The other
+// base is a binding rather than a `(*p)` deref. The `(*p)` spelling is taken
+// to mean `p` is a raw pointer, which is the only reason to write it (a
+// reference auto-derefs, and clippy's `explicit_auto_deref` rejects `(*r).f`),
+// so a `(*r).f` through a reference would not be reported. A local holding a
+// pointer projected elsewhere is out of scope, as is whether the pointer a
+// function was handed is itself whole-object (that is its caller's business). The other
 // ways of narrowing the same argument, a `&mut` formed in the argument, an
 // accessor returning `&mut Task`, `ptr::from_mut(..)` of either, are banned by
 // the sibling lint from #37865 and deliberately not repeated here, so the two

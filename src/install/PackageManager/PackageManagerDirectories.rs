@@ -380,7 +380,8 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 /// `<cache>/.id`: 16 random bytes created once per cache directory; npm cache
 /// entry fingerprints are keyed with it. A truncated file is replaced (its
 /// fingerprinted entries are then fetched again); if the file cannot be read
-/// or created at all the key falls back to zeroes so names stay stable.
+/// or created at all, a per-process random key is used and this run does not
+/// reuse fingerprinted entries.
 fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
     let name = bun_core::zstr!(".id");
     let mut id: integrity::CacheDirId = [0; 16];
@@ -393,17 +394,17 @@ fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
                 Ok(_) => {
                     let _ = sys::unlinkat(cache_dir.fd(), name);
                 }
-                Err(_) => return [0; 16],
+                Err(_) => break,
             },
             Err(err) if err.get_errno() == sys::E::ENOENT => {}
-            Err(_) => return [0; 16],
+            Err(_) => break,
         }
         bun_boringssl_sys::rand_bytes(&mut id);
         match File::openat(
             cache_dir.fd(),
             name.as_bytes(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-            0o644,
+            0o600,
         ) {
             Ok(file) if file.write_all(&id).is_ok() => return id,
             // created concurrently by another install: read theirs

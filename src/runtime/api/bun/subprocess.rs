@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::RefCount;
+use bun_ptr::{OwnedRef, RefCount};
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -113,8 +113,10 @@ pub use bun_spawn::process::StdioKind;
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
-// Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
-// Box when ref_count → 0; `deinit` runs when the last ref drops.
+// Intrusive ref-count, freed with the Box when it reaches zero. Holders: the
+// JS wrapper (`to_js_from_ref` hands it its ref, `finalize` releases it; for
+// spawnSync, `spawn_maybe_sync` plays that part itself), the process exit
+// handler, and the stdio pipes while they are open.
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
@@ -179,23 +181,19 @@ const _: () = {
     use crate::generated_classes::js_Subprocess as js;
 
     impl<'a> Subprocess<'a> {
-        /// Wrap an already-heap-allocated `Subprocess` (via `heap::alloc`) in
-        /// its JS cell. `Bun.spawn` boxes early so address-dependent
-        /// back-pointers (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be
-        /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
-        /// entrypoint that avoids re-boxing.
-        ///
-        /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
-        /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
-        /// the (already safe) generated `js_Subprocess::to_js`, which
-        /// encapsulates the FFI `__create` call internally.
+        /// Wrap an already-allocated `Subprocess` in its JS cell. `this`
+        /// becomes the wrapper's ref (stored as `m_ctx`); [`Self::finalize`]
+        /// releases it. `Bun.spawn` allocates before it has a wrapper so that
+        /// address-dependent back-pointers (`stdin.pipe.signal`, MaxBuf owner,
+        /// IPC owner) can be wired first; this is the entrypoint that avoids
+        /// re-boxing. Thin forwarder to the (already safe) generated
+        /// `js_Subprocess::to_js`, which encapsulates the FFI `__create` call.
         #[inline]
-        pub(crate) fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_js_from_ref(this: OwnedRef<Self>, global: &JSGlobalObject) -> JSValue {
             // The codegen wrapper is monomorphized at `'static`; the lifetime
             // parameter is purely a borrow-checker artifact (C++ stores the
             // pointer as opaque `m_ctx`), so erase it via `cast`.
-            js::to_js(ptr.cast(), global)
+            js::to_js(this.into_raw().cast(), global)
         }
     }
 
@@ -1287,12 +1285,22 @@ impl Subprocess<'_> {
         }
     }
 
+    /// JS wrapper finalizer. The `Box` is the codegen's spelling of the ref
+    /// `to_js_from_ref` gave the wrapper; the allocation outlives this call if
+    /// the exit handler or a pipe still holds a ref, so it is turned back into
+    /// that ref rather than dropped as a `Box`.
     pub fn finalize(self: Box<Self>) {
+        // SAFETY: the wrapper holds exactly the one ref `to_js_from_ref`
+        // handed it, and the finalizer runs once.
+        Self::finalize_owned(unsafe { OwnedRef::from_raw(bun_core::heap::into_raw(self)) });
+    }
+
+    /// Tear down and release the ref that stands for the JS wrapper: the
+    /// wrapper's own ref from the finalizer above, or, for `spawnSync`, which
+    /// never creates a wrapper, the ref `spawn_maybe_sync` holds.
+    pub(crate) fn finalize_owned(owned: OwnedRef<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this = bun_core::heap::release(self);
+        let this: &Self = &owned;
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
@@ -1364,7 +1372,9 @@ impl Subprocess<'_> {
         }
 
         this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.deref();
+        // Releases the ref; the allocation goes with it unless a pipe or the
+        // exit handler still holds one.
+        drop(owned);
     }
 
     pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {

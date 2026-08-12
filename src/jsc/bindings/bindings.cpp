@@ -814,8 +814,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // Node's deepStrictEqual compares [[Prototype]]s with ===; Bun.deepEquals and
-    // expect() only compare class names (the isStrict block below).
+    // Node's deepStrictEqual compares [[Prototype]]s with ===; Bun.deepEquals and expect() only compare class names (below).
     if constexpr (checkPrototypes && !skipPrototypeIdentity) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
@@ -956,8 +955,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
-        // calculatedClassName() is "Object" for null-prototype objects too; node mode
-        // already compared the prototypes themselves above.
+        // calculatedClassName() is "Object" for null-prototype objects too (node mode compared the prototypes above).
         if constexpr (!checkPrototypes) {
             JSValue proto1 = o1->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);

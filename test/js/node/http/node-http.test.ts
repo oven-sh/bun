@@ -4189,86 +4189,74 @@ function connectionListenerRequest(
 
 const PARTIAL_POST = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc";
 
-it("connectionListener aborts the in-flight request when the connection closes, like Node", async () => {
-  // Node's socketOnClose runs abortIncoming(): every request whose response has
-  // not finished is destroyed with an ECONNRESET "aborted" error, so it emits
-  // 'aborted' (before the response's 'close'), then 'error' only if something
-  // listens, then 'close'. The event orders below are Node v26's.
-  const aborted = ["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"];
+// Node's socketOnClose runs abortIncoming(): a request whose response has not
+// finished is destroyed with an ECONNRESET "aborted" error when its connection
+// closes, so it emits 'aborted' (before the response's 'close'), then 'error'
+// only if something listens, then 'close'. The event orders asserted below are
+// Node v26's.
+const ABORTED_EVENTS = ["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"];
 
-  // The connection is reset while the request body is still arriving.
-  {
+type ConnectionListenerRequest = ReturnType<typeof connectionListenerRequest>;
+const connectionCloseTriggers: [string, (t: ConnectionListenerRequest) => void][] = [
+  ["the connection is reset while the body is still arriving", t => t.serverSide.destroy()],
+  ["server.closeAllConnections() destroys the connection", t => t.server.closeAllConnections()],
+  // The parser flags the truncated message and the connection is torn down.
+  ["the peer hangs up with the body cut short", t => t.clientSide.end()],
+];
+
+for (const [trigger, closeConnection] of connectionCloseTriggers) {
+  it(`connectionListener aborts the in-flight request when ${trigger}`, async () => {
     const t = connectionListenerRequest(PARTIAL_POST);
     const { req } = await t.dispatched;
-    t.serverSide.destroy();
+    closeConnection(t);
     await t.connectionClosed();
-    expect(t.events).toEqual(aborted);
+    expect(t.events).toEqual(ABORTED_EVENTS);
     expect({
       destroyed: req.destroyed,
       aborted: req.aborted,
       complete: req.complete,
       errored: (req.errored as any)?.code,
     }).toEqual({ destroyed: true, aborted: true, complete: false, errored: "ECONNRESET" });
-  }
+  });
+}
 
-  // Without an 'error' listener the error is not emitted (it would otherwise be
-  // an uncaught exception), but req.errored still carries it.
-  {
-    const t = connectionListenerRequest(PARTIAL_POST, undefined, { reqErrorListener: false });
-    const { req } = await t.dispatched;
-    t.serverSide.destroy();
-    await t.connectionClosed();
-    expect(t.events).toEqual(["req-aborted", "res-close", "req-close"]);
-    expect((req.errored as any)?.code).toBe("ECONNRESET");
-  }
+it("connectionListener abort does not emit 'error' on a request without an error listener", async () => {
+  // Like Node, the error is only emitted when something listens for it (it
+  // would otherwise be an uncaught exception), but req.errored still carries it.
+  const t = connectionListenerRequest(PARTIAL_POST, undefined, { reqErrorListener: false });
+  const { req } = await t.dispatched;
+  t.serverSide.destroy();
+  await t.connectionClosed();
+  expect(t.events).toEqual(["req-aborted", "res-close", "req-close"]);
+  expect((req.errored as any)?.code).toBe("ECONNRESET");
+});
 
-  // server.closeAllConnections() destroys the connection from the server side.
-  {
-    const t = connectionListenerRequest(PARTIAL_POST);
-    await t.dispatched;
-    t.server.closeAllConnections();
-    await t.connectionClosed();
-    expect(t.events).toEqual(aborted);
-  }
+it("connectionListener aborts a body-less request whose response is still pending", async () => {
+  // The request is complete as far as the parser is concerned; Node keys the
+  // abort off the unfinished response, not off req.complete.
+  const t = connectionListenerRequest("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  const { req } = await t.dispatched;
+  t.serverSide.destroy();
+  await t.connectionClosed();
+  expect(t.events).toEqual(ABORTED_EVENTS);
+  expect({ complete: req.complete, aborted: req.aborted }).toEqual({ complete: true, aborted: true });
+});
 
-  // The peer hangs up (FIN) with the body cut short: the parser flags the
-  // truncated message, the connection is torn down, and the request is aborted.
-  {
-    const t = connectionListenerRequest(PARTIAL_POST);
-    await t.dispatched;
-    t.clientSide.end();
-    await t.connectionClosed();
-    expect(t.events).toEqual(aborted);
-  }
-
-  // A body-less request is complete as far as the parser is concerned, but its
-  // response is still pending, so it is aborted too (Node keys this off the
-  // response, not off req.complete).
-  {
-    const t = connectionListenerRequest("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-    const { req } = await t.dispatched;
-    t.serverSide.destroy();
-    await t.connectionClosed();
-    expect(t.events).toEqual(aborted);
-    expect({ complete: req.complete, aborted: req.aborted }).toEqual({ complete: true, aborted: true });
-  }
-
-  // res.destroy() tears the connection down, which aborts the request as well.
-  // (The response emits its own 'close' synchronously from destroy(), so only
-  // the request's events are order-checked here.)
-  {
-    const t = connectionListenerRequest(PARTIAL_POST);
-    const { req, res } = await t.dispatched;
-    res.destroy();
-    await t.connectionClosed();
-    expect(t.events.filter(event => event.startsWith("req-"))).toEqual([
-      "req-aborted",
-      "req-error:ECONNRESET",
-      "req-close",
-    ]);
-    expect(t.events).toContain("res-close");
-    expect(req.aborted).toBe(true);
-  }
+it("connectionListener aborts the request when its response is destroyed", async () => {
+  // res.destroy() tears the connection down. The response emits its own
+  // 'close' synchronously from destroy(), so only the request's events are
+  // order-checked here.
+  const t = connectionListenerRequest(PARTIAL_POST);
+  const { req, res } = await t.dispatched;
+  res.destroy();
+  await t.connectionClosed();
+  expect(t.events.filter(event => event.startsWith("req-"))).toEqual([
+    "req-aborted",
+    "req-error:ECONNRESET",
+    "req-close",
+  ]);
+  expect(t.events).toContain("res-close");
+  expect(req.aborted).toBe(true);
 });
 
 it("connectionListener does not abort a request whose response already finished when the connection closes", async () => {

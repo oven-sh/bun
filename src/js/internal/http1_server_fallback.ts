@@ -440,8 +440,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  // Node's socketOnClose (freeParser + abortIncoming). Must be registered before
-  // any response's assignSocket() 'close' listener: req 'aborted' precedes res 'close'.
+  // Node's socketOnClose: freeParser, then abortIncoming.
   function onHttp1SocketClose() {
     connections.delete(socket);
     try {
@@ -456,6 +455,7 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
+  // Ahead of every response's assignSocket() 'close' listener: req 'aborted' precedes res 'close'.
   socket.once("close", onHttp1SocketClose);
 }
 

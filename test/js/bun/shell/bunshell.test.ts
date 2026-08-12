@@ -556,6 +556,11 @@ describe("bunshell", () => {
       .exitCode(0)
       .runAsTest("failing substitution does not override the command's exit code");
 
+    TestBuilder.command`$(echo ${BUN} exit7.js) || echo fallback`
+      .file("exit7.js", exit7)
+      .stdout("ran\nfallback\n")
+      .runAsTest("external command's exit code drives ||");
+
     TestBuilder.command`$(echo false)`.exitCode(1).runAsTest("builtin");
 
     TestBuilder.command`$(echo; exit 3)`

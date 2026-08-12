@@ -622,17 +622,19 @@ const memoryVisualizerApp = {
   "index.html": emptyHtmlFile({}),
   "bun.app.ts": `
     import html from "./index.html";
+    // Always armed in the dev server's timer heap; /tick answers on its next fire.
+    const waiters = [];
+    setInterval(() => {
+      for (const resolve of waiters.splice(0)) resolve();
+    }, 20);
     export default {
       static: {
         "/": html,
       },
       async fetch(req) {
-        if (new URL(req.url).pathname === "/sleep") {
-          console.log("sleep: timer armed");
-          // Long enough to still be pending when the subscriber's close frame
-          // reaches the server; the test waits on the response, not on time.
-          await Bun.sleep(500);
-          return new Response("slept");
+        if (new URL(req.url).pathname === "/tick") {
+          await new Promise(resolve => waiters.push(resolve));
+          return new Response("ticked");
         }
         return new Response("Not Found", { status: 404 });
       },
@@ -650,6 +652,9 @@ async function subscribeMemoryVisualizer(dev: Dev) {
   ws.binaryType = "arraybuffer";
   let open = false;
   let frames = 0;
+  // Set when the socket errors or closes unexpectedly; fails the step being
+  // awaited at that moment and every step started afterwards.
+  let failure: Error | null = null;
   // The step currently being awaited: socket progress resolves it, socket
   // failure or the deadline rejects it.
   let step: { what: string; done: () => boolean; resolve: () => void; reject: (err: Error) => void } | null = null;
@@ -660,17 +665,21 @@ async function subscribeMemoryVisualizer(dev: Dev) {
     resolve();
   };
   const fail = (reason: string) => {
+    const err = new Error(
+      `${reason}${step ? ` while ${step.what}` : ""} (received ${frames} memory visualizer frames)`,
+    );
+    failure ??= err;
     if (step === null) return;
-    const { what, reject } = step;
+    const { reject } = step;
     step = null;
-    reject(new Error(`${reason} while ${what} (received ${frames} memory visualizer frames)`));
+    reject(err);
   };
   ws.onopen = () => {
     open = true;
     check();
   };
   ws.onerror = () => fail("hmr socket errored");
-  ws.onclose = event => fail(`hmr socket closed with code ${event.code}`);
+  ws.onclose = event => fail(`hmr socket closed unexpectedly with code ${event.code}`);
   ws.onmessage = event => {
     if (new Uint8Array(event.data as ArrayBuffer)[0] !== "M".charCodeAt(0)) return;
     frames++;
@@ -678,6 +687,7 @@ async function subscribeMemoryVisualizer(dev: Dev) {
   };
   const waitUntil = (what: string, done: () => boolean) =>
     new Promise<void>((resolve, reject) => {
+      if (failure) return reject(failure);
       const deadline = setTimeout(() => fail("timed out"), 5_000 * WAIT_MULTIPLIER);
       step = {
         what,
@@ -702,8 +712,9 @@ async function subscribeMemoryVisualizer(dev: Dev) {
     waitForFrames: (count: number) => waitUntil(`waiting for memory visualizer frame #${count}`, () => frames >= count),
     /** Closes the socket, which unsubscribes it on the server, and waits for the close handshake. */
     close: () =>
-      new Promise<void>(resolve => {
-        if (ws.readyState === WebSocket.CLOSED) return resolve();
+      new Promise<void>((resolve, reject) => {
+        if (failure) return reject(failure);
+        ws.onerror = () => reject(new Error("hmr socket errored during the close handshake"));
         ws.onclose = () => resolve();
         ws.close();
       }),
@@ -731,14 +742,14 @@ if (hasBakeDebuggingFeatures) {
       // i.e. at roughly 1s; 1.5s keeps clear of both.
       expect(performance.now() - start).toBeGreaterThanOrEqual(1500);
 
-      // Arm an unrelated timer inside the dev server, then unsubscribe while it
-      // is pending. Unsubscribing removes the tick timer from the heap; if the
-      // tick left its node marked as still in the heap, that removal discarded
-      // whichever timer was at the root instead (debug builds assert).
-      const sleeping = dev.fetch("/sleep");
-      await dev.output.waitForLine(/sleep: timer armed/);
+      // The fixture's interval is pending in the same heap while the subscriber
+      // leaves. Unsubscribing removes the visualizer timer from the heap; when
+      // the tick had left that node marked as still in the heap, the removal
+      // discarded whichever timer was at the root instead (debug builds assert),
+      // and the interval never fired again.
+      await dev.fetch("/tick").equals("ticked");
       await subscriber.close();
-      await sleeping.equals("slept");
+      await dev.fetch("/tick").equals("ticked");
 
       // The timer can be re-armed after being disarmed. This socket is left
       // open on purpose: the harness's graceful exit closes it while the timer

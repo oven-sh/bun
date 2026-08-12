@@ -1791,9 +1791,10 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
+    const optionsPath = options.path;
     let pathnameIsSocketPath = false;
-    if (options.path) {
-      path = options.path;
+    if (optionsPath) {
+      path = optionsPath;
     } else if (!url.hostname) {
       // postgres:///run/postgresql: a host-less pathname is the socket path, not a database name.
       path = url.pathname;

@@ -488,8 +488,7 @@ export class Dev extends EventEmitter {
         // failure surfaces at the dev.write() call instead of timing out.
         const exitHandler = (code: number | string) => {
           cleanup();
-          const mapped = exitCodeMapStrings[code];
-          reject(new Error(`Client exited while applying hot update${mapped ? `: ${mapped}` : ` (${code})`}`));
+          reject(clientExitedWhile("applying hot update", code));
         };
         client.on("received-hmr-event", socketEventHandler);
         client.on("exit", exitHandler);
@@ -807,7 +806,7 @@ class StylePromise extends Promise<Record<string, string>> {
           } else {
             reject(new Error(`Selector '${this.selector}' was found: ${JSON.stringify(style)}`));
           }
-        });
+        }, reject);
       });
     });
   }
@@ -817,6 +816,11 @@ const node = process.env.BUN_DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node");
 expect(node, "test will fail if this is not node").not.toBe(process.execPath);
 
 const danglingProcesses = new Set<Subprocess>();
+
+function clientExitedWhile(activity: string, code: number | string): Error {
+  const reason = exitCodeMapStrings[code];
+  return new Error(`Client exited while ${activity}${reason ? `: ${reason}` : ` (${code})`}`);
+}
 
 /**
  * Controls a subprocess that uses happy-dom as a lightweight browser. It is
@@ -1060,43 +1064,56 @@ export class Client extends EventEmitter {
           await maybeWaitInteractive("expectErrorOverlay");
           throw new Error("Expected errors, but none found");
         }
-
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
-
-        // Send the evaluation request and wait for response
-        this.#proc.send({
-          type: "get-errors",
-          args: [messageId],
-        });
-
-        const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-        if (result.error) {
-          throw new Error(result.error);
-        }
-        const actualErrors = result.value;
         const expectedErrors = [...errors].sort();
-        expect(actualErrors).toEqual(expectedErrors);
+        expect(await this.#overlayErrors()).toEqual(expectedErrors);
       } else {
         if (hasVisibleModal) {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Send the evaluation request and wait for response
-          this.#proc.send({
-            type: "get-errors",
-            args: [messageId],
-          });
-
-          const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-          if (result.error) {
-            throw new Error(result.error);
-          }
-          const actualErrors = result.value;
-          expect(actualErrors).toEqual([]);
+          expect(await this.#overlayErrors()).toEqual([]);
         }
+      }
+    });
+  }
+
+  #overlayErrors() {
+    return this.#request<string[]>("get-errors", "get-errors-result", [], "reading the error overlay");
+  }
+
+  /**
+   * Sends a request to client-fixture.mjs and waits for the `{value}` or
+   * `{error}` it replies with as the `${resultType}-${messageId}` event. The
+   * fixture reports every failure by exiting, in which case no reply comes, so
+   * an exit rejects the request with the exit reason instead of leaving the
+   * caller waiting until the test times out.
+   */
+  #request<T>(type: string, resultType: string, args: unknown[], activity: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.exited) {
+        const { exitCode, signalCode } = this.#proc;
+        reject(clientExitedWhile(activity, exitCode ?? signalCode ?? "unknown"));
+        return;
+      }
+      const messageId = Math.random().toString(36).slice(2);
+      const resultEvent = `${resultType}-${messageId}`;
+      const onResult = (result: { value?: T; error?: string }) => {
+        this.off("exit", onExit);
+        if (result.error) {
+          reject(new Error(result.error));
+        } else {
+          resolve(result.value as T);
+        }
+      };
+      const onExit = (code: number | string) => {
+        this.off(resultEvent, onResult);
+        reject(clientExitedWhile(activity, code));
+      };
+      this.once(resultEvent, onResult);
+      this.once("exit", onExit);
+      try {
+        this.#proc.send({ type, args: [messageId, ...args] });
+      } catch (err) {
+        this.off(resultEvent, onResult);
+        this.off("exit", onExit);
+        reject(err);
       }
     });
   }
@@ -1139,52 +1156,12 @@ export class Client extends EventEmitter {
     );
     return withAnnotatedStack(snapshotCallerLocationMayFail(), async () => {
       if (!this.suppressInteractivePrompt) await maybeWaitInteractive("js");
-      return new Promise((resolve, reject) => {
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
-
-        // Set up one-time handler for the response
-        const handler = (result: any) => {
-          if (result.error) {
-            reject(new Error(result.error));
-          } else {
-            resolve(result.value);
-          }
-        };
-
-        this.once(`js-result-${messageId}`, handler);
-
-        // Send the evaluation request
-        this.#proc.send({
-          type: "evaluate",
-          args: [messageId, code],
-        });
-      });
+      return this.#request<T>("evaluate", "js-result", [code], "evaluating JS");
     });
   }
 
   jsInteractive(code: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // Create unique message ID for this evaluation
-      const messageId = Math.random().toString(36).slice(2);
-
-      // Set up one-time handler for the response
-      const handler = (result: any) => {
-        if (result.error) {
-          reject(new Error(result.error));
-        } else {
-          resolve(result.value);
-        }
-      };
-
-      this.once(`js-result-${messageId}`, handler);
-
-      // Send the evaluation request
-      this.#proc.send({
-        type: "evaluate",
-        args: [messageId, code, "interactive"],
-      });
-    });
+    return this.#request<string>("evaluate", "js-result", [code, "interactive"], "evaluating JS");
   }
 
   async click(selector: string) {
@@ -1230,25 +1207,12 @@ export class Client extends EventEmitter {
     return new Proxy(
       new StylePromise(
         (resolve, reject) => {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Set up one-time handler for the response
-          const handler = (result: any) => {
-            if (result.error) {
-              reject(new Error(result.error));
-            } else {
-              resolve(result.value);
-            }
-          };
-
-          this.once(`get-style-result-${messageId}`, handler);
-
-          // Send the evaluation request
-          this.#proc.send({
-            type: "get-style",
-            args: [messageId, selector],
-          });
+          this.#request<Record<string, string>>(
+            "get-style",
+            "get-style-result",
+            [selector],
+            `reading the style of ${JSON.stringify(selector)}`,
+          ).then(resolve, reject);
         },
         selector,
         snapshotCallerLocation(),

@@ -14,8 +14,8 @@ use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
-    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
-    JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
+    BundleV2, BundleV2Result, CompletionStruct, JSBundleCompletionTask as Bv2OpaqueCompletion,
+    dispatch,
 };
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
@@ -57,9 +57,11 @@ pub struct JSBundleCompletionTask {
     /// How the bundle thread (and plugin hops) reach the VM that called Bun.build.
     pub(crate) loop_handle: jsc::LoopHandle,
     pub global_this: BackRef<JSGlobalObject>,
-    pub(crate) promise: jsc::JSPromiseStrong,
+    /// `Bun.build()`'s promise; empty for an HTML route's build.
+    promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub(crate) env: *mut bun_dotenv::Loader,
+    /// Written by the bundler through a raw pointer for the whole build.
     pub(crate) log: bun_ast::Log,
     /// Set by the owner giving up on the result (HTMLBundle route torn down)
     /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
@@ -74,16 +76,27 @@ pub struct JSBundleCompletionTask {
     /// is still queued itself instead of waiting behind other VMs' builds.
     pub(crate) stage: core::sync::atomic::AtomicU8,
 
-    pub(crate) html_build_task: Option<*mut html_bundle::Route>,
+    /// [`Deliver::HtmlRoute`]; the route refs itself until `on_complete`.
+    html_build_task: Option<NonNull<html_bundle::Route>>,
 
     pub(crate) result: BundleV2Result,
 
     /// intrusive queue link (UnboundedQueue)
     pub(crate) next: bun_threading::Link<JSBundleCompletionTask>,
-    /// arena-owned by BundleThread heap
-    pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
-    pub(crate) started_at_ns: u64,
+    /// Only an HTML route reports it.
+    started_at_ns: u64,
+}
+
+/// Who gets the result. Fixed at construction: once the task is enqueued the
+/// JS thread only cancels it (`cancelled`) or releases it while it is still
+/// queued (the `stage` handshake); see [`CompletionStruct`].
+pub(crate) enum Deliver {
+    /// `Bun.build()`: settle this promise.
+    Promise(jsc::JSPromiseStrong),
+    /// `Bun.serve` HTML route: `Route::on_complete` (the route refs itself
+    /// while the build runs).
+    HtmlRoute(NonNull<html_bundle::Route>),
 }
 
 #[repr(u8)]
@@ -102,6 +115,11 @@ pub(crate) enum Stage {
 }
 
 impl JSBundleCompletionTask {
+    /// When the build was scheduled (`Deliver::HtmlRoute` only).
+    pub(crate) fn started_at_ns(&self) -> u64 {
+        self.started_at_ns
+    }
+
     /// `RefCounted` destructor — last ref dropped.
     ///
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
@@ -135,60 +153,67 @@ unsafe impl Send for JSBundleCompletionTask {}
 
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
+///
+/// After the enqueue the JS thread only cancels or releases the task
+/// (`stop_for_vm_teardown`, `HTMLBundle::State::deinit`; `CompletionStruct`
+/// says why nothing else may touch it) until `on_complete_anytask` gets it
+/// back, and that is what the returned pointer is for.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-) -> crate::Result<*mut JSBundleCompletionTask> {
+    deliver: Deliver,
+) -> NonNull<JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
-    let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
+    let (promise, html_build_task, started_at_ns) = match deliver {
+        Deliver::Promise(promise) => (promise, None, 0),
+        Deliver::HtmlRoute(route) => (
+            jsc::JSPromiseStrong::default(),
+            Some(route),
+            bun_core::util::Timespec::now_allow_mocked_time().ns(),
+        ),
+    };
+    let mut task = Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
         loop_handle: global_this.bun_vm().loop_handle(),
         global_this: BackRef::new(global_this),
-        promise: jsc::JSPromiseStrong::default(),
+        promise,
         poll_ref: KeepAlive::init(),
         env,
         log: bun_ast::Log::init(),
         cancelled: core::sync::atomic::AtomicBool::new(false),
         bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
         stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
-        html_build_task: None,
+        html_build_task,
         result: BundleV2Result::Pending,
         next: bun_threading::Link::new(),
-        transpiler: ptr::null_mut(),
         plugins,
-        started_at_ns: 0,
-    }));
-    // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
-    unsafe {
-        if let Some(plugin) = (*completion).plugins {
-            (*plugin.as_ptr()).set_config(completion.cast());
-        }
+        started_at_ns,
+    });
+    // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`); the
+    // ctx is used for this one `loop_ref`.
+    task.poll_ref
+        .ref_(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
+    // Out on the bundle thread from the enqueue below until it posts the
+    // completion: it reads this VM's env loader and the plugin cell, so the VM
+    // cancels it at teardown (registry) and waits for it (embedded work).
+    task.loop_handle.embedded_work_scheduled();
+    let completion = bun_core::heap::into_raw_nn(task);
+    if let Some(plugin) = plugins {
+        // SAFETY: `plugin` is the live handle `Config::from_js` created; the
+        // task owns it from here (`deinit`).
+        unsafe { (*plugin.as_ptr()).set_config(completion.as_ptr().cast()) };
     }
+    crate::jsc_hooks::ActiveHandle::Bundle(completion).register();
 
     // Ensure this exists before we spawn the thread to prevent any race
     // conditions from creating two
     let _ = WorkPool::get();
 
-    // Out on the bundle thread from here until it posts the completion: it
-    // reads this VM's env loader and the plugin cell, so the VM cancels it at
-    // teardown (registry) and waits for it (embedded work).
-    // SAFETY: `completion` is live (refcount==1), JS thread.
-    unsafe { (*completion).loop_handle.embedded_work_scheduled() };
-    crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
-        .register();
-    bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
-
-    // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe {
-        (*completion)
-            .poll_ref
-            .ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm))
-    };
-
-    Ok(completion)
+    bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion.as_ptr());
+    completion
 }
 
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
@@ -636,10 +661,10 @@ impl JSBundleCompletionTask {
 
         if let Some(html_build_task) = this.html_build_task {
             this.plugins = None;
-            // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
-            // bumped its own refcount before scheduling and stays alive until this returns.
+            // SAFETY: `Deliver::HtmlRoute` contract — the route refs itself
+            // before scheduling and releases that ref inside `on_complete`.
             // R-2: deref as shared — `on_complete` takes `&self`.
-            unsafe { html_bundle::Route::on_complete(&*html_build_task, this) };
+            unsafe { html_bundle::Route::on_complete(html_build_task.as_ref(), this) };
             return Ok(());
         }
 
@@ -840,35 +865,35 @@ bun_jsc::jsc_abi_extern! {
 // `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
 // struct layout stays in `bun_runtime`.
 
-/// Recover `&JSBundleCompletionTask` from the opaque vtable owner pointer.
-///
-/// Centralises the `NonNull<Bv2OpaqueCompletion> → &JSBundleCompletionTask`
-/// cast+deref so the two `CompletionDispatch` thunks below stay safe at the
-/// call site (one accessor, N safe callers).
+/// The handle's owner is the task itself (`init_and_run`), live while its
+/// bundle runs; the thunks project single fields out of it (`CompletionStruct`).
 #[inline]
-fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCompletionTask {
-    // SAFETY: `c` is the live backref the bundler stashed in
-    // `CompletionHandle.owner` (set from a `Box<JSBundleCompletionTask>` that
-    // outlives every dispatch call). The opaque marker and the concrete struct
-    // are the same allocation; only shared field reads follow.
-    unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
+fn task_of(c: NonNull<Bv2OpaqueCompletion>) -> *mut JSBundleCompletionTask {
+    c.as_ptr().cast::<JSBundleCompletionTask>()
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
+    result_is_err: |c| {
+        // SAFETY: see `task_of`; `result` is only written once the bundle is
+        // over.
+        unsafe { matches!((*task_of(c)).result, BundleV2Result::Err(_)) }
+    },
     is_cancelled: |c| {
-        from_completion_handle(c)
-            .cancelled
-            .load(core::sync::atomic::Ordering::Acquire)
+        // SAFETY: see `task_of`; an atomic, readable from any thread.
+        unsafe {
+            (*task_of(c))
+                .cancelled
+                .load(core::sync::atomic::Ordering::Acquire)
+        }
     },
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `task` is a fresh non-null `ConcurrentTaskItem` passed through
-        // from the bundler vtable; the queue takes ownership. The VM waits for
-        // this build (embedded work) before closing its handle: always queued.
+        // SAFETY: see `task_of`; `loop_handle` is `Sync`. `task` is a fresh
+        // non-null `ConcurrentTaskItem` passed through from the bundler
+        // vtable; the queue takes ownership. The VM waits for this build
+        // (embedded work) before closing its handle: always queued.
         unsafe {
             let task = core::ptr::NonNull::new_unchecked(task);
-            let c = from_completion_handle(c);
-            let jsc::vm_handle::Posted::Queued = c.loop_handle.post_task(task) else {
+            let jsc::vm_handle::Posted::Queued = (*task_of(c)).loop_handle.post_task(task) else {
                 unreachable!("VM handle closed with a Bun.build outstanding");
             };
         }
@@ -876,7 +901,6 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 };
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
-// Hands BundleThread the field accessors it needs without exposing the layout.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
 unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     #[inline]
@@ -886,21 +910,25 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     }
 }
 
+// Field projections out of `this` only, never a reference to the whole task;
+// the trait doc says why.
 impl CompletionStruct for JSBundleCompletionTask {
-    fn try_start(&mut self) -> bool {
+    unsafe fn try_start(this: *mut Self) -> bool {
         use core::sync::atomic::Ordering;
-        self.stage
-            .compare_exchange(
+        // SAFETY: trait contract. `stage` is the handshake with
+        // `stop_for_vm_teardown`, which may be running right now.
+        unsafe {
+            (*this).stage.compare_exchange(
                 Stage::Queued as u8,
                 Stage::Started as u8,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .is_ok()
+        }
+        .is_ok()
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)] // trait contract: dequeued ⇒ sole owner
-    fn free_released_unstarted(this: *mut Self) {
+    unsafe fn free_released_unstarted(this: *mut Self) {
         use core::sync::atomic::Ordering;
         // `try_start` lost to the VM's teardown, which may still be releasing
         // the JS side (`Releasing`): a handful of stores on the JS thread.
@@ -916,250 +944,44 @@ impl CompletionStruct for JSBundleCompletionTask {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
-    /// (everything after `transpiler.* = try Transpiler.init(...)`).
-    /// `Transpiler::init` itself is called by `create_and_configure_transpiler`
-    /// (Rust cannot zero-init `Transpiler<'a>` and write it in place).
-    fn configure_bundler<'a>(
-        &mut self,
-        transpiler: &mut Transpiler<'a>,
-        _bump: &'a Arena,
-    ) -> bun_bundler::Result<()> {
-        let config = &mut self.config;
-
-        transpiler.options.env.behavior = config.env_behavior;
-        transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
-        // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
-        // its set, so clone rather than alias `config.features`.
-        transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
-        if config.force_node_env != options::ForceNodeEnv::Unspecified {
-            transpiler.options.force_node_env = config.force_node_env;
-        }
-
-        transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
-        // Convert API JSX config back to options.JSX.Pragma
-        let jsx_import = &config.jsx.import_source;
-        transpiler.options.jsx = options::jsx::Pragma {
-            factory: if !config.jsx.factory.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
-                    &config.jsx.factory,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
-            },
-            fragment: if !config.jsx.fragment.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
-                    &config.jsx.fragment,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
-            },
-            runtime: options::jsx::Runtime::from(config.jsx.runtime),
-            development: config.jsx.development,
-            package_name: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            classic_import_source: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            side_effects: config.jsx.side_effects,
-            parse: true,
-            import_source: options::jsx::ImportSource {
-                development: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 16);
-                    let _ = write!(&mut v, "{}/jsx-dev-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE_DEV)
-                },
-                production: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 12);
-                    let _ = write!(&mut v, "{}/jsx-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE)
-                },
-            },
-        };
-        transpiler.options.no_macros = config.no_macros;
-        transpiler.options.loaders =
-            options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
-        transpiler
-            .options
-            .entry_naming
-            .clone_from(&config.names.entry_point.data);
-        transpiler
-            .options
-            .chunk_naming
-            .clone_from(&config.names.chunk.data);
-        transpiler
-            .options
-            .asset_naming
-            .clone_from(&config.names.asset.data);
-
-        transpiler.options.output_format = config.format;
-        transpiler.options.bytecode = config.bytecode;
-        transpiler.options.compile_mode = if config.compile.is_some() {
-            options::CompileMode::Executable
-        } else {
-            options::CompileMode::None
-        };
-
-        // For compile mode, set the public_path to the target-specific base path
-        // This ensures embedded resources like yoga.wasm are correctly found
-        if let Some(compile_opts) = &config.compile {
-            let base_public_path =
-                target_base_public_path(compile_opts.compile_target.os, b"root/");
-            transpiler.options.public_path = Box::from(base_public_path);
-        } else {
-            transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
-        }
-
-        transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
-        transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
-        transpiler.options.minify_syntax = config.minify.syntax;
-        transpiler.options.minify_whitespace = config.minify.whitespace;
-        transpiler.options.minify_identifiers = config.minify.identifiers;
-        transpiler.options.keep_names = config.minify.keep_names;
-        transpiler.options.inlining = config.minify.syntax;
-        transpiler.options.source_map = config.source_map;
-        transpiler.options.packages = config.packages;
-        transpiler.options.allow_unresolved = match &config.allow_unresolved {
-            Some(a) => options::AllowUnresolved::from_strings(
-                a.keys().to_vec().into_boxed_slice(),
-                |p, s| bun_glob::r#match(p, s).matches(),
-            ),
-            None => options::AllowUnresolved::All,
-        };
-        transpiler.options.code_splitting = config.code_splitting;
-        transpiler.options.emit_dce_annotations = config
-            .emit_dce_annotations
-            .unwrap_or(!config.minify.whitespace);
-        transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-        transpiler.options.tree_shaking_override = config.tree_shaking;
-        transpiler.options.css_chunking = config.css_chunking;
-        let compile_to_standalone_html = 'brk: {
-            if config.compile.is_none() || config.target != bun_ast::Target::Browser {
-                break 'brk false;
-            }
-            // Only activate standalone HTML when all entrypoints are HTML files
-            for ep in config.entry_points.keys() {
-                if !ep.ends_with(b".html") {
-                    break 'brk false;
-                }
-            }
-            config.entry_points.count() > 0
-        };
-        // When compiling to standalone HTML, don't use the bun executable compile path
-        if compile_to_standalone_html {
-            transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
-            config.compile = None;
-        }
-        // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
-        // Owned so the static bound holds without tying `&mut self` to `'a`.
-        transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
-        transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
-        transpiler.options.react_fast_refresh = config.react_fast_refresh;
-        transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
-            config.react_compiler_output_mode.unwrap_or_else(|| {
-                if config.target.is_server_side() {
-                    bun_ast::runtime::ReactCompilerMode::Ssr
-                } else {
-                    bun_ast::runtime::ReactCompilerMode::Client
-                }
-            })
-        } else {
-            bun_ast::runtime::ReactCompilerMode::Disabled
-        };
-        transpiler.options.react_compiler_parse_test_pragmas =
-            config.react_compiler_parse_test_pragmas;
-        transpiler.options.metafile = config.metafile;
-        transpiler.options.metafile_json_path =
-            Box::from(config.metafile_json_path.list.as_slice());
-        transpiler.options.metafile_markdown_path =
-            Box::from(config.metafile_markdown_path.list.as_slice());
-        if config.optimize_imports.count() > 0 {
-            // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
-            // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).
-            transpiler.options.optimize_imports =
-                Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
-        }
-
-        if transpiler.options.compile_mode.is_executable() {
-            // Emitting DCE annotations is nonsensical in --compile.
-            transpiler.options.emit_dce_annotations = false;
-        }
-
-        transpiler.configure_linker();
-        transpiler.configure_defines()?;
-
-        if !transpiler.options.production {
-            transpiler
-                .options
-                .conditions
-                .append_slice(&[b"development"])?;
-        }
-        // `transpiler.env` is the dotenv loader installed by
-        // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
-        // `Resolver.opts` is the resolver-crate subset
-        // — re-project from the now-mutated `transpiler.options`.
-        transpiler.sync_resolver_opts();
-        Ok(())
-    }
-
-    fn complete_on_bundle_thread(&mut self) {
+    unsafe fn complete_on_bundle_thread(this: *mut Self) {
         // The bundle thread's last touch of this task and of the VM's memory:
         // hand it back (always queued — the VM waits for it) and stop counting.
-        self.bundle_loop
-            .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
-        let handle = self.loop_handle.clone();
-        let this = std::ptr::from_mut::<Self>(self);
+        // SAFETY: trait contract. The VM may free the task as soon as it is
+        // posted, so the handle is cloned out first and nothing reads `this`
+        // afterwards.
+        let handle = unsafe {
+            (*this)
+                .bundle_loop
+                .store(ptr::null_mut(), core::sync::atomic::Ordering::Release);
+            (*this).loop_handle.clone()
+        };
         let ct = jsc::ConcurrentTask::create(jsc::Task::init(this));
         let jsc::vm_handle::Posted::Queued = handle.post_task(ct) else {
             unreachable!("VM handle closed with a Bun.build outstanding");
         };
         handle.embedded_work_finished();
     }
-    fn set_result(&mut self, result: BundleV2Result) {
-        self.result = result;
+    unsafe fn set_result(this: *mut Self, result: BundleV2Result) {
+        // SAFETY: trait contract; the JS side reads `result` only after the
+        // hand-back.
+        unsafe { (*this).result = result };
     }
-    fn set_log(&mut self, log: bun_ast::Log) {
-        self.log = log;
-    }
-    fn set_transpiler(&mut self, this: *mut BundleV2<'_>) {
-        self.transpiler = this.cast();
-    }
-    fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>> {
-        // `Plugin` and `JSBundlerPlugin` are the same `bun_bundler` opaque.
-        self.plugins
-    }
-    fn file_map(&mut self) -> Option<NonNull<Bv2FileMap>> {
-        // `FileMap` and `Bv2FileMap` are the same `bun_bundler` type.
-        if self.config.files.map.is_empty() {
-            None
-        } else {
-            Some(NonNull::from(&mut self.config.files))
-        }
-    }
-    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle {
-        dispatch::CompletionHandle {
-            owner: NonNull::from(self).cast::<Bv2OpaqueCompletion>(),
-            vtable: &COMPLETION_VTABLE,
-        }
+    unsafe fn set_log(this: *mut Self, log: bun_ast::Log) {
+        // SAFETY: trait contract; the bundle is over, so nothing is writing
+        // through the transpiler's pointer to the old log any more.
+        unsafe { (*this).log = log };
     }
 
-    fn create_and_configure_transpiler<'a>(
-        &mut self,
+    unsafe fn create_and_configure_transpiler<'a>(
+        this: *mut Self,
         bump: &'a Arena,
     ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
-        let config = &self.config;
+        // SAFETY: trait contract. `config` is ours until the hand-back; `log`
+        // stays a raw pointer because the bundler writes through it from here
+        // until `set_log`.
+        let (config, log, env) =
+            unsafe { (&mut (*this).config, &raw mut (*this).log, (*this).env) };
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
                 Some(api::StringMap {
@@ -1190,24 +1012,14 @@ impl CompletionStruct for JSBundleCompletionTask {
             ..Default::default()
         };
 
-        let log: *mut bun_ast::Log = &raw mut self.log;
-        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
-        let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
-
-        // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        let transpiler: &'a mut Transpiler<'a> =
+            bump.alloc(Transpiler::init(bump, log, opts, Some(env))?);
+        configure_bundler(config, transpiler)?;
+        Ok(transpiler)
     }
 
-    fn init_and_run<'a>(
-        &mut self,
+    unsafe fn init_and_run<'a>(
+        this: *mut Self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
@@ -1221,8 +1033,13 @@ impl CompletionStruct for JSBundleCompletionTask {
             Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
         if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
             // So a cancelling VM can wake us out of an idle wait for plugins.
-            self.bundle_loop
-                .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
+            // SAFETY: trait contract; `stop_for_vm_teardown` reads this atomic
+            // concurrently.
+            unsafe {
+                (*this)
+                    .bundle_loop
+                    .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
+            }
         }
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
@@ -1235,23 +1052,23 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
-        bv2.plugins = self.plugins();
-        bv2.completion = Some(self.as_js_bundle_completion_task());
-        // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
-        // which outlives `bv2` (both live until `generate_in_new_thread`
-        // returns). `BundleV2.file_map: Option<&'a FileMap>` — erase to `'a`.
-        bv2.file_map = self.file_map().map(|p| unsafe { &*p.as_ptr() });
-
-        self.set_transpiler(&raw mut *bv2);
+        // SAFETY: trait contract. `plugins` is only read (here and by the VM's
+        // teardown); `config` is ours until the hand-back and the borrows taken
+        // out of it below end with `bv2`. Shared, not `&mut`: the transpiler
+        // still holds `configure_bundler`'s `&config.optimize_imports`.
+        let (config, plugins) = unsafe { (&(*this).config, (*this).plugins) };
+        bv2.plugins = plugins;
+        bv2.completion = Some(dispatch::CompletionHandle {
+            owner: NonNull::new(this)
+                .expect("completion")
+                .cast::<Bv2OpaqueCompletion>(),
+            vtable: &COMPLETION_VTABLE,
+        });
+        // `FileMap` and `JSBundlerConfig.files` are the same `bun_bundler` type.
+        bv2.file_map = (!config.files.map.is_empty()).then_some(&config.files);
 
         // Snapshot entry points as `&[&[u8]]`.
-        let entry_points: Vec<&[u8]> = self
-            .config
-            .entry_points
-            .keys()
-            .iter()
-            .map(|b| &**b)
-            .collect();
+        let entry_points: Vec<&[u8]> = config.entry_points.keys().iter().map(|b| &**b).collect();
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 
@@ -1259,7 +1076,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         // source-map wait-group waits run only on the error path.
         match run {
             Ok(build) => {
-                self.set_result(BundleV2Result::Value(build));
+                // SAFETY: trait contract.
+                unsafe { Self::set_result(this, BundleV2Result::Value(build)) };
                 bv2.deinit_without_freeing_arena();
                 Ok(())
             }
@@ -1271,6 +1089,201 @@ impl CompletionStruct for JSBundleCompletionTask {
             }
         }
     }
+}
+
+/// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
+/// (everything after `transpiler.* = try Transpiler.init(...)`). `&mut` because
+/// the standalone-HTML case clears `config.compile`, which `on_complete` reads.
+fn configure_bundler(
+    config: &mut JSBundlerConfig,
+    transpiler: &mut Transpiler<'_>,
+) -> bun_bundler::Result<()> {
+    transpiler.options.env.behavior = config.env_behavior;
+    transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
+    // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
+    // its set, so clone rather than alias `config.features`.
+    transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
+    if config.force_node_env != options::ForceNodeEnv::Unspecified {
+        transpiler.options.force_node_env = config.force_node_env;
+    }
+
+    transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
+    // Convert API JSX config back to options.JSX.Pragma
+    let jsx_import = &config.jsx.import_source;
+    transpiler.options.jsx = options::jsx::Pragma {
+        factory: if !config.jsx.factory.is_empty() {
+            options::jsx::Pragma::member_list_to_components_if_different(
+                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
+                &config.jsx.factory,
+            )?
+        } else {
+            options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
+        },
+        fragment: if !config.jsx.fragment.is_empty() {
+            options::jsx::Pragma::member_list_to_components_if_different(
+                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
+                &config.jsx.fragment,
+            )?
+        } else {
+            options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
+        },
+        runtime: options::jsx::Runtime::from(config.jsx.runtime),
+        development: config.jsx.development,
+        package_name: if !jsx_import.is_empty() {
+            std::borrow::Cow::Owned(jsx_import.to_vec())
+        } else {
+            std::borrow::Cow::Borrowed(b"react".as_slice())
+        },
+        classic_import_source: if !jsx_import.is_empty() {
+            std::borrow::Cow::Owned(jsx_import.to_vec())
+        } else {
+            std::borrow::Cow::Borrowed(b"react".as_slice())
+        },
+        side_effects: config.jsx.side_effects,
+        parse: true,
+        import_source: options::jsx::ImportSource {
+            development: if !jsx_import.is_empty() {
+                let mut v = Vec::with_capacity(jsx_import.len() + 16);
+                let _ = write!(&mut v, "{}/jsx-dev-runtime", bstr::BStr::new(jsx_import));
+                std::borrow::Cow::Owned(v)
+            } else {
+                std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE_DEV)
+            },
+            production: if !jsx_import.is_empty() {
+                let mut v = Vec::with_capacity(jsx_import.len() + 12);
+                let _ = write!(&mut v, "{}/jsx-runtime", bstr::BStr::new(jsx_import));
+                std::borrow::Cow::Owned(v)
+            } else {
+                std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE)
+            },
+        },
+    };
+    transpiler.options.no_macros = config.no_macros;
+    transpiler.options.loaders =
+        options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
+    transpiler
+        .options
+        .entry_naming
+        .clone_from(&config.names.entry_point.data);
+    transpiler
+        .options
+        .chunk_naming
+        .clone_from(&config.names.chunk.data);
+    transpiler
+        .options
+        .asset_naming
+        .clone_from(&config.names.asset.data);
+
+    transpiler.options.output_format = config.format;
+    transpiler.options.bytecode = config.bytecode;
+    transpiler.options.compile_mode = if config.compile.is_some() {
+        options::CompileMode::Executable
+    } else {
+        options::CompileMode::None
+    };
+
+    // For compile mode, set the public_path to the target-specific base path
+    // This ensures embedded resources like yoga.wasm are correctly found
+    if let Some(compile_opts) = &config.compile {
+        let base_public_path = target_base_public_path(compile_opts.compile_target.os, b"root/");
+        transpiler.options.public_path = Box::from(base_public_path);
+    } else {
+        transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
+    }
+
+    transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
+    transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
+    transpiler.options.minify_syntax = config.minify.syntax;
+    transpiler.options.minify_whitespace = config.minify.whitespace;
+    transpiler.options.minify_identifiers = config.minify.identifiers;
+    transpiler.options.keep_names = config.minify.keep_names;
+    transpiler.options.inlining = config.minify.syntax;
+    transpiler.options.source_map = config.source_map;
+    transpiler.options.packages = config.packages;
+    transpiler.options.allow_unresolved = match &config.allow_unresolved {
+        Some(a) => {
+            options::AllowUnresolved::from_strings(a.keys().to_vec().into_boxed_slice(), |p, s| {
+                bun_glob::r#match(p, s).matches()
+            })
+        }
+        None => options::AllowUnresolved::All,
+    };
+    transpiler.options.code_splitting = config.code_splitting;
+    transpiler.options.emit_dce_annotations = config
+        .emit_dce_annotations
+        .unwrap_or(!config.minify.whitespace);
+    transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+    transpiler.options.tree_shaking_override = config.tree_shaking;
+    transpiler.options.css_chunking = config.css_chunking;
+    let compile_to_standalone_html = 'brk: {
+        if config.compile.is_none() || config.target != bun_ast::Target::Browser {
+            break 'brk false;
+        }
+        // Only activate standalone HTML when all entrypoints are HTML files
+        for ep in config.entry_points.keys() {
+            if !ep.ends_with(b".html") {
+                break 'brk false;
+            }
+        }
+        config.entry_points.count() > 0
+    };
+    // When compiling to standalone HTML, don't use the bun executable compile path
+    if compile_to_standalone_html {
+        transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
+        config.compile = None;
+    }
+    // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
+    // Owned so the static bound holds without borrowing `config` for `'a`.
+    transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
+    transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
+    transpiler.options.react_fast_refresh = config.react_fast_refresh;
+    transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
+        config.react_compiler_output_mode.unwrap_or_else(|| {
+            if config.target.is_server_side() {
+                bun_ast::runtime::ReactCompilerMode::Ssr
+            } else {
+                bun_ast::runtime::ReactCompilerMode::Client
+            }
+        })
+    } else {
+        bun_ast::runtime::ReactCompilerMode::Disabled
+    };
+    transpiler.options.react_compiler_parse_test_pragmas = config.react_compiler_parse_test_pragmas;
+    transpiler.options.metafile = config.metafile;
+    transpiler.options.metafile_json_path = Box::from(config.metafile_json_path.list.as_slice());
+    transpiler.options.metafile_markdown_path =
+        Box::from(config.metafile_markdown_path.list.as_slice());
+    if config.optimize_imports.count() > 0 {
+        // SAFETY: only read while the bundle runs, which ends inside
+        // `init_and_run` before the task is handed back (the transpiler is
+        // dropped without reading it), and until then `config` is only
+        // borrowed shared again; a bump.alloc'd clone would leak (no Drop in
+        // arenas).
+        transpiler.options.optimize_imports =
+            Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
+    }
+
+    if transpiler.options.compile_mode.is_executable() {
+        // Emitting DCE annotations is nonsensical in --compile.
+        transpiler.options.emit_dce_annotations = false;
+    }
+
+    transpiler.configure_linker();
+    transpiler.configure_defines()?;
+
+    if !transpiler.options.production {
+        transpiler
+            .options
+            .conditions
+            .append_slice(&[b"development"])?;
+    }
+    // `transpiler.env` is the dotenv loader installed by
+    // `Transpiler::init`; non-null and valid for `'a`.
+    transpiler.resolver.env_loader = NonNull::new(transpiler.env);
+    // `Resolver.opts` is the resolver-crate subset
+    // — re-project from the now-mutated `transpiler.options`.
+    transpiler.sync_resolver_opts();
+    Ok(())
 }
 
 impl bun_event_loop::Taskable for JSBundleCompletionTask {

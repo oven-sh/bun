@@ -1370,19 +1370,15 @@ pub mod js_bundler {
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion =
-            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-                config,
-                plugins.and_then(core::ptr::NonNull::new),
-                global_this,
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        // SAFETY: `completion` is the freshly-boxed allocation returned above;
-        // sole owner on the JS thread until enqueued task runs.
-        unsafe {
-            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-            Ok((*completion).promise.value())
-        }
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise_value = promise.value();
+        crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+            crate::api::js_bundle_completion_task::Deliver::Promise(promise),
+        );
+        Ok(promise_value)
     }
 
     /// `Bun.build(config)`

@@ -18,7 +18,7 @@ use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
-    JSBundleCompletionTask, create_and_schedule_completion_task,
+    Deliver, JSBundleCompletionTask, create_and_schedule_completion_task,
 };
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
@@ -506,20 +506,19 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
-        // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
-        unsafe {
-            (*completion_task).started_at_ns =
-                bun_core::util::Timespec::now_allow_mocked_time().ns();
-            (*completion_task).html_build_task = Some(self.as_ctx_ptr());
-        }
-        self.state.set(State::Building(Some(completion_task)));
-
         // While we're building, ensure this doesn't get freed.
         // SAFETY: `self` is a live IntrusiveRc-managed allocation; matched by the
         // deref at the top of `on_complete`. `RefCount` is `Cell`-backed so the
         // `*const → *mut` cast carries sufficient (UnsafeCell) provenance.
         unsafe { RefCount::<Route>::ref_(self.as_ctx_ptr()) };
+        let completion_task = create_and_schedule_completion_task(
+            config,
+            plugins,
+            global,
+            Deliver::HtmlRoute(NonNull::from(self)),
+        );
+        self.state
+            .set(State::Building(Some(completion_task.as_ptr())));
         Ok(())
     }
 
@@ -539,6 +538,7 @@ impl Route {
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
         let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
 
+        let started_at_ns = completion_task.started_at_ns();
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
@@ -573,7 +573,7 @@ impl Route {
 
                 if server.config().is_development() {
                     let now = bun_core::util::Timespec::now_allow_mocked_time().ns();
-                    let duration = now.saturating_sub(completion_task.started_at_ns);
+                    let duration = now.saturating_sub(started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 
                     bun_output::print_elapsed(duration_f64);

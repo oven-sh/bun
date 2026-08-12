@@ -2593,13 +2593,13 @@ impl H2FrameParser {
                 self.dispatch_with_2_extra(
                     JSH2FrameParser::Gc::onError,
                     JSValue::js_number(rst_code.0 as f64),
-                    JSValue::js_number(self.last_stream_id.get() as f64),
+                    JSValue::js_number(last_stream_id as f64),
                     chunk,
                 );
             }
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onEnd,
-                JSValue::js_number(self.last_stream_id.get() as f64),
+                JSValue::js_number(last_stream_id as f64),
                 chunk,
             );
         }

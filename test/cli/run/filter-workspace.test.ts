@@ -662,6 +662,53 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  // With no real `node` on PATH, NODE/npm_node_execpath must point at the
+  // shim *executable* (not its directory), and once the first matched package
+  // writes that into the shared env loader the next package must still get
+  // the shim dir on its PATH so bare `node` in its script resolves.
+  test("every package gets the node shim on PATH when no real node exists", async () => {
+    const probe = (pkg: string) => `node -e "console.log(JSON.stringify({ pkg: '${pkg}', NODE: process.env.NODE }))"`;
+    const dir = tempDirWithFiles("filter-shim-path", {
+      packages: {
+        a: { "package.json": JSON.stringify({ name: "a", scripts: { go: probe("a") } }) },
+        b: { "package.json": JSON.stringify({ name: "b", scripts: { go: probe("b") } }) },
+        c: { "package.json": JSON.stringify({ name: "c", scripts: { go: probe("c") } }) },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    // PATH is the tempdir: guaranteed no real `node`. Bun must prepend the
+    // shim dir for every package, not just the first one it processes.
+    const env: Record<string, string | undefined> = { ...bunEnv, NO_COLOR: "1", PATH: dir };
+    delete env.NODE;
+    delete env.npm_node_execpath;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--shell=bun", "--filter", "*", "--elide-lines=0", "go"],
+      cwd: dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout
+      .split("\n")
+      .filter(l => l.includes('{"pkg"'))
+      .map(l => JSON.parse(l.slice(l.indexOf("{"))))
+      .sort((a, b) => a.pkg.localeCompare(b.pkg));
+    const shimExe = expect.stringMatching(/bun-node.*[\\/]node(\.exe)?$/);
+    expect({ results, stderr }).toEqual({
+      results: [
+        { pkg: "a", NODE: shimExe },
+        { pkg: "b", NODE: shimExe },
+        { pkg: "c", NODE: shimExe },
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

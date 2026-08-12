@@ -1119,4 +1119,49 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
   });
+
+  // With no real `node` on PATH, `bun run` set NODE / npm_node_execpath to the
+  // shim *directory* instead of the `node` executable inside it, so
+  // `"$NODE" file.js` (husky, node-gyp wrappers, etc.) failed with
+  // "Is a directory" (rc 126).
+  for (const bunFlag of [false, true]) {
+    it(`sets NODE and npm_node_execpath to the shim executable, not its directory${bunFlag ? " (--bun)" : " (no node on PATH)"}`, async () => {
+      using dir = tempDir("bun-run-node-env-shim", {
+        "package.json": JSON.stringify({
+          name: "p",
+          scripts: { probe: `echo "<$NODE><$npm_node_execpath>"` },
+        }),
+      });
+
+      // A PATH that provably contains no real `node` (the tempdir itself).
+      // `echo` is a `--shell=bun` builtin, so nothing here touches the
+      // machine-global shim that concurrent siblings may be recreating.
+      const env: Record<string, string | undefined> = { ...bunEnv, PATH: String(dir) };
+      delete env.NODE;
+      delete env.npm_node_execpath;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...(bunFlag ? ["--bun"] : []), "--shell=bun", "run", "probe"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const match = stdout.match(/^<(.*)><(.*)>$/m);
+      if (!match) {
+        expect({ stdout, stderr }).toEqual({ stdout: expect.stringMatching(/^<.*><.*>$/m), stderr: "" });
+        throw new Error("unreachable");
+      }
+      const [, NODE, npm_node_execpath] = match;
+      const exeSuffix = isWindows ? "\\node.exe" : "/node";
+      expect({ NODE, npm_node_execpath, endsWithExe: NODE.endsWith(exeSuffix) }).toEqual({
+        NODE: expect.stringContaining("bun-node"),
+        npm_node_execpath: NODE,
+        endsWithExe: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 });

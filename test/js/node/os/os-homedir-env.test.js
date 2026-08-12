@@ -2,11 +2,11 @@
 // os.homedir() must reflect live process.env.HOME (HOME="" → ""; only absent
 // HOME falls through to passwd); os.userInfo().homedir must NOT honor HOME.
 // Uses node:test so the same file runs under Node.js to verify parity:
-//   node test/js/node/os/os-homedir-env.test.mjs
+//   node test/js/node/os/os-homedir-env.test.js
 // Each check spawns process.execPath so HOME mutations can't leak out.
-import assert from "node:assert";
-import { spawnSync } from "node:child_process";
-import { test } from "node:test";
+const assert = require("node:assert");
+const { spawnSync } = require("node:child_process");
+const { test } = require("node:test");
 
 const isWindows = process.platform === "win32";
 

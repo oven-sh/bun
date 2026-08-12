@@ -2981,6 +2981,69 @@ describe("interpolated values in assignment position", () => {
     .runAsTest("interpolated equals in argument position passes through");
 });
 
+describe("expansion error in an assignment value", () => {
+  // 16 alternatives in each of 5 groups is 16^5 = 1048576 words, over the
+  // interpreter's 65536 cap, so expanding this word fails.
+  const group = "{a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p}";
+  const tooManyBraces = { raw: group.repeat(5) };
+  const braceError = "bun: too many brace expansions (1048576 > 65536)\n";
+
+  // Control: the same word in argument position.
+  TestBuilder.command`echo ${tooManyBraces}`
+    .stderr(braceError)
+    .exitCode(1)
+    .runAsTest("argument position reports the error");
+
+  // A standalone assignment and a command-prefix assignment both used to exit 1
+  // without writing anything. The message is written through a different path
+  // depending on whether stderr is a file descriptor or only captured
+  // (`.quiet()`), so cover both.
+  for (const quiet of [false, true]) {
+    const suffix = quiet ? " (quiet)" : "";
+    const command = (strings: TemplateStringsArray, ...exprs: any[]) => {
+      const builder = TestBuilder.command(strings, ...exprs);
+      return quiet ? builder.quiet() : builder;
+    };
+
+    command`FOO=${tooManyBraces}`
+      .stderr(braceError)
+      .exitCode(1)
+      .runAsTest(`standalone assignment reports the error and exits 1${suffix}`);
+
+    command`FOO=${tooManyBraces} echo hi`
+      .stderr(braceError)
+      .exitCode(1)
+      .runAsTest(`prefix assignment reports the error and does not run the command${suffix}`);
+  }
+
+  TestBuilder.command`FOO=${tooManyBraces} || echo fallback`
+    .stdout("fallback\n")
+    .stderr(braceError)
+    .runAsTest("failed standalone assignment has exit status 1 for || and the script continues");
+
+  TestBuilder.command`A=1 B=${tooManyBraces} C=2; echo "$A-$C"`
+    .stdout("1-\n")
+    .stderr(braceError)
+    .runAsTest("assignments before the failing one are applied, the ones after it are skipped");
+
+  test("a script file reports the error and exits 1", async () => {
+    using dir = tempDir("shell-assign-expansion-error", {
+      "script.sh": `FOO=${group.repeat(5)}\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [BUN, "script.sh"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe(braceError);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("interpolated values in reserved-word position", () => {
   TestBuilder.command`if true; then ${"if"} BUNISBAD; echo A; fi`
     .stdout("A\n")

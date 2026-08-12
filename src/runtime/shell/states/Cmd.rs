@@ -239,7 +239,9 @@ impl Cmd {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
-                        let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
+                        let io = interp.as_cmd(this).io.clone();
+                        let child =
+                            Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd, io);
                         return Assigns::start(interp, child);
                     }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
@@ -320,7 +322,8 @@ impl Cmd {
         if exit_code != 0 && matches!(child_kind, StateKind::Assign | StateKind::Expansion) {
             // Pull the expansion error out
             // before deiniting the child, then write it to stderr via
-            // `writeFailingError("{f}\n", err)` and finish with exit 1.
+            // `writeFailingError("{f}\n", err)` and finish with exit 1. An
+            // Assigns child has already written its own error (`Assigns::fail`).
             let err = if matches!(child_kind, StateKind::Expansion) {
                 Expansion::take_err(interp, child)
             } else {

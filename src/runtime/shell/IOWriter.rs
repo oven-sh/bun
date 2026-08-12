@@ -525,7 +525,10 @@ impl IOWriter {
 
     // ── queue management ────────────────────────────────────────────────
 
-    /// Cancel the chunks enqueued by the given child by marking them as dead.
+    /// Cancel the chunks enqueued by the given child by marking them as dead:
+    /// they are skipped without a callback, both when the queue drains and
+    /// when it fails (`fail_pending_writers`), so a child that is about to
+    /// finish with chunks still queued calls this first.
     pub(crate) fn cancel_chunks(&self, ptr: ChildPtr) {
         let s = self.state();
         if s.writers.is_empty() {
@@ -773,11 +776,9 @@ impl IOWriter {
                 if !not_fully_written {
                     return;
                 }
-                // Other end of the socket/pipe closed and we got EPIPE
-                // (e.g. `ls | echo`). Quick hack: have all writers see an
-                // error.
-                s.flags.broken_pipe = true;
-                self.broken_pipe_for_writers();
+                // Other end of the socket/pipe closed (e.g. `ls | echo`):
+                // everything still queued fails with EPIPE.
+                self.fail_pending_writers(&sys::Error::from_code(E::EPIPE, sys::Tag::write), None);
                 return;
             }
             if s.writers[idx].written >= s.writers[idx].len {
@@ -805,86 +806,89 @@ impl IOWriter {
         }
     }
 
-    fn broken_pipe_for_writers(&self) {
-        let s = self.state();
-        debug_assert!(s.flags.broken_pipe);
-        // NOTE: reshaped for borrowck — collect targets first so we don't
-        // hold `&mut s.writers` across `cancel_chunks`/`run_yield`.
-        let mut targets: Vec<ChildPtr> = Vec::new();
-        for w in &s.writers[s.writer_idx..] {
-            if w.is_dead() {
-                continue;
-            }
-            if !targets.contains(&w.ptr) {
-                targets.push(w.ptr);
-            }
-        }
-        for ptr in targets {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            self.run_yield(Yield::OnIoWriterChunk {
-                child: ptr,
-                written: 0,
-                err: Some(err),
-            });
-            self.cancel_chunks(ptr);
-        }
-        let s = self.state();
-        s.total_bytes_written = 0;
-        s.writers.clear();
-        s.buf.clear();
-        s.writer_idx = 0;
-    }
-
-    /// Shared failure bookkeeping: mark broken pipes, reset the queue, and
-    /// return the still-pending children that have to be told their chunk
-    /// failed. The queue is reset *before* any of them runs so that a child
-    /// re-enqueueing from its callback is not wiped afterwards.
-    fn fail_pending_writers(&self, err: &sys::Error) -> Vec<ChildPtr> {
+    /// Shared failure path: record the error, then fail every chunk that is
+    /// still queued, oldest first, with its own error completion.
+    ///
+    /// One completion per *chunk*, not per child. `rm` and the `OutputTask`
+    /// builtins (`ls`, `mkdir`, `touch`, `cp`) queue one chunk per task under
+    /// the same `ChildPtr` and finish once they have counted a completion for
+    /// each, so a single per-child error left them waiting for the rest
+    /// forever. A child that stops at its first error while more of its
+    /// chunks are queued (`cat`, the subprocess `CapturedWriter`) calls
+    /// `cancel_chunks` from that callback; that is why the queue is walked in
+    /// place, each entry re-checked right before its callback, and only
+    /// cleared after the last completion. Nothing is appended meanwhile:
+    /// `err`/`broken_pipe` are set before the first callback, so a child that
+    /// enqueues from its callback (the next statement, the RHS of `&&`, ...)
+    /// is answered by `handle_dead_writer` instead of being queued onto a
+    /// writer whose handle the error path is tearing down.
+    ///
+    /// `withhold` is the child whose `enqueue` is still on the stack (see
+    /// `on_sync_error`): the first of its chunks is not dispatched here but
+    /// returned, provided it is still live once everything else has run.
+    fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
+        // A completion may drop the last external `Arc` to this writer.
+        let _keepalive = self.keepalive();
         self.set_writing(false);
         let s = self.state();
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
         }
-        // Mark the writer dead before any completion below runs: a child that
-        // enqueues from its callback (the next statement, the RHS of `&&`, ...)
-        // must be rejected by `handle_dead_writer`, not queued onto a writer
-        // whose handle the error path is tearing down.
         s.err = Some(err.clone());
+        crate::shell_log!(
+            "IOWriter(fd={}) failing {} queued chunk(s): {:?}",
+            s.fd,
+            s.writers.len().saturating_sub(s.writer_idx),
+            err.get_errno()
+        );
         // Writers before writer_idx have already had their callback fired and
-        // may have been freed; only notify the still-pending ones, dedup'd.
-        let mut pending: Vec<ChildPtr> = Vec::new();
-        for w in &s.writers[s.writer_idx..] {
-            if !w.is_dead() && !pending.contains(&w.ptr) {
-                pending.push(w.ptr);
+        // may have been freed; only the still-pending ones are notified.
+        let mut idx = s.writer_idx;
+        let mut withheld: Option<usize> = None;
+        // Re-derived every iteration: a callback may `cancel_chunks`.
+        while let Some(w) = self.state().writers.get(idx) {
+            let (dead, child, this_idx) = (w.is_dead(), w.ptr, idx);
+            idx += 1;
+            if dead {
+                continue;
             }
+            if withheld.is_none() && withhold == Some(child) {
+                withheld = Some(this_idx);
+                continue;
+            }
+            // `SystemError` owns its strings by value, so derive a fresh one
+            // per callee instead of cloning the stored error.
+            self.run_yield(Yield::OnIoWriterChunk {
+                child,
+                written: 0,
+                err: Some(err.to_shell_system_error()),
+            });
         }
+        let withheld = withheld
+            .and_then(|i| self.state().writers.get(i))
+            .filter(|w| !w.is_dead())
+            .map(|w| Yield::OnIoWriterChunk {
+                child: w.ptr,
+                written: 0,
+                err: Some(err.to_shell_system_error()),
+            });
+        let s = self.state();
         s.total_bytes_written = 0;
         s.writer_idx = 0;
         s.buf.clear();
         s.writers.clear();
-        pending
+        withheld
     }
 
     /// Write failure reported by the `bun_io` writer callbacks. Each pending
-    /// child's error completion is driven through its own `Yield::run`; on
+    /// chunk's error completion is driven through its own `Yield::run`; on
     /// POSIX these callbacks only fire from the event loop, with no trampoline
     /// on the stack. On Windows uv can also deliver a synchronous submission
     /// failure from under `write()` (`start_with_current_pipe` returns `Ok`
     /// unconditionally), a re-entry `write()` cannot turn into a
     /// `WriteOutcome::Failed`.
     fn on_error(&self, err: &sys::Error) {
-        let _keepalive = self.keepalive();
-        for ptr in self.fail_pending_writers(err) {
-            // `SystemError` owns `bun_core::String`s by value (no shared
-            // refcount yet), so re-derive a fresh one per callee instead of
-            // cloning the stored error.
-            let ee = err.to_shell_system_error();
-            self.run_yield(Yield::OnIoWriterChunk {
-                child: ptr,
-                written: 0,
-                err: Some(ee),
-            });
-        }
+        self.fail_pending_writers(err, None);
     }
 
     /// Synchronous write failure while `child`'s `enqueue` call (and therefore
@@ -892,31 +896,15 @@ impl IOWriter {
     /// *returned* so that trampoline delivers it after `enqueue` unwinds;
     /// calling `on_error` here instead would re-enter `Yield::run` once per
     /// failing command and fire `child`'s callback from inside its own
-    /// `enqueue`. Usually `child`'s chunk is the only pending one (a
-    /// synchronous failure is the first write attempt of a batch); if a poll
-    /// re-registration fails while other children are still queued, those are
-    /// dispatched the way the async path dispatches them.
+    /// `enqueue`. Usually the chunk `enqueue` just pushed is the only pending
+    /// one (a synchronous failure is the first write attempt of a batch); if a
+    /// poll re-registration fails while other chunks are still queued, those
+    /// are dispatched the way the async path dispatches them. `Yield::done()`
+    /// comes back only if one of those completions made `child` cancel its
+    /// remaining chunks, i.e. it has already finished.
     fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
-        let _keepalive = self.keepalive();
-        let mut completion = None;
-        for ptr in self.fail_pending_writers(err) {
-            // `SystemError` owns `bun_core::String`s by value (no shared
-            // refcount yet), so re-derive a fresh one per callee.
-            let y = Yield::OnIoWriterChunk {
-                child: ptr,
-                written: 0,
-                err: Some(err.to_shell_system_error()),
-            };
-            if completion.is_none() && ptr == child {
-                completion = Some(y);
-            } else {
-                self.run_yield(y);
-            }
-        }
-        // The writer `enqueue` just pushed for `child` is live and at or past
-        // `writer_idx`, so it is always in the pending list.
-        debug_assert!(completion.is_some());
-        completion.unwrap_or_else(Yield::done)
+        self.fail_pending_writers(err, Some(child))
+            .unwrap_or_else(Yield::done)
     }
 
     fn on_close(&self) {

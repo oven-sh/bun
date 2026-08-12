@@ -1656,15 +1656,20 @@ impl CapturedWriter {
             .writer
             .clone()
             .expect("CapturedWriter live without writer");
-        // The CapturedWriter lives outside the NodeId arena (embedded in a
-        // heap-allocated PipeReader), so dispatch is by raw pointer — see
-        // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
-        let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
+        let child = self.child_ptr();
         let y = writer.enqueue(child, None, chunk);
         // `parent()` recovers the enclosing `PipeReader` via the same
         // `from_field_ptr!` projection (encapsulated once there). The `&mut
         // self` access above is finished, so the shared `&PipeReader` is fine.
         self.parent().run_yield(y);
+    }
+
+    /// How this writer's chunks are identified on the IOWriter queue. The
+    /// CapturedWriter lives outside the NodeId arena (embedded in a
+    /// heap-allocated PipeReader), so dispatch is by raw pointer — see
+    /// `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
+    fn child_ptr(&mut self) -> io_writer::ChildPtr {
+        io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>())
     }
 
     pub(crate) fn is_done(&self, just_written: usize) -> bool {
@@ -1709,6 +1714,13 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
+            // The writer fails each queued chunk separately; the rest of ours
+            // must not call back in here once the Cmd below has released this
+            // PipeReader (`do_write` stops enqueueing now that `err` is set).
+            let child = self.child_ptr();
+            if let Some(writer) = &self.writer {
+                writer.cancel_chunks(child);
+            }
             // SAFETY: `parent_mut` recovers the embedding `PipeReader` via
             // `container_of`; raw-ptr form per `try_signal_done_to_cmd`
             // contract (no `&mut PipeReader` held across the Cmd re-entry).

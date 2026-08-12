@@ -238,7 +238,10 @@ impl Cat {
                 node: cmd,
                 tag: ReaderTag::Cat,
             };
-            // Writing to stdout errored: cancel everything and finish.
+            // Writing to stdout errored: cancel everything and finish. The
+            // writer fails each queued chunk separately, so the chunks still
+            // queued behind this one must not call back into a finished cat.
+            Self::cancel_stdout_chunks(interp, cmd);
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
@@ -389,15 +392,19 @@ impl Cat {
             CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
         };
         if cancel {
-            let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
-            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
-                fd.writer.cancel_chunks(wchild);
-            }
+            Self::cancel_stdout_chunks(interp, cmd);
         }
         match step {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
             Step::Next => Self::next(interp, cmd),
+        }
+    }
+
+    fn cancel_stdout_chunks(interp: &Interpreter, cmd: NodeId) {
+        if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
+            fd.writer
+                .cancel_chunks(ChildPtr::new(cmd, WriterTag::Builtin));
         }
     }
 }

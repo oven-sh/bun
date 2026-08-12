@@ -87,12 +87,17 @@ impl IOReader {
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
         //
-        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
-        // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
-        // the read loop already holds a live `&mut ReaderImpl` on its stack
-        // while the callback runs (PipeReader.rs aliasing contract), so
-        // re-deriving here would create two simultaneous `&mut` to the same
-        // BufferedReader = Stacked-Borrows UB.
+        // The `BufferedReaderParent` callback bodies below (`on_read_chunk_cb`/
+        // `on_reader_done_cb`/`on_reader_error`) must not call this: a `&mut
+        // ReaderImpl` can be live on the stack while they run, always on
+        // Windows (`WindowsBufferedReader::on_read` dispatches them from
+        // `&mut self`) and on POSIX when `PosixBufferedReader::start()`
+        // reports a registration failure synchronously. The poll-driven POSIX
+        // dispatches (`on_poll` read loops, `done()`/`on_error()` in tail
+        // position) go through a copied vtable and a raw pointer with no
+        // borrow of the reader live, which is what lets a command that the
+        // trampoline starts from inside `on_reader_done_cb`/`on_reader_error`
+        // call `start()` and arm the next read.
         unsafe { &mut *self.reader.get() }
     }
 
@@ -279,14 +284,13 @@ impl IOReader {
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
             // NOTE: no explicit re-arm (`registerPoll()` on posix /
-            // `startWithCurrentPipe()` on windows) here: that would re-derive
-            // a second `&mut ReaderImpl` while the bun_io read loop still
-            // holds one on its stack (PipeReader.rs aliasing contract) —
-            // Stacked-Borrows UB.
-            // On posix the re-arm is redundant: the read loop re-registers
-            // itself after the callback returns based on the `bool` we return
-            // (PipeReader.rs:731/755/846/920/986). On Windows the re-arm is
-            // also handled by the caller (`on_file_read`'s defer block /
+            // `startWithCurrentPipe()` on windows) here: on Windows this
+            // callback runs from under `WindowsBufferedReader::on_read`'s
+            // `&mut self` (see `reader()`), and it is not needed anyway.
+            // On posix the read loop re-registers itself after the callback
+            // returns based on the `bool` we return (the `register_poll` calls
+            // at the end of the PipeReader.rs read loops). On Windows the
+            // re-arm is also handled by the caller (`on_file_read`'s epilogue /
             // `uv_read_start` for streams) — but `startWithCurrentPipe()` had
             // a SECOND load-bearing side effect: `buffer().clearRetainingCapacity()`,
             // which keeps `WindowsBufferedReader._buffer` bounded between

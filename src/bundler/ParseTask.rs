@@ -111,8 +111,8 @@ pub struct ParseTask {
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
-    pub completion_ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -248,8 +248,7 @@ impl ParseTask {
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
         let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            ctx: Some(ctx_ref.shared()),
-            completion_ctx: Some(ctx_ref),
+            ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -298,7 +297,6 @@ impl Default for ParseTask {
     fn default() -> Self {
         ParseTask {
             ctx: None,
-            completion_ctx: None,
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
@@ -533,7 +531,6 @@ pub mod parse_worker {
 
         let parse_task = ParseTask {
             ctx: None,
-            completion_ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             jsx: options::jsx::Pragma {
@@ -2809,7 +2806,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.completion_ctx.expect("ParseTask.completion_ctx unset"),
+            ctx: this.ctx.expect("ParseTask.ctx unset"),
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`

@@ -1620,19 +1620,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         unreachable!("use serializer::serialize_selector_list()");
     }
 
-    pub fn parse_with_options(input: &mut CssParser, options: &ParserOptions) -> CResult<Self> {
-        let mut parser = SelectorParser {
-            options,
-            is_nesting_allowed: true,
-        };
-        Self::parse(
-            &mut parser,
-            input,
-            ParseErrorRecovery::DiscardList,
-            NestingRequirement::None,
-        )
-    }
-
     pub fn parse(
         parser: &mut SelectorParser,
         input: &mut CssParser,
@@ -1925,14 +1912,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
 
     pub(crate) fn specificity(&self) -> u32 {
         self.specificity_and_flags.specificity
-    }
-
-    pub fn parse_with_options(input: &mut CssParser, options: &ParserOptions) -> CResult<Self> {
-        let mut selector_parser = SelectorParser {
-            is_nesting_allowed: true,
-            options,
-        };
-        Self::parse(&mut selector_parser, input)
     }
 
     pub(crate) fn iter_raw_match_order(&self) -> RawMatchOrderIterator<'_, Impl> {

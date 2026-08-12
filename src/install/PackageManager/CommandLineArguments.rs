@@ -936,31 +936,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
                 pretty_help(outro_text);
                 Output::flush();
             }
-            Subcommand::Scan => {
-                let intro_text = r"
-<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
-
-  Scan all packages in lockfile for security vulnerabilities.
-
-<b>Flags:<r>";
-
-                let outro_text = r"
-
-<b>Examples:<r>
-  <d>Scan all packages for vulnerabilities<r>
-  <b><green>bun pm scan<r>
-
-  <d>Output results as JSON<r>
-  <b><green>bun pm scan<r> <cyan>--json<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(PM_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
         }
     }
 
@@ -986,7 +961,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             // are not included in the help text
             Subcommand::Audit => AUDIT_PARAMS_FULL,
             Subcommand::Info => INFO_PARAMS,
-            Subcommand::Scan => PM_PARAMS, // scan uses the same params as pm command
         };
 
         let mut diag = clap::Diagnostic::default();

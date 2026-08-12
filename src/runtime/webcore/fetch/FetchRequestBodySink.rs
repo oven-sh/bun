@@ -276,35 +276,13 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::FetchRequestBodySink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
+    crate::impl_js_sink_forwarders!();
+
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

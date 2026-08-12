@@ -174,10 +174,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
-        // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
-        // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
-        // safe to call concurrently with `wait(&self)` in `thread_main` and with
-        // other `enqueue` callers.
+        // `&self` on all platforms and only reads a Copy field (eventfd, mach port,
+        // `WindowsLoop` pointer) to pass to a wake call that is safe from any thread
+        // (eventfd write, mach_msg send, uv_async_send), so the `&Waker` autoref is
+        // sound alongside `wait(&self)` in `thread_main` and other `enqueue` callers.
         unsafe {
             (*instance).queue.push(completion);
             (*instance).waker.wake();

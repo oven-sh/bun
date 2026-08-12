@@ -138,7 +138,3 @@ test/napi/napi.test.ts
 # unchecked at defineOwnNonIndexProperty. Moved here from expectations.txt.
 test/cli/run/require-cache.test.ts
 
-# The inspector's Runtime.evaluate / inspectee spawn hits an unchecked
-# getOwnNonIndexPropertyNames -> JSObjectInlines::get scope. Moved here from
-# expectations.txt so the whole file runs on ASAN without validateExceptionChecks.
-test/cli/inspect/inspect.test.ts

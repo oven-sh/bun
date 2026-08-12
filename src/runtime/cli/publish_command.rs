@@ -648,12 +648,6 @@ impl PublishCommand {
                             (),
                         );
                     }
-                    PackError::MissingPackageJSON => {
-                        Output::err_generic(
-                            "failed to find package.json from: '{}'",
-                            (bstr::BStr::new(FileSystem::instance().top_level_dir),),
-                        );
-                    }
                     PackError::RestrictedUnscopedPackage => {
                         Output::err_generic("unable to restrict access to unscoped package", ());
                     }

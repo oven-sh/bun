@@ -160,7 +160,7 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             jsc::bun_string_jsc::create_utf8_for_js(global, package_json.source.path.text)
         }
         Ok(None) => Ok(JSValue::UNDEFINED),
-        Err(_) => {
+        Err(bun_resolver::Error::ModuleNotFound) => {
             let (kind, name) = if bun_paths::is_package_path(specifier) {
                 ("package", esm_package_name(specifier))
             } else {
@@ -178,6 +178,12 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 )
                 .throw())
         }
+        Err(err) => Err(global.throw(format_args!(
+            "{} while resolving '{}' from '{}'",
+            err.name(),
+            BStr::new(specifier),
+            BStr::new(referrer)
+        ))),
     }
 }
 

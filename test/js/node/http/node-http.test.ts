@@ -4139,3 +4139,32 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("connectionListener closes a socket fed through emit('connection') once it has been idle for keepAliveTimeout", async () => {
+  const httpServer = createServer({ keepAliveTimeout: 100, keepAliveTimeoutBuffer: 0 }, (req, res) => res.end("ok"));
+  const serverSideClosed = Promise.withResolvers<void>();
+  // A plain net.Server accepts the connection and hands it to http's connection listener, so
+  // the request is served by the JS fallback parser rather than the native server.
+  const netServer = createNetServer(socket => {
+    socket.once("close", () => serverSideClosed.resolve());
+    httpServer.emit("connection", socket);
+  });
+  await once(netServer.listen(0), "listening");
+  try {
+    const client = connect((netServer.address() as AddressInfo).port);
+    client.setEncoding("utf8");
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    const clientClosed = once(client, "close");
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    // The client never sends anything else, so only the server can be closing the connection.
+    await serverSideClosed.promise;
+    await clientClosed;
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(received.toLowerCase()).toContain("\r\nconnection: keep-alive\r\n");
+    expect(received).toEndWith("\r\n\r\nok");
+  } finally {
+    netServer.close();
+  }
+});

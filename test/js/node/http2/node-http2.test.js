@@ -4304,6 +4304,198 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// A raw HTTP/1.1 client for the allowHTTP1 fallback: the tests below drive the connection
+// themselves so they can observe what the server does with it between and after requests.
+async function openHttp1Connection(port) {
+  const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+  socket.setEncoding("utf8");
+  let received = "";
+  let onData = () => {};
+  socket.on("data", chunk => {
+    received += chunk;
+    onData();
+  });
+  socket.on("error", () => {});
+  const closed = new Promise(resolve => socket.once("close", resolve));
+  await new Promise((resolve, reject) => {
+    socket.once("secureConnect", resolve);
+    socket.once("error", reject);
+  });
+  // Every response in these tests is res.end("ok") with a Content-Length, so the number of
+  // complete responses received so far is the number of "ok" bodies in the stream.
+  const responsesReceived = () => received.split("\r\n\r\nok").length - 1;
+  return {
+    socket,
+    closed,
+    get received() {
+      return received;
+    },
+    async waitForResponse() {
+      const before = responsesReceived();
+      while (responsesReceived() === before) {
+        await new Promise(resolve => (onData = resolve));
+      }
+      onData = () => {};
+    },
+    request(path, extraHeaders = "") {
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n${extraHeaders}\r\n`);
+      return this.waitForResponse();
+    },
+  };
+}
+
+it("http2 allowHTTP1 fallback closes a kept-alive connection once it has been idle for keepAliveTimeout", async () => {
+  const serverSocketClosed = Promise.withResolvers();
+  const server = http2.createSecureServer(
+    { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 100, keepAliveTimeoutBuffer: 0 },
+    (req, res) => {
+      req.socket.once("close", serverSocketClosed.resolve);
+      res.end("ok");
+    },
+  );
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = await openHttp1Connection(server.address().port);
+    await client.request("/");
+    expect(client.received.toLowerCase()).toContain("\r\nconnection: keep-alive\r\n");
+    // The client sends nothing further: the server has to be the one closing the connection.
+    await serverSocketClosed.promise;
+    await client.closed;
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback lets close() finish once a connection busy at close() time goes idle", async () => {
+  const server = http2.createSecureServer(
+    { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 100, keepAliveTimeoutBuffer: 0 },
+    (req, res) => {
+      // The connection is busy, so close() cannot sweep it; it has to be closed once its
+      // response has finished and the keep-alive idle period has passed.
+      server.close();
+      res.end("ok");
+    },
+  );
+  const serverClosed = new Promise(resolve => server.once("close", resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = await openHttp1Connection(server.address().port);
+  try {
+    await client.request("/");
+    await serverClosed;
+    await client.closed;
+  } finally {
+    client.socket.destroy();
+  }
+});
+
+// The arming itself, observed through socket.timeout (what net.Socket#setTimeout records), so
+// no timer has to fire: Node arms keepAliveTimeout + keepAliveTimeoutBuffer when a response
+// finishes with nothing else in flight, puts server.timeout back the moment the next request
+// arrives, and arms nothing after a response that closes the connection.
+it.each([
+  ["no server.timeout", 0],
+  ["server.setTimeout(7000)", 7000],
+])(
+  "http2 allowHTTP1 fallback arms the keep-alive idle timeout between requests (%s)",
+  async (_label, serverTimeout) => {
+    const observed = [];
+    const allFinished = Promise.withResolvers();
+    const server = http2.createSecureServer(
+      { ...TLS_CERT, allowHTTP1: true, keepAliveTimeout: 10_000, keepAliveTimeoutBuffer: 500 },
+      (req, res) => {
+        const entry = { url: req.url, onRequest: req.socket.timeout, afterFinish: undefined };
+        observed.push(entry);
+        res.on("finish", () => {
+          entry.afterFinish = req.socket.timeout;
+          if (observed.length === 3) allFinished.resolve();
+        });
+        res.end("ok");
+      },
+    );
+    if (serverTimeout) server.setTimeout(serverTimeout);
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const client = await openHttp1Connection(server.address().port);
+      await client.request("/1");
+      await client.request("/2");
+      await client.request("/3", "Connection: close\r\n");
+      await allFinished.promise;
+      await client.closed;
+      expect(observed).toEqual([
+        { url: "/1", onRequest: serverTimeout, afterFinish: 10_500 },
+        { url: "/2", onRequest: serverTimeout, afterFinish: 10_500 },
+        { url: "/3", onRequest: serverTimeout, afterFinish: serverTimeout },
+      ]);
+    } finally {
+      server.close();
+    }
+  },
+);
+
+it("http2 allowHTTP1 fallback destroys a connection that stays silent for server.setTimeout()", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
+  server.setTimeout(100);
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = await openHttp1Connection(server.address().port);
+    await client.closed;
+    expect(client.received).toBe("");
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback hands a timed-out connection to the server's 'timeout' listener instead of destroying it", async () => {
+  const timedOut = Promise.withResolvers();
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => res.end("ok"));
+  server.setTimeout(100, timedOut.resolve);
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = await openHttp1Connection(server.address().port);
+    expect(await timedOut.promise).toBeInstanceOf(tls.TLSSocket);
+    // The listener took responsibility for the connection, so it is still usable.
+    await client.request("/", "Connection: close\r\n");
+    expect(client.received).toStartWith("HTTP/1.1 200 OK\r\n");
+    await client.closed;
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback routes a socket timeout to res.setTimeout() and, while a body is still incoming, req.setTimeout()", async () => {
+  const events = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    req.once("timeout", () => events.push(`req ${req.url}`));
+    res.once("timeout", () => events.push(`res ${req.url}`));
+    server.once("timeout", () => events.push(`server ${req.url}`));
+    // Answering from the timeout callback shows the connection survived it: a timeout
+    // nobody listens for destroys the connection instead.
+    if (req.url === "/incomplete-body") {
+      req.setTimeout(50, () => res.end("ok"));
+    } else {
+      res.setTimeout(50, () => res.end("ok"));
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    // Fully received request: like Node, the request itself is not told about the timeout.
+    const client = await openHttp1Connection(server.address().port);
+    await client.request("/complete", "Connection: close\r\n");
+    await client.closed;
+    expect(events).toEqual(["res /complete", "server /complete"]);
+
+    // Only 3 of the announced 10 body bytes ever arrive: the request is told as well.
+    events.length = 0;
+    const stalled = await openHttp1Connection(server.address().port);
+    stalled.socket.write("POST /incomplete-body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc");
+    await stalled.waitForResponse();
+    expect(events).toEqual(["req /incomplete-body", "res /incomplete-body", "server /incomplete-body"]);
+    stalled.socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

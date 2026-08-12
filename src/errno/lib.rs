@@ -449,8 +449,8 @@ mod errno_name_tests {
         }
     }
 
-    /// On Windows `init` dispatches on the argument type. `i64` (the shared
-    /// `from_errno` / `bun_sys::Error` paths) is a discriminant lookup that only
+    /// On Windows `init` dispatches on the argument type. `i64` (`from_errno`
+    /// and the shared socket error paths) is a discriminant lookup that only
     /// falls back to the Win32/WSA table for values that are not discriminants;
     /// `c_int` (`Bun__errnoName`, libuv results) and `u32` (`GetLastError()`)
     /// are always mapped. The same number means different things on each path.
@@ -466,8 +466,10 @@ mod errno_name_tests {
         assert_eq!(SystemErrno::init(12_i64), Some(SystemErrno::ENOMEM));
         assert_eq!(SystemErrno::init(12_i32), None);
         assert_eq!(SystemErrno::init(12_u32), None);
-        // WSAEADDRINUSE is not a discriminant, so the i64 path reaches the WSA table.
+        // WSAEADDRINUSE is not a discriminant, so the i64 path reaches the WSA
+        // table, in either sign (udp bind widens usockets' negated getaddrinfo code).
         assert_eq!(SystemErrno::init(10048_i64), Some(SystemErrno::EADDRINUSE));
+        assert_eq!(SystemErrno::init(-10048_i64), Some(SystemErrno::EADDRINUSE));
         assert_eq!(SystemErrno::init(10048_i32), Some(SystemErrno::EADDRINUSE));
         // Negated libuv codes are what the c_int path exists for.
         assert_eq!(

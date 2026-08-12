@@ -1,8 +1,20 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { exists, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, installCacheFolderName, readdirSorted, tmpdirSync } from "harness";
 import { join } from "path";
+
+// registry.npmjs.org dist.integrity of the versions these tests install
+const uglifyIntegrity =
+  "sha512-T9q82TJI9e/C1TAxYvfb16xO120tMVFZrGA3f9/P4424DNu6ypK103y0GPFVa17yotwSyZW5iYXgjYHkGrJW/g==";
+const decompressIntegrity =
+  "sha512-e48kc2IjU+2Zw8cTb6VZcJQ3lgVbS4uuB1TfCHbiZIP/haNXm+SVyhu+87jts5/3ROpd82GSVCoNs/z8l4ZOaQ==";
+const uglifyCacheEntry = (run_dir: string) =>
+  installCacheFolderName(join(run_dir, ".cache"), "uglify-js", "3.17.4", uglifyIntegrity).slice("uglify-js@".length);
+const decompressCacheEntry = (run_dir: string) =>
+  installCacheFolderName(join(run_dir, ".cache"), "decompress", "4.2.1", decompressIntegrity).slice(
+    "decompress@".length,
+  );
 
 it.concurrent("should download dependency to run local file", async () => {
   const run_dir = tmpdirSync();
@@ -33,12 +45,8 @@ console.log(minify("print(6 * 7)").code);
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([
-    "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031",
-  ]);
-  expect(
-    await exists(join(run_dir, ".cache", "uglify-js", "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031", "package.json")),
-  ).toBeTrue();
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([uglifyCacheEntry(run_dir)]);
+  expect(await exists(join(run_dir, ".cache", "uglify-js", uglifyCacheEntry(run_dir), "package.json"))).toBeTrue();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited1).toBe(0);
@@ -62,9 +70,7 @@ console.log(minify("print(6 * 7)").code);
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([
-    "3.17.4@@@1_integrity=4fdabcd93248f5efc2d53031",
-  ]);
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual([uglifyCacheEntry(run_dir)]);
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited2).toBe(0);
@@ -104,17 +110,11 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([
-    "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713",
-  ]);
-  expect(
-    await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "package.json")),
-  ).toBeTrue();
-  expect(
-    await file(
-      join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "index.js"),
-    ).text(),
-  ).toContain("\nmodule.exports = ");
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([decompressCacheEntry(run_dir)]);
+  expect(await exists(join(run_dir, ".cache", "decompress", decompressCacheEntry(run_dir), "package.json"))).toBeTrue();
+  expect(await file(join(run_dir, ".cache", "decompress", decompressCacheEntry(run_dir), "index.js")).text()).toContain(
+    "\nmodule.exports = ",
+  );
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual([
     "directory: package/",
@@ -143,17 +143,11 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([
-    "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713",
-  ]);
-  expect(
-    await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "package.json")),
-  ).toBeTrue();
-  expect(
-    await file(
-      join(run_dir, ".cache", "decompress", "4.2.1@@@1_integrity=7b8f2473622353ed99c3c713", "index.js"),
-    ).text(),
-  ).toContain("\nmodule.exports = ");
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual([decompressCacheEntry(run_dir)]);
+  expect(await exists(join(run_dir, ".cache", "decompress", decompressCacheEntry(run_dir), "package.json"))).toBeTrue();
+  expect(await file(join(run_dir, ".cache", "decompress", decompressCacheEntry(run_dir), "index.js")).text()).toContain(
+    "\nmodule.exports = ",
+  );
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual([
     "directory: package/",

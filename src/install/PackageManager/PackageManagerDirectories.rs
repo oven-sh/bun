@@ -7,6 +7,7 @@ use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
+use bun_core::strings;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::integrity::{self, Integrity};
@@ -338,7 +339,11 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => return d,
+                Ok(d) => {
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_id = read_or_create_cache_directory_id(&d) };
+                    return d;
+                }
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -360,7 +365,11 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         };
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
-            Ok(d) => return d,
+            Ok(d) => {
+                // SAFETY: see fn safety contract.
+                unsafe { (*this).cache_directory_id = read_or_create_cache_directory_id(&d) };
+                return d;
+            }
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
@@ -370,6 +379,36 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
+}
+
+/// `<cache>/.id`: 16 random bytes created once per cache directory; npm cache
+/// entry fingerprints are keyed with it. An unreadable file is replaced,
+/// which only means fingerprinted entries are fetched again.
+fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
+    let name = bun_core::zstr!(".id");
+    let read = |id: &mut integrity::CacheDirId| -> bool {
+        File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0)
+            .and_then(|file| file.read_all(id))
+            .is_ok_and(|len| len == id.len())
+    };
+    let mut id: integrity::CacheDirId = [0; 16];
+    for _ in 0..2 {
+        if read(&mut id) {
+            return id;
+        }
+        bun_boringssl_sys::rand_bytes(&mut id);
+        let _ = sys::unlinkat(cache_dir.fd(), name);
+        match File::openat(
+            cache_dir.fd(),
+            name.as_bytes(),
+            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+            0o600,
+        ) {
+            Ok(file) if file.write_all(&id).is_ok() => return id,
+            _ => continue,
+        }
+    }
+    id
 }
 
 pub struct CacheDir {
@@ -434,7 +473,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 /// Append-only cursor over a caller-owned `&mut [u8]`. All writers are
 /// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
 /// asserted ≥ 1024 elsewhere) and the longest possible payload here —
-/// `name@u64.u64.u64-16hex+16HEX@@@<ver>_integrity=24hex_patch_hash=16hex\0`
+/// `name@u64.u64.u64-16hex+16HEX@@@<ver>.13base32_patch_hash=16hex\0`
 /// plus an `@@host__16hex` scope suffix — is bounded well under that. Debug builds
 /// keep the bounds check; release elides it so no panic-format code is
 /// reachable from this module.
@@ -497,13 +536,15 @@ impl<'a> ByteCursor<'a> {
         }
     }
 
-    /// `_integrity=<hex>` — leading bytes of the digest the entry was fetched
-    /// for, so entries fetched for different digests of one version coexist.
+    /// `.` + 13 chars of lowercase base32: a keyed fingerprint of the digest
+    /// the entry was fetched for, so entries fetched for different digests of
+    /// one version coexist.
     #[inline(always)]
-    fn put_integrity(&mut self, integrity: &Integrity) {
-        if let Some(fingerprint) = integrity.fingerprint() {
-            self.put(b"_integrity=");
-            self.at += bun_fmt::bytes_to_hex_lower(fingerprint, &mut self.buf[self.at..]);
+    fn put_fingerprint(&mut self, fingerprint: u64) {
+        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+        self.put_byte(b'.');
+        for i in 0..13 {
+            self.put_byte(CHARS[((fingerprint >> (60 - 5 * i)) & 31) as usize]);
         }
     }
 
@@ -657,7 +698,22 @@ pub fn cached_npm_package_folder_name_print<'a>(
         }
     }
     w.put_cache_version(Some(CacheVersion::CURRENT));
-    w.put_integrity(integrity);
+    debug_assert!(this.cache_directory.is_some());
+    // With verification off nothing vouches for the digest, so such entries
+    // share the digest-less name and a verifying install fetches its own copy.
+    if this.options.do_.contains(options::Do::VERIFY_INTEGRITY)
+        && let Some(fingerprint) = integrity.fingerprint(&this.cache_directory_id)
+    {
+        // NAME_MAX: leave the fingerprint off rather than produce a component
+        // the filesystem rejects (only reachable with ~200-byte package names).
+        // Decided on the unpatched name so both shapes share the same prefix.
+        const SUFFIXES_LEN: usize = ".".len() + 13 + "_patch_hash=".len() + 16;
+        let component_start =
+            strings::last_index_of_char(&w.buf[..w.at], b'/').map_or(0, |i| i + 1);
+        if w.at - component_start + SUFFIXES_LEN <= 255 {
+            w.put_fingerprint(fingerprint);
+        }
+    }
     w.put_patch_hash(patch_hash);
     w.finish_z()
 }
@@ -738,7 +794,7 @@ pub fn cached_tarball_folder_name_print<'a>(
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put_u64_hex16::<true>(integrity::sha256_prefix_u64(url));
+    w.put_u64_hex16::<true>(integrity::sha256_prefix_u64(&[url]));
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()
@@ -844,6 +900,7 @@ pub fn path_for_cached_npm_path<'a>(
     version: Semver::Version,
     integrity: &Integrity,
 ) -> Result<&'a mut [u8], Error> {
+    let cache_dir: Fd = get_cache_directory(this);
     let mut cache_path_buf = PathBuffer::uninit();
 
     let cache_path = cached_npm_package_folder_name_print(
@@ -860,8 +917,6 @@ pub fn path_for_cached_npm_path<'a>(
     debug_assert!(cache_path_buf[package_name.len()] == b'@');
 
     cache_path_buf[package_name.len()] = SEP;
-
-    let cache_dir: Fd = get_cache_directory(this);
 
     #[cfg(windows)]
     {
@@ -944,9 +999,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
+            cache_dir = get_cache_directory(manager);
             cache_dir_subpath =
                 cached_npm_package_folder_name(manager, name, version, integrity, patch_hash);
-            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
             let git = resolution.git();
@@ -1276,7 +1331,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
 pub(crate) struct CacheVersion;
 impl CacheVersion {
-    pub(crate) const CURRENT: usize = 1;
+    pub(crate) const CURRENT: usize = 2;
 }
 
 // ────────────────────────────── helpers ───────────────────────────────────────

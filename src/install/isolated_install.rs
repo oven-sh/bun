@@ -2312,6 +2312,10 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    let (cache_dir, cache_dir_path) =
+                        installer.manager_mut().get_cache_directory_and_abs_path();
+                    let _ = &cache_dir_path; // dropped at scope exit
+
                     // SAFETY: each arm reads the union field that `pkg_res_tag`
                     // (== `pkg_res.tag`) names as active.
                     let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {
@@ -2349,10 +2353,6 @@ pub(crate) fn install_isolated_packages(
                     };
                     let mut pkg_cache_dir_subpath: AutoRelPath =
                         AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
-
-                    let (cache_dir, cache_dir_path) =
-                        installer.manager_mut().get_cache_directory_and_abs_path();
-                    let _ = &cache_dir_path; // dropped at scope exit
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {

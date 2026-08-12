@@ -133,6 +133,8 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
+                let _ = directories::get_cache_directory(self);
+
                 // SAFETY: each arm reads the union variant that matches the
                 // `pkg.resolution.tag` just dispatched on; `Resolution` is
                 // zero-initialised (`Value::zero()`) so even a stale tag yields

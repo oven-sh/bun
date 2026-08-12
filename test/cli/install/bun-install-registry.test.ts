@@ -7,6 +7,7 @@ import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  installCacheFolderName,
   isFlaky,
   isMacOS,
   isWindows,
@@ -26,10 +27,9 @@ import {
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 
-/** Folder name of an npm cache entry: `<name>@<version>@@localhost@@@1_integrity=<first 12 digest bytes as hex>` */
-function cacheFolderName(name: string, version: string, integrity: string) {
-  const digest = Buffer.from(integrity.replace(/^sha\d+-/, ""), "base64");
-  return `${name}@${version}@@localhost@@@1_integrity=${digest.subarray(0, 12).toString("hex")}`;
+/** Folder name of an npm cache entry served by the test registry. */
+function cacheFolderName(cacheDir: string, name: string, version: string, integrity: string) {
+  return installCacheFolderName(cacheDir, name, version, integrity, "localhost");
 }
 async function fixtureIntegrity(name: string, version: string): Promise<string> {
   const manifest = await file(join(import.meta.dir, "registry", "packages", name, "package.json")).json();
@@ -125,7 +125,12 @@ describe("auto-install", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
-    const folderName = cacheFolderName("is-number", "2.0.0", await fixtureIntegrity("is-number", "2.0.0"));
+    const folderName = cacheFolderName(
+      join(packageDir, ".bun-cache"),
+      "is-number",
+      "2.0.0",
+      await fixtureIntegrity("is-number", "2.0.0"),
+    );
     expect(
       resolve(await readlink(join(packageDir, ".bun-cache", "is-number", folderName.slice("is-number@".length)))),
     ).toBe(join(packageDir, ".bun-cache", folderName));
@@ -133,12 +138,14 @@ describe("auto-install", () => {
 
   test("does not run a cached package that was stored for a different integrity", async () => {
     const cacheDir = join(packageDir, ".bun-cache");
-    // an entry (and its version index link) as stored without a recorded integrity
-    const otherEntry = join(cacheDir, "is-number@2.0.0@@localhost@@@1");
+    // entries (and version index links) stored by an earlier version / without an integrity
+    const otherEntries = ["is-number@2.0.0@@localhost@@@1", "is-number@2.0.0@@localhost@@@2"];
     await mkdir(join(cacheDir, "is-number"), { recursive: true });
-    await write(join(otherEntry, "package.json"), JSON.stringify({ name: "is-number", version: "2.0.0" }));
-    await write(join(otherEntry, "index.js"), "module.exports = { version: 'not from the registry' };");
-    await symlink(otherEntry, join(cacheDir, "is-number", "2.0.0@@localhost@@@1"), "junction");
+    for (const entry of otherEntries) {
+      await write(join(cacheDir, entry, "package.json"), JSON.stringify({ name: "is-number", version: "2.0.0" }));
+      await write(join(cacheDir, entry, "index.js"), "module.exports = { version: 'not from the registry' };");
+      await symlink(join(cacheDir, entry), join(cacheDir, "is-number", entry.slice("is-number@".length)), "junction");
+    }
 
     await using proc = spawn({
       cmd: [bunExe(), "--install=fallback", "--print", "require('is-number').version"],
@@ -153,11 +160,23 @@ describe("auto-install", () => {
     expect(exitCode).toBe(0);
 
     expect(
-      await exists(join(cacheDir, cacheFolderName("is-number", "2.0.0", await fixtureIntegrity("is-number", "2.0.0")))),
+      await exists(
+        join(
+          cacheDir,
+          cacheFolderName(
+            join(packageDir, ".bun-cache"),
+            "is-number",
+            "2.0.0",
+            await fixtureIntegrity("is-number", "2.0.0"),
+          ),
+        ),
+      ),
     ).toBeTrue();
-    expect(await file(join(otherEntry, "index.js")).text()).toBe(
-      "module.exports = { version: 'not from the registry' };",
-    );
+    for (const entry of otherEntries) {
+      expect(await file(join(cacheDir, entry, "index.js")).text()).toBe(
+        "module.exports = { version: 'not from the registry' };",
+      );
+    }
   });
 });
 
@@ -3215,7 +3234,7 @@ test("it should invalid cached package if package.json is missing", async () => 
   const cacheEntry = join(
     packageDir,
     ".bun-cache",
-    cacheFolderName("no-deps", "2.0.0", await fixtureIntegrity("no-deps", "2.0.0")),
+    cacheFolderName(join(packageDir, ".bun-cache"), "no-deps", "2.0.0", await fixtureIntegrity("no-deps", "2.0.0")),
   );
   await Promise.all([
     write(
@@ -3278,12 +3297,13 @@ describe.each(["hoisted", "isolated"] as const)("cache entry identity (%s linker
     const cacheDir = join(packageDir, ".bun-cache");
     const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
     const integrity = await fixtureIntegrity("no-deps", "2.0.0");
-    const cacheEntry = join(cacheDir, cacheFolderName("no-deps", "2.0.0", integrity));
+    const cacheEntry = join(cacheDir, cacheFolderName(cacheDir, "no-deps", "2.0.0", integrity));
 
     // entries for the same name@version stored without / for another integrity
     const otherEntries = [
       join(cacheDir, "no-deps@2.0.0@@localhost@@@1"),
-      join(cacheDir, cacheFolderName("no-deps", "2.0.0", "sha512-" + Buffer.alloc(64, 7).toString("base64"))),
+      join(cacheDir, "no-deps@2.0.0@@localhost@@@2"),
+      join(cacheDir, cacheFolderName(cacheDir, "no-deps", "2.0.0", "sha512-" + Buffer.alloc(64, 7).toString("base64"))),
     ];
     for (const entry of otherEntries) {
       await write(join(entry, "package.json"), JSON.stringify({ name: "no-deps", version: "2.0.0" }));

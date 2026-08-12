@@ -121,8 +121,9 @@ impl Id {
                 core::mem::size_of::<semver::Version>(),
             )
         });
-        if let Some(fingerprint) = integrity.fingerprint() {
-            hasher.update(fingerprint);
+        if integrity.tag.is_supported() {
+            hasher.update(&[integrity.tag.0]);
+            hasher.update(integrity.slice());
         }
         Id(hasher.final_())
     }
@@ -144,7 +145,7 @@ impl Id {
     // Persisted to the filesystem: this is the name of the bare clone in the cache directory.
     pub(crate) fn for_git_clone(url: &[u8]) -> Id {
         // @truncate to u61 then widen to u64 — keep low 61 bits
-        Id((4u64 << 61) | (crate::integrity::sha256_prefix_u64(url) & ((1u64 << 61) - 1)))
+        Id((4u64 << 61) | (crate::integrity::sha256_prefix_u64(&[url]) & ((1u64 << 61) - 1)))
     }
 
     pub(crate) fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {

@@ -1425,6 +1425,7 @@ impl<'a> PackageInstaller<'a> {
 
         match resolution.tag {
             resolution::Tag::Npm => {
+                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
                 installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
                     self.manager_mut(),
                     pkg_name.slice(string_buf!()),
@@ -1432,7 +1433,6 @@ impl<'a> PackageInstaller<'a> {
                     &self.metas[package_id as usize].integrity,
                     patch_contents_hash,
                 );
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Git => {
                 installer.cache_dir_subpath = package_manager::cached_git_folder_name(

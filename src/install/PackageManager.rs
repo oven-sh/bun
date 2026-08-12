@@ -279,6 +279,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
+    pub(crate) cache_directory_id: crate::integrity::CacheDirId,
     pub root_dir: &'static mut fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
@@ -1857,6 +1858,7 @@ pub fn init(
 
         wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
+        wr!(cache_directory_id, [0; 16]);
         wr!(options, options);
         wr!(
             active_lifecycle_scripts,
@@ -2284,6 +2286,7 @@ fn init_with_runtime_once(
 
         wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
+        wr!(cache_directory_id, [0; 16]);
         wr!(
             options,
             Options {

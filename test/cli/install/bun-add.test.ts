@@ -1048,7 +1048,10 @@ it("should add dependency (GitHub)", async () => {
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
+    ".id",
+    "@GH@mishoo-UglifyJS-e219a9a@@@2",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -1277,15 +1280,16 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
-    "@GH@mishoo-UglifyJS-e219a9a@@@1",
+    ".id",
+    "@GH@mishoo-UglifyJS-e219a9a@@@2",
     "uglify",
   ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-    "mishoo-UglifyJS-e219a9a@@@1",
+    "mishoo-UglifyJS-e219a9a@@@2",
   ]);
   expect(
-    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
-  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@2"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@2"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -1659,7 +1663,9 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
-  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("89529d5f052b327e.git");
+  expect(
+    (await readdirSorted(join(package_dir, "node_modules", ".cache"))).filter(entry => entry.endsWith(".git")),
+  ).toEqual(["89529d5f052b327e.git"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -2020,7 +2026,10 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(await exited1).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
+    ".id",
+    "@GH@mishoo-UglifyJS-e219a9a@@@2",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -2081,7 +2090,10 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
+    ".id",
+    "@GH@mishoo-UglifyJS-e219a9a@@@2",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",

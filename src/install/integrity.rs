@@ -33,12 +33,16 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-pub const FINGERPRINT_LEN: usize = 12;
+/// Random per-cache-directory key stored in `<cache>/.id`; cache entry
+/// fingerprints are derived from it so they cannot be predicted off-machine.
+pub type CacheDirId = [u8; 16];
 
-/// First 8 bytes of SHA-256 over `bytes`, for naming cache entries after a URL.
-pub fn sha256_prefix_u64(bytes: &[u8]) -> u64 {
+/// First 8 bytes of SHA-256 over the concatenation of `parts`.
+pub fn sha256_prefix_u64(parts: &[&[u8]]) -> u64 {
     let mut hasher = Crypto::SHA256::init();
-    hasher.update(bytes);
+    for part in parts {
+        hasher.update(part);
+    }
     let mut digest = [0u8; SHA256_DIGEST_LEN];
     hasher.r#final(&mut digest);
     u64::from_be_bytes(digest[..8].try_into().expect("infallible: size matches"))
@@ -182,13 +186,17 @@ impl Integrity {
         &self.value[0..self.tag.digest_len()]
     }
 
-    /// Leading digest bytes used to tell cache entries for the same
-    /// name@version apart; `None` when there is no supported digest.
-    pub fn fingerprint(&self) -> Option<&[u8]> {
+    /// 64-bit keyed fingerprint of (algorithm, digest) used to tell cache
+    /// entries for the same name@version apart; `None` without a digest.
+    pub fn fingerprint(&self, cache_dir_id: &CacheDirId) -> Option<u64> {
         if !self.tag.is_supported() {
             return None;
         }
-        Some(&self.value[..FINGERPRINT_LEN])
+        Some(sha256_prefix_u64(&[
+            cache_dir_id,
+            &[self.tag.0],
+            self.slice(),
+        ]))
     }
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).

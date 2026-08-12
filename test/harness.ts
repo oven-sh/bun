@@ -2032,6 +2032,53 @@ export async function readdirSorted(path: string): Promise<string[]> {
 }
 
 /**
+ * Folder name `bun install` uses for an npm package in its cache directory:
+ * `<name>@<version>[@@<registryHost>]@@@2[.<fingerprint>]`. The fingerprint is
+ * present when the package has an integrity value and is derived from the
+ * per-cache-directory key in `<cacheDir>/.id`, which this helper reads (or
+ * creates the same way `bun install` would, so it may be called before the
+ * first install into `cacheDir`).
+ */
+export function installCacheFolderName(
+  cacheDir: string,
+  name: string,
+  version: string,
+  integrity?: string,
+  registryHost?: string,
+): string {
+  let folder = `${name}@${version}${registryHost ? "@@" + registryHost : ""}@@@2`;
+  const match = integrity && /^(sha1|sha256|sha384|sha512)-([A-Za-z0-9+/=]+)$/.exec(integrity);
+  if (!match) return folder;
+  const idPath = join(cacheDir, ".id");
+  let id: Buffer;
+  try {
+    id = fs.readFileSync(idPath);
+    if (id.length !== 16) throw new Error("short");
+  } catch {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    id = require("node:crypto").randomBytes(16);
+    try {
+      fs.writeFileSync(idPath, id, { flag: "wx", mode: 0o600 });
+    } catch {
+      id = fs.readFileSync(idPath);
+    }
+  }
+  const tag = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 }[match[1] as "sha1" | "sha256" | "sha384" | "sha512"];
+  const digest = Buffer.from(match[2], "base64");
+  const bits = require("node:crypto")
+    .createHash("sha256")
+    .update(id)
+    .update(Buffer.from([tag]))
+    .update(digest)
+    .digest()
+    .readBigUInt64BE(0);
+  const alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
+  folder += ".";
+  for (let i = 0; i < 13; i++) folder += alphabet[Number((bits >> BigInt(60 - 5 * i)) & 31n)];
+  return folder;
+}
+
+/**
  * Helper function for making automatically lazily-executed promises.
  *
  * The difference is that the promise has not already started to be evaluated when it is created,

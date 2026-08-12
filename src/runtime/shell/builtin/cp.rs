@@ -563,6 +563,8 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
+    /// Classifies a source operand without following symlinks; the copy
+    /// recreates links rather than following them.
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
@@ -579,6 +581,14 @@ impl ShellCpTask {
             let st = bun_sys::lstat(path)?;
             Ok(bun_sys::S::ISDIR(st.st_mode as _))
         }
+    }
+
+    /// Classifies the target operand through symlinks, as cp(1) does:
+    /// `cp file linkdir` copies into the directory `linkdir` points at, and a
+    /// dangling link counts as not existing (ENOENT).
+    fn target_is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
+        let st = bun_sys::stat(path)?;
+        Ok(bun_sys::S::ISDIR(st.st_mode as _))
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
@@ -641,7 +651,7 @@ impl ShellCpTask {
             ));
         }
 
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::target_is_dir(tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.

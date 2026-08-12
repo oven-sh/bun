@@ -427,15 +427,19 @@ devTest("import() and require() of a module whose top-level await is in flight",
   files: {
     ...tlaAndFirstImporter,
     "probes.ts": `
-      let requireResult;
-      try {
-        requireResult = "returned " + JSON.stringify(require("./tla"));
-      } catch (e) {
-        requireResult = "threw: " + e.message;
+      function tryRequire(load) {
+        try {
+          return "returned " + JSON.stringify(load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
       }
+      const requireTla = tryRequire(() => require("./tla"));
+      const requireA = tryRequire(() => require("./a"));
       export const probes = import("./tla").then(ns => ({
         dynamicImport: ns === null ? "resolved to null" : "resolved to v=" + ns.v,
-        require: requireResult,
+        requireTla,
+        requireA,
       }));
     `,
     "routes/index.ts": `
@@ -452,11 +456,135 @@ devTest("import() and require() of a module whose top-level await is in flight",
       a: "a:tla",
       duringLoad: {
         dynamicImport: "resolved to v=tla",
-        // Same error as requiring it before it started loading.
-        require: `threw: Cannot require "tla.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
+        // Same errors as requiring them before anything started loading: the
+        // module that contains the await is the one named, whether it is the
+        // required module itself or a dependency it is waiting on.
+        requireTla: `threw: Cannot require "tla.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
+        requireA: `threw: Cannot require "a.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
       },
       // Once the load has settled, synchronous access works again.
       requireAfterLoad: "tla",
+    });
+  },
+});
+devTest("an in-flight load that rejects fails the importers waiting on it", {
+  // "a" and "b" both wait on "tla", whose load rejects. Each of them, and the
+  // route, must fail with that error. (When "b" was instead evaluated right
+  // away, the rejection "a" was waiting on ended up unhandled and took the
+  // whole dev server process down.)
+  framework: minimalFramework,
+  files: {
+    "tla.ts": `
+      await 1;
+      throw new Error("boom tla");
+      export const v = "unreachable";
+    `,
+    "a.ts": `
+      import { v } from "./tla";
+      export const a = "a:" + v;
+    `,
+    "b.ts": `
+      import { v } from "./tla";
+      export const b = "b:" + v;
+    `,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { b } from "../b";
+      export default function () {
+        return new Response(a + " " + b);
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other route still works");
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+    const errorPageJson = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/;
+    for (let i = 0; i < 2; i++) {
+      const response = await dev.fetch("/");
+      const payload = JSON.parse(errorPageJson.exec(await response.text())![1]);
+      expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(["boom tla"]);
+      expect(response.status).toBe(500);
+    }
+    await dev.fetch("/other").equals("other route still works");
+  },
+});
+devTest("a hot update replacing a module whose load is still in flight supersedes that load", {
+  // Version 1 of each module never finishes loading. Replacing it with a
+  // version that loads synchronously must make the module usable again: the
+  // pending load is forgotten when the reload starts, whether the reload is
+  // started by the update itself (x, y; y also switches to CommonJS) or by a
+  // require() that arrives while the update is parked on a dispose callback (z).
+  framework: minimalFramework,
+  files: {
+    "x.ts": `
+      await new Promise(() => {});
+      export const version = "unreachable";
+    `,
+    "y.ts": `
+      await new Promise(() => {});
+      export const version = "unreachable";
+    `,
+    "z.ts": `
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => new Promise(() => {}));
+      await new Promise(() => {});
+      export const version = "unreachable";
+    `,
+    "probe.ts": `
+      export function tryRequire(load) {
+        try {
+          return "returned " + JSON.stringify(load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+    `,
+    "routes/index.ts": `
+      import { tryRequire } from "../probe";
+      export default function () {
+        // Version 1 of these never settles, so nothing awaits them.
+        import("../x");
+        import("../y");
+        import("../z");
+        return Response.json({
+          x: tryRequire(() => require("../x")),
+          y: tryRequire(() => require("../y")),
+          z: tryRequire(() => require("../z")),
+        });
+      }
+    `,
+    "routes/z.ts": `
+      import { tryRequire } from "../probe";
+      export default function () {
+        return Response.json([tryRequire(() => require("../z")), tryRequire(() => require("../z"))]);
+      }
+    `,
+  },
+  async test(dev) {
+    const refused = (id: string) =>
+      `threw: Cannot require "${id}" because "${id}" uses top-level await, but 'require' is a synchronous operation.`;
+    // Nothing has started loading z yet, so this is the plain refusal (and it
+    // gets this route bundled before the updates below).
+    expect(await dev.fetch("/z").json()).toEqual([refused("z.ts"), refused("z.ts")]);
+    // Now every version 1 is in flight.
+    expect(await dev.fetch("/").json()).toEqual({ x: refused("x.ts"), y: refused("y.ts"), z: refused("z.ts") });
+
+    await dev.write("x.ts", `export const version = "x2";`);
+    await dev.write("y.ts", `module.exports = { version: "y2" };`);
+    // z self-accepts and its dispose callback never settles, so this update
+    // marks z stale and then stays parked; the first require() below performs
+    // the reload, the second one sees the reloaded module.
+    await dev.write("z.ts", `export const version = "z2";`);
+
+    expect(await dev.fetch("/z").json()).toEqual(['returned {"version":"z2"}', 'returned {"version":"z2"}']);
+    expect(await dev.fetch("/").json()).toEqual({
+      x: 'returned {"version":"x2"}',
+      y: 'returned {"version":"y2"}',
+      z: 'returned {"version":"z2"}',
     });
   },
 });

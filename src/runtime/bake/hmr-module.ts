@@ -70,6 +70,14 @@ interface CJSModule {
   require: (id: Id) => unknown;
 }
 
+interface InFlightLoad {
+  promise: Promise<HMRModule>;
+  /** The module whose top-level await the load is suspended on: the loading
+   *  module itself, or else the first of its dependencies that was suspended.
+   *  Same module `loadModuleSync` would name if it were loading the graph. */
+  asyncId: Id;
+}
+
 /** Implementation details must remain in sync with the parser (src/js_parser) and bundler (src/bundler/bundle_v2.rs) */
 export class HMRModule {
   /** Key in `registry` */
@@ -85,11 +93,12 @@ export class HMRModule {
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
   failure: unknown = null;
-  /** Set while this module's load is suspended on top-level await (its own or
-   *  a dependency's). Distinguishes that from a `State.Pending` module that is
-   *  merely part of an import cycle: importers found in the meantime must wait
-   *  for this promise instead of reading the not-yet-assigned namespace. */
-  loading: Promise<HMRModule> | null = null;
+  /** Set while this module's load is suspended on top-level await. Distinguishes
+   *  that from a `State.Pending` module that is merely part of an import cycle:
+   *  importers found in the meantime wait for the promise instead of reading the
+   *  not-yet-assigned namespace, and `require` refuses the module the same way
+   *  it does before the load has started. */
+  loading: InFlightLoad | null = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
@@ -287,7 +296,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.loading = null;
       isUserDynamic = false;
     } else {
-      if (mod.loading) throw new AsyncImportError(id);
+      if (mod.loading) throw new AsyncImportError(mod.loading.asyncId);
       if (importer) {
         mod.importers.add(importer);
       }
@@ -389,7 +398,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       if (importer) {
         mod.importers.add(importer);
       }
-      return mod.loading ?? mod;
+      return mod.loading ? mod.loading.promise : mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -439,7 +448,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const [deps /* exports */ /* stars */, , , load, isAsync] = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -453,16 +462,17 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    const { list, asyncId: depAsyncId } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    const hasAsyncDep = depAsyncId !== null;
     DEBUG.ASSERT(
-      isAsync //
+      hasAsyncDep //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    const result = isAsync
+    const result = hasAsyncDep
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, load, list),
           e => {
@@ -477,10 +487,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
           list as HMRModule[], // no promises as by assert above
         );
     if (result instanceof Promise) {
-      mod.loading = result;
+      // `load` only returns a promise for a module flagged `isAsync`, so one of
+      // the two is always set. Checked in the same order as loadModuleSync does.
+      DEBUG.ASSERT(isAsync || hasAsyncDep);
+      const loading: InFlightLoad = { promise: result, asyncId: isAsync ? id : depAsyncId! };
+      mod.loading = loading;
       const settled = () => {
         // A hot reload that started while this load was in flight owns the field now.
-        if (mod.loading === result) mod.loading = null;
+        if (mod.loading === loading) mod.loading = null;
       };
       result.then(settled, settled);
     }
@@ -525,7 +539,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  let isAsync = false;
+  /** Set if any dependency came back as a promise: what the first one of those is suspended on. */
+  let asyncId: Id | null = null;
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
@@ -557,7 +572,10 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         // }
         i++;
       }
-      isAsync ||= promiseOrModule instanceof Promise;
+      if (promiseOrModule instanceof Promise) {
+        // The loader only hands out a promise for a module whose `loading` is set.
+        asyncId ??= registry.get(dep)!.loading!.asyncId;
+      }
     } else {
       DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
@@ -567,7 +585,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
     }
   }
-  return { list, isAsync };
+  return { list, asyncId };
 }
 
 function hasExportStar(starImports: Id[], key: string) {

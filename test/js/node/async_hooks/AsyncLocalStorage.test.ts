@@ -1,4 +1,5 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { drainMicrotasks } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "http2";
@@ -1255,7 +1256,8 @@ describe("async generators", () => {
 // expect.extend matchers and Bun.build() with a plugin whose setup() returns a
 // promise block the calling frame and run the event loop from inside it;
 // HTMLRewriter.transform() runs a microtask checkpoint from inside it when a
-// handler returns a pending promise. Work that was scheduled with no store is
+// handler returns a pending promise, and bun:jsc's drainMicrotasks() drains on
+// request. Work that was scheduled with no store is
 // stored unwrapped and runs in whatever context is installed at dispatch time,
 // which in these cases used to be the blocked caller's store.
 describe("event loop work dispatched from inside a blocked frame", () => {
@@ -1342,7 +1344,8 @@ describe("event loop work dispatched from inside a blocked frame", () => {
       callerAfterwards = als.getStore();
       return result;
     });
-    expect((await build).success).toBe(true);
+    const { success, logs } = await build;
+    expect({ success, logs }).toEqual({ success: true, logs: [] });
     expect({ ...seen, ...setup, callerAfterwards }).toEqual({
       timer: "none",
       immediate: "none",
@@ -1462,6 +1465,17 @@ describe("event loop work dispatched from inside a blocked frame", () => {
       callerAfterwards: "caller",
       ambientAfterwards: "none",
     });
+  });
+
+  test("bun:jsc drainMicrotasks() inside run()", () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen = { microtask: "not run", callerAfterwards: "not run" };
+    Promise.resolve().then(() => (seen.microtask = als.getStore() ?? "none"));
+    als.run("caller", () => {
+      drainMicrotasks();
+      seen.callerAfterwards = als.getStore() ?? "none";
+    });
+    expect(seen).toEqual({ microtask: "none", callerAfterwards: "caller" });
   });
 
   test("HTMLRewriter.transform() draining microtasks for an async handler", () => {

@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use crate::event_loop::SuspendedAsyncContext;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
@@ -35,10 +36,16 @@ pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
-/// Caller must check for termination exception
+/// `bun:jsc`'s `drainMicrotasks()`; the caller checks for an exception afterwards.
 // HOST_EXPORT(Bun__drainMicrotasks, c)
 pub fn drain_microtasks() {
-    VirtualMachine::get().event_loop_mut().tick();
+    let vm = VirtualMachine::get();
+    let _caller_context = SuspendedAsyncContext::take(vm.global());
+    vm.jsc_vm().drain_microtasks();
+    if vm.global().has_exception() {
+        return;
+    }
+    vm.event_loop_mut().tick();
 }
 
 // HOST_EXPORT(Bun__readOriginTimer, c)

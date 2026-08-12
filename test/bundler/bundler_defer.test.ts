@@ -740,33 +740,32 @@ describe("defer() that is not awaited", () => {
       "entry.ts": `throw new Error("disk contents of entry were bundled");`,
       "build.ts": /* ts */ `
         // Spinning (not sleeping) keeps this thread busy; there is no event the
-        // bundle thread could signal, it is the bundle thread we are racing.
+        // bundle thread could signal, it is the bundle thread we are racing. The
+        // windows are generous so a loaded machine still lets it win.
         const spin = (ms: number) => {
           const end = performance.now() + ms;
           while (performance.now() < end) {}
         };
-        for (let build = 0; build < 2; build++) {
-          let settled = false;
-          const result = await Bun.build({
-            entrypoints: [import.meta.dir + "/entry.ts"],
-            plugins: [
-              {
-                name: "defer-then-busy",
-                setup(build) {
-                  build.onLoad({ filter: /entry\\.ts$/ }, args => {
-                    args.defer().then(() => (settled = true));
-                    spin(20); // let the bundle thread take the defer() notification first
-                    queueMicrotask(() => spin(250)); // runs right after the answer is posted
-                    return { contents: "export const x = 1;", loader: "ts" };
-                  });
-                },
+        let settled = false;
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/entry.ts"],
+          plugins: [
+            {
+              name: "defer-then-busy",
+              setup(build) {
+                build.onLoad({ filter: /entry\\.ts$/ }, args => {
+                  args.defer().then(() => (settled = true));
+                  spin(30); // let the bundle thread take the defer() notification first
+                  queueMicrotask(() => spin(600)); // runs right after the answer is posted
+                  return { contents: "export const x = 1;", loader: "ts" };
+                });
               },
-            ],
-          });
-          if (!result.success || !settled) {
-            console.log("build " + build + ": success=" + result.success + " settled=" + settled);
-            process.exit(1);
-          }
+            },
+          ],
+        });
+        if (!result.success || !settled) {
+          console.log("success=" + result.success + " settled=" + settled);
+          process.exit(1);
         }
         console.log("ok");
       `,

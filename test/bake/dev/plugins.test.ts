@@ -165,21 +165,29 @@ devTest("onLoad defer() after answering does not resolve other loads' defer() ea
 });
 // x answers without awaiting its defer(): the answer is used, and the promise is
 // resolved once the bundle is complete, i.e. after y (which only that answer
-// imports) has been loaded. Used to resolve as soon as the scan momentarily looked
-// finished. w is loaded from disk alongside x so the scan is not empty at the moment
-// x's defer() is registered.
+// imports) has been loaded. It used to resolve as soon as the scan momentarily
+// looked finished. w answers only after x has called defer(), so the scan is never
+// empty when that call is processed (otherwise resolving right away would be
+// correct); x's answer is long so that w's parse finishes first.
 devTest("onLoad defer() that is not awaited resolves when the bundle completes", {
   framework: minimalFramework,
   pluginFile: `
     let yLoaded = false;
     globalThis.deferSettledAfterY = "pending";
+    const xCalledDefer = Promise.withResolvers();
+    const xContents = 'import "./y.ts";\\n' + Array.from({ length: 2000 }, (_, i) => 'export const x' + i + ' = ' + i + ';').join('\\n');
     export default [
       {
         name: 'defer-without-await',
         setup(build) {
           build.onLoad({ filter: /[\\\\/]x\\.ts$/ }, ({ defer }) => {
             defer().then(() => { globalThis.deferSettledAfterY = String(yLoaded); });
-            return { contents: 'import "./y.ts";', loader: 'ts' };
+            xCalledDefer.resolve();
+            return { contents: xContents, loader: 'ts' };
+          });
+          build.onLoad({ filter: /[\\\\/]w\\.ts$/ }, async () => {
+            await xCalledDefer.promise;
+            return { contents: 'export const w = 1;', loader: 'ts' };
           });
           build.onLoad({ filter: /[\\\\/]y\\.ts$/ }, () => {
             yLoaded = true;
@@ -192,7 +200,7 @@ devTest("onLoad defer() that is not awaited resolves when the bundle completes",
   files: {
     "x.ts": `throw new Error('disk contents of x were bundled');`,
     "y.ts": `throw new Error('disk contents of y were bundled');`,
-    "w.ts": `export const w = 1;`,
+    "w.ts": `throw new Error('disk contents of w were bundled');`,
     "routes/index.ts": `
       import '../x.ts';
       import '../w.ts';

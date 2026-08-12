@@ -4124,36 +4124,12 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// `dir_info_cached` for `dir`, falling back to the closest ancestor that
-    /// exists when `dir` itself does not.
-    ///
-    /// It is possible to resolve with a source file that does not exist:
-    /// A. Bundler plugin refers to a non-existing `resolveDir`.
-    /// B. `createRequire()` is called with a path that does not exist. This was
-    ///    hit in Nuxt, specifically the `vite-node` dependency [1].
-    ///
-    /// Normally it would make sense to always bail here, but in the case of
-    /// resolving "hello" from "/project/nonexistent_dir/index.ts", resolution
-    /// should still query "/project/node_modules" and "/node_modules"
-    ///
-    /// For case B in Node.js, they use `_resolveLookupPaths` in
-    /// combination with `_nodeModulePaths` to collect a listing of
-    /// all possible parent `node_modules` [2]. Bun has a much smarter
-    /// approach that caches directory entries, but it (correctly) does
-    /// not cache non-existing directories. To successfully resolve this,
-    /// Bun finds the nearest existing directory, and uses that as the base
-    /// for `node_modules` resolution. Since that directory entry knows how
-    /// to resolve concrete node_modules, this iteration stops at the first
-    /// existing directory, regardless of what it is.
-    ///
-    /// The resulting `DirInfo` cannot resolve relative files, so this is only
-    /// suitable for package-path lookups.
-    ///
-    /// `Ok(None)` is theoretically impossible since the drive root should
-    /// always exist.
-    ///
-    /// [1]: https://github.com/oven-sh/bun/issues/16705
-    /// [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
+    /// `dir_info_cached` for `dir`, or for its closest existing ancestor when
+    /// `dir` does not exist (a plugin's made-up `resolveDir`, or `createRequire()`
+    /// with a path that does not exist: https://github.com/oven-sh/bun/issues/16705).
+    /// Package lookups from such a directory must still see the ancestors'
+    /// `node_modules`, like Node's `_nodeModulePaths()`; relative paths cannot
+    /// be resolved from the result. `Ok(None)` only if even the root is missing.
     fn closest_existing_dir_info(&mut self, dir: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         let mut current = dir;
         loop {

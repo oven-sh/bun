@@ -175,11 +175,12 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
   });
 });
 
-// cp classifies the target operand with stat(), so a symlink to a directory is
-// a directory target: `cp file linkdir` lands in the directory the link points
-// at. The builtin used to lstat() it and copy onto the link itself (EISDIR).
-// The builtin is only the default on Windows; on POSIX it is switched on by an
-// env var that is read once per process, so each cp runs in a child bun.
+// The target operand is classified with stat(), as cp(1) does, so a symlink to
+// a directory is a directory target and `cp file linkdir` lands in the directory
+// the link points at. The builtin used to lstat() it on POSIX and copy onto the
+// link itself. The builtin is only the default on Windows; on POSIX it is
+// switched on by an env var that is read once per process, so each cp runs in a
+// child bun.
 describe.concurrent("bunshell cp into a directory reached through a symlink", () => {
   const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
 
@@ -276,10 +277,12 @@ describe.concurrent("bunshell cp into a directory reached through a symlink", ()
     expect(readFileSync(join(cwd, "target.txt"), "utf8")).toBe("untouched\n");
   });
 
+  // A dangling link is a target that does not exist, even on Windows, where a
+  // directory-type link carries the directory attribute itself.
   test("file+ -> dangling link is rejected", async () => {
     using dir = setup("dangling", { "a.txt": "A\n", "b.txt": "B\n" });
     const cwd = String(dir);
-    symlinkSync("missing", join(cwd, "dangling"));
+    symlinkSync("missing", join(cwd, "dangling"), "dir");
 
     expect(await cp(cwd, "cp a.txt b.txt dangling")).toEqual({
       exitCode: 1,

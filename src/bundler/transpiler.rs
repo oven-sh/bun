@@ -722,6 +722,19 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
+    /// Silence the env loader's load-time output (the `[0.12ms] ".env"` line
+    /// and unreadable-file errors) unless the log level is `info` or lower.
+    ///
+    /// For the loader's owner only: [`Self::init`] when it adopts the
+    /// process-wide loader, and `init_runtime_state` (runtime/jsc_hooks.rs)
+    /// when a new VM is handed one (`bun test`, Workers). A `Transpiler` that
+    /// borrows another VM's loader (`Bun.build`'s, on the bundle thread;
+    /// `Bun.Transpiler`'s, with its own log level) must leave it alone.
+    pub fn apply_log_level_to_env_loader(&mut self) {
+        let quiet = !self.log().level.at_least(bun_ast::Level::Info);
+        self.env_mut().quiet = quiet;
+    }
+
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
@@ -1159,6 +1172,12 @@ impl<'a> Transpiler<'a> {
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
     /// match the struct field types — the same `*Log` is aliased into
     /// `linker.log` / `resolver.log` (see `set_log`).
+    ///
+    /// `env_loader_: None` adopts the process-wide loader (creating it on
+    /// first use) and configures it from `log`. A loader passed in is used
+    /// as-is; configuring it is its owner's job (see
+    /// [`Self::apply_log_level_to_env_loader`]), and some callers pass a
+    /// loader another VM owns, from another thread.
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -1246,14 +1265,6 @@ impl<'a> Transpiler<'a> {
             dot_env::set_instance(env_loader);
         }
 
-        // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
-        // leak above; no other live `&mut` to either at this point.
-        unsafe {
-            (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
-        }
-
         // var pool = try arena.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .arena = arena,
@@ -1320,6 +1331,10 @@ impl<'a> Transpiler<'a> {
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
+        }
+        if env_loader_.is_none() {
+            // SAFETY: every field was written above.
+            unsafe { dst.assume_init_mut() }.apply_log_level_to_env_loader();
         }
         Ok(())
     }

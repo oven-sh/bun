@@ -463,6 +463,12 @@ unsafe fn init_runtime_state(
                 // SAFETY: `vm` unique on this thread; `transpiler` just written.
                 unsafe {
                     let t = &mut (*vm).transpiler;
+                    // `Transpiler::init` configures only the process-wide
+                    // loader it adopts itself; one handed in by the embedder
+                    // (`bun test`, Workers) is this VM's to configure.
+                    if opts.env_loader.is_some() {
+                        t.apply_log_level_to_env_loader();
+                    }
                     t.options.emit_dce_annotations = false;
                     t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;

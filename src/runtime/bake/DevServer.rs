@@ -4990,9 +4990,7 @@ impl DevServer {
         Ok(())
     }
 
-    /// A "use client" file whose imports failed to resolve. The failure is on the client
-    /// node; this adds what `finalize_bundle` adds for a boundary that bundled, which is
-    /// what connects the file's server-side importers to that failure (and back).
+    /// Gives a "use client" file that failed to resolve the graph shape of a bundled boundary.
     pub(crate) fn handle_client_component_boundary_failure(
         &mut self,
         abs_path: &[u8],

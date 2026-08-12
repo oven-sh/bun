@@ -198,7 +198,7 @@ pub enum ErrorKind {
     JsAggregate,
 }
 
-// All "write" functions get a corresponding "read" function in ./client/error.ts
+// All "write" functions get a corresponding "read" function in ../client/error-serialization.ts
 type Writer = Vec<u8>;
 
 fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
@@ -221,7 +221,10 @@ fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
 fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
     write_string32(data.text.as_ref(), w);
     if let Some(loc) = &data.location {
-        if loc.line < 0 {
+        // `line <= 0` carries no position (e.g. a plugin exception), and
+        // `readBundlerMessageLocationOrNull` stops after a zero line, so the
+        // column/length/line text must not be written for it.
+        if loc.line <= 0 {
             _ = w.write_int_le::<u32>(0);
             return;
         }

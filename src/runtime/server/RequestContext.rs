@@ -1928,6 +1928,8 @@ where
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,
             pollable,
+            // auto_close ⇔ we opened the path ourselves above.
+            fifo_from_path: auto_close && bun_sys::S::ISFIFO(mode),
             offset: sendfile.offset as u64,
             length: if is_regular {
                 Some(sendfile.remain as u64)

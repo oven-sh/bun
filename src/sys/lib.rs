@@ -7487,67 +7487,83 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
+/// Linux: `preadv2(.., RWF_NOWAIT)`, with a poll-then-read fallback; else
+/// plain `read`.
 pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
-        let iov = [libc::iovec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: buf.len(),
-        }];
-        // SAFETY: fd valid; iov points at a live stack array.
-        let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
-                    // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
-                        _ => Err(Error::retry().with_fd(fd)),
-                    };
+    {
+        while linux::RWFFlagSupport::is_maybe_supported() {
+            let iov = [libc::iovec {
+                iov_base: buf.as_mut_ptr().cast(),
+                iov_len: buf.len(),
+            }];
+            // SAFETY: fd valid; iov points at a live stack array.
+            let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
+            if rc < 0 {
+                let e = last_errno();
+                match e {
+                    // Per-fd-type (named FIFOs), not per-kernel: a global
+                    // disable would degrade every later pipe read too.
+                    libc::EOPNOTSUPP => break,
+                    libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                        linux::RWFFlagSupport::disable();
+                        break;
+                    }
+                    libc::EINTR => continue,
+                    _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
                 }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
             }
+            return Ok(rc as usize);
         }
-        return Ok(rc as usize);
+        // Poll first: plain read() would block the event loop on a blocking
+        // fd, and misreport a FIFO that never had a writer as EOF (poll
+        // honors the FIFO's writer epoch; read does not).
+        return match bun_core::is_readable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
+            _ => Err(Error::retry().with_fd(fd)),
+        };
     }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
+/// Linux: `pwritev2(.., RWF_NOWAIT)`, with a poll-then-write fallback; else
+/// plain `write`.
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
-        let iov = [libc::iovec {
-            iov_base: buf.as_ptr().cast_mut().cast::<_>(),
-            iov_len: buf.len(),
-        }];
-        // SAFETY: fd valid; iov points at a live stack array.
-        let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
+    {
+        while linux::RWFFlagSupport::is_maybe_supported() {
+            let iov = [libc::iovec {
+                iov_base: buf.as_ptr().cast_mut().cast::<_>(),
+                iov_len: buf.len(),
+            }];
+            // SAFETY: fd valid; iov points at a live stack array.
+            let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
+            if rc < 0 {
+                let e = last_errno();
+                match e {
+                    // Per-fd-type, not per-kernel; see `read_nonblocking`.
+                    libc::EOPNOTSUPP => break,
+                    libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                        linux::RWFFlagSupport::disable();
+                        break;
+                    }
+                    libc::EINTR => continue,
+                    _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
                 }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
             }
+            return Ok(rc as usize);
         }
-        return Ok(rc as usize);
+        // Poll before issuing a possibly-blocking write.
+        return match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
+            _ => {
+                let mut e = Error::retry();
+                e.syscall = Tag::write;
+                Err(e.with_fd(fd))
+            }
+        };
     }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     write(fd, buf)
 }
 

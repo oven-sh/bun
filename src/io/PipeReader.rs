@@ -157,6 +157,13 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// macOS: the fd is a named FIFO opened by path before any writer
+        /// connected. In that state `read()` returns 0 even though no writer
+        /// has come and gone, so a 0-byte read must be treated as not-ready
+        /// rather than EOF until the first writer is observed (an EAGAIN or
+        /// data clears this flag). Owners arm a recovery timer as the wake
+        /// source while this is set; see `retry_stalled_fifo_read`.
+        const FIFO_AWAITING_FIRST_WRITER = 1 << 11;
     }
 }
 
@@ -539,6 +546,37 @@ impl PosixBufferedReader {
             PollOrFd::Fd(_) => true,
             _ => false,
         }
+    }
+
+    /// macOS tick for reading a named FIFO still awaiting its first writer
+    /// (see [`PosixFlags::FIFO_AWAITING_FIRST_WRITER`]). That state has no
+    /// kernel event to wait on: `read()` reports a false EOF and an
+    /// `EVFILT_READ` filter registered with zero writers does not reliably
+    /// report the first writer's data, so owners drive this from a repeating
+    /// timer instead. Each tick drops the kevent registration and reads
+    /// directly; once a writer exists, the EAGAIN path re-attaches a fresh
+    /// kevent in a state where it works, and owners stop the timer at the
+    /// first chunk/EOF.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::read`]: `this` is the live reader; the
+    /// chunk/done/error dispatches it reaches may re-enter or free the
+    /// parent, so the read runs in tail position.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn retry_stalled_fifo_read(this: *mut Self) {
+        // SAFETY: caller contract; borrow ends at `;`.
+        let skip = unsafe { (*this).flags.contains(PosixFlags::IS_PAUSED) || (*this).is_done() };
+        if skip {
+            return;
+        }
+        // SAFETY: caller contract; pause/unpause only unregister the poll and
+        // flip flags — neither dispatches into the parent.
+        unsafe {
+            (*this).pause();
+            (*this).unpause();
+        }
+        // SAFETY: caller contract; tail position.
+        unsafe { Self::read(this) };
     }
 
     /// # Safety
@@ -1030,6 +1068,32 @@ impl PosixBufferedReader {
 
                     match sys_fn(fd, buf, offset) {
                         sys::Result::Ok(bytes_read) => {
+                            #[cfg(target_os = "macos")]
+                            {
+                                // SAFETY: caller contract; borrows end at `;`.
+                                let awaiting_first_writer = unsafe {
+                                    !(*this).flags.contains(PosixFlags::IS_DONE)
+                                        && (*this)
+                                            .flags
+                                            .contains(PosixFlags::FIFO_AWAITING_FIRST_WRITER)
+                                };
+                                if awaiting_first_writer {
+                                    if bytes_read == 0 {
+                                        // False EOF (see the flag's doc);
+                                        // the owner's probe timer retries.
+                                        debug_assert!(head_start == 0);
+                                        return;
+                                    }
+                                    // Data: a writer connected; 0 now means
+                                    // a real EOF.
+                                    // SAFETY: caller contract; borrow ends at `;`.
+                                    unsafe {
+                                        (*this)
+                                            .flags
+                                            .remove(PosixFlags::FIFO_AWAITING_FIRST_WRITER);
+                                    }
+                                }
+                            }
                             // SAFETY: caller contract; borrow scoped to the call.
                             let over_budget =
                                 Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
@@ -1095,6 +1159,13 @@ impl PosixBufferedReader {
                         }
                         sys::Result::Err(err) => {
                             if err.is_retry() {
+                                // EAGAIN: a writer connected (see the flag's
+                                // doc); 0 now means a real EOF.
+                                #[cfg(target_os = "macos")]
+                                // SAFETY: caller contract; borrow ends at `;`.
+                                unsafe {
+                                    (*this).flags.remove(PosixFlags::FIFO_AWAITING_FIRST_WRITER);
+                                }
                                 if file_type == FileType::File {
                                     bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",

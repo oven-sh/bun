@@ -2,7 +2,8 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, readdirSync, unlinkSync, writeSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1371,4 +1372,198 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// A FIFO body whose producer connects only after the request is in flight:
+// the server opens the FIFO read end while it has no writer, and must still
+// deliver the bytes once a writer opens the FIFO and writes.
+//
+// Two requests on purpose, each with a fresh FIFO. On Linux the first FIFO
+// read in a process downgrades the RWF_NOWAIT fast path (named FIFOs return
+// EOPNOTSUPP), and the downgraded fallback used plain read(), which reports
+// EOF on a FIFO that has no writer yet — so the first exchange worked and
+// every later one answered with an instant empty body. On macOS a kqueue
+// EVFILT_READ filter registered on a FIFO with zero writers never fires
+// (even after a writer connects), so both exchanges hung until idleTimeout
+// without the recovery probe.
+test.skipIf(isWindows)(
+  "Response(Bun.file(FIFO)) streams bytes from a writer that opens after the request",
+  async () => {
+    using dir = tempDir("serve-fifo-late-writer", {});
+
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const fifoPath = join(String(dir), `late-${iteration}.fifo`);
+      mkfifo(fifoPath);
+
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(Bun.file(fifoPath));
+        },
+      });
+
+      const { promise: wireDone, resolve: resolveWire, reject: rejectWire } = Promise.withResolvers<string>();
+      let wire = "";
+      let writerAttached = false;
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            s.write("GET /late HTTP/1.1\r\nHost: x\r\n\r\n");
+          },
+          async data(_s, d) {
+            wire += Buffer.from(d).toString("latin1");
+            // The response head reaching the wire proves the server already
+            // opened the FIFO and started streaming; only now attach a writer.
+            if (!writerAttached && wire.includes("HTTP/1.1 200 OK")) {
+              writerAttached = true;
+              const writer = await open(fifoPath, "w");
+              await writer.write("LATEBYTES!");
+              await writer.close();
+            }
+            if (wire.includes("LATEBYTES!")) resolveWire(wire);
+          },
+          close() {
+            // Surface whatever arrived so a failure shows the truncated wire.
+            resolveWire(wire);
+          },
+          error(_s, err) {
+            rejectWire(err);
+          },
+        },
+      });
+
+      const captured = await wireDone;
+      client.end();
+      expect({ iteration, wire: captured }).toEqual({ iteration, wire: expect.stringContaining("LATEBYTES!") });
+    }
+  },
+);
+
+// Aborting (or idle-timing-out) a FIFO response that is still waiting for its
+// first writer must drop the stream and close its fd: the abort path is the
+// only terminal one for a FIFO whose producer never connects, and it used to
+// leave the in-flight read ref held forever, leaking the fd and poll.
+test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) with no writer releases its fd", async () => {
+  using dir = tempDir("serve-fifo-abort-leak", {});
+  const fifoPath = join(String(dir), "unwritten.fifo");
+  mkfifo(fifoPath);
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response(Bun.file(fifoPath));
+    },
+  });
+
+  const fdDir = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+  const countFds = () => readdirSync(fdDir).length;
+  const baseline = countFds();
+
+  const rounds = 16;
+  for (let i = 0; i < rounds; i++) {
+    const { promise: sawBytes, resolve } = Promise.withResolvers<void>();
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        // First response bytes prove the server opened the FIFO and is
+        // waiting on it.
+        data() {
+          resolve();
+        },
+        close() {
+          resolve();
+        },
+        error() {
+          resolve();
+        },
+      },
+    });
+    await sawBytes;
+    client.terminate();
+  }
+
+  // Each aborted stream closes its FIFO fd when it drops, shortly after the
+  // server observes the hangup; poll for the count to return toward the
+  // baseline. The unfixed build kept one fd per request (+16 here).
+  const slack = 4;
+  const deadline = Date.now() + 5000;
+  let current = countFds();
+  while (current > baseline + slack && Date.now() < deadline) {
+    await Bun.sleep(10);
+    current = countFds();
+  }
+  expect(current).toBeLessThanOrEqual(baseline + slack);
+});
+
+// After an abort frees a pollable file response, an event the loop already
+// has (or later gets) for that stream's poll must not be dispatched into the
+// freed stream. Regression: aborting a fd-backed FIFO response (auto_close
+// off, so the fd outlives the stream) and then making the FIFO readable
+// dispatched into freed memory. The repro runs in a child so the ASAN crash
+// of an unfixed build fails the test instead of taking down the runner.
+test.skipIf(isWindows || !isASAN)("aborted fd-backed FIFO response does not dispatch into freed memory", async () => {
+  using dir = tempDir("serve-fifo-fd-abort", {
+    "repro.ts": `
+        import fs from "node:fs";
+        const fifoPath = "./fd.fifo";
+        const fd = fs.openSync(fifoPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch() {
+            return new Response(Bun.file(fd));
+          },
+        });
+        const { promise: sawBytes, resolve } = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(s) {
+              s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            },
+            data() {
+              resolve();
+            },
+            close() {
+              resolve();
+            },
+            error() {
+              resolve();
+            },
+          },
+        });
+        await sawBytes; // head bytes: the stream is waiting on the FIFO
+        client.terminate();
+        await Bun.sleep(200); // let the abort free the stream
+        const wfd = fs.openSync(fifoPath, "w");
+        fs.writeSync(wfd, "BOOM");
+        fs.closeSync(wfd);
+        await Bun.sleep(300); // let the loop dispatch whatever it thinks is armed
+        console.log("survived");
+        process.exit(0);
+      `,
+  });
+  mkfifo(join(String(dir), "fd.fifo"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr.slice(-800) }).toEqual({
+    stdout: expect.stringContaining("survived"),
+    exitCode: 0,
+    stderr: "",
+  });
 });

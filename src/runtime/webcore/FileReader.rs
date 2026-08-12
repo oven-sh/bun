@@ -2,6 +2,8 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_collections::VecExt;
+#[cfg(target_os = "macos")]
+use bun_core::{Timespec, TimespecMockMode};
 #[cfg(unix)]
 use bun_io as aio;
 #[cfg(not(windows))]
@@ -10,6 +12,9 @@ use bun_io::{BufferedReader, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
+
+#[cfg(target_os = "macos")]
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
@@ -71,6 +76,13 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// See `arm_fifo_probe`. `pub(crate)` for the `offset_of!` in the timer
+    /// dispatch.
+    #[cfg(target_os = "macos")]
+    pub(crate) fifo_probe_timer: JsCell<EventLoopTimer>,
+    /// 0 = never armed; otherwise the current backoff interval in ms.
+    #[cfg(target_os = "macos")]
+    pub(crate) fifo_probe_interval_ms: Cell<u32>,
 }
 
 impl Default for FileReader {
@@ -96,6 +108,12 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            #[cfg(target_os = "macos")]
+            fifo_probe_timer: JsCell::new(EventLoopTimer::init_paused(
+                EventLoopTimerTag::FileReaderFifoProbe,
+            )),
+            #[cfg(target_os = "macos")]
+            fifo_probe_interval_ms: Cell::new(0),
         }
     }
 }
@@ -136,6 +154,10 @@ pub struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// The fd is a named FIFO we opened by path, so it may have no writer
+    /// yet; see `FileReader::arm_fifo_probe`.
+    #[cfg(not(windows))]
+    pub(crate) fifo_from_path: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -146,6 +168,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            fifo_from_path: false,
         }
     }
 }
@@ -252,6 +276,8 @@ impl Lazy {
             this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
                 || is_nonblocking
                 || file.is_atty.unwrap_or(false);
+            this.fifo_from_path =
+                sys::S::ISFIFO(mode) && matches!(&file.pathlike, PathOrFileDescriptor::Path(_));
             this.file_type = if sys::S::ISFIFO(mode) {
                 FileType::Pipe
             } else if sys::S::ISSOCK(mode) {
@@ -334,6 +360,8 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        #[cfg(unix)]
+        let mut fifo_from_path = false;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
@@ -361,6 +389,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                fifo_from_path = opened.fifo_from_path;
                             }
                             #[cfg(unix)]
                             {
@@ -515,6 +544,17 @@ impl FileReader {
             }
         }
 
+        #[cfg(unix)]
+        if fifo_from_path && !self.done.get() && !self.reader().is_done() {
+            // Must precede any read: without it, the 0-byte read a writerless
+            // FIFO produces on macOS would end the stream.
+            #[cfg(target_os = "macos")]
+            self.reader()
+                .flags
+                .insert(bun_io::pipe_reader::PosixFlags::FIFO_AWAITING_FIRST_WRITER);
+            self.arm_fifo_probe();
+        }
+
         streams::Start::Ready
     }
 
@@ -605,6 +645,7 @@ impl FileReader {
     }
 
     pub(crate) fn on_cancel(&self) {
+        self.cancel_fifo_probe();
         self.unpipe_without_deref();
         if self.done.get() {
             return;
@@ -640,7 +681,132 @@ impl FileReader {
         true
     }
 
+    // ───────────────── macOS FIFO first-writer probe ─────────────────
+    // Twin of `FileResponseStream::arm_fifo_probe`; see
+    // `retry_stalled_fifo_read` and `FIFO_AWAITING_FIRST_WRITER` in bun_io
+    // for why a writerless FIFO needs a timer-driven read on macOS.
+
+    #[cfg(target_os = "macos")]
+    const FIFO_PROBE_MIN_MS: u32 = 2;
+    #[cfg(target_os = "macos")]
+    const FIFO_PROBE_MAX_MS: u32 = 64;
+
+    /// Holds one count on the parent `Source` while the timer is armed
+    /// (released when the probe stops).
+    #[cfg(target_os = "macos")]
+    fn arm_fifo_probe(&self) {
+        let timer_all = crate::jsc_hooks::timer_all();
+        if timer_all.is_null() {
+            return;
+        }
+        self.fifo_probe_interval_ms.set(Self::FIFO_PROBE_MIN_MS);
+        // SAFETY: see `parent()` — keeps the Source (and the timer node
+        // embedded in `self`) alive while the heap points into it.
+        unsafe { (*self.parent()).increment_count() };
+        // SAFETY: single-threaded event loop; `timer_all` is the live
+        // per-thread heap.
+        unsafe {
+            (*timer_all).update(
+                self.fifo_probe_timer.as_ptr(),
+                &Timespec::ms_from_now(
+                    TimespecMockMode::ForceRealTime,
+                    i64::from(Self::FIFO_PROBE_MIN_MS),
+                ),
+            );
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[inline]
+    fn arm_fifo_probe(&self) {}
+
+    #[cfg(target_os = "macos")]
+    fn cancel_fifo_probe(&self) {
+        if self.fifo_probe_interval_ms.get() == 0 {
+            return; // never armed
+        }
+        let t = self.fifo_probe_timer.as_ptr();
+        // SAFETY: `t` is the embedded timer node; single-threaded event loop.
+        if unsafe { (*t).state } == EventLoopTimerState::ACTIVE {
+            let timer_all = crate::jsc_hooks::timer_all();
+            if !timer_all.is_null() {
+                // SAFETY: as in `arm_fifo_probe`. `remove` marks it CANCELLED.
+                unsafe { (*timer_all).remove(t) };
+            }
+            let parent = self.parent();
+            // SAFETY: releases the count taken in `arm_fifo_probe`; callers
+            // (chunk/done/error dispatches, JS cancel) hold their own counts,
+            // so this does not free. `self` is not accessed after.
+            let _ = unsafe { Source::decrement_count(parent) };
+            return;
+        }
+        // Probe is mid-fire (state FIRED): tell it not to re-arm. It owns the
+        // armed count and releases it when it returns.
+        // SAFETY: as above.
+        unsafe { (*t).state = EventLoopTimerState::CANCELLED };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[inline]
+    fn cancel_fifo_probe(&self) {}
+
+    /// Timer dispatch target (`EventLoopTimerTag::FileReaderFifoProbe`).
+    ///
+    /// # Safety
+    /// `this` is the live FileReader recovered from its embedded timer node,
+    /// on the event-loop thread, with the armed Source count outstanding.
+    #[cfg(target_os = "macos")]
+    pub(crate) unsafe fn on_fifo_probe(this: *mut Self) {
+        // SAFETY: `this` is live (armed count); standard fired-timer
+        // bookkeeping before any re-arm decision.
+        let timer = unsafe {
+            let t = (*this).fifo_probe_timer.as_ptr();
+            (*t).state = EventLoopTimerState::FIRED;
+            (*t).heap = Default::default();
+            t
+        };
+
+        // SAFETY: `this` is live; `Cell` reads / `reader()` accessor.
+        let waiting = unsafe { !(*this).done.get() && !(&*this).reader().is_done() };
+        if waiting {
+            // SAFETY: the reader cell is live for the Source's lifetime; the
+            // dispatches this reaches may run JS (deliver stream data,
+            // cancel); the armed count keeps `*this` alive through them.
+            unsafe { IOReader::retry_stalled_fifo_read((*this).reader.get()) };
+        }
+
+        // SAFETY: `this` is still live (armed count not released yet). The
+        // read may have delivered the first chunk (which marks the timer
+        // CANCELLED) or finished/cancelled the stream; re-arm only if not.
+        unsafe {
+            if (*timer).state != EventLoopTimerState::CANCELLED
+                && !(*this).done.get()
+                && !(&*this).reader().is_done()
+            {
+                let timer_all = crate::jsc_hooks::timer_all();
+                if !timer_all.is_null() {
+                    let next =
+                        ((*this).fifo_probe_interval_ms.get() * 2).min(Self::FIFO_PROBE_MAX_MS);
+                    (*this).fifo_probe_interval_ms.set(next);
+                    // Still waiting: keep the armed count for the new arming.
+                    (*timer_all).update(
+                        timer,
+                        &Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(next)),
+                    );
+                    return;
+                }
+            }
+            // Probe stops: release the armed count. May free the Source —
+            // tail position, `this` is not accessed after.
+            let parent = (&*this).parent();
+            let _ = Source::decrement_count(parent);
+        }
+    }
+
     pub(crate) fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> bool {
+        // First bytes arrived: the pipe demonstrably has (or had) a writer, so
+        // poll registrations are reliable from here on.
+        self.cancel_fifo_probe();
         let mut buf = init_buf;
         bun_core::scoped_log!(
             FileReader,
@@ -1120,6 +1286,7 @@ impl FileReader {
 
     pub(crate) fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
+        self.cancel_fifo_probe();
         // Pin across `p.run()` and `on_close()`: both can run user JS, and the
         // `self.buffered` / `waiting_for_on_reader_done` reads below must not
         // land on a freed box. Same bracket as on_read_chunk / on_reader_error.
@@ -1173,6 +1340,7 @@ impl FileReader {
     }
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
+        self.cancel_fifo_probe();
         self.consume_reader_buffer();
         if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
             self.buffered.set(Vec::new());

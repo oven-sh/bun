@@ -83,11 +83,19 @@ test("dead FFI declarations (sys crates) do not reappear", () => {
   expect(resurrected).toEqual([]);
 });
 
-test("dead Rust symbols (bun_core, jsc, test_runner) do not reappear", () => {
+test("dead Rust symbols (bun_core, threading, jsc, test_runner) do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // BuildTarget::Wasi was never constructed (BUILD_TARGET is Native or Wasm).
     ["src/bun_core/env.rs", /\bWasi\b/],
     ["src/bun_core/env.rs", /\bIS_WASI\b/],
+    // ThreadPool::needs_stack_bounds was never cleared, so the StackCheck-less
+    // worker setup it selected was unreachable. It must stay gone: every pool
+    // runs recursive parsers (bundler JS parser, runtime transpiler, npm
+    // manifest JSON on the install pool) whose recursion guards read the
+    // bounds that configure_named_thread initializes.
+    ["src/threading/ThreadPool.rs", /\bneeds_stack_bounds\b/],
+    ["src/bun_core/output.rs", /\bfn configure_thread_no_js\b/],
+    ["src/bun_core/output.rs", /\bfn configure_named_thread_no_js\b/],
     // Rust-side imports of HTTPServerAgent notify hooks that no Rust code calls.
     ["src/jsc/HTTPServerAgent.rs", /\bBun__HTTPServerAgent__notifyRequestWillBeSent\b/],
     // throw2 + its carrier trait duplicated JSGlobalObject::throw_error.

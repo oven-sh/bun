@@ -1517,6 +1517,109 @@ test("successfully removes and corrects symlinks", async () => {
   );
 });
 
+describe("empty directory where a dependency symlink belongs", () => {
+  // Build systems that declare `node_modules/<pkg>/...` as outputs of the
+  // `bun install` step (ninja, make) create `node_modules/<pkg>/` before
+  // running it. Only a real directory with contents may be left in place:
+  // that is what `bun patch <pkg>` produces while the user edits it.
+
+  test("new dependency is linked over a pre-created empty directory", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(packageJson, JSON.stringify({ name: "test-pkg-empty-dir", dependencies: { "no-deps": "1.0.0" } }));
+    await runBunInstall(bunEnv, packageDir);
+
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-pkg-empty-dir", dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } }),
+    );
+    await mkdir(join(packageDir, "node_modules", "what-bin"));
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("what-bin@1.0.0");
+
+    expect(readlinkSync(join(packageDir, "node_modules", "what-bin"))).toBe(
+      join(".bun", "what-bin@1.0.0", "node_modules", "what-bin"),
+    );
+    const bin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
+    expect(existsSync(join(packageDir, "node_modules", ".bin", bin))).toBe(true);
+  });
+
+  test("re-running install repairs links that became empty directories", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-empty-dir-repair",
+        dependencies: { "no-deps": "1.0.0", "@types/is-number": "1.0.0" },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = [
+      join(packageDir, "node_modules", "no-deps"),
+      join(packageDir, "node_modules", "@types", "is-number"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "@types", "is-number"),
+    ];
+    const expected = links.map(link => readlinkSync(link));
+    for (const link of links) {
+      await rm(link);
+      await mkdir(link);
+    }
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(links.map(link => readlinkSync(link))).toEqual(expected);
+  });
+
+  test("workspace dependency is linked over an empty directory", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "test-pkg-empty-dir-workspace", workspaces: ["packages/*"] }),
+        "packages/pkg-1/package.json": JSON.stringify({
+          name: "pkg-1",
+          version: "1.0.0",
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const link = join(packageDir, "packages", "pkg-1", "node_modules", "a-dep");
+    const expected = readlinkSync(link);
+    expect(expected).toBe(join("..", "..", "..", "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep"));
+    await rm(link);
+    await mkdir(link);
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(readlinkSync(link)).toBe(expected);
+  });
+
+  test("a directory with contents is left in place", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-pkg-dir-with-contents", dependencies: { "no-deps": "1.0.0" } }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    const workspace = join(packageDir, "node_modules", "no-deps");
+    await rm(workspace);
+    await write(join(workspace, "index.js"), "module.exports = 'USER_EDITS';\n");
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    expect(await file(join(workspace, "index.js")).text()).toBe("module.exports = 'USER_EDITS';\n");
+  });
+});
+
 test("runs lifecycle scripts correctly", async () => {
   // due to binary linking between preinstall and the remaining lifecycle scripts
   // there is special handling for preinstall scripts we should test.

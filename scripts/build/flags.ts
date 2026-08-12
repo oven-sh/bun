@@ -370,6 +370,14 @@ export const globalFlags: Flag[] = [
     desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
   },
   {
+    // OHOS release: -gz=zstd unsupported (host LLVM lacks zstd debug
+    // section compression); use -g1 line tables like the pre-upstream
+    // release lane did.
+    flag: "-g1",
+    when: c => c.ohos && c.release && !c.lto,
+    desc: "OHOS release: line tables only (no zstd support in host LLVM)",
+  },
+  {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
     // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
     // in, again. Homing (clang's default on Linux) emits a type once, in the

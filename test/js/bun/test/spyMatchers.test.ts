@@ -25,7 +25,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
-import { describe, expect, jest, expect as jestExpect, test } from "bun:test";
+import { describe, expect, jest, expect as jestExpect, type Matchers, test } from "bun:test";
 import * as Immutable from "immutable";
 import type { FunctionLike } from "jest-mock";
 
@@ -1342,6 +1342,56 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
 
         expect(() => jestExpect(fn)[returnedWith]("foo")).toThrow();
       }
+    });
+
+    test("failure messages name the matcher that was called", () => {
+      function failureHeader(matchers: Matchers<unknown>, expected: unknown): string {
+        try {
+          if (isToHaveNth(returnedWith)) {
+            matchers[returnedWith](1, expected);
+          } else {
+            matchers[returnedWith](expected);
+          }
+        } catch (error) {
+          return Bun.stripANSI((error as Error).message).split("\n")[0];
+        }
+        throw new Error(`${returnedWith} was expected to fail`);
+      }
+
+      const returnsFoo = jest.fn(() => "foo");
+      returnsFoo();
+
+      const uncalled = jest.fn();
+
+      const throws = jest.fn(() => {
+        throw new Error("Error!");
+      });
+      try {
+        throws();
+      } catch {
+        // ignore error
+      }
+
+      const params = isToHaveNth(returnedWith) ? "n, expected" : "expected";
+      const signature = (chain = "") => `expect(received).${chain}${returnedWith}(${params})`;
+
+      expect({
+        stringMismatch: failureHeader(jestExpect(returnsFoo), "bar"),
+        nonStringMismatch: failureHeader(jestExpect(returnsFoo), 1),
+        neverCalled: failureHeader(jestExpect(uncalled), "foo"),
+        lastCallThrew: failureHeader(jestExpect(throws), "foo"),
+        negated: failureHeader(jestExpect(returnsFoo).not, "foo"),
+        resolvesOnNonPromise: failureHeader(jestExpect(returnsFoo).resolves, "foo"),
+        rejectsOnNonPromise: failureHeader(jestExpect(returnsFoo).rejects, "foo"),
+      }).toEqual({
+        stringMismatch: signature(),
+        nonStringMismatch: signature(),
+        neverCalled: signature(),
+        lastCallThrew: signature(),
+        negated: signature("not."),
+        resolvesOnNonPromise: signature("resolves."),
+        rejectsOnNonPromise: signature("rejects."),
+      });
     });
   },
 );

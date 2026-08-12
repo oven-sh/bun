@@ -127,4 +127,11 @@ void generateNativeModule_##enumName( \
   Vector<JSC::Identifier, 4> &exportNames, \
   JSC::MarkedArgumentBuffer &exportValues);
 BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
+// Returns the object that exports appended as an empty JSValue are read from on first binding.
+#define FORWARD_DECL_LAZY_GENERATOR(id, enumName) \
+JSC::JSObject* generateNativeModule_##enumName( \
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
+  Vector<JSC::Identifier, 4> &exportNames, \
+  JSC::MarkedArgumentBuffer &exportValues);
+BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(FORWARD_DECL_LAZY_GENERATOR)
 } // namespace Zig

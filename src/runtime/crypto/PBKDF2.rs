@@ -15,7 +15,7 @@ pub(crate) struct PBKDF2 {
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
     pub length: i32,
-    pub algorithm: Algorithm,
+    algorithm: Algorithm,
 }
 
 impl PBKDF2 {

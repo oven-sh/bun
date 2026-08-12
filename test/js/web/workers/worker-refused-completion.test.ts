@@ -42,6 +42,13 @@ const ROWS: Row[] = [
     refused: "blob::read_file::ReadFile",
   },
   {
+    // Same read job, different completion: the image's read chain is handed
+    // ECANCELED at teardown and has to free itself.
+    name: "Bun.Image(Bun.file()).metadata()",
+    worker: `new Bun.Image(Bun.file(process.execPath).slice(0, 65536)).metadata().catch(() => {});`,
+    refused: "blob::read_file::ReadFile",
+  },
+  {
     name: "crypto.pbkdf2",
     worker: `require("node:crypto").pbkdf2("p", "s", 1000, 32, "sha256", () => {});`,
     refused: "Pbkdf2Job",

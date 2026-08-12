@@ -20,7 +20,13 @@
 #define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
     BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("node:module"_s, NodeModule)  \
-    macro("node:process"_s, NodeProcess) \
+    macro("node:process"_s, NodeProcess)
+
+// Generators with JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator's signature: they may
+// declare exports without a value and return the object JSC reads those exports from on first binding.
+// src/codegen/internal-module-registry-scanner.ts numbers native modules by their order in this file,
+// so these stay after the lists above.
+#define BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(macro) \
     macro("bun"_s, BunObject)
 
 #define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
@@ -32,6 +38,7 @@ namespace Zig {
 enum class NativeModuleDefaultSlot : unsigned char {
 #define NATIVE_MODULE_SLOT(id, enumName) enumName,
 BUN_FOREACH_ESM_NATIVE_MODULE(NATIVE_MODULE_SLOT)
+BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(NATIVE_MODULE_SLOT)
 #undef NATIVE_MODULE_SLOT
     Count
 };

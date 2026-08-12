@@ -5,7 +5,7 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
-use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -120,8 +120,8 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
-use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
+use crate::test_runner::snapshot::Snapshots;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -2151,14 +2151,6 @@ impl TestCommand {
             None
         };
 
-        let mut snapshot_file_buf: Vec<u8> = Vec::new();
-        // `Snapshots::ValuesHashMap` would be an inherent associated type alias
-        // (unstable in Rust); spell out the underlying map instead.
-        let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
-            bun_collections::HashMap::new();
-        let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
-        let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
-            ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
@@ -2211,28 +2203,7 @@ impl TestCommand {
                     .test_options
                     .test_filter_regex()
                     .map(|p| p.cast::<jsc::RegularExpression>()),
-                snapshots: Snapshots {
-                    update_snapshots: ctx.test_options.update_snapshots,
-                    total: 0,
-                    added: 0,
-                    passed: 0,
-                    failed: 0,
-                    // SAFETY: lifetime-erase to `'static`; the backing locals are
-                    // declared in this never-returning frame (`exec()` only exits
-                    // via process exit).
-                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
-                    _current_file: None,
-                    snapshot_dir_path: None,
-                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    inline_snapshots_to_write: unsafe {
-                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
-                    },
-                    last_error_snapshot_name: None,
-                },
+                snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the
                 // `&'a TestOptions` field, so spell the remaining fields out

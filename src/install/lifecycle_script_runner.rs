@@ -7,7 +7,6 @@ use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
@@ -273,8 +272,6 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
-    pub(crate) timer: Option<Timer>,
-
     pub(crate) has_incremented_alive_count: bool,
 
     pub(crate) foreground: bool,
@@ -337,8 +334,6 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     }
 }
 
-const MIN_MILLISECONDS_TO_LOG: u64 = 500;
-
 static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -356,8 +351,6 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-pub(crate) type Timer = bun_core::time::Timer;
-
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
     /// OutputReader parent backrefs), so it lives behind `*mut Self`.
@@ -370,16 +363,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // `manager` is non-null and outlives every subprocess (the
         // `PackageManager` is the singleton install-loop owner).
         self.manager.get()
-    }
-
-    /// # Safety
-    /// See [`Self::manager`]. Mutable access is sound because callers run on
-    /// the single install thread and no `&PackageManager`
-    /// outlives the brief field accesses below.
-    #[inline]
-    unsafe fn manager_mut(&mut self) -> &mut PackageManager {
-        // SAFETY: see fn doc.
-        unsafe { self.manager.get_mut() }
     }
 
     pub(crate) fn script_name(&self) -> &'static [u8] {
@@ -866,8 +849,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         match status {
             Status::Exited(exit) => {
-                let maybe_duration = self.timer.as_mut().map(|t| t.read());
-
                 if exit.code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
@@ -906,16 +887,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         scripts_node
                             .unprotected_completed_items
                             .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-
-                if let Some(nanos) = maybe_duration {
-                    if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        let entry = LifecycleScriptTimeLogEntry {};
-                        // SAFETY: see [`Self::manager_mut`].
-                        unsafe { self.manager_mut() }
-                            .lifecycle_script_time_log
-                            .append_concurrent(entry);
                     }
                 }
 
@@ -1145,7 +1116,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,
-            timer: None,
             has_incremented_alive_count: false,
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const bunEnv = {
@@ -1118,5 +1118,80 @@ describe.concurrent("bun run", () => {
       stdout: expect.stringContaining("nested --bun ok"),
       exitCode: 0,
     });
+  });
+
+  // The node/bun shims live in one directory shared by every bun process of
+  // the same build (and, for debug builds, by all debug builds). A bun that is
+  // starting up may add the links but must never remove ones that already
+  // point at it: a script spawned by an earlier process can exec them at any
+  // moment and would fail with `node: not found` or fall through to a real
+  // node. (Debug builds used to wipe the whole directory on every start.)
+  it("concurrent --bun runs do not remove the node shim other scripts are using", async () => {
+    using dir = tempDir("bun-run-shim-race", {
+      "package.json": JSON.stringify({
+        name: "shim-race",
+        scripts: {
+          watch: "node watch.js",
+          probe: "node probe.js",
+        },
+      }),
+      // Runs as `node` through the shim, reports what `node` resolves to, then
+      // keeps re-resolving it (what a script's PATH lookup does) until the test
+      // writes `stop`. A busy loop on purpose: a process that removes and
+      // recreates the shim leaves it missing for only a few syscalls, so sample
+      // as fast as possible. Deliberately import-free: in debug builds, loading
+      // node:fs alone takes most of a second. (`await using` below kills this
+      // process if the test fails before writing `stop`.)
+      "watch.js": `
+        const shim = Bun.which("node");
+        console.log(shim);
+        while (Bun.file("stop").size === 0) {
+          if (Bun.which("node") !== shim) {
+            console.log("missing");
+            process.exit(1);
+          }
+        }
+        console.log("ok");
+      `,
+      "probe.js": `process.exit(typeof Bun === "object" ? 0 : 3);`,
+    });
+    const dirStr = String(dir);
+
+    await using watcher = Bun.spawn({
+      cmd: [bunExe(), "run", "--bun", "watch"],
+      cwd: dirStr,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const watcherLines = forEachLine(watcher.stdout);
+    const { value: shim } = await watcherLines.next();
+    expect(shim).toMatch(/[\\/]bun-node[^\\/]*[\\/]node(\.exe)?$/);
+
+    // Every sibling sets up the shim directory on startup and then runs
+    // `node` through it, all while the watcher's script is still using it.
+    const siblings = await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--bun", "probe"],
+          cwd: dirStr,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }),
+    );
+
+    await Bun.write(join(dirStr, "stop"), "stop");
+    const [stdout, stderr, exitCode] = await Promise.all([
+      Array.fromAsync(watcherLines),
+      watcher.stderr.text(),
+      watcher.exited,
+    ]);
+
+    expect(siblings.filter(({ exitCode }) => exitCode !== 0)).toEqual([]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: ["ok"], stderr: "$ node watch.js\n", exitCode: 0 });
   });
 });

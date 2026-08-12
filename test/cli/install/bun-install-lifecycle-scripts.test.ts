@@ -3635,19 +3635,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
-      const originalPath = env.PATH;
-      env.PATH = "";
-
       let { stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env: testEnv,
+        env: { ...testEnv, PATH: "" },
       });
-
-      env.PATH = originalPath;
 
       let err = await stderr.text();
       expect(err).toContain("No packages! Deleted empty lockfile");
@@ -3676,19 +3671,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
-      const originalPath = env.PATH;
-      env.PATH = "";
-
       let { stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
-        env,
+        env: { ...testEnv, PATH: "" },
       });
-
-      env.PATH = originalPath;
 
       let err = await stderr.text();
       expect(err).toContain("No packages! Deleted empty lockfile");

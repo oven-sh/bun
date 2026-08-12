@@ -466,6 +466,40 @@ describe("bundler", () => {
       },
     };
   });
+  // An onResolve callback that returns nothing falls through to the builtin
+  // resolver (BundleV2::run_resolver), which has to treat a file it cannot find
+  // the same way the synchronous resolver does.
+  itBundled("plugin/ResolveFallThroughMissingRequireInTryCatch", {
+    files: {
+      "index.ts": /* ts */ `
+        let value = "fallback";
+        try {
+          value = require("./optional-dep").value;
+        } catch {}
+        console.log(value);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /optional-dep/ }, () => undefined);
+    },
+    run: {
+      stdout: "fallback",
+    },
+  });
+  itBundled("plugin/ResolveFallThroughMissingImport", {
+    files: {
+      "index.ts": /* ts */ `
+        import { value } from "./missing";
+        console.log(value);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /missing/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/index.ts": [`Could not resolve: "./missing"`],
+    },
+  });
   itBundled("plugin/ResolveOnceWhenSameFile", ({ root }) => {
     let onResolveCount = 0;
     return {

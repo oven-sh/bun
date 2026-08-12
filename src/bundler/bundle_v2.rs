@@ -2357,39 +2357,15 @@ pub mod bv2_impl {
                                         [import_record.importer_source_index as usize],
                                 )
                                 .expect("oom");
-
-                                // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                                unsafe {
-                                    self.graph.ast.items_parts_mut()
-                                        [import_record.importer_source_index as usize]
-                                        .set_len((0) as usize)
-                                };
                             }
                         }
 
-                        let handles_import_errors;
-                        // reshaped for borrowck — `log_for_resolution_failures` borrows
-                        // `&mut self`; the returned log is backed by either a DevServer-owned slot or
-                        // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
-                        // so `self.graph.*` / `self.transpiler.*` reads below type-check.
-                        // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                        let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
-                                target.bake_graph(),
-                            ))
-                        };
-
-                        {
+                        let handles_import_errors = {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
-                            handles_import_errors = record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -2399,61 +2375,88 @@ pub mod bv2_impl {
                             record
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
-                        }
-                        let source: Option<&bun_ast::Source> = Some(
-                            &self.graph.input_files.items_source()
-                                [import_record.importer_source_index as usize],
-                        );
+                            record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        };
 
-                        if err == _resolver::Error::ModuleNotFound {
+                        if err == _resolver::Error::ModuleNotFound
+                            && !handles_import_errors
+                            && !self.transpiler.options.ignore_module_resolution_errors
+                        {
+                            if self.dev_server.is_some() {
+                                // Turn this into an invalid AST, so that incremental mode skips it
+                                // when printing. Only valid because a failure is logged for the
+                                // importer below: a file with no parts and no failure (e.g. a
+                                // `try { require() }` of a missing file) would otherwise vanish
+                                // from the incremental graph instead of being bundled.
+                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
+                                unsafe {
+                                    self.graph.ast.items_parts_mut()
+                                        [import_record.importer_source_index as usize]
+                                        .set_len(0)
+                                };
+                            }
+
+                            // reshaped for borrowck — `log_for_resolution_failures` borrows
+                            // `&mut self`; the returned log is backed by either a DevServer-owned slot or
+                            // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
+                            // so the `self.graph.*` read below type-checks.
+                            // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
+                            let log: &mut bun_ast::Log = unsafe {
+                                bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                                    &import_record.source_file,
+                                    target.bake_graph(),
+                                ))
+                            };
+                            let source: Option<&bun_ast::Source> = Some(
+                                &self.graph.input_files.items_source()
+                                    [import_record.importer_source_index as usize],
+                            );
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
-                            if !handles_import_errors
-                                && !self.transpiler.options.ignore_module_resolution_errors
-                            {
-                                if is_package_path(&import_record.specifier) {
-                                    if target == Target::Browser
-                                        && options::is_node_builtin(path_to_use)
-                                    {
-                                        add_error(
-                                            log,
-                                            source,
-                                            import_record.range,
-                                            format_args!(
-                                                "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                                bstr::BStr::new(import_record.kind.error_label()),
-                                                bstr::BStr::new(path_to_use)
-                                            ),
-                                            path_to_use,
-                                            import_record.kind,
-                                        );
-                                    } else {
-                                        add_error(
-                                            log,
-                                            source,
-                                            import_record.range,
-                                            format_args!(
-                                                "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                                                bstr::BStr::new(path_to_use)
-                                            ),
-                                            path_to_use,
-                                            import_record.kind,
-                                        );
-                                    }
+                            if is_package_path(&import_record.specifier) {
+                                if target == Target::Browser
+                                    && options::is_node_builtin(path_to_use)
+                                {
+                                    add_error(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        format_args!(
+                                            "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                            bstr::BStr::new(import_record.kind.error_label()),
+                                            bstr::BStr::new(path_to_use)
+                                        ),
+                                        path_to_use,
+                                        import_record.kind,
+                                    );
                                 } else {
                                     add_error(
                                         log,
                                         source,
                                         import_record.range,
                                         format_args!(
-                                            "Could not resolve: \"{}\"",
+                                            "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
                                             bstr::BStr::new(path_to_use)
                                         ),
                                         path_to_use,
                                         import_record.kind,
                                     );
                                 }
+                            } else {
+                                add_error(
+                                    log,
+                                    source,
+                                    import_record.range,
+                                    format_args!(
+                                        "Could not resolve: \"{}\"",
+                                        bstr::BStr::new(path_to_use)
+                                    ),
+                                    path_to_use,
+                                    import_record.kind,
+                                );
                             }
                         }
                         // assume other errors are already in the log

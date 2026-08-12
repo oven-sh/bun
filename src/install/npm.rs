@@ -1715,9 +1715,10 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
-                // An explicitly excluded version is taken as-is: it skips the
-                // age gate and the stability check, which would otherwise walk
-                // past it to an older version.
+                // Excluded versions are handled like stable ones (`is_stable`
+                // below): no age gate, and they replace a newer `best_version`,
+                // which only ever holds an unstable fallback. Subjecting them to
+                // the stability check instead could walk past the listed version.
                 if self.is_version_excluded_from_age_filter(version, exclusions) {
                     best_version = Some(FindResult { version, package });
                     break;

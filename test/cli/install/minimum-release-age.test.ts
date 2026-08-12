@@ -1394,6 +1394,22 @@ describe("minimum-release-age", () => {
         expect(exitCode).toBe(0);
       });
 
+      // With a 1.2 day gate, 1.0.3 is blocked and 1.0.2 passes the gate but was
+      // released only 1 day before 1.0.3, so the walk keeps it as a fallback and
+      // continues; without an exemption it ends on 1.0.0. A listed 1.0.1 ends
+      // the walk there, taking precedence over the unstable fallback the same
+      // way a stable version does.
+      test.concurrent.each([
+        ["*", "range"],
+        ["latest", "dist-tag"],
+      ])("a listed version is preferred over a newer unstable fallback (%s dependency)", async (spec, label) => {
+        using dir = project(`fallback-${label}`, { "bugfix-package": spec }, 1.2, ["bugfix-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
       test.concurrent("dist-tag dependency falls back to a listed version", async () => {
         using dir = project("dist-tag-walk", { "bugfix-package": "latest" }, 1.8, ["bugfix-package@1.0.2"]);
         const { stderr, exitCode, resolved } = await install(String(dir));

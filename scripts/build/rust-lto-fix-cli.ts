@@ -125,7 +125,7 @@ function main(): void {
     const bitcode = readdirSync(tmp)
       .filter(f => isBitcode(join(tmp, f)))
       .map(f => join(tmp, f));
-    assert(bitcode.length > 0, `no LLVM bitcode members found in ${rustLib}`, {
+    assert(bitcode[0] !== undefined, `no LLVM bitcode members found in ${rustLib}`, {
       hint:
         "The ELF cross-language LTO build expects cargo to emit fat bitcode " +
         "(-Clinker-plugin-lto with CARGO_PROFILE_RELEASE_LTO=fat — see emitRust() in rust.ts).",

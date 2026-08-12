@@ -1490,12 +1490,15 @@ test("env: process.env reads in a worker module are evaluated at runtime against
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({
-    inherited: "from-worker-option",
-    assigned: "assigned-in-worker",
-    nodeEnv: "production",
+  expect({
+    message: stdout ? JSON.parse(stdout) : stdout,
+    stderr: exitCode === 0 ? "" : stderr,
+    exitCode,
+  }).toEqual({
+    message: { inherited: "from-worker-option", assigned: "assigned-in-worker", nodeEnv: "production" },
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });
 
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {

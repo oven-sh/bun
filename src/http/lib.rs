@@ -1447,7 +1447,7 @@ pub(crate) fn print_request(
             || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
         {
             let value = header.value();
-            let scheme_len = value.iter().position(|&b| b == b' ').map_or(0, |i| i + 1);
+            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
                 "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
                 BStr::new(name),

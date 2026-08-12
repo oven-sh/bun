@@ -1806,7 +1806,9 @@ function parseOptions(
         const value = `${queryObject[key]}`.toLowerCase();
         if (value === "true" || value === "1") {
           tls = true;
-        } else if (value && value !== "false" && value !== "0") {
+        } else if (value === "false" || value === "0") {
+          sslMode = SSLMode.disable;
+        } else if (value) {
           sslMode = normalizeSSLMode(value);
         }
       } else if (lowerKey === "path") {
@@ -1956,6 +1958,9 @@ function parseOptions(
   const tlsOption = options.tls || options.ssl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
+    tls = undefined;
+  } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
+    sslMode = SSLMode.disable;
     tls = undefined;
   } else {
     tls = tlsOption || tls;

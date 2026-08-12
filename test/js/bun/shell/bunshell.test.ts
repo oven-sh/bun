@@ -230,16 +230,18 @@ describe("bunshell", () => {
       TestBuilder.command`FOO=bar && echo a$${name}b`.stdout(`a$FOOb\n`).runAsTest("inside a word");
 
       test("does not extend a preceding variable name", async () => {
-        const { stdout, exitCode } = await $`FOOBAR=long && FOO=short && echo $FOO${"BAR"}`.env({ ...bunEnv });
+        const { stdout, stderr, exitCode } = await $`FOOBAR=long && FOO=short && echo $FOO${"BAR"}`.env({ ...bunEnv });
+        expect(stderr.toString()).toBe("");
         expect(stdout.toString()).toBe("shortBAR\n");
         expect(exitCode).toBe(0);
       });
 
       test("does not name a variable from the environment", async () => {
-        const { stdout, exitCode } = await $`echo $${"SHELL_TEST_SECRET"}`.env({
+        const { stdout, stderr, exitCode } = await $`echo $${"SHELL_TEST_SECRET"}`.env({
           ...bunEnv,
           SHELL_TEST_SECRET: "hunter2",
         });
+        expect(stderr.toString()).toBe("");
         expect(stdout.toString()).toBe("$SHELL_TEST_SECRET\n");
         expect(exitCode).toBe(0);
       });

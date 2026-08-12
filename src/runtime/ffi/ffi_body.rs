@@ -2421,24 +2421,28 @@ impl CompilerRT {
                 return false;
             }
         }
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return false;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
+                return false;
+            }
+        }
 
         let mut path_buf = PathBuffer::uninit();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
             return false;
         };
         // `ZBox::from_bytes` panics on OOM.
-        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
-
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return true;
+        let path = ZBox::from_bytes(&*path);
+        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
+            return false;
         };
-        for (name, source) in CompilerRtSources::NODE_HEADERS {
-            Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source);
-        }
-        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
-            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
-        }
+        let node_path = ZBox::from_bytes(&*node_path);
+        let _ = COMPILER_RT_DIR.set(path);
+        let _ = COMPILER_RT_NODE_DIR.set(node_path);
         true
     }
 

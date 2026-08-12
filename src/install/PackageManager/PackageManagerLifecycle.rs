@@ -470,16 +470,21 @@ fn add_package_to_set(
     if handle_oom(set.get_or_put(package_id)).found_existing {
         return;
     }
-    let dependencies_slice = lockfile.packages.items_dependencies()[package_id as usize];
-    let begin = dependencies_slice.off;
-    let end = begin.saturating_add(dependencies_slice.len);
-    let mut dep_id = begin;
-    while dep_id < end {
-        let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
-        if dep_package_id != invalid_package_id {
-            add_package_to_set(set, lockfile, dep_package_id);
+    let mut stack: Vec<PackageID> = vec![package_id];
+    while let Some(current) = stack.pop() {
+        let dependencies_slice = lockfile.packages.items_dependencies()[current as usize];
+        let begin = dependencies_slice.off;
+        let end = begin.saturating_add(dependencies_slice.len);
+        let mut dep_id = begin;
+        while dep_id < end {
+            let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
+            if dep_package_id != invalid_package_id
+                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
+            {
+                stack.push(dep_package_id);
+            }
+            dep_id += 1;
         }
-        dep_id += 1;
     }
 }
 

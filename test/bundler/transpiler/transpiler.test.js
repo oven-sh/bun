@@ -4466,6 +4466,7 @@ console.log(foo, array);
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
         JSON.stringify({
           pre: "inner-value",
@@ -4473,7 +4474,6 @@ console.log(foo, array);
           tail: { list: [2, 4, 6], label: "a-b" },
         }),
       );
-      expect(exitCode).toBe(0);
     });
 
     it("special identifier in import statement", () => {

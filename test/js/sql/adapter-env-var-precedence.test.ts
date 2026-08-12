@@ -394,6 +394,36 @@ describe("SQL adapter environment variable precedence", () => {
       const options = new SQL({ adapter: "postgres", hostname: "h", tls: true });
       expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
     });
+
+    test.each([{ tls: false }, { ssl: false }, { tls: false, ssl: false }])(
+      "an explicit %p disables a mode selected by PGSSLMODE or the URL",
+      tlsOptions => {
+        process.env.PGSSLMODE = "require";
+
+        const fromEnv = new SQL({ adapter: "postgres", hostname: "h", ...tlsOptions });
+        expect(fromEnv.options.sslMode).toBe(0);
+        expect(fromEnv.options.tls).toBeUndefined();
+
+        const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-full&ssl=true", tlsOptions);
+        expect(fromUrl.options.query).toBe("");
+        expect(fromUrl.options.sslMode).toBe(0);
+        expect(fromUrl.options.tls).toBeUndefined();
+      },
+    );
+
+    test("an unset tls option keeps the mode selected by PGSSLMODE", () => {
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: undefined });
+      expect(options.options.sslMode).toBe(2);
+      expect(options.options.tls).toEqual({ serverName: "h" });
+    });
+
+    test("a tls object alongside ssl: false still requests an encrypted connection", () => {
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: {}, ssl: false });
+      expect(options.options.sslMode).toBe(2);
+      expect(options.options.tls).toBeTypeOf("object");
+    });
   });
 
   describe("TLS settings from the connection URL query string", () => {
@@ -439,13 +469,31 @@ describe("SQL adapter environment variable precedence", () => {
       },
     );
 
-    test("?ssl=false does not clear a mode selected by PGSSLMODE", () => {
-      process.env.PGSSLMODE = "verify-full";
+    test.each(["postgres://u@h:5432/db?ssl=false", "postgres://u@h:5432/db?tls=0"])(
+      "%s disables a mode selected by PGSSLMODE",
+      url => {
+        process.env.PGSSLMODE = "verify-full";
 
-      const options = new SQL("postgres://u@h:5432/db?ssl=false");
+        const options = new SQL(url);
+        expect(options.options.query).toBe("");
+        expect(options.options.sslMode).toBe(0);
+        expect(options.options.tls).toBeUndefined();
+      },
+    );
+
+    test("an empty ?tls= is treated as unset and keeps the mode selected by PGSSLMODE", () => {
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL("postgres://u@h:5432/db?tls=");
       expect(options.options.query).toBe("");
-      expect(options.options.sslMode).toBe(4);
+      expect(options.options.sslMode).toBe(2);
       expect(options.options.tls).toEqual({ serverName: "h" });
+    });
+
+    test("an explicit tls option takes priority over ?ssl=false", () => {
+      const options = new SQL("postgres://u@h:5432/db?ssl=false", { tls: true });
+      expect(options.options.sslMode).toBe(2);
+      expect(options.options.tls).toBe(true);
     });
 
     test.each(["mysql://u:p@h/db?ssl=bogus", 'mysql://u:p@h/db?ssl={"rejectUnauthorized":true}'])(

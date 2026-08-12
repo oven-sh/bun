@@ -1928,41 +1928,28 @@ test.concurrent(
           },
         }),
       ),
-      write(
-        join(packageDir, "lib-src", "lib", "package.json"),
-        JSON.stringify({
-          name: "lib",
-          version: "1.0.0",
-          optionalDependencies: {
-            extra: "workspace:extra",
-          },
-        }),
-      ),
-      write(
-        join(packageDir, "lib-src", "lib", "extra", "package.json"),
-        JSON.stringify({
-          name: "extra",
-          version: "1.0.0",
-          scripts: {
-            postinstall: `${bunExe()} postinstall.js`,
-          },
-        }),
-      ),
-      write(
-        join(packageDir, "lib-src", "lib", "extra", "postinstall.js"),
-        `require("fs").writeFileSync(${JSON.stringify(marker)}, "")`,
+      Bun.Archive.write(
+        join(packageDir, "lib.tgz"),
+        {
+          "lib/package.json": JSON.stringify({
+            name: "lib",
+            version: "1.0.0",
+            optionalDependencies: {
+              extra: "workspace:extra",
+            },
+          }),
+          "lib/extra/package.json": JSON.stringify({
+            name: "extra",
+            version: "1.0.0",
+            scripts: {
+              postinstall: `${bunExe()} postinstall.js`,
+            },
+          }),
+          "lib/extra/postinstall.js": `require("fs").writeFileSync(${JSON.stringify(marker)}, "")`,
+        },
+        { compress: "gzip" },
       ),
     ]);
-
-    {
-      await using tar = spawn({
-        cmd: ["tar", "-czf", join(packageDir, "lib.tgz"), "-C", join(packageDir, "lib-src"), "lib"],
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-      expect(await tar.exited).toBe(0);
-    }
 
     await using proc = spawn({
       cmd: [bunExe(), "install"],

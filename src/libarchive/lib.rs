@@ -995,14 +995,14 @@ impl Drop for BufferReadStream {
 /// path with leading `..` preserved; the target is unsafe if the result
 /// climbs above the extraction root.
 #[cfg(unix)]
-fn is_symlink_target_safe(
+pub fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
     symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
 ) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
     let link_target_bytes = link_target.as_bytes();
-    if !link_target_bytes.is_empty() && link_target_bytes[0] == b'/' {
+    if link_target_bytes.is_empty() || link_target_bytes[0] == b'/' {
         return false;
     }
 

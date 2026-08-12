@@ -23,6 +23,7 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
+#[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
@@ -859,7 +860,7 @@ impl TarballStream {
             }
             FileKind::SymLink => {
                 #[cfg(unix)]
-                if symlink_target_stays_inside(entry.symlink(), path_slice) {
+                if bun_libarchive::is_symlink_target_safe(path_slice, entry.symlink(), &mut None) {
                     self.deferred_symlinks
                         .push(bun_libarchive::DeferredSymlink::new(
                             path_slice,
@@ -1406,65 +1407,6 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
             },
         }
     }
-}
-
-#[cfg(unix)]
-fn symlink_target_stays_inside(target: &bun_core::ZStr, path_slice: &[OSPathChar]) -> bool {
-    // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
-    // reject absolute targets and anything that escapes via `..`.
-    if target.is_empty() || target[0] == b'/' {
-        return false;
-    }
-    {
-        // Normalize `symlink_dir/target` as a *relative* path with leading
-        // `..` preserved, and reject targets that climb above the extraction
-        // root. A fake absolute root cannot be used here: POSIX normalization
-        // clamps excess `..` at `/`, so a target like `../../packages/x`
-        // would normalize back under the fake root while the kernel still
-        // resolves the raw `..` components and escapes the extraction
-        // directory.
-        let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
-        let target_bytes = target.as_bytes();
-        let mut seen_named_component = false;
-        for component in strings::split(target_bytes, b"/") {
-            match component {
-                b"" | b"." => {}
-                b".." => {
-                    if seen_named_component {
-                        return false;
-                    }
-                }
-                _ => seen_named_component = true,
-            }
-        }
-        let mut join_buf = PathBuffer::uninit();
-        if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
-            return false;
-        }
-        let mut written = 0usize;
-        if !symlink_dir.is_empty() {
-            join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
-            written = symlink_dir.len();
-            join_buf[written] = b'/';
-            written += 1;
-        }
-        join_buf[written..written + target_bytes.len()].copy_from_slice(target_bytes);
-        written += target_bytes.len();
-
-        let mut norm_buf = PathBuffer::uninit();
-        let resolved = resolve_path::normalize_string_generic_t::<u8, true, false>(
-            &join_buf[..written],
-            &mut norm_buf[..],
-            b'/',
-            |c| c == b'/',
-        );
-        if bun_core::strings::eql(resolved, b"..")
-            || bun_core::strings::has_prefix_comptime(resolved, b"../")
-        {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(windows)]

@@ -1681,9 +1681,10 @@ describe("bundler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toBe(
-        `TypeError|ERR_INVALID_ARG_TYPE|Expected filter (1st argument) to be a RegExp\ncalls=${call}\n`,
-      );
+      expect({ stdout, stderr }).toEqual({
+        stdout: `TypeError|ERR_INVALID_ARG_TYPE|Expected filter (1st argument) to be a RegExp\ncalls=${call}\n`,
+        stderr: "",
+      });
       expect(exitCode).toBe(0);
     });
   }

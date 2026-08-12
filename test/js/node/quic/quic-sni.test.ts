@@ -205,16 +205,19 @@ test("connect() with the default verifyPeer refuses an unverifiable certificate 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe(
-    JSON.stringify({
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
       code: "ERR_QUIC_TRANSPORT_ERROR",
       message:
         "QUIC transport error 0: Peer certificate validation failed: unable to get local issuer certificate [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]",
       echoed: [1],
       streamsReceived: 1,
     }),
-  );
-  expect(exitCode).toBe(0);
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
+  });
 });

@@ -7,7 +7,7 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
-import { createHash, randomFillSync } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
@@ -383,7 +383,11 @@ describe("streaming tarball extraction", () => {
     const before = Buffer.alloc(4 * 1024 * 1024, 0);
     const after = Buffer.alloc(16 * 1024 * 1024, 0);
     const tail = Buffer.alloc(8 * 1024 * 1024);
-    randomFillSync(tail);
+    let seed = createHash("sha512").update("tail.bin").digest();
+    for (let off = 0; off < tail.length; off += seed.length) {
+      seed.copy(tail, off);
+      seed = createHash("sha512").update(seed).digest();
+    }
 
     const damaged = Buffer.alloc(512, 0);
     damaged.write("junk", 0, "utf8");

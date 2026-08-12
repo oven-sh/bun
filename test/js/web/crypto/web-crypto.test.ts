@@ -400,10 +400,11 @@ describe("Ed25519", () => {
         await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", consistent, data), data),
       ).toBe(true);
 
-      const cloned = structuredClone(privateKey);
-      expect(
-        await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
-      ).toBe(true);
+      for (const cloned of [structuredClone(privateKey), structuredClone(consistent)]) {
+        expect(
+          await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
+        ).toBe(true);
+      }
     });
   });
 });

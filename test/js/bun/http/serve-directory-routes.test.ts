@@ -10,11 +10,18 @@ const straceEnv = {
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
   LSAN_OPTIONS: "detect_leaks=0",
 };
-const straceInjectArgs = ["-o", "/dev/null", "-e", "trace=openat2", "-e", "inject=openat2:error=EPERM:when=1"];
+const straceInjectArgs = (traceFile: string) => [
+  "-o",
+  traceFile,
+  "-e",
+  "trace=openat2",
+  "-e",
+  "inject=openat2:error=EPERM:when=1",
+];
 const canInjectOpenat2Error =
   !!strace &&
   Bun.spawnSync({
-    cmd: [strace, ...straceInjectArgs, bunExe(), "--version"],
+    cmd: [strace, ...straceInjectArgs("/dev/null"), bunExe(), "--version"],
     env: straceEnv,
     stdout: "ignore",
     stderr: "ignore",
@@ -413,13 +420,16 @@ describe("Bun.serve() directory routes", () => {
         server.stop(true);
         console.log(JSON.stringify(out));
       `;
+    const traceFile = join(root, "strace.log");
     await using proc = Bun.spawn({
-      cmd: [strace!, ...straceInjectArgs, bunExe(), "-e", script],
+      cmd: [strace!, ...straceInjectArgs(traceFile), bunExe(), "-e", script],
       env: straceEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const trace = await Bun.file(traceFile).text();
+    expect(trace, stderr).toMatch(/openat2\(.*"escape-rel".*= -1 EPERM .*\(INJECTED\)/);
     expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
     expect(exitCode).toBe(0);
   });

@@ -616,6 +616,13 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
           expect(stderr).not.toContain("Streamed ");
         }
 
+        if (exitCode !== 0) {
+          console.error("Install failed with exit code:", exitCode);
+          console.error("stdout:", stdout);
+          console.error("stderr:", stderr);
+        }
+        expect(exitCode).toBe(0);
+
         const misplaced: string[] = [];
         let markerDirs = 0;
         for (const entry of await readdir(installDir, { recursive: true, withFileTypes: true })) {
@@ -637,13 +644,6 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
         expect(literalX.isSymbolicLink()).toBe(false);
         expect(literalX.isDirectory()).toBe(true);
         expect(await Bun.file(join(pkgDir, decomposed, "x", "nested.txt")).text()).toBe("written at its literal path");
-
-        if (exitCode !== 0) {
-          console.error("Install failed with exit code:", exitCode);
-          console.error("stdout:", stdout);
-          console.error("stderr:", stderr);
-        }
-        expect(exitCode).toBe(0);
       } finally {
         httpServer.closeAllConnections?.();
         await new Promise<void>(resolve => httpServer.close(() => resolve()));

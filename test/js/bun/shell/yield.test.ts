@@ -97,7 +97,7 @@ describe("yield", async () => {
         { stdout: "write_failed_again\n", exitCode: 0 },
         { stdout: "next\n", exitCode: 0 },
       ]),
-      stderr: expect.any(String),
+      stderr: "",
       exitCode: 0,
     });
   });

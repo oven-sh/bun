@@ -127,6 +127,7 @@ test("update rejects a hasher that was digested while its input was being conver
       message: `${name} hasher already digested, create a new instance to update`,
     };
   }
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
 });

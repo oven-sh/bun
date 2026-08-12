@@ -178,7 +178,7 @@ test("object destructuring of a macro result keeps every bound property regardle
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toMatchObject({ lastLine: "[2,1,1,1,2]" });
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[2,1,1,1,2]", stderr: "" });
   expect(exitCode).toBe(0);
 });
 

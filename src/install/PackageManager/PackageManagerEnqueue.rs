@@ -1921,6 +1921,29 @@ fn update_name_and_name_hash_from_version_replacement(
     }
 }
 
+fn root_workspace_package_id(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+) -> Option<PackageID> {
+    let root_package = lockfile.root_package()?;
+    let root_dependencies = root_package
+        .dependencies
+        .get(lockfile.buffers.dependencies.as_slice());
+    let root_resolutions = root_package
+        .resolutions
+        .get(lockfile.buffers.resolutions.as_slice());
+    debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
+    for (root_dep, &workspace_package_id) in root_dependencies.iter().zip(root_resolutions) {
+        if workspace_package_id != invalid_package_id
+            && root_dep.version.tag == dependency::version::Tag::Workspace
+            && root_dep.name_hash == name_hash
+        {
+            return Some(workspace_package_id);
+        }
+    }
+    None
+}
+
 pub(crate) enum ResolvedPackageTask {
     /// Pending network task to schedule
     NetworkTask(*mut NetworkTask),
@@ -2285,36 +2308,18 @@ fn get_or_put_resolved_package(
                             // dependency version is wildcard
                             || (workspace_path.is_some() && npm_group.is_star()))
                     {
-                        let Some(root_package) = this.lockfile.root_package() else {
+                        let Some(workspace_package_id) =
+                            root_workspace_package_id(&this.lockfile, name_hash)
+                        else {
                             break 'resolve_from_workspace;
                         };
-                        let root_dependencies = root_package
-                            .dependencies
-                            .get(this.lockfile.buffers.dependencies.as_slice());
-                        let root_resolutions = root_package
-                            .resolutions
-                            .get(this.lockfile.buffers.resolutions.as_slice());
-
-                        debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
-                        for (root_dep, &workspace_package_id) in
-                            root_dependencies.iter().zip(root_resolutions)
-                        {
-                            if workspace_package_id != invalid_package_id
-                                && root_dep.version.tag == dependency::version::Tag::Workspace
-                                && root_dep.name_hash == name_hash
-                            {
-                                // make sure verifyResolutions sees this resolution as a valid package id
-                                success_fn(this, dependency_id, workspace_package_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this
-                                        .lockfile
-                                        .packages
-                                        .get(workspace_package_id as usize),
-                                    is_first_time: false,
-                                    task: None,
-                                }));
-                            }
-                        }
+                        // make sure verifyResolutions sees this resolution as a valid package id
+                        success_fn(this, dependency_id, workspace_package_id);
+                        return Ok(Some(ResolvedPackageResult {
+                            package: *this.lockfile.packages.get(workspace_package_id as usize),
+                            is_first_time: false,
+                            task: None,
+                        }));
                     }
                 }
             }
@@ -2438,37 +2443,21 @@ fn get_or_put_resolved_package(
                                 None
                             };
                             if workspace_path.is_some() {
-                                let Some(root_package) = this.lockfile.root_package() else {
+                                let Some(workspace_package_id) =
+                                    root_workspace_package_id(&this.lockfile, name_hash)
+                                else {
                                     break 'resolve_workspace_from_dist_tag;
                                 };
-                                let root_dependencies = root_package
-                                    .dependencies
-                                    .get(this.lockfile.buffers.dependencies.as_slice());
-                                let root_resolutions = root_package
-                                    .resolutions
-                                    .get(this.lockfile.buffers.resolutions.as_slice());
-
-                                debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
-                                for (root_dep, &workspace_package_id) in
-                                    root_dependencies.iter().zip(root_resolutions)
-                                {
-                                    if workspace_package_id != invalid_package_id
-                                        && root_dep.version.tag
-                                            == dependency::version::Tag::Workspace
-                                        && root_dep.name_hash == name_hash
-                                    {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        success_fn(this, dependency_id, workspace_package_id);
-                                        return Ok(Some(ResolvedPackageResult {
-                                            package: *this
-                                                .lockfile
-                                                .packages
-                                                .get(workspace_package_id as usize),
-                                            is_first_time: false,
-                                            task: None,
-                                        }));
-                                    }
-                                }
+                                // make sure verifyResolutions sees this resolution as a valid package id
+                                success_fn(this, dependency_id, workspace_package_id);
+                                return Ok(Some(ResolvedPackageResult {
+                                    package: *this
+                                        .lockfile
+                                        .packages
+                                        .get(workspace_package_id as usize),
+                                    is_first_time: false,
+                                    task: None,
+                                }));
                             }
                         }
                     }
@@ -2622,30 +2611,16 @@ fn get_or_put_resolved_package(
                     dependency.name.slice(buf),
                     buf,
                 ) {
-                    let Some(root_package) = this.lockfile.root_package() else {
+                    let Some(workspace_package_id) =
+                        root_workspace_package_id(&this.lockfile, name_hash)
+                    else {
                         return Err(crate::Error::MissingPackageJSON);
                     };
-                    let root_dependencies = root_package
-                        .dependencies
-                        .get(this.lockfile.buffers.dependencies.as_slice());
-                    let root_resolutions = root_package
-                        .resolutions
-                        .get(this.lockfile.buffers.resolutions.as_slice());
-                    for (root_dep, &workspace_package_id) in
-                        root_dependencies.iter().zip(root_resolutions)
-                    {
-                        if workspace_package_id != invalid_package_id
-                            && root_dep.version.tag == dependency::version::Tag::Workspace
-                            && root_dep.name_hash == name_hash
-                        {
-                            success_fn(this, dependency_id, workspace_package_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                package: *this.lockfile.packages.get(workspace_package_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                    return Err(crate::Error::MissingPackageJSON);
+                    success_fn(this, dependency_id, workspace_package_id);
+                    return Ok(Some(ResolvedPackageResult {
+                        package: *this.lockfile.packages.get(workspace_package_id as usize),
+                        ..Default::default()
+                    }));
                 }
             }
             // package name hash should be used to find workspace path from map

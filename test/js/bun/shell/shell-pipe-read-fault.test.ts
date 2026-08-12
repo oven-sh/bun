@@ -459,8 +459,8 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
       teedIsAllA: true,
       teedLength: 256 * 1024,
       parsed: { exitCode: ENOMEM },
-      stderr: expect.any(String),
-      readerStderr: expect.any(String),
+      stderr: "",
+      readerStderr: "",
       exitCode: 0,
       readerExitCode: 0,
     });

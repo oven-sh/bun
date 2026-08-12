@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -5379,10 +5379,9 @@ describe.concurrent("bun-install", () => {
       expect(err).toContain("Saved lockfile");
       expect(out).toContain("1 package installed");
       expect(readFileSync(target, "utf8")).toBe("original\n");
-      const tag = lstatSync(join(ctx.package_dir, "node_modules", ".cache", `@G@${sha}`, ".bun-tag"), {
-        throwIfNoEntry: false,
-      });
-      expect(tag?.isSymbolicLink() ?? false).toBe(false);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache", `@G@${sha}`))).toEqual(
+        isWindows ? [".bun-tag", "package.json"] : ["package.json"],
+      );
       expect(await file(join(ctx.package_dir, "node_modules", "has-bun-tag", "package.json")).json()).toEqual({
         name: "has-bun-tag",
         version: "1.0.0",

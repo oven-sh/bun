@@ -939,6 +939,7 @@ impl RepositoryExt for Repository {
                     .open_at(folder_name)
                     .map_err(Error::from)?;
                 let _ = dir.delete_tree(b".git");
+                // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
                 let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
 
                 if !resolved.is_empty() {

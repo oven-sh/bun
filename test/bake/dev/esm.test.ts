@@ -540,17 +540,6 @@ devTest("error report endpoint tolerates a browser url whose normalized origin i
   },
 });
 
-/** The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs). */
-async function expectErrorPage(response: Promise<Response>, ...messages: string[]) {
-  const res = await response;
-  const text = await res.text();
-  const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
-  if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
-  const payload = JSON.parse(match[1]);
-  expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
-  expect(res.status).toBe(500);
-}
-
 devTest("a route that failed because its dependency rejected is loaded again once the dependency is fixed", {
   // The route fails together with its dependency and remembers that failure.
   // Fixing the dependency only replaces the dependency; the route, whose body
@@ -571,8 +560,8 @@ devTest("a route that failed because its dependency rejected is loaded again onc
     `,
   },
   async test(dev) {
-    await expectErrorPage(dev.fetch("/"), "dep rejected");
-    await expectErrorPage(dev.fetch("/"), "dep rejected");
+    await dev.fetch("/").expectErrorPage("dep rejected");
+    await dev.fetch("/").expectErrorPage("dep rejected");
     await dev.write(
       "dep.ts",
       `
@@ -647,11 +636,11 @@ devTest("a route that threw because of its dependency's exports is evaluated aga
     `,
   },
   async test(dev) {
-    await expectErrorPage(dev.fetch("/"), "invalid port: not a number");
+    await dev.fetch("/").expectErrorPage("invalid port: not a number");
     // Still broken: the route is evaluated against the new dependency and
     // reports the new failure, not the remembered one.
     await dev.write("config.ts", `export const port = "still not a number";`);
-    await expectErrorPage(dev.fetch("/"), "invalid port: still not a number");
+    await dev.fetch("/").expectErrorPage("invalid port: still not a number");
     await dev.write("config.ts", `export const port = 3000;`);
     await dev.fetch("/").equals("port: 3000");
     // Once loaded, the route takes further updates as a regular importer.
@@ -689,11 +678,43 @@ devTest("every route that failed because of a dependency is evaluated again when
     `,
   },
   async test(dev) {
-    await expectErrorPage(dev.fetch("/"), "index: dep is broken");
-    await expectErrorPage(dev.fetch("/other"), "other: dep is broken");
+    await dev.fetch("/").expectErrorPage("index: dep is broken");
+    await dev.fetch("/other").expectErrorPage("other: dep is broken");
     await dev.write("dep.ts", `export const value = "fixed";`);
     await dev.fetch("/").equals("index: fixed");
     await dev.fetch("/other").equals("other: fixed");
+  },
+});
+
+devTest("a route that loaded an already failed module is evaluated again once that module is fixed", {
+  // `dep` is already recorded as failed (by /first) when the route loads it.
+  // Loading a failed module rethrows its failure right away; the route still
+  // has to be recorded as one of its importers, or fixing `dep` cannot find it.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "unreachable";
+      throw new Error("dep threw");
+    `,
+    "routes/first.ts": `
+      export default async function () {
+        const { value } = await import("../dep");
+        return new Response("first: " + value);
+      }
+    `,
+    "routes/index.ts": `
+      const { value } = require("../dep");
+      export default function () {
+        return new Response("index: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/first").expectErrorPage("dep threw");
+    await dev.fetch("/").expectErrorPage("dep threw");
+    await dev.write("dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/").equals("index: fixed");
+    await dev.fetch("/first").equals("first: fixed");
   },
 });
 

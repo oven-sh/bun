@@ -753,6 +753,31 @@ class DevFetchPromise extends Promise<Response> {
     });
   }
 
+  /**
+   * Expect the dev error page (a 500 for a server-side failure), carrying
+   * exactly these exception messages.
+   * @example await dev.fetch("/").expectErrorPage("dep threw");
+   */
+  expectErrorPage(...messages: string[]) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      try {
+        const res = await this;
+        const text = await res.text();
+        // The page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+        const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
+        if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
+        const payload = JSON.parse(match[1]);
+        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
+        expect(res.status).toBe(500);
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
+      }
+    });
+  }
+
   expectFile(expected: Buffer) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;

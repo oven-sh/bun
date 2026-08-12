@@ -275,7 +275,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
-    if (mod.state === State.Error) throw mod.failure;
+    if (mod.state === State.Error) {
+      // The importer fails too; `replaceModules` only finds it through `importers` once this module is replaced.
+      if (importer) mod.importers.add(importer);
+      throw mod.failure;
+    }
     if (mod.state === State.Stale) {
       mod.state = State.Pending;
       isUserDynamic = false;
@@ -374,7 +378,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   let mod = registry.get(id)!;
   if (mod) {
     const { state } = mod;
-    if (state === State.Error) throw mod.failure;
+    if (state === State.Error) {
+      // Same as in loadModuleSync: the importer has to be reachable from here when this module is replaced.
+      if (importer) mod.importers.add(importer);
+      throw mod.failure;
+    }
     if (state === State.Stale) {
       mod.state = State.Pending;
       isUserDynamic = false as IsUserDynamic;

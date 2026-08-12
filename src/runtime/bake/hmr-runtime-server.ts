@@ -159,15 +159,15 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    try {
-      await replaceModules(modules);
-    } catch (err) {
-      // The dev server does not observe the promise this function returns, so
-      // a module (or one of its hot callbacks) throwing while the update is
-      // applied would otherwise be an unhandled rejection that ends the
-      // process. The module stays failed until it is saved again.
+    // The dev server does not observe the promise this function returns, so a
+    // module (or a hot callback) throwing while the update is applied has to be
+    // reported here; as an unhandled rejection it would end the process.
+    // Deliberately not awaited: requests deferred on this bundle are dispatched
+    // as soon as this function returns and read the manifest updated below, so
+    // that update should not wait for the reload to settle.
+    replaceModules(modules).catch(err => {
       console.error(err);
-    }
+    });
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

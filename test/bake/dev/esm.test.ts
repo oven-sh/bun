@@ -234,13 +234,15 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
       `,
     );
     await dev.output.waitForLine(/config boom sync/);
-    // Still answering requests (served from the modules loaded before the failed update).
-    await dev.fetch("/");
+    // The route keeps being served from the modules evaluated before the failed
+    // update (the importer is not re-evaluated), and saving the file again
+    // replaces the module whatever state the failed evaluation left it in.
+    await dev.fetch("/").equals("v1");
     await dev.write("config.ts", `export const value = "v3";`);
     await dev.fetch("/").equals("v3");
 
-    // Same thing when the module fails asynchronously: the update is applied
-    // through a promise when the module uses top-level await.
+    // Same thing when the module fails asynchronously: with top-level await the
+    // update is applied through a promise that rejects instead of a throw.
     await dev.write(
       "config.ts",
       `
@@ -250,7 +252,7 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
       `,
     );
     await dev.output.waitForLine(/config boom async/);
-    await dev.fetch("/");
+    await dev.fetch("/").equals("v3");
     await dev.write(
       "config.ts",
       `

@@ -8489,6 +8489,23 @@ impl NodeFS {
         result
     }
 
+    /// Classifies the source from its lstat before `copy_single_file_sync`
+    /// opens it: `open(2)` on a FIFO blocks until a writer shows up, and
+    /// sockets and devices have no contents to copy either, so only regular
+    /// files and symlinks (recreated by [`Self::cp_symlink`]) get as far as the
+    /// open. The macOS arm makes the same decision from the stat it takes anyway.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    fn cp_check_source_kind(src: &ZStr, reuse_stat: Option<&sys::Stat>) -> Maybe<()> {
+        let st_mode = match reuse_stat {
+            Some(stat_) => stat_.st_mode,
+            None => Syscall::lstat(src)?.st_mode,
+        };
+        if sys::S::ISREG(st_mode as Mode) || sys::S::ISLNK(st_mode as Mode) {
+            return Ok(());
+        }
+        Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile).with_path(src.as_bytes()))
+    }
+
     #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
     fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
@@ -8688,11 +8705,12 @@ impl NodeFS {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
                 return Maybe::<ret::CopyFile>::todo();
             }
+
+            Self::cp_check_source_kind(src, reuse_stat)?;
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,
@@ -8856,7 +8874,6 @@ impl NodeFS {
 
         #[cfg(target_os = "freebsd")]
         {
-            let _ = reuse_stat;
             if mode.is_force_clone() {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
@@ -8864,6 +8881,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
+
+            Self::cp_check_source_kind(src, reuse_stat)?;
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,

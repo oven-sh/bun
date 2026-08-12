@@ -171,23 +171,11 @@ impl AnyEventLoop {
             AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
         }
     }
-
-    /// Any thread (install task threads wake the ticking installer thread
-    /// through this), hence `&self`; see `MiniEventLoop::wakeup`.
-    #[inline]
-    pub fn wakeup(&self) {
-        match self {
-            // SAFETY: `uws_loop()` is the VM's live uws loop; `us_wakeup_loop`
-            // is thread-safe and takes the raw pointer.
-            AnyEventLoop::Js { owner } => unsafe { bun_uws::us_wakeup_loop(owner.uws_loop()) },
-            AnyEventLoop::Mini(mini) => mini.wakeup(),
-        }
-    }
 }
 
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
-// these methods. `AnyEventLoop` forwards through `from_any` instead of
+// these four methods. `AnyEventLoop` forwards through `from_any` instead of
 // duplicating each `match`.
 impl AnyEventLoop {
     #[inline]
@@ -207,6 +195,12 @@ impl AnyEventLoop {
     #[inline]
     pub fn native_loop(&mut self) -> *mut bun_io::Loop {
         bun_io::uws_to_native(self.r#loop())
+    }
+
+    #[inline]
+    pub fn wakeup(&mut self) {
+        // SAFETY: `r#loop()` returns a valid live loop pointer.
+        unsafe { (*self.r#loop()).wakeup() };
     }
 }
 

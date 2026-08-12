@@ -389,7 +389,8 @@ impl MiniEventLoop {
     /// the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        self.wakeup();
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*self.loop_ptr()).wakeup() };
     }
 
     /// Any thread. The caller supplies `field_offset = core::mem::offset_of!(C, <field>)`
@@ -414,7 +415,8 @@ impl MiniEventLoop {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        self.wakeup();
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*self.loop_ptr()).wakeup() };
     }
 }
 

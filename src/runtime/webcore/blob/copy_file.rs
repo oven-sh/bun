@@ -967,21 +967,14 @@ fn read_write_fallback(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
+    read_write_loop_capped(src_fd, dest_fd, cap, total)?;
     if bun_opened_dest {
-        let stat_size = if cap == MAX_SIZE { 0 } else { cap as usize };
-        node_fs::NodeFS::copy_file_using_read_write_loop(
-            bun_core::ZStr::EMPTY,
-            bun_core::ZStr::EMPTY,
-            src_fd,
-            dest_fd,
-            stat_size,
-            total,
-        )?;
+        // Bun opened dest with O_TRUNC, but run_async may have fallocate'd it
+        // to the stat'd length, which is longer than the copy if the source
+        // shrank underneath us.
         let _ = bun_sys::ftruncate(dest_fd, i64::try_from(*total).expect("int cast"));
-        Ok(())
-    } else {
-        read_write_loop_capped(src_fd, dest_fd, cap, total)
     }
+    Ok(())
 }
 
 #[inline(never)] // 64 KB stack buffer
@@ -992,6 +985,12 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    {
+        // SAFETY: `src_fd` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+    }
+
     let mut buf = [0u8; 64 * 1024];
     let mut remaining = cap;
     while remaining > 0 {

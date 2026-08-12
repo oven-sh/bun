@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { randomBytes } from "crypto";
 import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
@@ -721,6 +722,78 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         expect(exitCode).toBe(0);
       },
     );
+
+    // copy_file_range copies exactly the destination window. The read()/write()
+    // fallback it degrades to (EXDEV, ENOSYS, ENOTSUP, or the env var here)
+    // used to drain the source to EOF for a path destination, so the same call
+    // copied a different number of bytes depending on the filesystems involved.
+    describe("Bun.write(Bun.file(path).slice(0, n), Bun.file(src)) copies n bytes", () => {
+      const fallbackEnv = { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" };
+
+      async function copyInto(env, src, dst, n) {
+        const dest = `Bun.file(${JSON.stringify(dst)})` + (n === undefined ? "" : `.slice(0, ${n})`);
+        const script = `console.log(await Bun.write(${dest}, Bun.file(${JSON.stringify(src)})))`;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+        const [resolved, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const copied = fs.readFileSync(dst);
+        return { resolved, stderr, exitCode, copied };
+      }
+
+      // 2.5 MiB is above the 2 MiB threshold past which a path destination is
+      // fallocate'd to the copy length before the copy starts.
+      it.each([
+        ["copy_file_range", bunEnv, 300_000, 100_000],
+        ["copy_file_range, window past EOF", bunEnv, 300_000, 1_000_000],
+        ["read/write fallback", fallbackEnv, 300_000, 100_000],
+        ["read/write fallback, window past EOF", fallbackEnv, 300_000, 1_000_000],
+        ["read/write fallback, preallocated destination", fallbackEnv, 3_000_000, 2_621_440],
+      ])("%s", async (_, env, sourceSize, n) => {
+        const payload = randomBytes(sourceSize);
+        using dir = tempDir("bun-write-dst-window", { "src.bin": payload });
+        const expected = payload.subarray(0, Math.min(n, sourceSize));
+
+        const { resolved, stderr, exitCode, copied } = await copyInto(
+          env,
+          join(String(dir), "src.bin"),
+          join(String(dir), "dst.bin"),
+          n,
+        );
+        expect({ resolved, stderr, size: copied.byteLength, identical: copied.equals(expected) }).toEqual({
+          resolved: `${expected.byteLength}\n`,
+          stderr: "",
+          size: expected.byteLength,
+          identical: true,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // procfs files are regular files with st_size == 0, so the copy length is
+      // unknown up front: an unsliced destination has to read to EOF, a sliced
+      // one still stops at n.
+      it.each([
+        ["read/write fallback, st_size == 0 source, unsliced destination", undefined],
+        ["read/write fallback, st_size == 0 source", 10],
+      ])("%s", async (_, n) => {
+        const version = fs.readFileSync("/proc/version");
+        expect(version.byteLength).toBeGreaterThan(10);
+        using dir = tempDir("bun-write-dst-window-procfs", {});
+        const expected = n === undefined ? version : version.subarray(0, n);
+
+        const { resolved, stderr, exitCode, copied } = await copyInto(
+          fallbackEnv,
+          "/proc/version",
+          join(String(dir), "dst.bin"),
+          n,
+        );
+        expect({ resolved, stderr, size: copied.byteLength, identical: copied.equals(expected) }).toEqual({
+          resolved: `${expected.byteLength}\n`,
+          stderr: "",
+          size: expected.byteLength,
+          identical: true,
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
   }
 
   describe("ENOENT", () => {

@@ -639,6 +639,30 @@ describe("reconnect", () => {
     expect(server.queries.filter(query => query === 'LISTEN "ch"')).toHaveLength(1);
     expect(server.liveConnections).toBe(1);
   });
+
+  test("a listen() that reconnects but has its LISTEN rejected still gets the channel's other listener repaired", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const repaired = gate();
+    const got = Promise.withResolvers<string>();
+    await sql.listen("ch", got.resolve, repaired.after(2));
+
+    // Issued in the same tick as the drop, this lands on the dying connection
+    // and rejects once the client has processed the drop, which is the moment
+    // the client considers "ch" unsubscribed and has armed its backoff.
+    server.dropConnections();
+    await expect(sql.listen("probe", () => {})).rejects.toThrow();
+
+    // This listen() brings the connection back (cancelling the backoff) and is
+    // the one sending LISTEN "ch"; its rejection must not strand the first listener.
+    server.failNextListen("ch");
+    await expect(sql.listen("ch", () => {})).rejects.toThrow("cannot LISTEN ch");
+
+    await repaired;
+    expect(server.connections).toEqual([['LISTEN "ch"'], ['LISTEN "ch"', 'LISTEN "ch"']]);
+    server.notify("ch", "after");
+    expect(await got.promise).toBe("after");
+  });
 });
 
 describe("close()", () => {
@@ -821,7 +845,29 @@ describe("in a subprocess", () => {
     expect(result).toEqual(clean("closed\n"));
   });
 
-  test("a throwing listener surfaces as uncaughtException and later notifications still arrive", async () => {
+  test("a throwing listener surfaces as uncaughtException; the channel's other listeners and later notifications are unaffected", async () => {
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      await sql.listen("ch", payload => {
+        console.log("first got " + payload);
+        if (payload === "bad") throw new Error("listener failed");
+      });
+      await sql.listen("ch", payload => {
+        console.log("second got " + payload);
+        if (payload === "good") sql.unlisten("ch");
+      });
+      notifyMany([["ch", "bad"], ["ch", "good"]]);
+    `);
+    expect(result).toEqual(
+      clean(
+        ["first got bad", "uncaught: listener failed", "second got bad", "first got good", "second got good", ""].join(
+          "\n",
+        ),
+      ),
+    );
+  });
+
+  test("a lone throwing listener surfaces as uncaughtException and later notifications still arrive", async () => {
     const result = await run(`
       process.on("uncaughtException", err => console.log("uncaught: " + err.message));
       await sql.listen("ch", payload => {

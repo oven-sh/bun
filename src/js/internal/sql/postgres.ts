@@ -593,14 +593,15 @@ class Channel {
   fireOnlisten(state: ListenState) {
     const pairs = this.onlisten;
     if (pairs === null) return;
-    for (let i = 0; i < pairs.length; i++) callOnlisten(pairs[i][1], state);
+    for (let i = 0; i < pairs.length; i++) invoke(pairs[i][1], state);
   }
 }
 
-// A throw must not reject listen() or look like a failed LISTEN to #sweep; it surfaces like a throwing onnotify.
-function callOnlisten(onlisten: OnListen, state: ListenState) {
+// A throwing callback is reported as uncaught; it must not skip the callbacks
+// after it, reject listen(), or look like a failed LISTEN to #sweep.
+function invoke<T>(callback: (arg: T) => void, arg: T) {
   try {
-    onlisten(state);
+    callback(arg);
   } catch (err) {
     reportError(err);
   }
@@ -661,10 +662,10 @@ class ListenConnection {
     if (entry === undefined) return;
     const listeners = entry.listeners;
     if (typeof listeners === "function") {
-      listeners(payload);
+      listeners(payload); // nothing to shield from a throw; native reports it the same way
       return;
     }
-    for (let i = 0; i < listeners.length; i++) listeners[i](payload);
+    for (let i = 0; i < listeners.length; i++) invoke(listeners[i], payload);
   };
 
   async listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
@@ -679,16 +680,20 @@ class ListenConnection {
     try {
       await (entry.ready ??= this.#subscribe(channel, entry));
     } catch (err) {
-      if (this.#channels.get(channel) === entry && entry.remove(onnotify)) {
-        this.#channels.delete(channel);
-        this.#closeIfIdle();
+      if (this.#channels.get(channel) === entry) {
+        if (entry.remove(onnotify)) {
+          this.#channels.delete(channel);
+          this.#closeIfIdle();
+        } else {
+          this.#scheduleSweep(); // the channel's other listeners lost this round trip too
+        }
       }
       throw err;
     }
 
     if (onlisten !== undefined && this.#channels.get(channel) === entry && entry.has(onnotify)) {
       (entry.onlisten ??= []).push([onnotify, onlisten]);
-      callOnlisten(onlisten, this.#state);
+      invoke(onlisten, this.#state);
     }
 
     const unlisten = () => this.unlisten(channel, onnotify);
@@ -792,11 +797,13 @@ class ListenConnection {
   }
 
   #sweep() {
-    if (this.#adapter.closed || this.#channels.size === 0) return;
+    if (this.#adapter.closed) return;
     let failed = false;
-    let pending = 0;
+    let pending = 1; // released after the loop, so a sweep with nothing to do also settles
     const settle = () => {
-      if (--pending === 0 && failed) this.#scheduleSweep();
+      if (--pending !== 0) return;
+      if (failed) this.#scheduleSweep();
+      else this.#backoffMs = RECONNECT_MIN_MS;
     };
     for (const [channel, entry] of this.#channels) {
       if (entry.ready !== null) continue;
@@ -809,6 +816,7 @@ class ListenConnection {
         settle();
       });
     }
+    settle();
   }
 
   #scheduleSweep() {

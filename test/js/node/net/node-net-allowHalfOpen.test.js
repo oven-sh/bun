@@ -125,5 +125,5 @@ test.skipIf(isWindows)("allowHalfOpen: paused socket whose unix peer closed deli
   const expected = Object.fromEntries(
     Array.from({ length: 4 }, (_, i) => [`tail-${i}`, { data: `tail-${i}\n`, ends: 1, closes: 1 }]),
   );
-  expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0, signalCode: null });
+  expect(result).toEqual({ stdout: JSON.stringify(expected) + "\nidle", stderr: "", exitCode: 0, signalCode: null });
 });

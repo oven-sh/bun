@@ -1074,8 +1074,7 @@ pub mod bv2_impl {
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
             pub struct Resolve {
-                /// Only for the pass's own loop (`dispatch()`, the answer);
-                /// `run_on_js_thread` runs on the plugins' thread and uses `plugins`.
+                /// Owning loop only (`dispatch()`, the answer); `run_on_js_thread` uses `plugins`.
                 pub bv2: *mut BundleV2<'static>,
                 /// `BundleV2::plugins` as of `init`.
                 pub(crate) plugins: Option<core::ptr::NonNull<Plugin>>,

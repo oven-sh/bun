@@ -15,8 +15,7 @@ use core::ptr::NonNull;
 /// Embedded in the pass as `BundleV2::drain_defer_task`.
 #[derive(Default)]
 pub struct DeferredBatchTask {
-    /// `BundleV2::plugins`, copied by `schedule`: `run_on_js_thread` runs on
-    /// the plugins' thread, which must not reach into the pass.
+    /// `BundleV2::plugins`, copied by `schedule` for `run_on_js_thread`.
     plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 

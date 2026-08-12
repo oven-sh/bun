@@ -1113,17 +1113,16 @@ impl Drop for DevServer {
         }
 
         {
-            let mut r = self.next_bundle.requests.first;
-            while !r.is_null() {
-                // SAFETY: `r` is a live intrusive-list node linked by `defer_request`;
-                // read the link before `deref_` may reclaim the node.
-                let next = unsafe { (*r).next };
-                // SAFETY: `data` was initialized by `defer_request` before being
-                // linked; this exclusive borrow ends at `deref_` below.
+            // Unlink each node before `deref_` returns it to
+            // `deferred_request_pool`: the list's own `Drop` (which runs with the
+            // other fields after this body) frees whatever is still linked as if
+            // it were a heap node, and these are hive slots inside `*self`.
+            while let Some(r) = self.next_bundle.requests.pop_first() {
+                // SAFETY: `pop_first` returns a live node linked by `defer_request`;
+                // `data` was initialized there. The borrow ends at `deref_`.
                 let data = unsafe { (*r).data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
                 data.deref_();
-                r = next;
             }
             self.next_bundle.promise.deinit_idempotently();
         }
@@ -1999,6 +1998,15 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
+                                        // `ServePlugins` now points at this DevServer
+                                        // and will call `on_plugins_resolved` /
+                                        // `on_plugins_rejected` on it. As with a bundle
+                                        // in flight (`start_async_bundle`), hold a
+                                        // pending request until then so `stop()` cannot
+                                        // free the DevServer first.
+                                        if let Some(server) = dev.server.as_mut() {
+                                            server.on_pending_request();
+                                        }
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
                                         continue 'plugin;
@@ -6128,13 +6136,16 @@ impl DevServer {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
+        debug_assert!(matches!(self.plugin_state, PluginState::Pending));
         self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
+        self.on_plugin_load_settled();
         Ok(())
     }
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+        debug_assert!(matches!(self.plugin_state, PluginState::Pending));
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
@@ -6147,7 +6158,18 @@ impl DevServer {
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
+        self.on_plugin_load_settled();
         Ok(())
+    }
+
+    /// Releases the pending request taken when `plugin_state` became
+    /// `Pending` (see `ensure_route_is_bundled`). If the server was stopped
+    /// in the meantime this runs its idle pass, which drops `*self`, so it has
+    /// to be the caller's last use of `self`.
+    fn on_plugin_load_settled(&mut self) {
+        if let Some(mut server) = self.server {
+            server.on_static_request_complete();
+        }
     }
 }
 

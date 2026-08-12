@@ -137,3 +137,124 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
 });
+
+// The cases below call server.stop(true) while the first request is still parked in
+// the DevServer waiting for the `[serve.static]` plugin's setup() to finish. The
+// request is aborted first (by the client, or by stop(true) itself closing the
+// connection), so nothing else keeps the server busy when stop() runs its idle pass.
+//
+// The DevServer must survive until the plugin load settles (ServePlugins still points
+// at it and calls on_plugins_resolved / on_plugins_rejected on it later), which is why
+// the load shows up in server.pendingRequests after stop(). Once it settles, on either
+// path, that pending request has to be released again: the stop() promise settles
+// and the same idle pass frees the DevServer.
+//
+// Without the fix the child dies inside stop(true): DevServer::drop returned the
+// aborted DeferredRequest to its pool without unlinking it from next_bundle.requests,
+// and the list's own Drop then walked the released slot (ASAN use-after-poison in
+// SinglyLinkedList<DeferredRequest>::drop). With only that part fixed, the plugin
+// settling would call into the freed DevServer instead.
+const pluginParkedInSetup = (afterRelease: string) => `
+  export default {
+    name: "parked-plugin",
+    async setup() {
+      globalThis.__parked();
+      await globalThis.__release;
+      ${afterRelease}
+    },
+  };
+`;
+
+const stopDuringPluginLoadServer = /* ts */ `
+  import html from "./index.html";
+
+  const parked = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  globalThis.__parked = parked.resolve;
+  globalThis.__release = release.promise;
+
+  const server = Bun.serve({
+    port: 0,
+    development: true,
+    routes: { "/": html },
+    fetch() { return new Response("fallback"); },
+  });
+
+  const controller = new AbortController();
+  const request = fetch(server.url, { signal: controller.signal }).then(
+    res => String(res.status),
+    err => (typeof err.code === "string" ? err.code : err.name),
+  );
+  // setup() has been entered: the request is now deferred inside the DevServer until
+  // the plugin load settles.
+  await parked.promise;
+
+  if (process.argv[2] === "client-abort") {
+    controller.abort();
+    await request;
+    // A round trip through the plain fetch handler lets the server process the aborted
+    // connection before stop() runs (stop(true) would otherwise close it itself).
+    await fetch(new URL("/probe", server.url)).then(res => res.text());
+  }
+
+  const stopped = server.stop(true);
+  const pendingAfterStop = server.pendingRequests;
+
+  release.resolve();
+  let timer;
+  const stop = await Promise.race([
+    stopped.then(() => "closed"),
+    new Promise(resolve => { timer = setTimeout(() => resolve("timeout"), 10_000); }),
+  ]);
+  clearTimeout(timer);
+
+  console.log(JSON.stringify({ request: await request, pendingAfterStop, stop }));
+`;
+
+async function stopDuringPluginLoad(name: string, plugin: string, abortedBy: "client-abort" | "stop") {
+  using dir = tempDir(`serve-plugins-devserver-${name}`, {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": plugin,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    "server.ts": stopDuringPluginLoadServer,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts", abortedBy],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(l => l.startsWith("{"));
+  return { out: line === undefined ? undefined : JSON.parse(line), stderr, exitCode };
+}
+
+test.concurrent("stop(true) after the client aborted a request parked on plugin setup; setup resolves", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "abort-stop-resolve",
+    pluginParkedInSetup(""),
+    "client-abort",
+  );
+  expect(out, stderr).toEqual({ request: "AbortError", pendingAfterStop: 1, stop: "closed" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("stop(true) after the client aborted a request parked on plugin setup; setup rejects", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad(
+    "abort-stop-reject",
+    pluginParkedInSetup(`throw new Error("plugin setup failed after stop");`),
+    "client-abort",
+  );
+  expect(out, stderr).toEqual({ request: "AbortError", pendingAfterStop: 1, stop: "closed" });
+  expect(stderr).toContain("plugin setup failed after stop");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("stop(true) itself aborts the request parked on plugin setup", async () => {
+  const { out, stderr, exitCode } = await stopDuringPluginLoad("stop-aborts", pluginParkedInSetup(""), "stop");
+  expect(out, stderr).toEqual({ request: "ECONNRESET", pendingAfterStop: 1, stop: "closed" });
+  expect(exitCode).toBe(0);
+});

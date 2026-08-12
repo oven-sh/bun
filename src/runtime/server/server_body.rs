@@ -907,8 +907,12 @@ pub enum ServePluginsState {
         // but `ServePlugins` is a refcounted heap object handed across FFI as
         // a raw promise-context pointer with dynamic lifetime, so a borrowed
         // `&'a DevServer` cannot be expressed here. Back-reference invariant:
-        // the DevServer outlives the pending plugin load (see the SAFETY
-        // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
+        // a DevServer that registers itself here counts the load as one of
+        // its server's pending requests (`ensure_route_is_bundled`) until
+        // `on_plugins_resolved` / `on_plugins_rejected` is delivered, and
+        // every path that frees a `DevServer` goes through `deinit_if_we_can`,
+        // which requires that count to be zero. So the pointer is live until
+        // exactly that call, which must therefore be the last use of it.
         dev_server: Option<NonNull<DevServer>>,
     },
     Loaded(Box<JSBundler::Plugin>),
@@ -1155,9 +1159,9 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load (stored as a back-reference
-            // by `get_or_start_load`; the owning Box<DevServer> is held by the
-            // server instance, which itself holds a counted ref on `self`).
+            // SAFETY: see `ServePluginsState::Pending::dev_server`: the
+            // DevServer holds a pending request on its server until this call,
+            // which may free it, so nothing touches `server` afterwards.
             bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
@@ -1187,7 +1191,9 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
+            // SAFETY: see `ServePluginsState::Pending::dev_server`: the
+            // DevServer holds a pending request on its server until this call,
+            // which may free it, so nothing touches `server` afterwards.
             bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
         }
 

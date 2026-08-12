@@ -14,11 +14,15 @@
  *     #define REPORTED_NODEJS_VERSION \"1.2.3\"
  *
  * These tests run the real flag tables, compile.ts, a direct dep and a
- * nested-cmake dep through a Ninja instance and read back both files.
- * Configure-time logic only: nothing is compiled, so they run on every host.
+ * nested-cmake dep through a Ninja instance and read back both files, then
+ * split the emitted variables with the host's real splitter (sh, or a Win32
+ * argv parser on Windows) and compare against the compile_commands.json
+ * argv. Nothing is compiled, so they run on every host; CI builds Windows
+ * by cross-compiling on Linux, so the Windows test shards are the only place
+ * the Windows-host quoting meets a Windows parser automatically.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -100,18 +104,33 @@ function syntheticDep(srcDir: string): Dependency {
 
 /**
  * A nested-cmake dep. Its flags reach the compiler through one more layer:
- * they are pasted into CMAKE_C_FLAGS, which cmake copies into the inner
+ * they are pasted into CMAKE_<LANG>_FLAGS, which cmake copies into the inner
  * build's commands, and that whole -D argument is itself one word of the
- * outer cmake command line.
+ * outer cmake command line. The C and C++ extras differ so that the two
+ * languages' lines cannot be swapped without a test noticing.
  */
+const SYNTHCM_EXTRA = { C: '-DSYNTHCM_C="a b"', CXX: '-DSYNTHCM_CXX="c d"' };
+
 function syntheticCmakeDep(srcDir: string): Dependency {
   return {
     name: "synthcm",
     source: () => ({ kind: "local", path: srcDir }),
-    build: () => ({ kind: "nested-cmake", args: {}, pic: true, extraCFlags: ['-DSYNTHCM_NAME="a b"'] }),
+    build: () => ({
+      kind: "nested-cmake",
+      args: {},
+      pic: true,
+      extraCFlags: [SYNTHCM_EXTRA.C],
+      extraCxxFlags: [SYNTHCM_EXTRA.CXX],
+    }),
     provides: () => ({ libs: ["synthcm"], includes: [] }),
   };
 }
+
+/** The dep_configure edge of the nested-cmake dep, as compile_commands.json-style buildDir-relative output. */
+const SYNTHCM_CONFIGURE_OUTPUT = join("deps", "synthcm", "CMakeCache.txt");
+
+/** The quoting flavour of the machine running this test file: what a real configure here would emit. */
+const hostOs = isWindows ? "windows" : "linux";
 
 /** An argv entry that still carries shell syntax: an escaped quote or a posix quote character. */
 const SHELL_SYNTAX = /\\"|'/;
@@ -194,13 +213,30 @@ function entryFlags(entry: CompileCommand): string[] {
   return pchAt === -1 ? args : args.slice(0, pchAt);
 }
 
-/** Word-split a build.ninja variable value exactly as ninja's `sh -c` does. */
-async function shWords(value: string): Promise<string[]> {
-  await using proc = Bun.spawn({ cmd: ["sh", "-c", `printf '%s\\n' ${value}`], stdout: "pipe", stderr: "pipe" });
+/**
+ * Word-split a build.ninja variable value the way the command it is spliced
+ * into gets split on this machine. On unix that is ninja's `sh -c`. On
+ * Windows ninja spawns the tool directly and the tool parses the command
+ * line itself; bun does that with CommandLineToArgvW, so handing it the raw
+ * text via windowsVerbatimArguments runs the variable through a real Win32
+ * argv parser (one of the family that split the `""` spelling this build
+ * system used to emit).
+ */
+async function hostWords(value: string): Promise<string[]> {
+  await using proc = isWindows
+    ? Bun.spawn({
+        // `--` keeps bun from reading the flag words as its own options.
+        cmd: [bunExe(), "-e", "console.log(JSON.stringify(process.argv.slice(1)))", "--", value],
+        windowsVerbatimArguments: true,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+    : Bun.spawn({ cmd: ["sh", "-c", `printf '%s\\n' ${value}`], stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  return stdout.slice(0, -1).split("\n");
+  return isWindows ? JSON.parse(stdout) : stdout.slice(0, -1).split("\n");
 }
 
 describe("compile flags are bare argv in compile_commands.json and quoted only in build.ninja", () => {
@@ -245,27 +281,40 @@ describe("compile flags are bare argv in compile_commands.json and quoted only i
     expect(compileCommands.flatMap(e => e.arguments).filter(a => SHELL_SYNTAX.test(a))).toEqual([]);
   });
 
-  test.skipIf(isWindows)("sh splits every build.ninja flags variable back into exactly that argv", async () => {
-    const { cfg, ninja, compileCommands, bunFlags } = await emit("linux");
+  test("this host splits every build.ninja flags variable back into exactly that argv", async () => {
+    const { cfg, ninja, compileCommands, bunFlags } = await emit(hostOs);
 
     for (const file of ["BunProcess.cpp", "example.c", "synth.c"]) {
       const entry = entryFor(compileCommands, file);
-      const words = await shWords(edgeVar(ninja, entry.output, file.endsWith(".cpp") ? "cxxflags" : "cflags"));
+      const words = await hostWords(edgeVar(ninja, entry.output, file.endsWith(".cpp") ? "cxxflags" : "cflags"));
       expect(words).toEqual(entryFlags(entry));
     }
     // The PCH has no compile_commands.json entry. It must see the same argv
     // as the TUs that include it, or clang rejects it over a define mismatch.
-    expect(await shWords(edgeVar(ninja, "pch/root-pch.h.hxx.pch", "cxxflags"))).toEqual(bunFlags);
+    expect(await hostWords(edgeVar(ninja, join("pch", "root-pch.h.hxx.pch"), "cxxflags"))).toEqual(bunFlags);
     // The dep's codegen tool is compiled by source.ts's own dep_host_cc rule.
-    expect(await shWords(edgeVar(ninja, "deps/synth/codegen-tool", "flags"))).toEqual([
-      "-w",
-      '-DGEN_BANNER="gen tool"',
-    ]);
-    // Nested cmake: the outer sh yields cmake one -DCMAKE_C_FLAGS=<fragment>
-    // argument, and the inner build's sh later splits <fragment> itself.
-    const cmakeArgs = await shWords(edgeVar(ninja, "deps/synthcm/CMakeCache.txt", "args"));
-    const fragment = cmakeArgs.find(a => a.startsWith("-DCMAKE_C_FLAGS="))!.slice("-DCMAKE_C_FLAGS=".length);
-    expect(await shWords(fragment)).toEqual([...computeDepFlags(cfg).cflags, "-fPIC", '-DSYNTHCM_NAME="a b"']);
+    expect(
+      await hostWords(edgeVar(ninja, join("deps", "synth", `codegen-tool${cfg.host.exeSuffix}`), "flags")),
+    ).toEqual(["-w", '-DGEN_BANNER="gen tool"']);
+    // Nested cmake: splitting the configure command yields cmake one
+    // -DCMAKE_<LANG>_FLAGS=<fragment> argument per language, and the inner
+    // build later splits <fragment> itself. (-fPIC: the dep sets pic, which
+    // emitNestedCmake only translates into a flag for non-Windows targets.)
+    const depFlags = computeDepFlags(cfg);
+    const cmakeArgs = await hostWords(edgeVar(ninja, SYNTHCM_CONFIGURE_OUTPUT, "args"));
+    for (const [lang, globals] of [
+      ["C", depFlags.cflags],
+      ["CXX", depFlags.cxxflags],
+    ] as const) {
+      const prefix = `-DCMAKE_${lang}_FLAGS=`;
+      const fragments = cmakeArgs.filter(a => a.startsWith(prefix));
+      expect(fragments).toHaveLength(1);
+      expect(await hostWords(fragments[0]!.slice(prefix.length))).toEqual([
+        ...globals,
+        ...(cfg.windows ? [] : ["-fPIC"]),
+        SYNTHCM_EXTRA[lang],
+      ]);
+    }
   });
 
   test("unix hosts single-quote exactly the arguments that need it", async () => {
@@ -288,6 +337,11 @@ describe("compile flags are bare argv in compile_commands.json and quoted only i
     expect(cxxflags).toContain(` "-DREPORTED_NODEJS_VERSION=\\"1.2.3\\"" -DREPORTED_NODEJS_ABI_VERSION=`);
     expect(cflags).toContain(` "-DSYNTH_NAME=\\"a b\\"" -DSYNTH_LEVEL=2 -DSYNTH_STATIC `);
     expect(edgeVar(ninja, join("deps", "synth", "codegen-tool.exe"), "flags")).toBe(`-w "-DGEN_BANNER=\\"gen tool\\""`);
+    // Nested cmake composes two layers: the fragment's own `\"` escapes are
+    // themselves escaped inside the outer "-DCMAKE_<LANG>_FLAGS=..." word.
+    const cmakeArgs = edgeVar(ninja, SYNTHCM_CONFIGURE_OUTPUT, "args");
+    expect(cmakeArgs).toContain(String.raw` \"-DSYNTHCM_C=\\\"a b\\\"\""`);
+    expect(cmakeArgs).toContain(String.raw` \"-DSYNTHCM_CXX=\\\"c d\\\"\""`);
     // Only the build.ninja side changes with the host; the argv is the same.
     expect(compileCommands.flatMap(e => e.arguments).filter(a => SHELL_SYNTAX.test(a))).toEqual([]);
     expect(entryFlags(entryFor(compileCommands, "synth.c"))).toContain('-DSYNTH_NAME="a b"');

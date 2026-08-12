@@ -4325,6 +4325,7 @@ async function bodyReceivedWhenHandlerClosesServer(requestHead, respond) {
     socket.on("error", reject);
     socket.on("data", chunk => chunks.push(chunk));
     socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    socket.on("close", () => reject(new Error("connection closed without EOF")));
     const raw = await promise;
     await serverClosed.promise;
     expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
@@ -4380,6 +4381,7 @@ it("http2 allowHTTP1 fallback close() destroys a keep-alive connection whose res
       if (Buffer.concat(chunks).toString().endsWith("\r\n\r\nBODY")) resolve();
     });
     const closed = new Promise(resolveClosed => socket.on("close", resolveClosed));
+    socket.on("close", () => reject(new Error("connection closed before the response arrived")));
     await promise;
     // Nothing is left to flush, so close() tears the idle connection down synchronously, like Node.
     const serverClosed = new Promise(resolveClosed => server.close(resolveClosed));

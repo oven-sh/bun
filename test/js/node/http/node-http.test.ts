@@ -4155,22 +4155,25 @@ it("closing the server right after res.end() still delivers the body on an emit(
       closeServer(server);
     });
     const [clientSide, serverSide] = duplexPair();
-    server.emit("connection", serverSide);
-    const body = await new Promise<string>((resolve, reject) => {
-      const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
-        let data = "";
-        res.setEncoding("utf8");
-        res.on("data", chunk => (data += chunk));
-        // A connection destroyed with the body still queued aborts the response after the head:
-        // report whatever body did arrive so the assertion below shows the truncation.
-        res.on("error", () => resolve(data));
-        res.on("end", () => resolve(data));
+    try {
+      server.emit("connection", serverSide);
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (data += chunk));
+          // A connection destroyed with the body still queued aborts the response after the head:
+          // report whatever body did arrive so the assertion below shows the truncation.
+          res.on("error", () => resolve(data));
+          res.on("end", () => resolve(data));
+        });
+        req.on("error", reject);
+        req.end();
       });
-      req.on("error", reject);
-      req.end();
-    });
-    expect({ connection, body }).toEqual({ connection, body: "BODY" });
-    clientSide.destroy();
-    serverSide.destroy();
+      expect({ connection, body }).toEqual({ connection, body: "BODY" });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
   }
 });

@@ -4100,9 +4100,7 @@ function listenInCluster(
     readableAll,
     writableAll,
     ...options,
-    // A TLS server accepts natively, so it wants a copy of the primary's listening socket. Not on Windows,
-    // where two processes accepting on copies of one socket block in accept() and livelock its polls
-    // (oven-sh/bun#37896): there the primary hands TLS workers connections too and tls.Server wraps them.
+    // Not on Windows: two processes cannot accept on copies of one listening socket there (oven-sh/bun#37896).
     sharedOnly: tls && process.platform !== "win32" ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);

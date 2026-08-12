@@ -1159,8 +1159,7 @@ function buildSharedCreds(server) {
   ));
 }
 
-// Node's default SNICallback: `*` spans part of one label, the newest matching entry wins.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
+// Matches like node's default SNICallback: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
 function matchContext(contexts: Map<string, typeof InternalSecureContext>, servername: string) {
   let match;
   for (const { 0: name, 1: context } of contexts) {
@@ -1250,8 +1249,7 @@ function Server(options, secureConnectionListener): void {
   };
 
   const server = this;
-  // SNI for the connections this server wraps itself (no listener SNI tree). addContext() entries apply
-  // behind a user SNICallback that selects nothing, like on our native listener (node's would not).
+  // Like our native listener (and unlike node), addContext() entries apply when the SNICallback selects nothing.
   const wrappedSNICallback = function (servername, callback) {
     const userCallback = server._SNICallback;
     if (typeof userCallback !== "function") {

@@ -39,7 +39,9 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
+use crate::api::js_bundler::js_bundler::{
+    Config as JSBundlerConfig, OwnedPlugin, Plugin, PluginJscExt,
+};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
@@ -82,8 +84,40 @@ pub struct JSBundleCompletionTask {
     pub(crate) next: bun_threading::Link<JSBundleCompletionTask>,
     /// arena-owned by BundleThread heap
     pub(crate) transpiler: *mut BundleV2<'static>,
-    pub(crate) plugins: Option<NonNull<Plugin>>,
+    pub(crate) plugins: Option<BuildPlugins>,
     pub(crate) started_at_ns: u64,
+}
+
+/// The plugin cell a build runs against, and whether this task releases it.
+/// The task drops it wherever it gives up its JS-side state (`deinit`, the
+/// queued branch of `stop_for_vm_teardown`); only `Owned` releases the cell.
+pub(crate) enum BuildPlugins {
+    /// `Bun.build({ plugins })`: created for this one build.
+    Owned(OwnedPlugin),
+    /// HTML route build: the cell belongs to the server's `ServePlugins`,
+    /// which shares it across every build that server runs (same lifetime
+    /// the route's own server back-reference relies on).
+    Borrowed(NonNull<Plugin>),
+}
+
+impl BuildPlugins {
+    #[inline]
+    fn as_non_null(&self) -> NonNull<Plugin> {
+        match self {
+            BuildPlugins::Owned(plugin) => plugin.as_non_null(),
+            BuildPlugins::Borrowed(plugin) => *plugin,
+        }
+    }
+
+    #[inline]
+    fn plugin(&self) -> &Plugin {
+        Plugin::opaque_ref(self.as_non_null().as_ptr())
+    }
+
+    #[inline]
+    fn plugin_mut(&mut self) -> &mut Plugin {
+        Plugin::opaque_mut(self.as_non_null().as_ptr())
+    }
 }
 
 #[repr(u8)]
@@ -115,12 +149,8 @@ impl JSBundleCompletionTask {
         if boxed.poll_ref.is_active() {
             boxed.poll_ref.disable();
         }
-        if let Some(plugin) = boxed.plugins.take() {
-            // `plugin` is the live FFI handle stashed at construction;
-            // last-ref drop is the only place that releases it.
-            Plugin::destroy(plugin.as_ptr());
-        }
-        // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
+        // Owned fields (`config`, `log`, `result`, `promise`, `plugins`) drop
+        // with the Box; `BuildPlugins::Owned` releases the plugin cell here.
     }
 }
 
@@ -137,7 +167,7 @@ unsafe impl Send for JSBundleCompletionTask {}
 /// ref, and hand the task to the bundle-thread singleton.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
+    plugins: Option<BuildPlugins>,
     global_this: &JSGlobalObject,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
@@ -163,8 +193,8 @@ pub(crate) fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        if let Some(plugin) = (*completion).plugins {
-            (*plugin.as_ptr()).set_config(completion.cast());
+        if let Some(plugin) = &mut (*completion).plugins {
+            plugin.plugin_mut().set_config(completion.cast());
         }
     }
 
@@ -215,20 +245,11 @@ impl JSBundleCompletionTask {
         Ok(value != JSValue::UNDEFINED)
     }
 
-    /// Mutable borrow of the attached `Plugin`, if any.
-    ///
-    /// Centralises the `Option<NonNull> → Option<&mut T>` deref so callers
-    /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
-    /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
-    /// `protect()`-ed for the task's lifetime; it is freed only via
-    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
-    /// While the field is `Some` the pointee is therefore live, pinned, and
-    /// disjoint from `*self` (separate C++-heap allocation).
+    /// Mutable borrow of the attached `Plugin`, if any (see [`BuildPlugins`]
+    /// for why the cell is live while the field is `Some`).
     #[inline]
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
-        // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is
-        // `Some`, disjoint from `*self`. Single JS-mutator thread.
-        self.plugins.map(|p| unsafe { &mut *p.as_ptr() })
+        self.plugins.as_mut().map(BuildPlugins::plugin_mut)
     }
 
     fn to_js_error(
@@ -586,9 +607,9 @@ impl JSBundleCompletionTask {
     /// `this` is live (registered ⇒ its completion has not run); JS thread.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
         use core::sync::atomic::Ordering;
-        // SAFETY: fn contract; the plugin cell is protected by this task; the
-        // loop pointer is a thread's uws loop, valid for that thread's
-        // lifetime, and wakeup is thread-safe.
+        // SAFETY: fn contract; the plugin cell is live while `plugins` is
+        // `Some` (see `BuildPlugins`); the loop pointer is a thread's uws
+        // loop, valid for that thread's lifetime, and wakeup is thread-safe.
         unsafe {
             if (*this)
                 .stage
@@ -601,9 +622,9 @@ impl JSBundleCompletionTask {
                 .is_ok()
             {
                 (*this).poll_ref.disable();
-                if let Some(plugin) = (*this).plugins.take() {
-                    Plugin::destroy(plugin.as_ptr());
-                }
+                // Must happen on this (JS) thread: the bundle thread drops the
+                // rest of `*this` in `free_released_unstarted`.
+                (*this).plugins = None;
                 (*this).promise = jsc::JSPromiseStrong::default();
                 let handle = (*this).loop_handle.clone();
                 // Publish only now: from here the bundle thread may free `this`.
@@ -613,8 +634,8 @@ impl JSBundleCompletionTask {
                 handle.embedded_work_finished();
                 return;
             }
-            if let Some(plugins) = (*this).plugins {
-                crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+            if let Some(plugins) = &(*this).plugins {
+                plugins.plugin().tombstone();
             }
             (*this).cancelled.store(true, Ordering::Release);
             let l = (*this).bundle_loop.load(Ordering::Acquire);
@@ -635,7 +656,6 @@ impl JSBundleCompletionTask {
         }
 
         if let Some(html_build_task) = this.html_build_task {
-            this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
             // bumped its own refcount before scheduling and stays alive until this returns.
             // R-2: deref as shared — `on_complete` takes `&self`.
@@ -1138,7 +1158,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
     fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>> {
         // `Plugin` and `JSBundlerPlugin` are the same `bun_bundler` opaque.
-        self.plugins
+        self.plugins.as_ref().map(BuildPlugins::as_non_null)
     }
     fn file_map(&mut self) -> Option<NonNull<Bv2FileMap>> {
         // `FileMap` and `Bv2FileMap` are the same `bun_bundler` type.

@@ -86,17 +86,11 @@ impl IOReader {
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
         //
-        // The `BufferedReaderParent` callback bodies below (`on_read_chunk_cb`/
-        // `on_reader_done_cb`/`on_reader_error`) must not call this: a `&mut
-        // ReaderImpl` can be live on the stack while they run, always on
-        // Windows (`WindowsBufferedReader::on_read` dispatches them from
-        // `&mut self`) and on POSIX when `PosixBufferedReader::start()`
-        // reports a registration failure synchronously. The poll-driven POSIX
-        // dispatches (`on_poll` read loops, `done()`/`on_error()` in tail
-        // position) go through a copied vtable and a raw pointer with no
-        // borrow of the reader live, which is what lets a command that the
-        // trampoline starts from inside `on_reader_done_cb`/`on_reader_error`
-        // call `start()` and arm the next read.
+        // Not called from the callback bodies below: `WindowsBufferedReader`
+        // (and `PosixBufferedReader::start()` on a synchronous registration
+        // failure) invokes them from under a `&mut ReaderImpl`. The POSIX poll
+        // dispatches hold no borrow (raw pointer, copied vtable), so a command
+        // started from a done/error notification may `start()` a new read.
         unsafe { &mut *self.reader.get() }
     }
 
@@ -199,11 +193,9 @@ impl IOReader {
         #[cfg(not(windows))]
         {
             let r = self.reader();
-            // A finished cycle (EOF or error) leaves the one-shot poll fired
-            // and not re-armed: still `is_registered()`, but it will never
-            // fire again. `has_pending_read()` is false then, so a listener
-            // added after that cycle gets a new one (which reads EOF again on
-            // a pipe, or whatever the fd has to offer now).
+            // Not `is_registered()`: a finished read (EOF or error) leaves the
+            // one-shot poll registered but fired, so a listener added after it
+            // needs a new read, which reads the fd again (EOF again on a pipe).
             if !r.has_pending_read() {
                 let fd = self.state().fd;
                 if let Err(e) = r.start(fd, true) {
@@ -272,20 +264,9 @@ impl IOReader {
         let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
-            // NOTE: no explicit re-arm (`registerPoll()` on posix /
-            // `startWithCurrentPipe()` on windows) here: on Windows this
-            // callback runs from under `WindowsBufferedReader::on_read`'s
-            // `&mut self` (see `reader()`), and it is not needed anyway.
-            // On posix the read loop re-registers itself after the callback
-            // returns based on the `bool` we return (the `register_poll` calls
-            // at the end of the PipeReader.rs read loops). On Windows the
-            // re-arm is also handled by the caller (`on_file_read`'s epilogue /
-            // `uv_read_start` for streams) — but `startWithCurrentPipe()` had
-            // a SECOND load-bearing side effect: `buffer().clearRetainingCapacity()`,
-            // which keeps `WindowsBufferedReader._buffer` bounded between
-            // chunks. That clear is now performed by
-            // `WindowsBufferedReader::on_read` after the streaming chunk is
-            // consumed, so we still do nothing here.
+            // No re-arm here (none is allowed on Windows, see `reader()`): the
+            // caller re-arms once we return (on posix from the `bool` below),
+            // and `WindowsBufferedReader::on_read` clears the chunk buffer.
         }
         should_continue
     }
@@ -317,12 +298,10 @@ impl IOReader {
         }
     }
 
-    /// Detaches the listeners of the cycle that just ended before notifying
-    /// them. Notifying one can synchronously run the rest of the script: a
-    /// `cat` started there registers into the emptied list and restarts the
-    /// reader, so it is notified by its own cycle rather than by this one, and
-    /// nothing stays behind to be notified again by a later cycle under a
-    /// `NodeId` that has been freed or recycled by then.
+    /// The listeners of the read that just finished. Taken out before they are
+    /// notified: a notification can synchronously start the next `cat`, which
+    /// registers for (and starts) a new read, and a notified entry left behind
+    /// would be notified again later, by then under a recycled `NodeId`.
     fn take_readers(&self) -> Readers {
         core::mem::take(&mut self.state().readers)
     }

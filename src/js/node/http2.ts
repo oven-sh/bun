@@ -2183,10 +2183,8 @@ function validateWindowSize(windowSize) {
 }
 hideFromStack(validateWindowSize);
 
-// Node's Http2Session#goaway (one implementation for both session types) only type-checks the
-// two numbers; a code outside the uint32 range is converted on the way to the wire (-1 goes out
-// as 0xffffffff), not rejected. destroy(error, code) routes its caller's code through here too,
-// so a range check would make it throw mid-teardown where Node destroys the session.
+// Node only type-checks the numbers (the code is converted to a uint32 on the way out), and
+// destroy(error, code) comes through here too, so a range check would make destroy() throw:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#goaway)
 function validateGoawayArguments(code, lastStreamID, opaqueData) {
   if (opaqueData !== undefined) {

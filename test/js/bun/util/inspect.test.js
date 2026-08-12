@@ -928,3 +928,74 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("property lookup throws while being formatted", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it.concurrent("Proxy traps in the prototype chain", async () => {
+    const [stdout, stderr, exitCode] = await run(`
+      {
+        const proto = new Proxy({ a: 1 }, {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf");
+          },
+        });
+        console.log(Bun.inspect(Object.create(proto)));
+        console.log(Object.create(proto));
+      }
+      {
+        // The exception from looking up "a" must not leak into the lookup of
+        // "b" or into the walk up the prototype chain that follows.
+        const proto = new Proxy({ a: 1, b: 2 }, {
+          get(target, key, receiver) {
+            if (key === "a") throw new Error("get a");
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        console.log(Bun.inspect(Object.create(proto)));
+        console.log(Object.create(proto));
+      }
+    `);
+
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        a: 1,
+      }
+      {
+        a: 1,
+      }
+      {
+        b: 2,
+      }
+      {
+        b: 2,
+      }
+      "
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("lazily initialized properties of Bun", async () => {
+    // Some of Bun's properties ($, sql, ...) are initialized on first access by
+    // code that calls the global Symbol, so clobbering it makes those
+    // initializers throw while the rest of the object is still being formatted.
+    // Archive and version are listed after them and must still be printed.
+    const [stdout, , exitCode] = await run(`
+      globalThis.Symbol = 0;
+      const text = Bun.inspect(Bun);
+      console.log(text.includes("Archive: [class Archive]"), text.includes("version:"));
+    `);
+
+    expect(stdout).toBe("true true\n");
+    expect(exitCode).toBe(0);
+  });
+});

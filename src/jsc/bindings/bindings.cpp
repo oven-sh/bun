@@ -1974,6 +1974,36 @@ bool Bun__deepMatch(
     ASSERT(subsetValue.isCell());
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
+
+    if constexpr (enableAsymmetricMatchers) {
+        // The whole expected (or received) value may itself be a matcher, e.g.
+        // `toMatchObject(expect.objectContaining({...}))`. A matcher object has
+        // no enumerable properties, so walking it as the subset below would
+        // match anything. Skipped for the sample of `expect.objectContaining()`,
+        // which (as in Jest) is always walked as a plain object.
+        if (!isMatchingObjectContaining) {
+            if (subsetValue.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, subsetValue, objValue, throwScope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    return true;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            } else if (objValue.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, objValue, subsetValue, throwScope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    return true;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            }
+        }
+    }
+
     VM& vm = globalObject->vm();
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();

@@ -214,6 +214,12 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("decimals implied by exponent notation");
 
+  TestBuilder.command`seq 1e-9999999999 0.5 1`
+    .exitCode(0)
+    .stdout("0\n0.5\n1\n")
+    .stderr("")
+    .runAsTest("exponent too large to count decimals for");
+
   // 2251799813685248 is 2^51; halves are still representable there, but the
   // values are too large to be counted in tenths, so they are used as written.
   TestBuilder.command`seq 2251799813685248.5 2251799813685249.5`

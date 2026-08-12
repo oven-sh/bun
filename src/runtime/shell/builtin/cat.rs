@@ -42,6 +42,7 @@ pub enum CatState {
 }
 
 /// Internal: what to do after dropping the &mut state borrow.
+#[derive(Clone, Copy)]
 pub(crate) enum Step {
     Suspend,
     Done(ExitCode),

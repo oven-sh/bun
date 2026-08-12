@@ -1,7 +1,7 @@
 import type { FileSink } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isPosix, libcPathForDlopen, tempDir } from "harness";
 import { closeSync, writeSync } from "node:fs";
 
 // On POSIX the shell only runs its own `cat` when this flag is set (see
@@ -45,7 +45,8 @@ const EIO = 5;
 // to the child as its stdin is a way to feed the builtin a genuine read error
 // preceded by data: cat gets both in the same poll wake.
 function openptyMasterWithClosedSlave(payload: string): number {
-  const { openpty } = dlopen(libcPathForDlopen(), {
+  // glibc ships openpty in libutil (merged into libc only in 2.34); musl has it in libc.
+  const { openpty } = dlopen(isMusl ? libcPathForDlopen() : "libutil.so.1", {
     openpty: {
       args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
       returns: FFIType.i32,

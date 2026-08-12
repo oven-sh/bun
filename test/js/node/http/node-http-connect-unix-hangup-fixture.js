@@ -11,7 +11,7 @@ let closed = 0;
 const server = http.createServer();
 server.on("connect", (req, socket) => {
   const c = (counts[req.url] = { ends: 0, closes: 0 });
-  socket.on("error", () => {});
+  socket.on("error", err => (c.error = err.code || String(err)));
   socket.on("end", () => c.ends++);
   socket.on("close", () => {
     c.closes++;
@@ -29,7 +29,10 @@ server.listen(process.env.SOCK, () => {
     const client = net.connect(process.env.SOCK, () => {
       client.write("CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n\r\n");
     });
-    client.on("error", () => {});
+    client.on("error", err => {
+      console.error("client " + target + " error: " + (err.code || err));
+      process.exitCode = 1;
+    });
     clients.set(target, client);
   }
 });

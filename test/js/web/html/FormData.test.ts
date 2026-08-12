@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -1004,6 +1004,53 @@ describe("entry filenames belong to the entry, not to the byte store it shares w
     }).toEqual({
       entries: ["source.txt", "wrapped.txt"],
       body: ['filename="source.txt"', 'filename="wrapped.txt"'],
+    });
+  });
+
+  // The default filename used to come from the byte store, which for these two
+  // is the on-disk path and nothing at all, while .name already said otherwise.
+  it("defaults the filename to the name a File wrapping a Bun.file() was given", async () => {
+    using dir = tempDir("formdata-wrapped-bun-file", { "on-disk.bin": "xyz" });
+    const formData = new FormData();
+    formData.append("file", new File([Bun.file(join(String(dir), "on-disk.bin"))], "display.bin"));
+    const body = await new Response(formData).text();
+    expect({
+      entry: (formData.get("file") as File).name,
+      body: body.match(/filename="[^"]*"/g),
+    }).toEqual({
+      entry: "display.bin",
+      body: ['filename="display.bin"'],
+    });
+  });
+
+  it("defaults the filename to a name assigned through the Blob name setter", async () => {
+    const blob = new Blob(["xyz"]) as Blob & { name: string };
+    blob.name = "assigned.txt";
+    const formData = new FormData();
+    formData.append("file", blob);
+    const body = await new Response(formData).text();
+    expect({
+      entry: (formData.get("file") as File).name,
+      body: body.match(/filename="[^"]*"/g),
+    }).toEqual({
+      entry: "assigned.txt",
+      body: ['filename="assigned.txt"'],
+    });
+  });
+
+  it.each(["append", "set"] as const)("%s(name, file, filename) renames only the entry", async method => {
+    const file = new File(["xyz"], "original.txt");
+    const formData = new FormData();
+    formData[method]("file", file, "override.txt");
+    const body = await new Response(formData).text();
+    expect({
+      entry: (formData.get("file") as File).name,
+      body: body.match(/filename="[^"]*"/g),
+      file: file.name,
+    }).toEqual({
+      entry: "override.txt",
+      body: ['filename="override.txt"'],
+      file: "original.txt",
     });
   });
 

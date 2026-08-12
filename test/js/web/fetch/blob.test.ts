@@ -383,16 +383,20 @@ describe("new File([blob], name) names only the new File", () => {
   });
 
   test("blob: imports pick the loader from each File's own name, or from a Bun.file's path", async () => {
-    using dir = tempDir("blob-url-loader", { "on-disk.json": '{"a":1}' });
+    using dir = tempDir("blob-url-loader", { "on-disk.json": '{"onDisk":true}' });
+    const onDisk = Bun.file(path.join(String(dir), "on-disk.json"));
     const source = new File(['{"a":1}'], "source.json");
     const urls = [
       URL.createObjectURL(source),
       URL.createObjectURL(new File([source], "wrapped.txt")),
-      URL.createObjectURL(Bun.file(path.join(String(dir), "on-disk.json"))),
+      URL.createObjectURL(onDisk),
+      // A File wrapping a Bun.file() is named like any other File: the loader
+      // follows the name it was given, the bytes still come from the disk.
+      URL.createObjectURL(new File([onDisk], "wrapped-on-disk.txt")),
     ];
     try {
       const modules = await Promise.all(urls.map(url => import(url)));
-      expect(modules.map(module => module.default)).toEqual([{ a: 1 }, '{"a":1}', { a: 1 }]);
+      expect(modules.map(module => module.default)).toEqual([{ a: 1 }, '{"a":1}', { onDisk: true }, '{"onDisk":true}']);
     } finally {
       urls.forEach(url => URL.revokeObjectURL(url));
     }

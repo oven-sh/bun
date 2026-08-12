@@ -1502,6 +1502,7 @@ mod vm_loader_ctx {
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
+            // The store's path (what gets read), not the File's own name.
             blob_file_name(b) => blob(b)
                 .get_file_name()
                 .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
@@ -4241,6 +4242,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
+                // The store's path (what gets read), not the File's own name.
                 if let Some(filename) = blob.get_file_name() {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {

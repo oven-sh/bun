@@ -915,20 +915,20 @@ export class Client extends EventEmitter {
    * wait adds a timeout and the fixture's output when it dies while loading.
    */
   async waitForPageLoad(): Promise<void> {
-    const acked = new Promise<void>((resolve, reject) => {
-      const onAck = () => {
-        this.off("exit", onExit);
-        resolve();
-      };
-      const onExit = (code: number | string) => {
-        this.off("received-hmr-event", onAck);
-        const mapped = exitCodeMapStrings[code];
-        reject(new Error(`Client exited while loading the page${mapped ? `: ${mapped}` : ` (${code})`}`));
-      };
-      this.once("received-hmr-event", onAck);
-      this.once("exit", onExit);
-    });
-    await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked]);
+    const acked = Promise.withResolvers<void>();
+    const onAck = () => acked.resolve();
+    const onExit = (code: number | string) => {
+      const mapped = exitCodeMapStrings[code];
+      acked.reject(new Error(`Client exited while loading the page${mapped ? `: ${mapped}` : ` (${code})`}`));
+    };
+    this.once("received-hmr-event", onAck);
+    this.once("exit", onExit);
+    try {
+      await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked.promise]);
+    } finally {
+      this.off("received-hmr-event", onAck);
+      this.off("exit", onExit);
+    }
   }
 
   elemText(selector: string): Promise<string> {

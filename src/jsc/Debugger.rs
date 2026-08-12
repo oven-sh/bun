@@ -427,14 +427,17 @@ impl Debugger {
     /// not have — UB. We hold a raw `*VirtualMachine` and
     /// never materialize a `&`/`&mut VirtualMachine` to the foreign-thread VM.
     pub(crate) fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
-        // The global allocator is mimalloc and `InitOptions` does not carry
-        // `allocator`/`env_loader` (those are wired by
-        // `RuntimeHooks::init_runtime_state`).
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
+            // Without a loader of its own, `Transpiler::init` hands this VM the
+            // process-wide `dot_env` instance, i.e. the parent VM's loader, and
+            // `configure_defines()` below would load env files into a map the
+            // parent thread is concurrently using (#22206). Never freed: this VM
+            // lives until the process exits (`start` never returns).
+            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init())),
             is_main_thread: false,
             ..Default::default()
         })
@@ -443,6 +446,8 @@ impl Debugger {
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
 
+        // Whatever this loader finds was already reported by the parent VM's.
+        vm.transpiler.env_mut().quiet = true;
         vm.transpiler
             .configure_defines()
             .unwrap_or_else(|_| panic!("Failed to configure defines"));

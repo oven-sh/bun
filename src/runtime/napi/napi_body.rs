@@ -1754,15 +1754,18 @@ pub(super) enum AsyncWorkStatus {
     Cancelled = 3,
 }
 
-/// Heap-allocated; owned and freed by the addon. Once queued it is shared with
-/// the pool thread and the event-loop queue (`napi_cancel_async_work` may run
-/// during `execute`, and `complete` usually frees it the moment `run` has
-/// posted), so the entry points below take the addon's pointer and go through
-/// it field by field instead of forming a reference to the whole work.
+/// Heap-allocated; owned and freed by the addon. While queued it is shared
+/// between the JS thread (which may still cancel or re-queue it, and whose
+/// `complete` usually frees it the moment `run` has posted it) and the pool
+/// thread, so the entry points below take the addon's pointer and go through it
+/// field by field instead of forming a reference to the whole work. The field
+/// docs say which thread writes what; unmarked fields are immutable after
+/// [`Self::new`].
 pub(crate) struct napi_async_work {
+    /// The pool's while the work is queued.
     pub task: WorkPoolTask,
+    /// Written by the pool thread as it hands the work back.
     pub(crate) concurrent_task: ConcurrentTask,
-    // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
     /// How the pool thread delivers completion / cancellation to the VM.
     pub(crate) loop_handle: bun_jsc::LoopHandle,
     /// JS thread only.
@@ -1771,8 +1774,11 @@ pub(crate) struct napi_async_work {
     pub(crate) execute: napi_async_execute_callback,
     pub(crate) complete: Option<napi_async_complete_callback>,
     pub(crate) data: *mut c_void,
-    pub(crate) status: AtomicU32, // AsyncWorkStatus
+    /// [`AsyncWorkStatus`]; the one field both threads write.
+    pub(crate) status: AtomicU32,
+    /// JS thread only.
     pub(crate) scheduled: bool,
+    /// JS thread only.
     pub poll_ref: KeepAlive,
 }
 
@@ -1820,7 +1826,10 @@ impl napi_async_work {
     /// # Safety
     /// `this` is a live work.
     pub(crate) unsafe fn schedule(this: *mut Self) {
-        // SAFETY: fn contract; nothing else sees the work before the last line.
+        // SAFETY: fn contract. The first call hands the pool its field on the
+        // last line and touches JS-thread and immutable fields before that
+        // (see the struct); a repeat call while the pool has the work only
+        // reads `scheduled`.
         unsafe {
             if (*this).scheduled {
                 return;
@@ -1847,8 +1856,8 @@ impl napi_async_work {
     /// # Safety
     /// `this` is the live work `schedule` handed to the pool.
     unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract; the JS thread only touches `status` (atomic)
-        // while the pool has the work.
+        // SAFETY: fn contract; immutable fields here, and below only the pool
+        // thread's fields and the atomic (see the struct).
         let (handle, execute, env, data) = unsafe {
             (
                 (*this).loop_handle.clone(),

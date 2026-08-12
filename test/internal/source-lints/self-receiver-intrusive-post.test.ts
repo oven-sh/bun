@@ -46,11 +46,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `ShellAsyncTask` in src/runtime/shell/states/Async.rs.
 //
 // Scope: the `.from(` initializer with the receiver's address as its first
-// argument, where "the receiver's address" is one of the direct spellings
-// below, a local of the same function bound to one, or a `*mut Self` /
-// `*const Self` parameter of a method that also has a reference receiver (the
-// only thing such a parameter can be is the receiver, handed in separately
-// because the reference cannot be posted). The heap-task constructors
+// argument, where "the receiver's address" is one of the spellings below
+// (applied to `self` or to a reborrow of it), a local of the same function
+// bound to one, or a parameter of a method that also has a reference receiver
+// and is typed as a raw pointer to the method's own type, spelled `Self` or by
+// the enclosing impl's name (the only thing such a parameter can be is the
+// receiver, handed in separately because the reference cannot be posted). The
+// spelling list is the same one self-receiver-reclaim.test.ts uses; a change
+// to one belongs in the other too. The heap-task constructors
 // (`Task::init`, `ConcurrentTask::create_from`, `from_callback`) are the same
 // hazard in a different spelling and a separate population (#37723); a
 // pointer produced by a helper (`self.as_ptr()`) and reference parameters
@@ -83,23 +86,33 @@ const POST = String.raw`\.\s*from\s*\(\s*`;
 // `.cast_mut()`, `.as_ptr()` (how a `NonNull` binding is passed).
 const SAME_ADDRESS = String.raw`(?:\s*\.\s*(?:cast(?:_mut|_const)?(?:::<[^>]*>)?|as_ptr)\(\))*`;
 
-// The ways of spelling "`self`, as a raw pointer" inline. The bare form (a
-// `&mut Self` coerces to `*mut Self` at the call) needs the `,` / `)` so
-// `self.field` does not match; `(?!\s*\.)` after the `&raw` form keeps
-// `&raw mut *self.field` (something the receiver owns) out.
-const SELF_AS_POINTER = [
-  String.raw`self\s*[,)]`,
-  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-  String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
-  String.raw`self\s+as\s+\*(?:mut|const)\b`,
-  String.raw`&raw\s+(?:mut|const)\s+\*\s*self\b(?!\s*\.)`,
+// `self` or a reborrow of it (`&mut *self`, `&*self`), as the operand of the
+// pointer conversions below. `(?!\s*\.)` keeps `&mut *self.field` (something
+// the receiver owns) out.
+const SELF_OPERAND = String.raw`(?:&\s*(?:mut\s+)?\*\s*)?self\b(?!\s*\.)`;
+
+// The conversions that turn the receiver into its address. Shared between the
+// inline and the `let`-bound forms below; the self-test at the bottom pins
+// each spelling. `(?!\s*\.)` after the reborrow forms keeps `&raw mut
+// *self.field` out, as above.
+const ADDRESS_OF_SELF = [
+  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*${SELF_OPERAND}\s*\)`,
+  String.raw`(?:[\w:]+::)?NonNull::from\(\s*${SELF_OPERAND}\s*\)`,
   String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
-].join("|");
+  String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
+];
+
+// Inline: one of the conversions, `self as *mut _`, or bare `self` (a `&mut
+// Self` coerces to `*mut Self` at the call; it needs the `,` / `)` so
+// `self.field` does not match).
+const SELF_AS_POINTER = [...ADDRESS_OF_SELF, String.raw`self\s+as\s+\*(?:mut|const)\b`, String.raw`self\s*[,)]`].join(
+  "|",
+);
 
 const DIRECT = new RegExp(`${POST}(?:${SELF_AS_POINTER})`, "g");
 
 // A local bound to the receiver's address: `let p = ptr::from_mut(self);`,
-// `let p = self as *mut Self;`, `let p = NonNull::from(self);`, or the
+// `let p = NonNull::from(&mut *self);`, `let p = self as *mut Self;`, or the
 // coercion spelling `let p: *mut Self = self;` (which needs the annotation;
 // without it `let p = self;` is just another reference).
 const BINDING_HEAD = String.raw`let\s+(?:mut\s+)?(\w+)\s*`;
@@ -107,13 +120,7 @@ const SELF_POINTER_BINDINGS = [
   new RegExp(
     BINDING_HEAD +
       String.raw`(?::[^=;]*)?=\s*(?:` +
-      [
-        String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-        String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
-        String.raw`self\s+as\s+\*(?:mut|const)\b[^;.]*`,
-        String.raw`&raw\s+(?:mut|const)\s+\*\s*self\b`,
-        String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
-      ].join("|") +
+      [...ADDRESS_OF_SELF, String.raw`self\s+as\s+\*(?:mut|const)\b[^;.]*`].join("|") +
       String.raw`)${SAME_ADDRESS}\s*;`,
     "g",
   ),
@@ -129,7 +136,19 @@ const FN_ITEM_SOURCE = String.raw`^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|as
 const FN_ITEM = new RegExp(FN_ITEM_SOURCE, "m");
 const FN_ITEMS = new RegExp(FN_ITEM_SOURCE, "gm");
 const RECEIVER_PARAM = /^\s*(?:&(?:'\w+\s+)?(?:mut\s+)?self\b|(?:mut\s+)?self\s*:\s*(?:&|Pin<))/;
-const SELF_POINTER_PARAM = /\b(\w+)\s*:\s*\*(?:mut|const)\s+Self\b(?!\s*::)/g;
+
+// `impl Foo`, `impl<T> Foo<T>`, `impl Trait for Foo`: the type `Self` stands
+// for in the methods that follow, so a parameter typed `*mut Foo` inside them
+// counts like `*mut Self`. A `trait` item starts a region where only `Self`
+// is known.
+const IMPL_OR_TRAIT_ITEMS =
+  /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:impl(?:<[^>]*>)?\s+(?:[\w:]+(?:<[^>]*>)?\s+for\s+)?([\w:]+)|trait\s+\w+)/gm;
+
+/** A parameter typed `*mut Self` / `*const Self` (or the enclosing impl's type), capturing its name. */
+function selfPointerParams(implType: string | null): RegExp {
+  const types = implType === null ? String.raw`Self\b(?!\s*::)` : String.raw`(?:Self\b(?!\s*::)|${implType}\b)`;
+  return new RegExp(String.raw`\b(\w+)\s*:\s*\*(?:mut|const)\s+${types}`, "g");
+}
 
 function postOf(name: string): RegExp {
   return new RegExp(POST + String.raw`\b${name}\b${SAME_ADDRESS}\s*[,)]`);
@@ -142,12 +161,23 @@ function restOfFunction(stripped: string, offset: number): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
+/** For each `impl` / `trait` item: where it starts and the implementing type's last path segment (null for traits). */
+function implRegions(stripped: string): { start: number; implType: string | null }[] {
+  return [...stripped.matchAll(IMPL_OR_TRAIT_ITEMS)].map(m => ({
+    start: m.index,
+    implType: m[1] === undefined ? null : m[1].slice(m[1].lastIndexOf(":") + 1),
+  }));
+}
+
 /**
- * For every method with a reference receiver and a `*mut Self` parameter:
- * the parameter names and the offset of the method's body.
+ * For every method with a reference receiver and a parameter that is a raw
+ * pointer to its own type: the parameter names and the offset of the
+ * method's body.
  */
 function* receiverTwice(stripped: string): Generator<{ names: string[]; bodyStart: number }> {
+  const regions = implRegions(stripped);
   for (const item of stripped.matchAll(FN_ITEMS)) {
+    const region = regions.findLast(r => r.start < item.index);
     let i = item.index + item[0].length;
     // Skip the generic parameter list, which may itself contain parens
     // (`fn f<F: Fn(u8) -> u8>(`); `->` inside it is not a closing angle.
@@ -177,7 +207,7 @@ function* receiverTwice(stripped: string): Generator<{ names: string[]; bodyStar
     if (close === -1) continue;
     const params = stripped.slice(paramsOpen + 1, close);
     if (!RECEIVER_PARAM.test(params)) continue;
-    const names = [...params.matchAll(SELF_POINTER_PARAM)].map(m => m[1]);
+    const names = [...params.matchAll(selfPointerParams(region?.implType ?? null))].map(m => m[1]);
     if (names.length > 0) yield { names, bodyStart: close + 1 };
   }
 }
@@ -263,8 +293,33 @@ test("the patterns match the banned spellings and nothing else", () => {
       "        let Posted::Queued = self.loop_handle.post_task(ct) else { unreachable!() };",
       "    }",
     ].join("\n"),
+    // The same two methods with the parameter typed by the impl's name
+    // instead of `Self`.
+    [
+      "impl napi_async_work {",
+      "    fn run(&mut self) {",
+      "        let self_ptr: *mut napi_async_work = self;",
+      "        self.post_to_js_thread(self_ptr);",
+      "    }",
+      "",
+      "    fn post_to_js_thread(&mut self, work: *mut napi_async_work) {",
+      "        let ct = NonNull::from(self.concurrent_task.from(work, AutoDeinit::ManualDeinit));",
+      "    }",
+      "}",
+    ].join("\n"),
+    "impl<T: Taskable> Worker<T> {\n    fn post(&mut self, me: *const Worker<T>) {\n        self.ct.from(me.cast_mut(), AutoDeinit::ManualDeinit);\n    }\n}",
+    "unsafe impl crate::Postable for shell::RmTask {\n    fn post(&mut self, me: *mut RmTask) {\n        self.ct.from(me, AutoDeinit::ManualDeinit);\n    }\n}",
     // The same thing inlined into one method.
     "fn run(&mut self) {\n    let self_ptr: *mut Self = self;\n    let ct = NonNull::from(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));\n}",
+    // Taking the address of a reborrow of the receiver is taking the
+    // receiver's address.
+    "fn run(&mut self) {\n    let self_ptr = NonNull::from(&mut *self);\n    ct.from(self_ptr.as_ptr(), AutoDeinit::ManualDeinit);\n}",
+    "fn run(&mut self) {\n    let p = core::ptr::from_mut(&mut *self);\n    ct.from(p, AutoDeinit::ManualDeinit);\n}",
+    "fn run(&mut self) {\n    let p = std::ptr::from_ref(&*self).cast_mut();\n    ct.from(p, AutoDeinit::ManualDeinit);\n}",
+    "fn run(&mut self) {\n    let p = &mut *self;\n    ct.from(p, AutoDeinit::ManualDeinit);\n}",
+    "ct.from(&mut *self, AutoDeinit::ManualDeinit)",
+    "ct.from(std::ptr::from_mut(&mut *self), AutoDeinit::ManualDeinit)",
+    "ct.from(NonNull::from(&mut *self).as_ptr(), AutoDeinit::ManualDeinit)",
     "fn run(&mut self) {\n    let this = std::ptr::from_mut::<Self>(self);\n    unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) };\n}",
     "fn run(&mut self) {\n    let p = self as *mut Self;\n    self.task.from(p, Self::run_from_main_thread_mini);\n}",
     "fn run(&mut self) {\n    let p = std::ptr::from_ref(self).cast_mut();\n    ct.from(p, AutoDeinit::ManualDeinit);\n}",
@@ -297,7 +352,14 @@ test("the patterns match the banned spellings and nothing else", () => {
     // Posting something the receiver owns or points at is not this shape.
     "self.concurrent_task.from(self.child, AutoDeinit::ManualDeinit)",
     "ct.from(&raw mut *self.inner, AutoDeinit::ManualDeinit)",
+    "ct.from(&mut *self.inner, AutoDeinit::ManualDeinit)",
+    "ct.from(std::ptr::from_mut(&mut *self.inner), AutoDeinit::ManualDeinit)",
+    "fn run(&mut self) {\n    let p = NonNull::from(&mut *self.inner);\n    ct.from(p.as_ptr(), AutoDeinit::ManualDeinit);\n}",
     "ct.from(self.as_ptr(), AutoDeinit::ManualDeinit)",
+    // A pointer to some other type, or to a type that is only the impl's
+    // type by name in a different region of the file.
+    "impl Scheduler {\n    fn post(&mut self, job: *mut Job) {\n        self.ct.from(job, AutoDeinit::ManualDeinit);\n    }\n}",
+    "impl Job {\n    fn id(&self) -> u32 {\n        self.id\n    }\n}\n\ntrait Poster {\n    fn post(&mut self, job: *mut Job) {\n        self.ct().from(job, AutoDeinit::ManualDeinit);\n    }\n}",
     // `from` methods that are not the task initializer, and `From` impls.
     ".reader()\n    .from(buffered_reader, ctx_ptr.cast::<c_void>());",
     "let s = String::from(self.name);",

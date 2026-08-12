@@ -136,11 +136,8 @@ describe("auto-install", () => {
     // an entry (and its version index link) as stored without a recorded integrity
     const otherEntry = join(cacheDir, "is-number@2.0.0@@localhost@@@1");
     await mkdir(join(cacheDir, "is-number"), { recursive: true });
-    await write(
-      join(otherEntry, "package.json"),
-      JSON.stringify({ name: "is-number", version: "0.0.0-not-from-registry" }),
-    );
-    await write(join(otherEntry, "index.js"), "module.exports = require('./package.json');");
+    await write(join(otherEntry, "package.json"), JSON.stringify({ name: "is-number", version: "2.0.0" }));
+    await write(join(otherEntry, "index.js"), "module.exports = { version: 'not from the registry' };");
     await symlink(otherEntry, join(cacheDir, "is-number", "2.0.0@@localhost@@@1"), "junction");
 
     await using proc = spawn({
@@ -158,10 +155,9 @@ describe("auto-install", () => {
     expect(
       await exists(join(cacheDir, cacheFolderName("is-number", "2.0.0", await fixtureIntegrity("is-number", "2.0.0")))),
     ).toBeTrue();
-    expect(await file(join(otherEntry, "package.json")).json()).toEqual({
-      name: "is-number",
-      version: "0.0.0-not-from-registry",
-    });
+    expect(await file(join(otherEntry, "index.js")).text()).toBe(
+      "module.exports = { version: 'not from the registry' };",
+    );
   });
 });
 

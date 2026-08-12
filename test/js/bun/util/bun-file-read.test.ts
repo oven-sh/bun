@@ -96,14 +96,18 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
   // The child must already have the FIFO open for reading before a writer can
   // connect to it: a non-blocking open for writing fails with ENXIO until then.
   async function openWriterOnceChildIsReading(fifo: string, child: Bun.Subprocess) {
+    const deadline = performance.now() + 10_000;
     while (true) {
       try {
         return openFd(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
       } catch (err: any) {
         if (err.code !== "ENXIO") throw err;
       }
-      if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`child exited (${child.exitCode ?? child.signalCode}) without opening the FIFO`);
+      const exited = child.exitCode ?? child.signalCode;
+      if (exited !== null || performance.now() > deadline) {
+        throw new Error(
+          `nothing opened ${fifo} for reading; child ${exited === null ? "is still running" : `exited (${exited})`}`,
+        );
       }
       await Bun.sleep(5);
     }

@@ -4365,6 +4365,49 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback applies server.maxHeadersCount to req.headers like Node", async () => {
+  // Same clamp as Node's parserOnHeadersComplete on an http.Server: only the
+  // first maxHeadersCount fields reach req.headers (0 = unlimited, unset = the
+  // parser's 2000-pair default) while req.rawHeaders keeps all of them.
+  async function requestWithMaxHeadersCount(maxHeadersCount) {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+      res.end(
+        JSON.stringify({
+          maxHeaderPairs: req.socket.parser.maxHeaderPairs,
+          headers: Object.keys(req.headers),
+          rawHeaders: req.rawHeaders,
+        }),
+      );
+    });
+    if (maxHeadersCount !== undefined) server.maxHeadersCount = maxHeadersCount;
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const socket = tls.connect(
+        { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+        () => socket.write("GET / HTTP/1.1\r\nHost: example\r\nX-A: 1\r\nX-B: 2\r\nConnection: close\r\n\r\n"),
+      );
+      const chunks = [];
+      socket.on("error", reject);
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      const raw = await promise;
+      return JSON.parse(raw.slice(raw.indexOf("\r\n\r\n") + 4));
+    } finally {
+      server.close();
+    }
+  }
+
+  const rawHeaders = ["Host", "example", "X-A", "1", "X-B", "2", "Connection", "close"];
+  expect(
+    await Promise.all([requestWithMaxHeadersCount(1), requestWithMaxHeadersCount(0), requestWithMaxHeadersCount()]),
+  ).toEqual([
+    { maxHeaderPairs: 2, headers: ["host"], rawHeaders },
+    { maxHeaderPairs: 0, headers: ["host", "x-a", "x-b", "connection"], rawHeaders },
+    { maxHeaderPairs: 2000, headers: ["host", "x-a", "x-b", "connection"], rawHeaders },
+  ]);
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

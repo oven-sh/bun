@@ -331,6 +331,12 @@ impl FetchTasklet {
 
     /// HTTP thread → JS thread: queue `task` on the tasklet's VM. Returns the
     /// task back if the VM has been torn down (caller releases what it holds).
+    ///
+    /// Only for callers whose own ref keeps the tasklet alive across the post:
+    /// `self` is borrowed for the whole call, and the JS thread starts
+    /// consuming `task` as soon as it is queued. The post that hands the
+    /// tasklet itself over (`deref_from_thread`) goes through a copy of
+    /// `loop_handle` instead.
     #[inline]
     fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> jsc::vm_handle::Posted {
         self.loop_handle.post_task(task)
@@ -412,24 +418,29 @@ impl FetchTasklet {
 
     /// # Safety
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
-    // Forwards `this` to ThreadSafeRefCount/dealloc without dereferencing; signature must
-    // stay `*mut` because the call may drop the last ref and free the allocation.
+    // Signature must stay `*mut`: this may drop the last ref, after which the JS
+    // thread frees the allocation as soon as the hop below is queued.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
         }
-        let self_ = Self::from_raw_ref(this);
         // Last ref dropped on the HTTP thread: deinit must run on the JS thread
-        // (it drops JSC Strong/Weak handles), so hop there — as a task with its
-        // own tag, so a VM that is tearing down releases it from its queue. The
-        // VM waits for its fetches (embedded work) before closing its handle,
-        // so this is always queued.
+        // (it drops JSC Strong/Weak handles), so hop there, as a task with its
+        // own tag so a VM that is tearing down releases it from its queue. The
+        // JS thread may free the tasklet the moment the hop is queued, so the
+        // post goes through a copy of the handle, not through `&self` or the
+        // `loop_handle` field (see refcount-release-reborrow.test.ts).
+        // SAFETY: the count just hit zero and nothing else reaches `*this`
+        // until the hop is queued below.
+        let handle = unsafe { (*this).loop_handle.clone() };
         let task = ConcurrentTask::create(bun_event_loop::Task::init(
             this.cast::<FetchTaskletDeinitHop>(),
         ));
-        let jsc::vm_handle::Posted::Queued = self_.post(task) else {
+        // The VM waits for its fetches (embedded work) before closing its
+        // handle, so this is always queued.
+        let jsc::vm_handle::Posted::Queued = handle.post_task(task) else {
             unreachable!("VM handle closed with a fetch outstanding on the HTTP thread");
         };
     }

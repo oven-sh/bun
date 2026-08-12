@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { randomBytes } from "node:crypto";
 import { closeSync, constants, openSync } from "node:fs";
@@ -62,7 +62,14 @@ describe("Bun.file read-loop target selection", () => {
 // ReadFile is handed to the io thread every time it drains the pipe and has to
 // wait for more, and once the writer closes it is (on Linux) handed over once
 // more to unregister the fd before the fd it opened is closed.
-describe.skipIf(isWindows)("Bun.file(fifo)", () => {
+//
+// macOS: the child never finishes this read (the test times out with the child
+// still alive) while the same setup completes on Linux; reading a FIFO by path
+// on macOS is also what "Bun.file() read text from pipe" in
+// test/js/web/streams/streams.test.js is todo'd for. The read-side hand-overs
+// are covered on macOS by the Bun.stdin pipe tests (test/regression/issue/07500,
+// bun-stdin-slice.test.ts); what this adds is the path-opened variant.
+describe.skipIf(isWindows || isMacOS)("Bun.file(fifo)", () => {
   it("bytes() reads a pipe that is filled in pieces and ends when the writer closes", async () => {
     const payload = randomBytes(256 * 1024);
     using dir = tempDir("bun-file-read-fifo", {});

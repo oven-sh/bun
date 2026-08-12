@@ -348,8 +348,10 @@ pub(crate) fn run_task(
         | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
+        // The final hop releases the tasklet's JS-side ref, which may free it,
+        // so it takes the raw pointer (no `&mut` at this boundary).
         task_tag::FetchTasklet => {
-            cast!(FetchTasklet).on_progress_update()?;
+            FetchTasklet::on_progress_update(cast_ptr!(FetchTasklet))?;
         }
         task_tag::FetchTaskletDeinit => {
             // SAFETY: posted by `deref_from_thread` with the last ref.

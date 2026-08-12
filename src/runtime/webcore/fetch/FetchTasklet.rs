@@ -311,18 +311,25 @@ impl FetchTasklet {
     ///
     /// INVARIANT: every `*mut FetchTasklet` threaded through the HTTP-thread
     /// callback (`callback`), the drain hook (`on_write_request_data_drain` /
-    /// `resume_request_data_stream`), and the JS-thread enqueue
-    /// (`queue` → `node`) was produced by `heap::into_raw(Box<FetchTasklet>)`
-    /// in `get()` and is kept alive by the intrusive `ref_count` until
-    /// `deinit`. Access on either thread is serialised: HTTP-thread writes
-    /// happen under `mutex.lock()` and JS-thread access is single-threaded.
+    /// `resume_request_data_stream`), the progress hop (`on_progress_update`),
+    /// the request-body release (`write_end_request`), and the JS-thread
+    /// enqueue (`queue` → `node`) was produced by
+    /// `heap::into_raw(Box<FetchTasklet>)` in `get()` and is kept alive by the
+    /// intrusive `ref_count` until `deinit`. Access on either thread is
+    /// serialised: HTTP-thread writes happen under `mutex.lock()` and
+    /// JS-thread access is single-threaded.
+    ///
+    /// The entry points above that end by releasing a ref keep the `&mut`
+    /// returned here scoped to the work that precedes the release and release
+    /// through the raw pointer: a release may be the last one, and freeing
+    /// the tasklet through a live `&mut` to it is UB.
     #[inline]
     fn from_raw_mut<'a>(this: *mut FetchTasklet) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *this }
     }
-    /// Shared variant of [`from_raw_mut`] for paths that only read atomics
-    /// (`ref_count`, `is_shutting_down`) before deciding whether to upgrade.
+    /// Shared variant of [`from_raw_mut`] for the parts of an entry point that
+    /// only need `&self` (atomics, `mutex`, posting a task).
     #[inline]
     fn from_raw_ref<'a>(this: *mut FetchTasklet) -> &'a Self {
         // SAFETY: see [`from_raw_mut`] INVARIANT.
@@ -631,8 +638,12 @@ impl FetchTasklet {
         // +1 on the tasklet; balanced exactly once by `write_end_request` on the
         // assign_to_stream-result side (on_resolve/on_reject or the synchronous
         // Fulfilled/Rejected/undefined branches below), or by the sink's
-        // `finalize` as a fallback if that path never runs.
+        // `finalize` as a fallback if that path never runs. The synchronous
+        // branches release it through `self_ptr` while the progress hop that
+        // called us still holds the JS-side ref, so none of them can free the
+        // tasklet.
         self.ref_();
+        let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
 
         if stream.is_locked(&global_this) || stream.is_disturbed(&global_this) {
             let err = jsc::SystemError {
@@ -645,11 +656,10 @@ impl FetchTasklet {
             };
             let err_instance = err.to_error_instance(&global_this);
             err_instance.ensure_still_alive();
-            self.write_end_request(Some(err_instance));
+            Self::write_end_request(self_ptr, Some(err_instance));
             return;
         }
 
-        let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
         // `self_ptr` is the live heap tasklet; the +1 above keeps it alive
         // until `write_end_request`/`finalize` clears `task`.
         let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
@@ -683,7 +693,7 @@ impl FetchTasklet {
                     err_js.ensure_still_alive();
                     err_js
                 });
-                self.write_end_request(err_js);
+                Self::write_end_request(self_ptr, err_js);
                 return;
             }
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
@@ -697,7 +707,7 @@ impl FetchTasklet {
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
-            self.write_end_request(Some(err));
+            Self::write_end_request(self_ptr, Some(err));
             self.clear_sink();
             return;
         }
@@ -715,13 +725,13 @@ impl FetchTasklet {
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
                         sink.task = None;
-                        self.write_end_request(None);
+                        Self::write_end_request(self_ptr, None);
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         promise.set_handled(global_this.vm());
                         let result = promise.result(global_this.vm());
                         sink.task = None;
-                        self.write_end_request(Some(result));
+                        Self::write_end_request(self_ptr, Some(result));
                     }
                 }
                 return;
@@ -732,7 +742,7 @@ impl FetchTasklet {
         // assignToStream. `end()` no longer calls `write_end_request`, so this
         // path always balances the `+1` itself.
         sink.task = None;
-        self.write_end_request(None);
+        Self::write_end_request(self_ptr, None);
     }
 
     fn on_body_received(&mut self) -> JsTerminatedResult<()> {
@@ -913,13 +923,36 @@ impl FetchTasklet {
         Ok(())
     }
 
-    pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
+    /// `task_tag::FetchTasklet` arm: one progress hop posted by `callback`.
+    ///
+    /// Takes the raw pointer, like `callback` and `resume_request_data_stream`:
+    /// the final hop releases the JS-side ref from `get()`, which is the last
+    /// one once the HTTP thread has dropped its own (the usual order, as
+    /// `callback` derefs right after posting the final hop), so the release
+    /// frees the tasklet and must not run while a `&mut self` to it is live.
+    /// Everything that needs `&mut` runs inside `on_progress_update_locked`,
+    /// which the JS-side ref outlives.
+    pub(crate) fn on_progress_update(this: *mut FetchTasklet) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
-        self.mutex.lock();
-        self.has_schedule_callback.store(false, Ordering::Relaxed);
-        let is_done = !self.result.has_more;
+        let shared = Self::from_raw_ref(this);
+        shared.mutex.lock();
+        shared.has_schedule_callback.store(false, Ordering::Relaxed);
+        let is_done = !shared.result.has_more;
+        let result = Self::from_raw_mut(this).on_progress_update_locked(is_done);
+        if is_done {
+            // SAFETY: `this` is the live heap tasklet; this releases the
+            // JS-side ref from `get()`, and no borrow of `*this` is live.
+            FetchTasklet::deref(this);
+        }
+        result
+    }
 
+    /// Body of [`on_progress_update`](Self::on_progress_update). Entered with
+    /// `mutex` held; unlocks it on every path. Does not release the JS-side
+    /// ref, so no release reached from here (`write_end_request` via
+    /// `cancel_request_body_sink`) can be the tasklet's last one.
+    fn on_progress_update_locked(&mut self, is_done: bool) -> JsTerminatedResult<()> {
         let vm = self.global_this.bun_vm();
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
@@ -932,10 +965,6 @@ impl FetchTasklet {
                 }
             }
             self.mutex.unlock();
-            if is_done {
-                // SAFETY: `self` is the live heap tasklet; we hold a ref.
-                FetchTasklet::deref(std::ptr::from_mut(self));
-            }
             return Ok(());
         }
 
@@ -952,8 +981,6 @@ impl FetchTasklet {
                 this.cancel_request_body_sink(JSValue::UNDEFINED);
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
                 poll_ref.unref(bun_io::js_vm_ctx());
-                // SAFETY: `this` is the live heap tasklet; we hold a ref.
-                FetchTasklet::deref(std::ptr::from_mut(this));
             }
         };
 
@@ -2277,13 +2304,31 @@ impl FetchTasklet {
         result
     }
 
-    pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
+    /// Ends the streamed request body (terminating chunk + End, or an abort
+    /// carrying `err`) and releases the ref `start_request_stream` took for it.
+    ///
+    /// That ref is the tasklet's last one when the response finished before
+    /// the upload did: the final progress hop cancels the sink and drops the
+    /// JS-side ref, and the pump promise then settles into
+    /// `on_resolve_request_stream` / `on_reject_request_stream`, whose release
+    /// here frees the tasklet (`FetchRequestBodySink::end_from_stream` releases
+    /// it the same way). Hence the raw pointer: the `&mut` work happens in
+    /// `end_request_body`, and nothing borrows the tasklet when it is
+    /// released. The callers that pass a pointer to their own receiver
+    /// (`start_request_stream`, `cancel_request_body_sink`) each say why their
+    /// release cannot be the last one.
+    pub(crate) fn write_end_request(this: *mut FetchTasklet, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
-        let this_ptr = std::ptr::from_mut(self);
+        Self::from_raw_mut(this).end_request_body(err);
+        // SAFETY: `this` is the live heap tasklet; this releases the
+        // `start_request_stream` ref, and no borrow of `*this` is live.
+        FetchTasklet::deref(this);
+    }
+
+    /// The ref-count-neutral part of [`write_end_request`](Self::write_end_request).
+    fn end_request_body(&mut self, err: Option<JSValue>) {
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
-                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                FetchTasklet::deref(this_ptr);
                 return;
             }
             if !js_error.is_undefined_or_null() {
@@ -2292,15 +2337,11 @@ impl FetchTasklet {
             self.abort_task();
         } else {
             if self.signal_store.aborted.load(Ordering::Relaxed) {
-                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                FetchTasklet::deref(this_ptr);
                 return;
             }
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
                 let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
-                    // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                    FetchTasklet::deref(this_ptr);
                     return;
                 };
                 // Mutex guards `buffer` against the HTTP thread; released when
@@ -2314,8 +2355,6 @@ impl FetchTasklet {
                     .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
             }
         }
-        // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-        FetchTasklet::deref(this_ptr);
     }
 
     fn abort_task(&mut self) {
@@ -2369,8 +2408,11 @@ impl FetchTasklet {
         if is_native {
             // No pump promise exists to balance the `+1` from
             // `start_request_stream`; `aborted` is set above so
-            // `write_end_request(Some(_))` is just the balancing deref.
-            self.write_end_request(Some(reason));
+            // `write_end_request(Some(_))` is just the balancing deref. Never
+            // the last one: the final progress hop ends the sink (through this
+            // function) before its JS-side ref is released, so an un-ended
+            // sink means that ref is still held.
+            Self::write_end_request(std::ptr::from_mut(self), Some(reason));
         }
     }
 
@@ -2580,15 +2622,14 @@ fn on_resolve_request_stream(
     let args = callframe.arguments();
     let this: *mut FetchTasklet = args[args.len() - 1].as_promise_ptr::<FetchTasklet>();
     // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
-    // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
-    // `write_end_request` below. Clear `sink.task` first so the sink's
+    // `start_request_stream`; the `ref_()` there keeps it alive until
+    // `write_end_request` below releases it (possibly freeing the tasklet, so
+    // the borrow taken here ends first). Clear `sink.task` so the sink's
     // `finalize()` fallback does not release a second time.
-    unsafe {
-        if let Some(sink) = (*this).sink_mut() {
-            sink.task = None;
-        }
-        (*this).write_end_request(None);
+    if let Some(sink) = unsafe { (*this).sink_mut() } {
+        sink.task = None;
     }
+    FetchTasklet::write_end_request(this, None);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -2599,16 +2640,11 @@ fn on_reject_request_stream(
     let args = callframe.arguments();
     let this: *mut FetchTasklet = args[args.len() - 1].as_promise_ptr::<FetchTasklet>();
     let err = args[0];
-    // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
-    // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
-    // `write_end_request` below. Clear `sink.task` first so the sink's
-    // `finalize()` fallback does not release a second time.
-    unsafe {
-        if let Some(sink) = (*this).sink_mut() {
-            sink.task = None;
-        }
-        (*this).write_end_request(Some(err));
+    // SAFETY: as in `on_resolve_request_stream`.
+    if let Some(sink) = unsafe { (*this).sink_mut() } {
+        sink.task = None;
     }
+    FetchTasklet::write_end_request(this, Some(err));
     Ok(JSValue::UNDEFINED)
 }
 

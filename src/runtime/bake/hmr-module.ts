@@ -127,8 +127,14 @@ export class HMRModule {
       const mod = loadModuleSync(id, true, this);
       return mod.esm ? (mod.cjs ??= toCommonJS(mod.exports)) : mod.cjs.exports;
     } catch (e: any) {
+      // The user-facing error is a new, plain Error so that the `require()`
+      // calls it propagates out of (and the `failure` a module records, which
+      // is rethrown on every later load) pass it along unchanged, like any
+      // other error thrown while evaluating a module.
       if (e instanceof AsyncImportError) {
-        e.message = `Cannot require "${id}" because "${e.asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
+        throw new Error(
+          `Cannot require "${id}" because "${e.asyncId}" uses top-level await, but 'require' is a synchronous operation.`,
+        );
       }
       throw e;
     }

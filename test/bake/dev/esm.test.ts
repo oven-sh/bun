@@ -361,6 +361,82 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+devTest("the error for requiring a module with top level await names the require call that failed", {
+  // `require()` used to produce this message by rewriting, in place, the error
+  // the loader threw. Every enclosing `require()` the error then propagated
+  // through renamed it again, including the error a failed module records and
+  // rethrows on every later load of it.
+  framework: minimalFramework,
+  files: {
+    "tla.ts": `
+      await 1;
+      export const value = "tla";
+    `,
+    "imports-tla.ts": `
+      import "./tla";
+      export const value = "unreachable";
+    `,
+    "outer.ts": `
+      require("./inner");
+      export const value = "unreachable";
+    `,
+    "inner.ts": `
+      require("./tla");
+      export const value = "unreachable";
+    `,
+    "requires-tla.ts": `
+      require("./tla");
+      export const value = "unreachable";
+    `,
+    "imports-requires-tla.ts": `
+      import "./requires-tla";
+      export const value = "unreachable";
+    `,
+    "routes/index.ts": `
+      async function attempt(load) {
+        try {
+          await load();
+          return "loaded";
+        } catch (e) {
+          return e.message;
+        }
+      }
+      export default async function () {
+        return Response.json({
+          requireTla: await attempt(() => require("../tla")),
+          requireImportsTla: await attempt(() => require("../imports-tla")),
+          requireOuter: await attempt(() => require("../outer")),
+          importRequiresTla: await attempt(() => import("../requires-tla")),
+          requireRequiresTla: await attempt(() => require("../requires-tla")),
+          requireImportsRequiresTla: await attempt(() => require("../imports-requires-tla")),
+          importRequiresTlaAgain: await attempt(() => import("../requires-tla")),
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    const cannotRequire = (id: string, asyncId: string) =>
+      `Cannot require "${id}" because "${asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/").json()).toEqual({
+      // The required module, or one of its static imports, has top-level await.
+      requireTla: cannotRequire("tla.ts", "tla.ts"),
+      requireImportsTla: cannotRequire("imports-tla.ts", "tla.ts"),
+      // outer.ts and inner.ts can be required. The call that failed is the
+      // require("./tla") in inner.ts, and its error propagates out of the two
+      // enclosing require() calls unchanged, like any other error thrown while
+      // evaluating a required module. (This used to name outer.ts.)
+      requireOuter: cannotRequire("tla.ts", "tla.ts"),
+      // The import() records the error on requires-tla.ts. The two require()
+      // calls rethrow that recorded error (directly, then through a static
+      // importer); they used to rename it to requires-tla.ts and then to
+      // imports-requires-tla.ts, which is what the second import() reported.
+      importRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      requireRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      requireImportsRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      importRequiresTlaAgain: cannotRequire("tla.ts", "tla.ts"),
+    });
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

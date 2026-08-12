@@ -394,6 +394,49 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should report a manifest that is nested too deeply instead of overflowing the worker stack", async () => {
+    await withContext(defaultOpts, async ctx => {
+      // Manifests are parsed on the package manager's thread pool. The parser's
+      // recursion guard reads the stack bounds that every pool worker sets up on
+      // startup; without them this document would overflow the worker's stack
+      // instead of being rejected. Deep enough to trip the guard on the largest
+      // worker stack bun uses (18 MB on Windows).
+      const depth = 400_000;
+      const nested = Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
+      const urls: string[] = [];
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        return new Response(
+          `{"name":"bar","dist-tags":{"latest":"0.0.2"},"versions":{"0.0.2":{"name":"bar","version":"0.0.2","dist":{"tarball":"${ctx.registry_url}bar-0.0.2.tgz"},"x":${nested}}}}`,
+        );
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            bar: "0.0.2",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("JSON document is too deeply nested");
+      expect(err).toContain("parsing package manifest for bar");
+      expect(await stdout.text()).toEqual(expect.stringContaining("bun install v1."));
+      expect(await exited).toBe(1);
+      expect(urls).toEqual([`${ctx.registry_url}bar`]);
+    });
+  });
+
   it("should support --registry CLI flag", async () => {
     await withContext(defaultOpts, async ctx => {
       const connected = jest.fn();

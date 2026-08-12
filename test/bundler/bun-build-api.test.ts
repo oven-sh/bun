@@ -369,13 +369,18 @@ describe("Bun.build", () => {
   });
 
   test.concurrent("in-memory BuildArtifact reports the output bytes as its size", async () => {
+    // Two entries with names of the same length, so the artifacts differ only
+    // in the output bytes they hold.
     const payload = Buffer.alloc(64 * 1024, "abcdefghij").toString();
     using dir = tempDir("build-artifact-size-in-memory", {
-      "entry.js": `export const s = ${JSON.stringify(payload)};`,
+      "small.js": "export const s = 1;",
+      "large.js": `export const s = ${JSON.stringify(payload)};`,
     });
-    const [artifact] = (await Bun.build({ entrypoints: [join(String(dir), "entry.js")] })).outputs;
-    expect(artifact.size).toBeGreaterThanOrEqual(payload.length);
-    expect(estimateShallowMemoryUsageOf(artifact)).toBeGreaterThanOrEqual(artifact.size);
+    const [small] = (await Bun.build({ entrypoints: [join(String(dir), "small.js")] })).outputs;
+    const [large] = (await Bun.build({ entrypoints: [join(String(dir), "large.js")] })).outputs;
+    expect(large.path.length).toBe(small.path.length);
+    expect(large.size - small.size).toBeGreaterThanOrEqual(payload.length);
+    expect(estimateShallowMemoryUsageOf(large) - estimateShallowMemoryUsageOf(small)).toBe(large.size - small.size);
   });
 
   test.concurrent("outdir BuildArtifact reports the output path as its size", async () => {
@@ -424,6 +429,7 @@ describe("Bun.build", () => {
     const { size, extraMemorySize } = JSON.parse(stdout);
     expect(size).toBeGreaterThanOrEqual(artifactBytes);
     expect(extraMemorySize).toBeGreaterThanOrEqual(size);
+    expect(extraMemorySize).toBeLessThan(2 * size);
     expect(exitCode).toBe(0);
   });
 

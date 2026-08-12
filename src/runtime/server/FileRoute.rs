@@ -82,9 +82,8 @@ impl FileRoute {
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        size_of::<FileRoute>()
-            + self.headers.memory_cost()
-            + self.blob.reported_estimated_size.get()
+        let fields_outside_blob = size_of::<FileRoute>() - size_of::<Blob>();
+        fields_outside_blob + self.headers.memory_cost() + self.blob.estimated_size()
     }
 
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {

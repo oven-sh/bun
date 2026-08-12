@@ -54,15 +54,39 @@ const tracked: Set<string> | null = (() => {
 })();
 
 // `MiniEventLoop`'s posting entry points (the only `enqueue_task_concurrent*`
-// definitions under src/event_loop/). Group 1 is the fn name, group 2 the receiver.
+// definitions under src/event_loop/). Group 1 is the fn name, group 2 the
+// receiver. Generics, if any, are skipped up to the parameter list's `(` so
+// nested `<>` do not matter.
 const ENTRY_POINT_DIR = "src/event_loop/";
 const ENTRY_POINT =
-  /\bfn\s+(enqueue_task_concurrent_with_extra_ctx|enqueue_task_concurrent)\b(?:<[^>]*>)?\s*\(\s*(&\s*mut\s+self|&\s*self)\b/g;
+  /\bfn\s+(enqueue_task_concurrent_with_extra_ctx|enqueue_task_concurrent)\b(?:<[^(]*)?\s*\(\s*(&\s*mut\s+self|&\s*self)\b/g;
 
 // `x.get_mut().enqueue_task_concurrent(..)`, `unsafe { x.get_mut() }.enqueue_task_concurrent(..)`,
-// `x.assume_mut().enqueue_task_concurrent_with_extra_ctx::<A, B>(..)`, optionally
-// split across lines by rustfmt.
-const POST_THROUGH_MUT = /\b(?:get_mut|assume_mut)\(\)\s*\}?\s*\.\s*enqueue_task_concurrent\w*\s*(?:::<[^>]*>\s*)?\(/g;
+// `x.assume_mut().enqueue_task_concurrent_with_extra_ctx::<A, B<'static>>(..)`,
+// optionally split across lines by rustfmt. The turbofish is skipped up to
+// the call's `(`: every `_with_extra_ctx` call in the tree nests a generic.
+const POST_THROUGH_MUT = /\b(?:get_mut|assume_mut)\(\)\s*\}?\s*\.\s*enqueue_task_concurrent\w*\s*(?:::<[^(]*)?\(/g;
+
+// The shapes the two patterns are claimed to cover (and the spelling they must
+// not flag), so a later edit to either regex cannot silently stop matching.
+const ENTRY_POINT_SHAPES = [
+  "pub fn enqueue_task_concurrent(&mut self, task: NonNull<Task>) {",
+  "pub fn enqueue_task_concurrent(&self, task: NonNull<Task>) {",
+  "pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(\n        &mut self,\n        ctx: *mut C,",
+  "pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C: Ctx<'static>, P>(\n        &self,",
+];
+const POST_THROUGH_MUT_SHAPES = [
+  "mini.get_mut().enqueue_task_concurrent(at);",
+  "unsafe { mini.get_mut() }.enqueue_task_concurrent(task);",
+  "mini.get_mut().enqueue_task_concurrent(\n    NonNull::new_unchecked(addr_of_mut!((*out).task)),\n);",
+  "ctx.assume_mut().enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(\n    load,",
+  "mini.get_mut().enqueue_task_concurrent_with_extra_ctx::<\n    Result,\n    BundleV2<'static>,\n>(result,",
+];
+const POST_THROUGH_SHARED_SHAPES = [
+  "mini.enqueue_task_concurrent(task);",
+  "mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(load,",
+  "poster.get_mut().post(task);",
+];
 
 function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
@@ -108,6 +132,20 @@ test("the pattern still recognizes MiniEventLoop's posting entry points", () => 
   // directory above need updating, not the assertions below.
   const names = new Set(entryPoints.map(e => e.slice(e.indexOf(": fn ") + 5, e.indexOf("("))));
   expect([...names].sort()).toEqual(["enqueue_task_concurrent", "enqueue_task_concurrent_with_extra_ctx"]);
+});
+
+test("the patterns match the shapes they are documented to cover", () => {
+  // Non-global copies: `.test()` on a /g regex carries `lastIndex` between calls.
+  const entryPoint = new RegExp(ENTRY_POINT.source);
+  const postThroughMut = new RegExp(POST_THROUGH_MUT.source);
+  expect(ENTRY_POINT_SHAPES.map(s => entryPoint.exec(s)?.[2]?.replace(/\s+/g, " "))).toEqual([
+    "&mut self",
+    "&self",
+    "&mut self",
+    "&self",
+  ]);
+  expect(POST_THROUGH_MUT_SHAPES.filter(s => !postThroughMut.test(s))).toEqual([]);
+  expect(POST_THROUGH_SHARED_SHAPES.filter(s => postThroughMut.test(s))).toEqual([]);
 });
 
 test("MiniEventLoop::enqueue_task_concurrent* take &self", () => {

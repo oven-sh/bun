@@ -625,9 +625,8 @@ pub struct Location {
     // arena-owned source text.
     pub file: Cow<'static, [u8]>,
     pub namespace: Str,
-    /// Text on the line, avoiding the need to refetch the source code.
-    /// May be just a window of a long line (see `init_or_null`), in which
-    /// case `line_text_column_offset` says where on the line it starts.
+    /// Text on the line (possibly a window of a long one, per
+    /// `line_text_column_offset`), avoiding a source refetch.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -643,11 +642,9 @@ pub struct Location {
     // original docs: 0-based, in bytes.
     // but there is a place where this is emitted in output, implying one based character offset
     pub column: i32,
-    /// Number of columns (in the units of `column`) of the source line that
-    /// precede `line_text`: non-zero only when `line_text` is a window of a
-    /// long line that starts after the line's first character. `column` is
-    /// always relative to the whole line, so a caret drawn under `line_text`
-    /// goes `column - 1 - line_text_column_offset` characters in.
+    /// Columns (in `column`'s units) of the line preceding `line_text`;
+    /// `column` stays relative to the whole line, so subtract this to draw
+    /// a caret under `line_text`.
     pub line_text_column_offset: u32,
 }
 
@@ -798,8 +795,8 @@ impl Location {
                 .min(line.len());
             let mut line_text = line;
             let mut line_text_column_offset: u32 = 0;
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets, snapped to UTF-8 char boundaries.
+            // Window a long line to ~120 bytes around the error, snapped to
+            // UTF-8 char boundaries.
             if line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(line.len());
@@ -810,11 +807,9 @@ impl Location {
                     hi += 1;
                 }
                 line_text = &line[lo..hi];
-                // Both scans start at column 1, so the difference is the width
-                // of `line[..lo]`. Measuring the ≤ 40 bytes kept in front of
-                // the error, rather than rescanning `line[..lo]`, keeps a long
-                // line with many diagnostics linear (the reason
-                // `LineColumnTracker` exists).
+                // Columns before `lo` = the error's column minus the width of
+                // `line[lo..offset_in_line]`; measuring those ≤ 40 bytes avoids
+                // rescanning the whole prefix for every diagnostic.
                 let mut kept = ErrorPositionState::default();
                 kept.advance(line, lo, offset_in_line);
                 line_text_column_offset =
@@ -833,11 +828,8 @@ impl Location {
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. This is only
-                // materialized on diagnostic paths.
+                // Own the bytes: `source.contents` can drop before this `Msg`
+                // is cloned into a `BuildMessage` (`Transpiler::parse_*`).
                 line_text: Some(Cow::Owned(line_text.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });

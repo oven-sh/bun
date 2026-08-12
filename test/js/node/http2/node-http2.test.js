@@ -4320,8 +4320,12 @@ it("http2 allowHTTP1 server.close() only destroys fallback connections that are 
   async function connectHttp1() {
     const accepted = new Promise(resolve => server.once("secureConnection", resolve));
     const client = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+    await new Promise((resolve, reject) => {
+      client.once("secureConnect", resolve);
+      client.once("error", reject);
+    });
+    // From here on the only error this test expects is the reset of the connection close() destroys.
     client.on("error", () => {});
-    await new Promise(resolve => client.once("secureConnect", resolve));
     return { client, serverSocket: await accepted };
   }
   // Reads one Content-Length framed response; rejects if the response is framed any other way or

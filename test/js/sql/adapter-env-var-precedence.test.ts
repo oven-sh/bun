@@ -484,6 +484,17 @@ describe("SQL adapter environment variable precedence", () => {
         });
         expect(options.options.path).toBe(join(String(dir), "a.sock"));
       });
+
+      test.each([
+        ["?path=A&socket=B", (a: string, b: string) => `?path=${a}&socket=${b}`],
+        ["?socket=B&path=A", (a: string, b: string) => `?socket=${b}&path=${a}`],
+      ])("?path= wins over ?socket= regardless of order (%s)", (_, search) => {
+        using dir = tempDir("sql-socket-both-query", { "a.sock": "", "b.sock": "" });
+        const a = join(String(dir), "a.sock");
+        const b = join(String(dir), "b.sock");
+        const options = new SQL(`mysql://user:pass@localhost/appdb${search(a, b)}`);
+        expect(options.options.path).toBe(a);
+      });
     });
 
     test.skipIf(isWindows)("postgres URL with a host uses the pathname as the database name, not a socket path", () => {

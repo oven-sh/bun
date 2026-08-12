@@ -1791,15 +1791,18 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || options.socket || (url.hostname ? "" : url.pathname);
+    let pathParam: string | undefined;
+    let socketParam: string | undefined;
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (lowerKey === "path" || lowerKey === "socket") {
-        path = queryObject[key];
+      } else if (lowerKey === "path") {
+        pathParam = queryObject[key];
+      } else if (lowerKey === "socket") {
+        socketParam = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1813,6 +1816,8 @@ function parseOptions(
       }
     }
     query = query.trim();
+
+    path ||= pathParam || socketParam || options.path || options.socket || (url.hostname ? "" : url.pathname);
   }
 
   switch (adapter) {

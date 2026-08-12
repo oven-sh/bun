@@ -2048,11 +2048,17 @@ export function installCacheFolderName(
   registryHost?: string,
 ): string {
   let folder = `${name}@${version}${registryHost ? "@@" + registryHost : ""}@@@2`;
-  const match = integrity && /^(sha1|sha256|sha384|sha512)-([A-Za-z0-9+/=]+)$/.exec(integrity);
+  if (!integrity) return folder;
+  const match = /^(sha1|sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(integrity);
+  const digestLengths = { sha1: 20, sha256: 32, sha384: 48, sha512: 64 };
+  const digest = match && Buffer.from(match[2], "base64");
+  if (!match || !digest || digest.length !== digestLengths[match[1] as keyof typeof digestLengths]) {
+    throw new Error(`installCacheFolderName: not a supported integrity value: ${integrity}`);
+  }
   // same NAME_MAX rule as `bun install`: no fingerprint when it and a
   // `_patch_hash=<16 hex>` suffix would not fit in a 255-byte component
   const component = folder.slice(folder.lastIndexOf("/") + 1);
-  if (!match || Buffer.byteLength(component) + 1 + 13 + "_patch_hash=".length + 16 > 255) return folder;
+  if (Buffer.byteLength(component) + 1 + 13 + "_patch_hash=".length + 16 > 255) return folder;
   const idPath = join(cacheDir, ".id");
   let id: Buffer;
   try {
@@ -2067,8 +2073,7 @@ export function installCacheFolderName(
       id = fs.readFileSync(idPath);
     }
   }
-  const tag = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 }[match[1] as "sha1" | "sha256" | "sha384" | "sha512"];
-  const digest = Buffer.from(match[2], "base64");
+  const tag = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 }[match[1] as keyof typeof digestLengths];
   const bits = createHash("sha256")
     .update(id)
     .update(Buffer.from([tag]))

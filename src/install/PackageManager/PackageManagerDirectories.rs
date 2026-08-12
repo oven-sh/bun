@@ -85,8 +85,8 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
 /// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
 /// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
-/// `env` fields are projected, so an outstanding `&mut manifests` derived
+/// disjoint `cache_directory`, `cache_directory_id`, `cache_directory_path`,
+/// `options.enable`, and `env` fields are projected, so an outstanding `&mut manifests` derived
 /// from the same provenance root stays valid under Stacked Borrows.
 ///
 /// # Safety
@@ -103,8 +103,12 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
-    // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory = Some(d) };
+    let id = read_or_create_cache_directory_id(&d);
+    // SAFETY: as above; single writer of `cache_directory` / `cache_directory_id`.
+    unsafe {
+        (*this).cache_directory_id = id;
+        (*this).cache_directory = Some(d);
+    }
     fd
 }
 
@@ -339,11 +343,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => {
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_id = read_or_create_cache_directory_id(&d) };
-                    return d;
-                }
+                Ok(d) => return d,
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -365,11 +365,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         };
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
-            Ok(d) => {
-                // SAFETY: see fn safety contract.
-                unsafe { (*this).cache_directory_id = read_or_create_cache_directory_id(&d) };
-                return d;
-            }
+            Ok(d) => return d,
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
@@ -382,32 +378,32 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 }
 
 /// `<cache>/.id`: 16 random bytes created once per cache directory; npm cache
-/// entry fingerprints are keyed with it. An unreadable file is replaced,
-/// which only means fingerprinted entries are fetched again.
+/// entry fingerprints are keyed with it. A truncated file is replaced (its
+/// fingerprinted entries are then fetched again); if the file cannot be read
+/// or created at all the key falls back to zeroes so names stay stable.
 fn read_or_create_cache_directory_id(cache_dir: &Dir) -> integrity::CacheDirId {
     let name = bun_core::zstr!(".id");
     let mut id: integrity::CacheDirId = [0; 16];
-    for attempt in 0..3 {
+    for _ in 0..3 {
         match File::openat(cache_dir.fd(), name.as_bytes(), sys::O::RDONLY, 0) {
-            Ok(file) => {
-                if file.read_all(&mut id).is_ok_and(|len| len == id.len()) {
-                    return id;
+            Ok(file) => match file.read_all(&mut id) {
+                Ok(len) if len == id.len() => return id,
+                // just created by a concurrent install that has not written it yet
+                Ok(0) => continue,
+                Ok(_) => {
+                    let _ = sys::unlinkat(cache_dir.fd(), name);
                 }
-                if attempt < 2 {
-                    // possibly being written by a concurrent install; read again
-                    continue;
-                }
-                let _ = sys::unlinkat(cache_dir.fd(), name);
-            }
-            Err(err) if err.get_errno() != sys::E::ENOENT => break,
-            Err(_) => {}
+                Err(_) => return [0; 16],
+            },
+            Err(err) if err.get_errno() == sys::E::ENOENT => {}
+            Err(_) => return [0; 16],
         }
         bun_boringssl_sys::rand_bytes(&mut id);
         match File::openat(
             cache_dir.fd(),
             name.as_bytes(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-            0o600,
+            0o644,
         ) {
             Ok(file) if file.write_all(&id).is_ok() => return id,
             // created concurrently by another install: read theirs

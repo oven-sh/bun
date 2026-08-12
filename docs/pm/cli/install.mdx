@@ -354,7 +354,7 @@ Environment variables take priority over `bunfig.toml`.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
-Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}@@@2`, followed by `.` and a short fingerprint of the tarball's integrity hash when one is known. If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.
+Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}@@@2`, followed by `.` and a short fingerprint of the tarball's integrity hash when the registry or lockfile provides one and integrity verification is enabled (it is omitted with `--no-verify`, and for the rare package name long enough that the folder name would exceed the filesystem's name-length limit). If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.
 
 When the `node_modules` folder exists, Bun decides whether to install a package by checking that the `"name"` and `"version"` in its `package.json` at the expected `node_modules` location match the expected name and version. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 

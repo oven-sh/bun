@@ -128,6 +128,13 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // on_goaway_received has no access to the GOAWAY Stream ID (RFC 9114
+    // sec 5.2), so node:quic reported ongoaway(-1n) and had no way to reject
+    // in-flight requests above it; lsquic's fake_reset path then surfaced them
+    // as a clean EOF (silent truncation). Expose the id via
+    // lsquic_conn_get_min_goaway_stream_id so the session can deliver it and
+    // mark affected streams H3_REQUEST_REJECTED.
+    "patches/lsquic/goaway-stream-id.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

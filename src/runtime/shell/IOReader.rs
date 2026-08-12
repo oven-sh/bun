@@ -198,15 +198,8 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading; the listeners are then called
-    /// back from the event loop.
-    ///
-    /// A failure to start is returned, not dispatched: the caller is the
-    /// listener being started, still inside its own trampoline frame, so a
-    /// completion dispatched from here would run nested in that frame (the
-    /// read-side counterpart of `IOWriter::on_sync_error`). `starting` catches
-    /// the failures `bun_io` reports through `on_reader_error` instead of
-    /// returning, such as a refused poll registration.
+    /// Idempotent. A failure to start is returned for the caller to finish itself with;
+    /// dispatching it to the listeners would nest a trampoline (cf. `IOWriter::on_sync_error`).
     pub(crate) fn start(&self) -> sys::Result<()> {
         self.state().starting = true;
         let result = self.start_impl();

@@ -220,8 +220,7 @@ impl Cat {
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Clone the `Arc<IOReader>` out of `stdin` so no borrow of the
-                // builtin is held while the reader is started.
+                // Cloned out so the builtin is not borrowed while the reader starts.
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => Arc::clone(r),
@@ -292,9 +291,7 @@ impl Cat {
         }
     }
 
-    /// A reader that cannot be started is finished right here, in tail
-    /// position, so the completion is returned to the trampoline instead of
-    /// running from inside `start()` (see `IOReader::start`).
+    /// A reader that cannot start is finished here, in tail position (see `IOReader::start`).
     fn start_reader(interp: &Interpreter, cmd: NodeId, reader: &IOReader) -> Yield {
         reader.add_reader(ReaderChildPtr {
             node: cmd,

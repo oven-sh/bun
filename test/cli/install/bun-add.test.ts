@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
-import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, appendFile, copyFile, mkdir, readdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
@@ -2610,3 +2610,59 @@ it("should install tarball with tarball dependencies", async () => {
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));
 });
+
+// https://github.com/oven-sh/bun/issues/13244
+for (const cmd of ["add", "install"]) {
+  it(`should not create package.json for \`bun ${cmd} <pkg> --dry-run\` in an empty directory`, async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+
+    // `add_dir` is a fresh empty tmpdir per test.
+    expect(await readdir(add_dir)).toEqual([]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd, "BaR", "--dry-run", "--registry", root_url + "/"],
+      cwd: add_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(add_dir, ".cache"),
+      },
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).toContain("installed BaR@0.0.2");
+    expect(await exited).toBe(0);
+
+    // --dry-run must not write package.json, bun.lock, or node_modules.
+    const entries = (await readdir(add_dir)).filter(e => e !== ".cache");
+    expect(entries).toEqual([]);
+  });
+}
+
+for (const cmd of ["link", "unlink"]) {
+  it(`should not create package.json for \`bun ${cmd} --dry-run\` in an empty directory`, async () => {
+    expect(await readdir(add_dir)).toEqual([]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd, "--dry-run"],
+      cwd: add_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    await stdout.text();
+    // There is no package.json to link/unlink; the command should refuse
+    // rather than create one.
+    expect(err).toContain("could not find a package.json");
+    expect(await exited).not.toBe(0);
+
+    expect(await readdir(add_dir)).toEqual([]);
+  });
+}

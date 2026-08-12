@@ -707,6 +707,12 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
+struct SpawnFailed {
+    errno: SystemErrno,
+    /// Workers (and spawns still in flight) the pool had left once the failed spawn's slot was released.
+    workers_left: u16,
+}
+
 /// Nothing will ever run the queued tasks and `schedule()` has no caller to return an error to, so this is the only way to report it.
 #[cold]
 #[inline(never)]
@@ -748,17 +754,20 @@ impl ThreadPool {
                 sync = current;
                 continue;
             }
-            let pool_was_empty = sync.spawned() == 0;
-            if let Err(errno) = self.spawn_worker(pool_was_empty) {
-                return if pool_was_empty { Err(errno) } else { Ok(()) };
+            if let Err(failed) = self.spawn_worker(sync.spawned() == 0) {
+                return if failed.workers_left == 0 {
+                    Err(failed.errno)
+                } else {
+                    Ok(())
+                };
             }
             sync = new_sync;
         }
         Ok(())
     }
 
-    /// Spawns the worker whose `spawned` slot the caller just took; on failure the slot is released and the OS error returned.
-    fn spawn_worker(&self, pool_was_empty: bool) -> Result<(), SystemErrno> {
+    /// Spawns the worker whose `spawned` slot the caller just took; on failure the slot is released again.
+    fn spawn_worker(&self, pool_was_empty: bool) -> Result<(), SpawnFailed> {
         let stack_size = self.stack_size as usize;
         let spawn = || {
             // `BackRef<ThreadPool>: Send` (ThreadPool is `Sync`); pool's `join()`
@@ -787,7 +796,10 @@ impl ThreadPool {
         if workers_left == 0 && self.wait_group.pending() > 0 {
             exit_with_stranded_tasks(errno);
         }
-        Err(errno)
+        Err(SpawnFailed {
+            errno,
+            workers_left,
+        })
     }
 
     #[inline(never)]

@@ -39,14 +39,13 @@ use bun_options_types::schema::api;
 #[bun_jsc::JsClass(name = "Transpiler")]
 #[derive(bun_ptr::RefCounted)]
 pub struct JSTranspiler {
-    pub transpiler: JsCell<Transpiler::Transpiler<'static>>,
+    pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
     /// Read-only after construction EXCEPT for `config.log`, which is the
     /// resting-state log that `transpiler.log: *mut Log` points at between
     /// host-fn calls. `JsCell` so a `*mut Log` can be projected from `&self`.
-    pub config: JsCell<Config>,
-    pub scan_pass_result: JsCell<ScanPassResult>,
-    pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
-    pub log_level: bun_ast::Level,
+    pub(crate) config: JsCell<Config>,
+    pub(crate) scan_pass_result: JsCell<ScanPassResult>,
+    pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
@@ -54,7 +53,7 @@ pub struct JSTranspiler {
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
     // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
-    pub ref_count: bun_ptr::RefCount<JSTranspiler>,
+    pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
 fn default_transform_options() -> api::TransformOptions {
@@ -66,23 +65,23 @@ fn default_transform_options() -> api::TransformOptions {
 }
 
 pub struct Config {
-    pub transform: api::TransformOptions,
-    pub default_loader: Loader,
-    pub macro_map: MacroMap,
-    pub tsconfig: Option<Box<TSConfigJSON>>,
-    pub tsconfig_buf: Box<[u8]>,
-    pub macros_buf: Box<[u8]>,
-    pub log: bun_ast::Log,
-    pub runtime: Runtime::Features,
-    pub tree_shaking: bool,
-    pub trim_unused_imports: Option<bool>,
+    pub(crate) transform: api::TransformOptions,
+    pub(crate) default_loader: Loader,
+    pub(crate) macro_map: MacroMap,
+    pub(crate) tsconfig: Option<Box<TSConfigJSON>>,
+    pub(crate) tsconfig_buf: Box<[u8]>,
+    pub(crate) macros_buf: Box<[u8]>,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) runtime: Runtime::Features,
+    pub(crate) tree_shaking: bool,
+    pub(crate) trim_unused_imports: Option<bool>,
 
-    pub dead_code_elimination: bool,
-    pub minify_whitespace: bool,
-    pub minify_identifiers: bool,
-    pub minify_syntax: bool,
-    pub no_macros: bool,
-    pub repl_mode: bool,
+    pub(crate) dead_code_elimination: bool,
+    pub(crate) minify_whitespace: bool,
+    pub(crate) minify_identifiers: bool,
+    pub(crate) minify_syntax: bool,
+    pub(crate) no_macros: bool,
+    pub(crate) repl_mode: bool,
 }
 
 impl Default for Config {
@@ -517,7 +516,7 @@ impl Config {
                             // `Vec` would silently grow instead, so check the
                             // bound explicitly to preserve the overflow throw.
                             let start = buf.len();
-                            write!(&mut buf, "{}", str).ok();
+                            let _ = write!(&mut buf, "{}", str);
                             if buf.len() > total_name_buf_len as usize {
                                 return Err(global.throw_invalid_arguments(format_args!(
                                     "Error reading exports.eliminate. TODO: utf-16",
@@ -650,98 +649,112 @@ impl Config {
 // threadlocal var transform_buffer_loaded: bool = false;
 
 // This is going to be hard to not leak
-pub(crate) struct TransformTask<'a> {
-    /// Created with `is_async=true` (JS-backed buffer protected); the
-    /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
+/// `transpiler.transform()` off the JS thread. The parse/print state points
+/// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
+/// which the job's Js side keeps alive and the pool borrow keeps valid.
+pub(crate) struct TransformTask {
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
     pub output_code: BunString,
-    /// Bitwise copy of `js_instance.transpiler`.
-    /// Heap-owned fields (`Box<Define>`, resolver caches, …) are *shared* with
-    /// `js_instance`, which is kept alive by the `IntrusiveRc` below for the
-    /// task's lifetime. `ManuallyDrop` prevents double-free; the original owns.
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
-    // `IntrusiveRc` (not `Arc`): JSTranspiler uses single-thread intrusive
-    // `bun.ptr.RefCount` and crosses FFI as `m_ctx` (PORTING.md §Pointers).
-    pub js_instance: bun_ptr::IntrusiveRc<JSTranspiler>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
     pub macro_map: MacroMap,
-    pub tsconfig: Option<&'a TSConfigJSON>,
+    pub tsconfig: Option<jsc::JsPtr<TSConfigJSON>>,
     pub loader: Loader,
-    pub global: &'a JSGlobalObject,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
 }
+// SAFETY: see the type doc — VM-owned config is read only under the pool
+// borrow; everything else is owned.
+unsafe impl Send for TransformTask {}
 
-pub(crate) type AsyncTransformTask<'a> =
-    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, TransformTask<'a>>;
+#[derive(bun_jsc::JsAffine)]
+pub(crate) struct TransformJs {
+    promise: jsc::JSPromiseStrong,
+    /// The `JSTranspiler` wrapper whose config the task reads.
+    _transpiler: jsc::Strong,
+}
 
-impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncTransformTask;
-    fn run(&mut self) {
-        TransformTask::run(self)
+impl jsc::JobContext for TransformTask {
+    type OffThread = Self;
+    type Js = TransformJs;
+    fn run(
+        this: &mut Self,
+        vm: &jsc::vm_handle::Borrow,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        TransformTask::run(this, vm);
+        Some(done)
     }
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        TransformTask::then(self, promise)
+    fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+        Ok(TransformTask::then(
+            &mut this,
+            js.promise.swap(),
+            cx.global(),
+        )?)
     }
 }
 
-impl<'a> TransformTask<'a> {
+impl TransformTask {
     // `pub const new = bun.TrivialNew(@This())` → Box::new
 
-    pub(crate) fn create(
-        transpiler: &'a JSTranspiler,
+    /// Schedule the transform on the work pool; returns its promise.
+    fn schedule(
+        transpiler: &JSTranspiler,
+        transpiler_js: JSValue,
         input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         loader: Loader,
-    ) -> Box<AsyncTransformTask<'a>> {
+    ) -> JSValue {
         let config = transpiler.config.get();
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: bitwise struct copy of `transpiler.transpiler`. Heap-owned
-        // fields are shared with `js_instance` (kept alive via IntrusiveRc); the
-        // copy is wrapped in `ManuallyDrop` so only the original frees them.
+        // SAFETY: bitwise copy of the wrapper's Transpiler; `ManuallyDrop` so the
+        // copy never frees what the original owns. Its self-pointers (log,
+        // linker.resolver, arena) are re-aimed in `run` once the task has its
+        // final address inside the job.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });
 
-        let mut transform_task = Box::new(TransformTask {
+        let task = TransformTask {
             input_code,
             output_code: BunString::empty(),
             transpiler: transpiler_copy,
-            global,
             macro_map: clone_macro_map(&config.macro_map),
-            tsconfig: config.tsconfig.as_deref(),
+            tsconfig: config
+                .tsconfig
+                .as_deref()
+                // SAFETY: points into the wrapper's config, kept alive by `TransformJs`.
+                .map(|t| unsafe { jsc::JsPtr::new(core::ptr::NonNull::from(t)) }),
             log,
             err: None,
             loader,
             replace_exports: bun_ast::runtime::ReplaceableExportMap {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
-            // SAFETY: `transpiler` is the live `m_ctx` payload; `init_ref` bumps the
-            // `Cell<u32>`-backed count. `as_ctx_ptr`
-            // yields `*mut Self` from `&Self` — signature-only; the only mutation
-            // is to the `RefCount` field, which is interior-mutable.
-            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
-        });
-
-        // Re-point the linker's resolver backref into the heap-allocated copy.
-        // Must happen AFTER the move into the Box so the address is stable.
-        let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
-        transform_task.transpiler.linker.resolver = resolver_ptr;
-        transform_task
-            .transpiler
-            .set_log(&raw mut transform_task.log);
-        // `set_arena(bun.default_allocator)` — Rust `Transpiler` carries an
-        // `&Arena`, not a generic allocator. The work-thread `run()` immediately
-        // overwrites it with the local arena, so leave the copied pointer as-is
-        // here (it still points at `js_instance.arena`, which is kept alive).
-
-        AsyncTransformTask::create_on_js_thread(global, transform_task)
+        };
+        let cx = global.js_thread();
+        let promise = jsc::JSPromiseStrong::init(global);
+        let value = promise.value();
+        jsc::Job::<TransformTask>::schedule(
+            &cx,
+            task,
+            TransformJs {
+                promise,
+                _transpiler: jsc::Strong::create(transpiler_js, global),
+            },
+        );
+        value
     }
 
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self, vm: &jsc::vm_handle::Borrow) {
         let name = self.loader.stdin_name();
+        let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
+        self.transpiler.linker.resolver = resolver_ptr;
+        // SAFETY: the wrapper's config, alive under the borrow (see `schedule`).
+        let tsconfig: Option<&TSConfigJSON> =
+            self.tsconfig.map(|p| &*unsafe { p.under_borrow(vm) });
 
         let arena = Arena::new();
 
@@ -779,7 +792,7 @@ impl<'a> TransformTask<'a> {
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
-        let jsx = match self.tsconfig {
+        let jsx = match tsconfig {
             Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
             None => self.transpiler.options.jsx.clone(),
         };
@@ -794,8 +807,11 @@ impl<'a> TransformTask<'a> {
             path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
-            experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
-            emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
+            experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
+            emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
+            use_define_for_class_fields: tsconfig
+                .and_then(|ts| ts.use_define_for_class_fields)
+                .unwrap_or(true),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -851,19 +867,19 @@ impl<'a> TransformTask<'a> {
         }
     }
 
-    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        // After `then` returns, the dispatcher
-        // (`run_then_destroy!` for `task_tag::AsyncTransformTask` in
-        // runtime/dispatch.rs) unconditionally calls
-        // `ConcurrentPromiseTask::destroy`, dropping the owned `ctx`
-        // (this `TransformTask`) and running its `Drop` (transpiler deref etc.).
-
+    fn then(
+        &mut self,
+        promise: &mut JSPromise,
+        global: &JSGlobalObject,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        // The job drops this `TransformTask` (running its `Drop`: transpiler
+        // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = &self.err {
                     if !self.log.has_any() {
                         break 'brk bun_jsc::BuildMessage::create(
-                            self.global,
+                            global,
                             bun_ast::Msg {
                                 data: bun_ast::Data {
                                     text: err.name().as_bytes().to_vec().into(),
@@ -875,30 +891,22 @@ impl<'a> TransformTask<'a> {
                     }
                 }
 
-                break 'brk self.log.to_js(self.global, "Transform failed");
+                break 'brk self.log.to_js(global, "Transform failed");
             };
 
-            promise.reject_with_async_stack(self.global, error_value)?;
+            promise.reject_with_async_stack(global, error_value)?;
             return Ok(());
         }
 
-        self.finish(promise)
+        self.finish(promise, global)
     }
 
-    fn finish(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        match self.output_code.transfer_to_js(self.global) {
-            Ok(value) => promise.resolve(self.global, value),
-            Err(e) => promise.reject(self.global, Ok(self.global.take_exception(e))),
-        }
-    }
-}
-
-// `js_instance: IntrusiveRc` (= `RefPtr`) has NO Drop impl; its strong ref must be
-// released explicitly or the `JSTranspiler` never reaches refcount 0.
-impl<'a> Drop for TransformTask<'a> {
-    fn drop(&mut self) {
-        // Release the +1 taken in `TransformTask::create`.
-        bun_ptr::RefPtr::deref(&self.js_instance);
+    fn finish(
+        &mut self,
+        promise: &mut JSPromise,
+        global: &JSGlobalObject,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        promise.settle(global, self.output_code.transfer_to_js(global))
     }
 }
 
@@ -959,7 +967,7 @@ impl JSTranspiler {
     // JsClass construct hook — invoked via the codegen'd `${T}Class__construct`
     // shim emitted by `#[bun_jsc::JsClass]`, NOT via `#[host_fn]` (constructors
     // return `*mut Self`, not `JSValue`, so the free-fn shim would be ill-typed).
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<*mut JSTranspiler> {
@@ -1028,7 +1036,6 @@ impl JSTranspiler {
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
-            log_level: bun_ast::Level::Err,
             ref_count: bun_ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1191,15 +1198,6 @@ impl Drop for TranspilerStateGuard {
 impl JSTranspiler {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for `IntrusiveRc::init_ref` and similar
-    /// FFI ctx slots that spell the parameter `*mut`. The only mutation through
-    /// this pointer goes to `ref_count` (`Cell<u32>`-backed) or `JsCell` fields,
-    /// so no write provenance on the outer `JSTranspiler` is required.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        std::ptr::from_ref::<Self>(self).cast_mut()
-    }
-
     /// `*mut Log` to the resting-state `config.log`, projected through the
     /// `JsCell<Config>` (UnsafeCell-backed, so the write provenance is sound).
     #[inline]
@@ -1284,6 +1282,11 @@ impl JSTranspiler {
                 .tsconfig
                 .as_deref()
                 .is_some_and(|ts| ts.emit_decorator_metadata),
+            use_define_for_class_fields: config
+                .tsconfig
+                .as_deref()
+                .and_then(|ts| ts.use_define_for_class_fields)
+                .unwrap_or(true),
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
@@ -1301,7 +1304,7 @@ impl JSTranspiler {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn scan(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn scan(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
@@ -1387,7 +1390,11 @@ impl JSTranspiler {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn transform(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn transform(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
@@ -1438,17 +1445,17 @@ impl JSTranspiler {
         };
 
         let default_loader = self.config.get().default_loader;
-        let mut task = TransformTask::create(self, code, global, loader.unwrap_or(default_loader));
-        let promise = task.promise.value();
-        task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        let _ = bun_core::heap::into_raw(task);
-        Ok(promise)
+        Ok(TransformTask::schedule(
+            self,
+            callframe.this(),
+            code,
+            global,
+            loader.unwrap_or(default_loader),
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn transform_sync(
+    pub(crate) fn transform_sync(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1662,7 +1669,7 @@ fn named_imports_to_js(
 
 impl JSTranspiler {
     #[bun_jsc::host_fn(method)]
-    pub fn scan_imports(
+    pub(crate) fn scan_imports(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1801,7 +1808,7 @@ impl JSTranspiler {
 /// Heuristic used by the REPL: returns true if `code` starts with `{` (after
 /// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
 /// parse as an object literal rather than a block statement. Mirrors Node.js.
-pub fn is_likely_object_literal(code: &[u8]) -> bool {
+pub(crate) fn is_likely_object_literal(code: &[u8]) -> bool {
     // Skip leading whitespace
     let mut start: usize = 0;
     while start < code.len() && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r') {

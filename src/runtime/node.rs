@@ -7,10 +7,6 @@
 // link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
-#[path = "node/nodejs_error_code.rs"]
-pub mod nodejs_error_code;
-pub use nodejs_error_code::Code as ErrorCode;
-
 #[path = "node/assert/myers_diff.rs"]
 pub mod myers_diff_impl;
 pub mod assert {
@@ -42,17 +38,17 @@ pub mod crypto;
 // codegen (`generated_js2native.rs`) addresses this by its file-stem name.
 pub use crypto as node_crypto_binding;
 
+#[cfg(target_os = "macos")]
 #[path = "node/fs_events.rs"]
 pub mod fs_events;
 
 // Sibling modules node_fs.rs imports by `super::` path.
 #[path = "node/Stat.rs"]
 pub mod stat;
-pub use stat::{Stats, StatsBig, StatsSmall};
+pub(crate) use stat::StatsSmall;
 
 #[path = "node/StatFS.rs"]
 pub mod statfs;
-pub use statfs::{StatFS, StatFSBig, StatFSSmall};
 
 #[path = "node/time_like.rs"]
 pub mod time_like;
@@ -139,9 +135,6 @@ pub mod node_assert;
 
 #[path = "node/node_assert_binding.rs"]
 pub mod node_assert_binding;
-
-#[path = "node/node_error_binding.rs"]
-pub mod node_error_binding;
 
 #[path = "node/node_zlib_binding.rs"]
 pub mod node_zlib_binding;

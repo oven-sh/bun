@@ -66,9 +66,9 @@ type Socket = uws::AnySocket;
 
 #[derive(Default)]
 pub struct SubscriptionCtx {
-    pub is_subscriber: bool,
-    pub original_enable_offline_queue: bool,
-    pub original_enable_auto_pipelining: bool,
+    pub(crate) is_subscriber: bool,
+    pub(crate) original_enable_offline_queue: bool,
+    pub(crate) original_enable_auto_pipelining: bool,
 }
 
 /// The generate-classes.ts output emits a
@@ -81,7 +81,7 @@ pub use crate::generated_classes::js_RedisClient as Js;
 bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
 
 impl SubscriptionCtx {
-    pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
+    pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
         let parent_this = valkey_parent
             .this_value
@@ -121,18 +121,21 @@ impl SubscriptionCtx {
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
+    pub(crate) fn channels_subscribed_to_count(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<u32> {
         let count = self.subscription_callback_map().size(global_object)?;
         Ok(count)
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
-    pub fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
+    pub(crate) fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
         Ok(self.channels_subscribed_to_count(global_object)? > 0)
     }
 
-    pub fn clear_receive_handlers(
+    pub(crate) fn clear_receive_handlers(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
@@ -142,7 +145,10 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    pub fn clear_all_receive_handlers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn clear_all_receive_handlers(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
         self.subscription_callback_map().clear(global_object)
     }
 
@@ -152,7 +158,7 @@ impl SubscriptionCtx {
     /// listeners originally registered.
     ///
     /// Note: This function will empty out the map entry if there are no more handlers registered.
-    pub fn remove_receive_handler(
+    pub(crate) fn remove_receive_handler(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
@@ -196,7 +202,7 @@ impl SubscriptionCtx {
     }
 
     /// Add a handler for receiving messages on a specific channel
-    pub fn upsert_receive_handler(
+    pub(crate) fn upsert_receive_handler(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
@@ -242,7 +248,7 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    pub fn get_callbacks(
+    pub(crate) fn get_callbacks(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
@@ -258,7 +264,7 @@ impl SubscriptionCtx {
 
     /// Invoke callbacks for a channel with the given arguments
     /// Handles both single callbacks and arrays of callbacks
-    pub fn invoke_callbacks(
+    pub(crate) fn invoke_callbacks(
         &self,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
@@ -346,19 +352,19 @@ impl SubscriptionCtx {
 // — see `connect()` below).
 #[repr(C)]
 pub struct JSValkeyClient {
-    pub client: JsCell<valkey::ValkeyClient>,
-    pub global_object: GlobalRef,
+    pub(crate) client: JsCell<valkey::ValkeyClient>,
+    pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
 
-    pub _subscription_ctx: JsCell<SubscriptionCtx>,
+    pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    pub _secure: Cell<Option<*mut uws::SslCtx>>,
+    pub(crate) _secure: Cell<Option<*mut uws::SslCtx>>,
 
-    pub timer: RefCountedTimer,
-    pub reconnect_timer: RefCountedTimer,
-    pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
+    pub(crate) timer: RefCountedTimer,
+    pub(crate) reconnect_timer: RefCountedTimer,
+    pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
 /// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
@@ -416,7 +422,14 @@ impl RefCountedTimer {
         let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
         // field of the boxed `JSValkeyClient` (stable address until disarmed).
-        unsafe { VirtualMachine::timer_insert(vm, self.event_loop_timer.as_ptr()) };
+        unsafe {
+            VirtualMachine::timer_insert(
+                vm,
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            )
+        };
         if !self.ref_held.replace(true) {
             owner.ref_();
         }
@@ -496,12 +509,12 @@ impl JSValkeyClient {
     /// RAII scoped ref: bumps on construction, derefs on `Drop`. Keeps `*self`
     /// alive across re-entrant connect/close/fail paths.
     #[inline]
-    pub fn ref_scope(&self) -> ScopedRef<Self> {
+    pub(crate) fn ref_scope(&self) -> ScopedRef<Self> {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
     }
     #[inline]
-    pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
+    pub(crate) fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -537,7 +550,7 @@ impl JSValkeyClient {
     // as `js_this`. `callframe.this()` is *not* the wrapper here — using it
     // would mis-target the cached `subscriptionCallbackMap` slot in
     // `SubscriptionCtx::init`.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
         js_this: JSValue,
@@ -548,7 +561,7 @@ impl JSValkeyClient {
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
     ///
     /// This whole client needs a refactor.
-    pub fn create_no_js_no_pubsub(
+    pub(crate) fn create_no_js_no_pubsub(
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
@@ -820,7 +833,7 @@ impl JSValkeyClient {
         }))
     }
 
-    pub fn create(
+    pub(crate) fn create(
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
         js_this: JSValue,
@@ -844,7 +857,7 @@ impl JSValkeyClient {
     ///
     /// Note that this does not create an object with an associated this_value.
     /// You may need to populate it yourself.
-    pub fn clone_without_connecting(
+    pub(crate) fn clone_without_connecting(
         &self,
         global_object: &JSGlobalObject,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
@@ -940,7 +953,7 @@ impl JSValkeyClient {
         }))
     }
 
-    pub fn add_subscription(&self) {
+    pub(crate) fn add_subscription(&self) {
         debug!(
             "addSubscription: entering, current subscriber state: {}",
             self._subscription_ctx.get().is_subscriber
@@ -966,7 +979,7 @@ impl JSValkeyClient {
         );
     }
 
-    pub fn remove_subscription(&self) {
+    pub(crate) fn remove_subscription(&self) {
         debug!(
             "removeSubscription: entering, has subscriptions: {}",
             self._subscription_ctx
@@ -999,23 +1012,23 @@ impl JSValkeyClient {
         debug!("removeSubscription: exiting");
     }
 
-    pub fn is_subscriber(&self) -> bool {
+    pub(crate) fn is_subscriber(&self) -> bool {
         self._subscription_ctx.get().is_subscriber
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_connected(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_connected(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.client.get().status == valkey::Status::Connected)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         let client = self.client.get();
         let len = client.write_buffer.len() + client.read_buffer.len();
         JSValue::js_number(f64::from(len))
     }
 
-    pub fn do_connect(
+    pub(crate) fn do_connect(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -1082,7 +1095,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_connect(
+    pub(crate) fn js_connect(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1091,7 +1104,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_disconnect(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_disconnect(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // `disconnect()` -> `close()` can dispatch `on_close` synchronously,
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_scope();
@@ -1120,7 +1137,7 @@ impl JSValkeyClient {
             .arm(self, self.client.get().get_timeout_interval());
     }
 
-    pub fn on_connection_timeout(&self) {
+    pub(crate) fn on_connection_timeout(&self) {
         debug!("onConnectionTimeout");
 
         let _guard = self.ref_scope();
@@ -1169,7 +1186,7 @@ impl JSValkeyClient {
         }
     }
 
-    pub fn on_reconnect_timer(&self) {
+    pub(crate) fn on_reconnect_timer(&self) {
         debug!("Reconnect timer fired, attempting to reconnect");
 
         let _guard = self.ref_scope();
@@ -1179,11 +1196,13 @@ impl JSValkeyClient {
         self.reconnect();
     }
 
-    pub fn reconnect(&self) {
+    pub(crate) fn reconnect(&self) {
         if !self.client.get().flags.is_reconnecting {
             return;
         }
 
+        // No reconnecting on a VM that is exiting: its stop phase would only
+        // have to close the new socket again.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return;
@@ -1217,7 +1236,10 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsTerminatedResult<()> {
+    pub(crate) fn on_valkey_connect(
+        &self,
+        value: &mut protocol::RESPValue,
+    ) -> JsTerminatedResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
@@ -1275,14 +1297,14 @@ impl JSValkeyClient {
     /// Invoked when the Valkey client receives a new listener.
     ///
     /// `SubscriptionCtx` will invoke this to communicate that it has added a new listener.
-    pub fn on_new_subscription_callback_insert(&self) {
+    pub(crate) fn on_new_subscription_callback_insert(&self) {
         let _guard = self.ref_scope();
 
         self.client_mut().on_writable();
         self.update_poll_ref();
     }
 
-    pub fn on_valkey_subscribe(&self, value: &mut protocol::RESPValue) {
+    pub(crate) fn on_valkey_subscribe(&self, value: &mut protocol::RESPValue) {
         debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
@@ -1294,7 +1316,7 @@ impl JSValkeyClient {
         self.update_poll_ref();
     }
 
-    pub fn on_valkey_unsubscribe(&self) -> JsResult<()> {
+    pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
         debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
@@ -1303,7 +1325,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
+    pub(crate) fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
         if !self.is_subscriber() {
             debug!("onMessage called but client is not in subscriber mode");
             return;
@@ -1349,7 +1371,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client needs to reconnect
-    pub fn on_valkey_reconnect(&self) {
+    pub(crate) fn on_valkey_reconnect(&self) {
         // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
         // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
         // branch, which never calls `on_valkey_close()`, so this scope is the
@@ -1361,7 +1383,7 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client closes
-    pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
         // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
@@ -1404,11 +1426,15 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client times out
 
-    pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
+    pub(crate) fn client_fail(
+        &self,
+        message: &[u8],
+        err: protocol::RedisError,
+    ) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(message, err))
     }
 
-    pub fn fail_with_js_value(&self, value: JSValue) {
+    pub(crate) fn fail_with_js_value(&self, value: JSValue) {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
@@ -1426,55 +1452,14 @@ impl JSValkeyClient {
             return;
         }
 
-        // During VM shutdown the event loop won't tick, so the deferred task below
-        // would never run; close inline (this_value is cleared, no JS re-entry).
-        if self.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            self.client_mut().close();
-            return;
-        }
-
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
-        struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop.
-            ctx: *const JSValkeyClient,
-            task: jsc::AnyTask::AnyTask,
-        }
-        impl Holder {
-            fn run(self_: *mut Holder) {
-                // SAFETY: allocated via heap::alloc below; reclaimed here.
-                let self_ = unsafe { bun_core::heap::take(self_) };
-                let ctx = self_.ctx;
-                // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
-                unsafe {
-                    (*ctx).client_mut().close();
-                    JSValkeyClient::deref(ctx.cast_mut());
-                }
-                // self_ dropped here (Box freed).
-            }
-        }
-        let holder = bun_core::heap::into_raw(Box::new(Holder {
+        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
             ctx: self.as_ctx_ptr(),
-            task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
-        // SAFETY: holder just allocated; closure captures nothing so it coerces
-        // to `fn(*mut c_void) -> JsResult<()>`.
-        unsafe {
-            (*holder).task = jsc::AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>())),
-                callback: |p: *mut c_void| {
-                    Holder::run(p.cast::<Holder>());
-                    Ok(())
-                },
-            };
-        }
-
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
         unsafe {
-            (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&raw mut (*holder).task));
+            (*self.vm().event_loop()).enqueue_task(task);
         }
     }
 
@@ -1497,7 +1482,7 @@ impl JSValkeyClient {
         // Nothing to release.
     }
 
-    pub fn stop_timers(&self) {
+    pub(crate) fn stop_timers(&self) {
         self.timer.disarm(self);
         self.reconnect_timer.disarm(self);
     }
@@ -1596,7 +1581,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub fn send(
+    pub(crate) fn send(
         &self,
         global_this: &JSGlobalObject,
         _this_value: JSValue,
@@ -1631,7 +1616,7 @@ impl JSValkeyClient {
     }
 
     // Getter for memory cost - useful for diagnostics
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // TODO(markovejnovic): This is most-likely wrong because I didn't know better.
         let client = self.client.get();
         let mut memory_cost: usize = core::mem::size_of::<JSValkeyClient>();
@@ -1685,7 +1670,7 @@ impl JSValkeyClient {
     /// Keep the event loop alive, or don't keep it alive
     ///
     /// This requires this_value to be alive.
-    pub fn update_poll_ref(&self) {
+    pub(crate) fn update_poll_ref(&self) {
         // TODO(markovejnovic): This function is such a crazy cop out. We really
         // should be treating valkey as a state machine, with well-defined
         // state and modes in which it tracks and manages its own lifecycle.
@@ -1776,7 +1761,7 @@ pub struct SocketHandler<const SSL: bool>;
 type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
+    fn socket(s: SocketType<SSL>) -> Socket {
         // `NewSocketHandler<SSL>` only differs by const generic; the
         // `socket` field is identical. Re-wrap the inner `InternalSocket` into
         // the right `AnySocket` variant.
@@ -1787,12 +1772,15 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsTerminatedResult<()> {
-        this.client_mut().socket = Self::_socket(socket);
-        narrow_terminated(this.client_mut().on_open(Self::_socket(socket)))
+    pub(crate) fn on_open(
+        this: &JSValkeyClient,
+        socket: SocketType<SSL>,
+    ) -> JsTerminatedResult<()> {
+        this.client_mut().socket = Self::socket(socket);
+        narrow_terminated(this.client_mut().on_open(Self::socket(socket)))
     }
 
-    pub fn on_handshake_(
+    pub(crate) fn on_handshake(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         success: i32,
@@ -1928,15 +1916,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         )
     }
 
-    // `pub const onHandshake = if (ssl) onHandshake_ else null;`
-    pub const ON_HANDSHAKE: Option<
+    pub(crate) const ON_HANDSHAKE: Option<
         fn(
             &JSValkeyClient,
             SocketType<SSL>,
             i32,
             uws::us_bun_verify_error_t,
         ) -> JsTerminatedResult<()>,
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &JSValkeyClient,
@@ -1956,7 +1943,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
     }
 
-    pub fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
+    pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
         let _ = this;
         let _ = socket;
 
@@ -1965,7 +1952,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // anything here
     }
 
-    pub fn on_connect_error(
+    pub(crate) fn on_connect_error(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         _code: i32,
@@ -1981,24 +1968,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
         narrow_terminated(this.client_mut().on_close())
     }
 
-    pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
+    pub(crate) fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
         debug!("Socket timed out.");
 
-        this.client_mut().socket = Self::_socket(socket);
+        this.client_mut().socket = Self::socket(socket);
         // Handle socket timeout
     }
 
-    pub fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
+    pub(crate) fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
         // Ensure the socket pointer is updated.
-        this.client_mut().socket = Self::_socket(socket);
+        this.client_mut().socket = Self::socket(socket);
 
         let _guard = this.ref_scope();
         let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
         this.update_poll_ref();
     }
 
-    pub fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
-        this.client_mut().socket = Self::_socket(socket);
+    pub(crate) fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
+        this.client_mut().socket = Self::socket(socket);
         let _guard = this.ref_scope();
         this.client_mut().on_writable();
         this.update_poll_ref();
@@ -2013,10 +2000,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    pub(crate) fn from_js(
-        global_object: &JSGlobalObject,
-        options_obj: JSValue,
-    ) -> JsResult<valkey::Options> {
+    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<valkey::Options> {
         let mut this = valkey::Options {
             enable_auto_pipelining:
                 !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
@@ -2087,5 +2071,30 @@ impl Options {
         }
 
         Ok(this)
+    }
+}
+
+pub(crate) struct ValkeyDeferredClose {
+    ctx: *const JSValkeyClient,
+}
+
+impl ValkeyDeferredClose {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        let ctx = self.ctx;
+        // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
+        unsafe {
+            (*ctx).client_mut().close();
+            JSValkeyClient::deref(ctx.cast_mut());
+        }
+    }
+}
+
+impl bun_event_loop::Taskable for ValkeyDeferredClose {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
+    /// The deferred close is script-free bookkeeping; do it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        unsafe { bun_core::heap::take(this) }.run();
     }
 }

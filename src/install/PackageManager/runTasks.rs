@@ -199,8 +199,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             break;
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
-        // — reclaim ownership exactly once here so the `Box` drops at end of
+        // batch. `ptask_ptr` is the `Box` that `enqueue_patch_task` /
+        // `enqueue_patch_task_pre` handed to the fifo via `heap::into_raw`;
+        // reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         debug_assert!(manager.pending_task_count() > 0);
@@ -1573,15 +1574,15 @@ pub fn decrement_pending_tasks(manager: &mut PackageManager) {
 
 impl PackageManager {
     #[inline]
-    pub fn pending_task_count(&self) -> u32 {
+    pub(crate) fn pending_task_count(&self) -> u32 {
         pending_task_count(self)
     }
     #[inline]
-    pub fn increment_pending_tasks(&mut self, count: u32) {
+    pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
         increment_pending_tasks(self, count)
     }
     #[inline]
-    pub fn decrement_pending_tasks(&mut self) {
+    pub(crate) fn decrement_pending_tasks(&mut self) {
         decrement_pending_tasks(self)
     }
 }
@@ -1742,13 +1743,13 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
-pub fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+pub(crate) fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
     if let Some(entry) = this.network_dedupe_map.get_mut(&task_id) {
         entry.failed = true;
     }
 }
 
-pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
+pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
@@ -1788,15 +1789,11 @@ pub fn generate_network_task_for_tarball<'a>(
         ))
     });
     let apply_patch_task = if let Some((h, patch_hash)) = patch {
-        let task: *mut PatchTask =
-            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-        // SAFETY: `task` is a fresh non-null `heap::alloc` from
-        // `new_apply_patch_hash`; we hold the only reference.
-        if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
+        let mut task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        if let PatchTaskCallback::Apply(apply) = &mut task.callback {
             apply.task_id = Some(task_id);
         }
-        // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
-        Some(unsafe { bun_core::heap::take(task) })
+        Some(task)
     } else {
         None
     };
@@ -1907,39 +1904,43 @@ impl PackageManager {
         drain_dependency_list(self)
     }
     #[inline]
-    pub fn flush_network_queue(&mut self) {
+    pub(crate) fn flush_network_queue(&mut self) {
         flush_network_queue(self)
     }
     #[inline]
-    pub fn flush_patch_task_queue(&mut self) {
+    pub(crate) fn flush_patch_task_queue(&mut self) {
         flush_patch_task_queue(self)
     }
     #[inline]
-    pub fn schedule_tasks(&mut self) -> usize {
+    pub(crate) fn schedule_tasks(&mut self) -> usize {
         schedule_tasks(self)
     }
     #[inline]
-    pub fn has_created_network_task(&mut self, task_id: Task::Id, is_required: bool) -> bool {
+    pub(crate) fn has_created_network_task(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+    ) -> bool {
         has_created_network_task(self, task_id, is_required)
     }
     #[inline]
-    pub fn is_network_task_required(&self, task_id: Task::Id) -> bool {
+    pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
     }
     #[inline]
-    pub fn mark_network_task_failed(&mut self, task_id: Task::Id) {
+    pub(crate) fn mark_network_task_failed(&mut self, task_id: Task::Id) {
         mark_network_task_failed(self, task_id)
     }
     #[inline]
-    pub fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
+    pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
     }
     #[inline]
-    pub fn get_network_task(&mut self) -> *mut NetworkTask {
+    pub(crate) fn get_network_task(&mut self) -> *mut NetworkTask {
         get_network_task(self)
     }
     #[inline]
-    pub fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
+    pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         alloc_github_url(self, repository)
     }
 }

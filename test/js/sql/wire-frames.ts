@@ -88,6 +88,22 @@ export function pgAuthenticationCleartextPassword(): Buffer {
   return buf;
 }
 
+// PostgreSQL FE/BE protocol §55.7 AuthenticationMD5Password: Byte1('R') Int32(12) Int32(5) Byte4(salt)
+export function pgAuthenticationMD5Password(salt: Buffer = Buffer.alloc(4, 0x61)): Buffer {
+  const buf = Buffer.alloc(13);
+  buf.write("R", 0);
+  buf.writeInt32BE(12, 1);
+  buf.writeInt32BE(5, 5);
+  salt.copy(buf, 9);
+  return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASL: Byte1('R') Int32(len) Int32(10) (String mechanism)* Byte1(0)
+export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): Buffer {
+  const body = Buffer.concat([pgInt32(10), ...mechanisms.map(m => pgCString(m)), Buffer.from([0])]);
+  return pgRaw("R", body);
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
 export function pgParameterStatus(name: string, value: string): Buffer {
   return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
@@ -261,6 +277,7 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
 // ---------------------------------------------------------------------------
 
 // Capability flags — page_protocol_basic_capability_flags.html (subset used by the mocks).
+export const MYSQL_CLIENT_LONG_PASSWORD = 1 << 0; // CLIENT_MYSQL in MariaDB's dialect
 export const MYSQL_CLIENT_PROTOCOL_41 = 1 << 9;
 export const MYSQL_CLIENT_SSL = 1 << 11;
 export const MYSQL_CLIENT_SECURE_CONNECTION = 1 << 15;
@@ -273,6 +290,10 @@ export const MYSQL_DEFAULT_CAPABILITIES =
   MYSQL_CLIENT_PLUGIN_AUTH |
   MYSQL_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
   MYSQL_CLIENT_DEPRECATE_EOF;
+
+// MariaDB extended capability flags (bits 32+ of the combined value, carried in
+// a separate 4-byte field): https://mariadb.com/kb/en/connection/#capabilities
+export const MARIADB_CLIENT_EXTENDED_TYPE_INFO = 1 << 3;
 
 // MySQL packet framing — page_protocol_basic_packets.html: Int<3>(payload_length) Int<1>(sequence_id) payload
 // `declaredLength` is the low-level escape hatch for fault-injection tests that need a
@@ -295,10 +316,22 @@ export const MYSQL_MOCK_AUTH_DATA_PART_2: Buffer = Buffer.concat([Buffer.alloc(1
 // MySQL Protocol::HandshakeV10 — page_protocol_connection_phase_packets_protocol_handshake_v10.html
 // Int<1>(10) NulString(server_version) Int<4>(thread_id) String<8>(auth1) Int<1>(0) Int<2>(cap_lo)
 // Int<1>(charset) Int<2>(status) Int<2>(cap_hi) Int<1>(auth_len) String<10>(reserved) String<13>(auth2) NulString(plugin)
+// A MariaDB 10.2+ server leaves CLIENT_LONG_PASSWORD unset and repurposes the
+// last 4 reserved bytes as its extended capability flags
+// (`mariadbExtendedCapabilities`): https://mariadb.com/kb/en/connection/
 export function mysqlHandshakeV10(
-  opts: { authPlugin?: string; capabilities?: number; serverVersion?: string } = {},
+  opts: {
+    authPlugin?: string;
+    capabilities?: number;
+    serverVersion?: string;
+    mariadbExtendedCapabilities?: number;
+  } = {},
 ): Buffer {
   const caps = opts.capabilities ?? MYSQL_DEFAULT_CAPABILITIES;
+  const reserved = Buffer.alloc(10, 0);
+  if (opts.mariadbExtendedCapabilities !== undefined) {
+    reserved.writeUInt32LE(opts.mariadbExtendedCapabilities, 6);
+  }
   const payload = Buffer.concat([
     Buffer.from([10]),
     Buffer.from(`${opts.serverVersion ?? "mock-5.7.0"}\0`),
@@ -310,7 +343,7 @@ export function mysqlHandshakeV10(
     Buffer.from([0x02, 0x00]), // status_flags (SERVER_STATUS_AUTOCOMMIT)
     Buffer.from([(caps >> 16) & 0xff, (caps >>> 24) & 0xff]), // capability_flags_2
     Buffer.from([21]), // auth_plugin_data_len
-    Buffer.alloc(10, 0), // reserved
+    reserved,
     MYSQL_MOCK_AUTH_DATA_PART_2,
     Buffer.from(`${opts.authPlugin ?? "mysql_native_password"}\0`),
   ]);
@@ -368,6 +401,12 @@ export function mysqlReadLenencInt(buf: Buffer, offset: number): { value: number
   throw new Error(`0x${first.toString(16)} is not a lenenc-int prefix`);
 }
 
+// The MariaDB extended client capabilities live in the last 4 of HandshakeResponse41's
+// 23 filler bytes (a MySQL client leaves them zero): https://mariadb.com/kb/en/connection/
+export function mysqlParseHandshakeResponseExtendedCaps(payload: Buffer): number {
+  return payload.readUInt32LE(4 + 4 + 1 + 19);
+}
+
 // MySQL Protocol::HandshakeResponse41 — page_protocol_connection_phase_packets_protocol_handshake_response.html:
 //   Int<4>(client_flag) Int<4>(max_packet) Int<1>(charset) String<23>(filler) NulString(username)
 //   then the auth_response as a string<lenenc> (CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) or Int<1>-prefixed string.
@@ -387,6 +426,12 @@ export function mysqlParseHandshakeResponse41(payload: Buffer): { username: stri
 // MySQL Protocol::ColumnDefinition41 — page_protocol_com_query_response_text_resultset_column_definition.html:
 //   lenenc("def") lenenc(schema) lenenc(table) lenenc(org_table) lenenc(name) lenenc(org_name)
 //   lenenc(0x0c) Int<2>(charset) Int<4>(column_length) Int<1>(type) Int<2>(flags) Int<1>(decimals) Int<2>(0x0000)
+// When MARIADB_CLIENT_EXTENDED_TYPE_INFO is negotiated, MariaDB inserts a lenenc
+// blob of (Int<1> kind, string<lenenc> value) pairs between org_name and the
+// fixed-length fields; pass `extendedTypeInfo` (possibly []) to emit it:
+// https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
+// A raw Buffer is the fault-injection escape hatch (mirrors `declaredLength`
+// above): it becomes the blob's contents verbatim, however malformed.
 export function mysqlColumnDefinition(
   seq: number,
   opts: {
@@ -400,6 +445,7 @@ export function mysqlColumnDefinition(
     table?: string;
     orgTable?: string;
     orgName?: string;
+    extendedTypeInfo?: { kind: number; value: string }[] | Buffer;
   },
 ): Buffer {
   const fixed = Buffer.alloc(12);
@@ -409,6 +455,14 @@ export function mysqlColumnDefinition(
   fixed.writeUInt16LE(opts.flags ?? 0, 7);
   fixed[9] = opts.decimals ?? 0;
   // bytes 10-11 reserved zero
+  const extended =
+    opts.extendedTypeInfo === undefined
+      ? Buffer.alloc(0)
+      : mysqlLenencStr(
+          Buffer.isBuffer(opts.extendedTypeInfo)
+            ? opts.extendedTypeInfo
+            : Buffer.concat(opts.extendedTypeInfo.flatMap(e => [Buffer.from([e.kind]), mysqlLenencStr(e.value)])),
+        );
   return mysqlRawPacket(
     seq,
     Buffer.concat([
@@ -418,6 +472,7 @@ export function mysqlColumnDefinition(
       mysqlLenencStr(opts.orgTable ?? ""),
       mysqlLenencStr(opts.name),
       mysqlLenencStr(opts.orgName ?? ""),
+      extended,
       Buffer.from([0x0c]),
       fixed,
     ]),

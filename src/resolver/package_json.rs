@@ -43,7 +43,7 @@ pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
-pub type MainFieldMap = StringMap;
+type MainFieldMap = StringMap;
 
 #[derive(Default)]
 pub struct DependencyMap {
@@ -65,7 +65,7 @@ impl Clone for DependencyMap {
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
-pub type DependencyHashMap =
+type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
 pub struct PackageJSON {
@@ -77,9 +77,9 @@ pub struct PackageJSON {
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
-    pub source_contents: Box<[u8]>,
+    pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
-    pub main_fields: MainFieldMap,
+    pub(crate) main_fields: MainFieldMap,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
 
@@ -87,13 +87,13 @@ pub struct PackageJSON {
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
-    pub arch: Architecture,
-    pub os: OperatingSystem,
+    pub(crate) arch: Architecture,
+    pub(crate) os: OperatingSystem,
 
-    pub package_manager_package_id: PackageID,
+    pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
 
-    pub side_effects: SideEffects,
+    pub(crate) side_effects: SideEffects,
 
     // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -120,10 +120,10 @@ pub struct PackageJSON {
     // * Given the mapping "./ext.js": "./ext-browser.js" the query "./ext.js"
     //   should match and the query "./ext" should ALSO match.
     //
-    pub browser_map: BrowserMap,
+    pub(crate) browser_map: BrowserMap,
 
-    pub exports: Option<ExportsMap>,
-    pub imports: Option<ExportsMap>,
+    pub(crate) exports: Option<ExportsMap>,
+    pub(crate) imports: Option<ExportsMap>,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -226,17 +226,17 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
+type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-pub type GlobList = Vec<Box<[u8]>>;
+type GlobList = Vec<Box<[u8]>>;
 
 pub struct MixedPatterns {
-    pub exact: SideEffectsMap,
-    pub globs: GlobList,
+    pub(crate) exact: SideEffectsMap,
+    pub(crate) globs: GlobList,
 }
 
 impl SideEffects {
-    pub fn has_side_effects(&self, path: &[u8]) -> bool {
+    pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
@@ -293,7 +293,7 @@ impl SideEffects {
 /// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
 /// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
 /// call-sites that only need a transient borrow.
-pub trait FileSystemPackageJsonExt {
+trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
     fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
@@ -1028,11 +1028,11 @@ impl PackageJSON {
 }
 
 pub struct ExportsMap {
-    pub root: Entry,
+    pub(crate) root: Entry,
 }
 
 impl ExportsMap {
-    pub fn parse(
+    pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
@@ -1049,13 +1049,13 @@ impl ExportsMap {
     }
 }
 
-pub struct Visitor<'a> {
-    pub source: &'a bun_ast::Source,
-    pub log: &'a mut bun_ast::Log,
+pub(crate) struct Visitor<'a> {
+    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) log: &'a mut bun_ast::Log,
 }
 
 impl<'a> Visitor<'a> {
-    pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
+    pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
         let vloc = json_parser::ValueLocation::Property(expr.loc);
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
@@ -1222,7 +1222,7 @@ impl<'a> Visitor<'a> {
 
 #[derive(Clone)]
 pub struct Entry {
-    pub data: EntryData,
+    pub(crate) data: EntryData,
 }
 
 #[derive(Clone)]
@@ -1237,25 +1237,25 @@ pub enum EntryData {
 #[derive(Clone)]
 pub struct EntryDataMap {
     // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
-    pub expansion_keys: Box<[MapEntry]>,
-    pub list: EntryDataMapList,
+    pub(crate) expansion_keys: Box<[MapEntry]>,
+    pub(crate) list: EntryDataMapList,
 }
 
 pub type EntryDataMapList = Vec<MapEntry>;
 
 #[derive(Clone)]
 pub struct MapEntry {
-    pub key: Box<[u8]>, // owned copy
-    pub key_range: bun_ast::Range,
-    pub value: Entry,
+    pub(crate) key: Box<[u8]>, // owned copy
+    pub(crate) key_range: bun_ast::Range,
+    pub(crate) value: Entry,
 }
 
 impl Entry {
-    pub fn keys_start_with_dot(&self) -> bool {
+    pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
-    pub fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
+    pub(crate) fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
         match &self.data {
             EntryData::Map(m) => {
                 for entry in m.list.iter() {
@@ -1273,19 +1273,19 @@ impl Entry {
 
 pub type ConditionsMap = StringArrayHashMap<()>;
 
-pub struct ESModule<'a> {
-    pub debug_logs: Option<&'a mut resolver::DebugLogs>,
-    pub conditions: &'a ConditionsMap,
+pub(crate) struct ESModule<'a> {
+    pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
+    pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
-    pub module_type: &'a mut ModuleType,
+    pub(crate) module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
 pub struct Resolution {
-    pub status: Status,
+    pub(crate) status: Status,
     // The source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    pub path: Box<[u8]>,
+    pub(crate) path: Box<[u8]>,
 }
 
 impl Default for Resolution {
@@ -1321,9 +1321,6 @@ pub enum Status {
     /// The package or module requested does not exist.
     ModuleNotFound,
 
-    /// The user just needs to add the missing extension
-    ModuleNotFoundMissingExtension,
-
     /// The resolved path corresponds to a directory, which is not a supported target for module imports.
     UnsupportedDirectoryImport,
 
@@ -1338,7 +1335,7 @@ pub enum Status {
 
 impl Status {
     #[inline]
-    pub fn is_undefined(self) -> bool {
+    pub(crate) fn is_undefined(self) -> bool {
         matches!(self, Status::Undefined | Status::UndefinedNoConditionsMatch)
     }
 }
@@ -1346,11 +1343,11 @@ impl Status {
 #[derive(Clone, Copy)]
 pub struct Package<'a> {
     /// Borrows from the `specifier` argument to `Package::parse`.
-    pub name: &'a [u8],
+    pub(crate) name: &'a [u8],
     /// Borrows from the `specifier` argument to `Package::parse`.
-    pub version: &'a [u8],
+    pub(crate) version: &'a [u8],
     /// Borrows from the `subpath_buf` argument to `Package::parse`.
-    pub subpath: &'a [u8],
+    pub(crate) subpath: &'a [u8],
 }
 
 impl Default for Package<'_> {
@@ -1366,22 +1363,16 @@ impl Default for Package<'_> {
 #[derive(Clone, Copy, Default)]
 pub struct PackageExternal {
     pub name: Semver::String,
-    pub version: Semver::String,
-    pub subpath: Semver::String,
 }
 
 impl<'a> Package<'a> {
-    pub fn count(self, builder: &mut Semver::semver_string::Builder) {
+    pub(crate) fn count(self, builder: &mut Semver::semver_string::Builder) {
         builder.count(self.name);
-        builder.count(self.version);
-        builder.count(self.subpath);
     }
 
-    pub fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
+    pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
             name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
-            version: builder.append_utf8_without_pool::<Semver::String>(self.version, 0),
-            subpath: builder.append_utf8_without_pool::<Semver::String>(self.subpath, 0),
         }
     }
 
@@ -1389,7 +1380,7 @@ impl<'a> Package<'a> {
     /// into it as offset-encoded `Semver::String`s. Mirrors the inline
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
     /// auto-install pending sites, exposed as the `esm.copy` helper.
-    pub fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
+    pub(crate) fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
         let mut builder = Semver::semver_string::Builder::default();
         self.count(&mut builder);
         builder.allocate()?;
@@ -1398,7 +1389,7 @@ impl<'a> Package<'a> {
         Ok((cloned, string_buf))
     }
 
-    pub fn with_auto_version(self) -> Package<'a> {
+    pub(crate) fn with_auto_version(self) -> Package<'a> {
         if self.version.is_empty() {
             return Package {
                 name: self.name,
@@ -1409,7 +1400,7 @@ impl<'a> Package<'a> {
 
         self
     }
-    pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
             slash = if slash == -1 {
@@ -1433,7 +1424,7 @@ impl<'a> Package<'a> {
         }
     }
 
-    pub fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
         if let Some(slash) = strings::index_of_char(specifier_after_name, b'/') {
             // "foo@/bar" is not a valid specifier\
             // "foo@/"   is not a valid specifier
@@ -1454,7 +1445,7 @@ impl<'a> Package<'a> {
         None
     }
 
-    pub fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
+    pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;
         }
@@ -1465,7 +1456,7 @@ impl<'a> Package<'a> {
         };
 
         if strings::starts_with(package.name, b".")
-            || strings::index_any_comptime(package.name, b"\\%").is_some()
+            || strings::index_of_any(package.name, b"\\%").is_some()
         {
             return None;
         }
@@ -1509,7 +1500,11 @@ impl<'a> Package<'a> {
         Some(package)
     }
 
-    pub fn parse_subpath(subpath: &mut &'a [u8], specifier: &[u8], subpath_buf: &'a mut [u8]) {
+    pub(crate) fn parse_subpath(
+        subpath: &mut &'a [u8],
+        specifier: &[u8],
+        subpath_buf: &'a mut [u8],
+    ) {
         if specifier.len() + 1 > subpath_buf.len() {
             *subpath = b"";
             return;
@@ -1561,12 +1556,17 @@ fn module_bufs() -> *mut ModuleBufs {
 // `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
 // requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
-    pub fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+    pub(crate) fn resolve(
+        &mut self,
+        package_url: &[u8],
+        subpath: &[u8],
+        exports: &Entry,
+    ) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
         Self::finalize(r)
     }
 
-    pub fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
+    pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
@@ -1585,7 +1585,7 @@ impl<'a> ESModule<'a> {
         }
     }
 
-    pub fn finalize(result_: Resolution) -> Resolution {
+    pub(crate) fn finalize(result_: Resolution) -> Resolution {
         let mut result = result_;
         if result.status != Status::Exact
             && result.status != Status::ExactEndsWithStar
@@ -2070,18 +2070,11 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
+                        status: Status::ExactEndsWithStar,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2231,14 +2224,14 @@ impl<'a> ESModule<'a> {
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
-    let Some(slash) = strings::index_any_comptime(path_, b"/\\") else {
+    let Some(slash) = strings::index_of_any(path_, b"/\\") else {
         return Some(b"");
     };
     let mut path = &path_[slash + 1..];
 
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {
@@ -2261,7 +2254,7 @@ fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     let mut path = path_;
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {

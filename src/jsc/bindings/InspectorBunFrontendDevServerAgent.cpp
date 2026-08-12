@@ -21,12 +21,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
 
 InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject& globalObject)
     : InspectorAgentBase("BunFrontendDevServer"_s)
-    // , m_globalobject(globalObject)
     , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
     , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
     , m_enabled(false)
 {
-    UNUSED_PARAM(globalObject);
 }
 
 InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;
@@ -37,8 +35,7 @@ void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
 
 void InspectorBunFrontendDevServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    m_frontendDispatcher = nullptr;
-    m_enabled = false;
+    disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::enable()
@@ -109,22 +106,6 @@ void InspectorBunFrontendDevServerAgent::clientNavigated(int devServerId, int co
     m_frontendDispatcher->clientNavigated(devServerId, connectionId, url, WTF::move(routeBundleId));
 }
 
-void InspectorBunFrontendDevServerAgent::clientErrorReported(int devServerId, const String& clientErrorPayloadBase64)
-{
-    if (!m_enabled || !m_frontendDispatcher)
-        return;
-
-    m_frontendDispatcher->clientErrorReported(devServerId, clientErrorPayloadBase64);
-}
-
-void InspectorBunFrontendDevServerAgent::graphUpdate(int devServerId, const String& visualizerPayloadBase64)
-{
-    if (!m_enabled || !m_frontendDispatcher)
-        return;
-
-    // m_frontendDispatcher->graphUpdate(devServerId, visualizerPayloadBase64);
-}
-
 void InspectorBunFrontendDevServerAgent::consoleLog(int devServerId, char kind, const String& data)
 {
     if (!m_enabled || !m_frontendDispatcher)
@@ -175,16 +156,6 @@ void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFront
     }
 
     agent->clientNavigated(devServerId, connectionId, url->toWTFString(), optionalRouteBundleId);
-}
-
-void InspectorBunFrontendDevServerAgent__notifyClientErrorReported(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* clientErrorPayloadBase64)
-{
-    agent->clientErrorReported(devServerId, clientErrorPayloadBase64->toWTFString());
-}
-
-void InspectorBunFrontendDevServerAgent__notifyGraphUpdate(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* visualizerPayloadBase64)
-{
-    agent->graphUpdate(devServerId, visualizerPayloadBase64->toWTFString());
 }
 
 void InspectorBunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, BunString* data)

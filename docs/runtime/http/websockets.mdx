@@ -96,6 +96,7 @@ Bun.serve({
       ws.send("Hello world"); // string
       ws.send(response.arrayBuffer()); // ArrayBuffer
       ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
+      ws.send(new Blob(["binary"])); // Blob
     },
   },
 });
@@ -384,7 +385,7 @@ type Compressor =
 
 interface Server {
   pendingWebSockets: number;
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer | Blob, compress?: boolean): number;
   upgrade(
     req: Request,
     options?: {
@@ -399,11 +400,11 @@ interface ServerWebSocket {
   readonly readyState: number;
   readonly remoteAddress: string;
   readonly subscriptions: string[];
-  send(message: string | ArrayBuffer | Uint8Array, compress?: boolean): number;
+  send(message: string | ArrayBuffer | Uint8Array | Blob, compress?: boolean): number;
   close(code?: number, reason?: string): void;
   subscribe(topic: string): boolean;
   unsubscribe(topic: string): boolean;
-  publish(topic: string, message: string | ArrayBuffer | Uint8Array): void;
+  publish(topic: string, message: string | ArrayBuffer | Uint8Array | Blob): void;
   isSubscribed(topic: string): boolean;
   cork(cb: (ws: ServerWebSocket) => void): void;
 }

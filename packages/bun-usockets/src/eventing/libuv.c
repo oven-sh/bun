@@ -44,11 +44,7 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
-  struct us_socket_t *s = (struct us_socket_t *)wp;
-  if (s->flags.adopted && s->prev) {
-    s = s->prev;
-  }
-  return s;
+  return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
 static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
@@ -78,7 +74,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * signal). */
   int eof = status == UV_EOF;
   int error = status < 0 && status != UV_EOF;
-  if (events & UV_DISCONNECT) {
+  if (events & (UV_DISCONNECT | UV_PRIORITIZED)) {
     struct us_poll_t *wp = (struct us_poll_t *)p->data;
     uv_poll_start(p, us_poll_events(wp), poll_cb);
     int kind = us_internal_poll_type(wp) & POLL_TYPE_KIND_MASK;
@@ -134,14 +130,31 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
                !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
       /* A half-open data socket whose end was already delivered: the EOF path
        * moved its poll to WRITABLE-only (loop.c), and us_poll_change re-adds
-       * UV_DISCONNECT unconditionally, so AFD keeps reporting it. Re-adding
-       * READABLE here made recv() rediscover the same EOF, which re-armed
-       * WRITABLE+DISCONNECT again - on_end busy-looped once per iteration per
-       * half-open socket, and every subsequent event-loop turn paid that cost.
-       * The re-arm at the top of this branch (uv_poll_start(p, us_poll_events))
-       * already dropped DISCONNECT, so a socket at 0-event polling quiesces.
-       * Non-SOCKET kinds keep the unconditional READABLE below: SEMI_SOCKET
-       * checks error/eof (set from status) and listen polls READABLE only. */
+       * UV_DISCONNECT unconditionally, so AFD keeps reporting the FIN's
+       * level-triggered DISCONNECT. Re-adding READABLE here made recv()
+       * rediscover the same EOF and busy-loop on_end; keeping DISCONNECT
+       * armed would complete instantly forever. But the peer's later RST
+       * must still close the socket (epoll parity: EPOLLERR is unmaskable),
+       * so ask the kernel which of the two this wakeup is: a dead peer
+       * surfaces via SO_ERROR or the zero-byte send probe and closes through
+       * the shared error path; a FIN re-report quiesces with only the
+       * ABORT-only subscription (UV_PRIORITIZED) kept armed so the RST still
+       * has an event to ride. Non-SOCKET kinds keep the unconditional
+       * READABLE below: SEMI_SOCKET checks error/eof (set from status) and
+       * listen polls READABLE only. */
+      struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+      /* A reported UV_PRIORITIZED is AFD's own ABORT signal and needs no
+       * probe; the probe covers a reset that arrives while PRIORITIZED was
+       * not yet subscribed (reported as plain DISCONNECT, same as the FIN
+       * re-report) and a reset AFD has latched but only SO_ERROR shows. */
+      if (!sock->flags.is_closed &&
+          ((events & UV_PRIORITIZED) ||
+           us_socket_get_error(sock) != 0 ||
+           us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
+        error = 1;
+      } else {
+        uv_poll_start(p, us_poll_events(wp) | UV_PRIORITIZED, poll_cb);
+      }
     } else {
       events |= UV_READABLE;
     }

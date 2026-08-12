@@ -23,7 +23,6 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
-#[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
@@ -84,7 +83,7 @@ pub struct TarballStream {
     http_err: Option<crate::Error>,
 
     /// Cached response status (metadata only arrives on the first callback).
-    pub status_code: u32,
+    pub(crate) status_code: u32,
 
     /// True while a drain task is either queued on the thread pool or
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
@@ -103,7 +102,7 @@ pub struct TarballStream {
     reading: Vec<u8>,
     read_pos: usize,
 
-    archive: Option<*mut lib::Archive>,
+    archive: Option<lib::ReadArchive>,
 
     /// Where we are in the per-entry state machine between drain
     /// invocations. libarchive preserves everything else (filter buffers,
@@ -162,7 +161,7 @@ pub struct TarballStream {
     /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
     /// read-only `request_extract()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
-    extract_task: bun_ptr::ParentRef<Task>,
+    extract_task: bun_ptr::ParentRef<Task, bun_ptr::Mut>,
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
 }
@@ -202,11 +201,13 @@ impl TarballStream {
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
         // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
-        // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
-        // passes a non-null `*mut Task`.
-        let extract_task = bun_ptr::ParentRef::<Task>::from(
-            core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
-        );
+        // `tag == Tag::Extract`).
+        let extract_task =
+            core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
+        // SAFETY: `extract_task` is the caller's live task pointer.
+        let extract_task = unsafe {
+            bun_ptr::ParentRef::<Task, bun_ptr::Mut>::from_raw_mut(extract_task.as_ptr())
+        };
         let tarball = &extract_task.request_extract().tarball;
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
@@ -527,9 +528,9 @@ impl TarballStream {
             }
 
             // `archive` points to a libarchive heap allocation disjoint from
-            // `*this`; holding `&mut lib::Archive` across the loop does not
+            // `*this`; holding `&lib::Archive` across the loop does not
             // alias any access to `*this`.
-            let archive = &mut *(*this).archive.unwrap();
+            let archive: &lib::Archive = (*this).archive.as_deref().unwrap();
 
             loop {
                 match (*this).phase {
@@ -550,9 +551,7 @@ impl TarballStream {
                                 (*this).begin_entry(&mut *entry)?;
                             }
                             lib::Result::Failed | lib::Result::Fatal => {
-                                // SAFETY: `(*this).archive` is the live `read_new()` handle
-                                // opened in `init` and held until `finish` frees it.
-                                let msg = (*(*this).archive.unwrap()).error_string();
+                                let msg = archive.error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
@@ -578,9 +577,7 @@ impl TarballStream {
                                 }
                             }
                             _ => {
-                                // SAFETY: `(*this).archive` is the live `read_new()` handle
-                                // opened in `init` and held until `finish` frees it.
-                                let msg = (*(*this).archive.unwrap()).error_string();
+                                let msg = archive.error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
@@ -603,19 +600,12 @@ impl TarballStream {
     /// lifetime of the archive — see `step()` # Safety for the provenance
     /// requirement.
     unsafe fn open_archive(this: *mut Self) -> crate::Result<()> {
-        let archive = lib::Archive::read_new();
-        let guard = scopeguard::guard(archive, |a| {
-            // SAFETY: errdefer cleanup — archive is a valid handle from read_new().
-            unsafe {
-                let _ = (*a).read_close();
-                let _ = (*a).read_free();
-            }
-        });
+        let archive = lib::ReadArchive::new();
         // Bypass bidding entirely: the stream is always gzip → tar, and
         // bidding would try to read-ahead before any bytes have arrived.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
+        if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
             return Err(crate::Error::Fail);
         }
         // Register tar before read_set_options so the option has a format slot
@@ -626,22 +616,20 @@ impl TarballStream {
         // format away and archive_read_open1() falls back to bidding. Bidding
         // reads ahead 512 decompressed bytes and fails with "Unrecognized
         // archive format" when the first HTTP chunk is too small for that.
-        // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_support_format_tar() };
-        // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
+        let _ = archive.read_support_format_tar();
+        let _ = archive.read_set_options(c"read_concatenated_archives");
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
+        if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
             return Err(crate::Error::Fail);
         }
 
         // SAFETY: archive is a valid handle; `this` outlives the archive
-        // (freed only in `Drop` after `read_free`). See fn-level # Safety
-        // for why client_data must be the Box-rooted `this` and not a
-        // `&mut self`-derived pointer.
+        // (dropped below on failure, otherwise as a field of `*this`). See
+        // fn-level # Safety for why client_data must be the Box-rooted
+        // `this` and not a `&mut self`-derived pointer.
         let rc_raw: c_int = unsafe {
             lib::archive_read_open(
-                archive,
+                archive.as_mut_ptr(),
                 this.cast::<c_void>(),
                 None,
                 Some(archive_read_callback),
@@ -665,21 +653,20 @@ impl TarballStream {
                 // open() runs the filter bidder which we bypassed, but the
                 // client open path may still probe; treat as transient.
                 // SAFETY: see fn-level # Safety — raw-ptr field write.
-                unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
+                unsafe { (*this).archive = Some(archive) };
                 return Ok(());
             }
             _ => {
                 bun_output::scoped_log!(
                     TarballStream,
                     "archive_read_open: {}",
-                    // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(unsafe { (*archive).error_string() })
+                    bstr::BStr::new(archive.error_string())
                 );
                 return Err(crate::Error::Fail);
             }
         }
         // SAFETY: see fn-level # Safety — raw-ptr field write.
-        unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
+        unsafe { (*this).archive = Some(archive) };
         Ok(())
     }
 
@@ -799,6 +786,15 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        if rest.len() >= norm_buf.len() {
+            bun_core::warn!(
+                "Skipping entry with a path longer than the maximum path length: {}\n",
+                bun_core::fmt::fmt_os_path(rest, Default::default()),
+            );
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();
@@ -1221,13 +1217,6 @@ impl Drop for TarballStream {
         if let Some(d) = self.dest {
             d.close();
         }
-        if let Some(a) = self.archive {
-            // SAFETY: `a` is a live libarchive handle owned by this struct.
-            unsafe {
-                let _ = (*a).read_close();
-                let _ = (*a).read_free();
-            }
-        }
     }
 }
 
@@ -1453,7 +1442,7 @@ fn make_symlink(
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
         let mut seen_named_component = false;
-        for component in target_bytes.split(|c| *c == b'/') {
+        for component in strings::split(target_bytes, b"/") {
             match component {
                 b"" | b"." => {}
                 b".." => {

@@ -117,14 +117,14 @@ pub enum Version {
 }
 
 impl Version {
-    pub const CURRENT: Version = Version::V2;
+    pub(crate) const CURRENT: Version = Version::V2;
 
     #[inline]
-    pub const fn current() -> Version {
+    pub(crate) const fn current() -> Version {
         Version::CURRENT
     }
 
-    pub const fn from_int(n: u32) -> Option<Version> {
+    pub(crate) const fn from_int(n: u32) -> Option<Version> {
         match n {
             0 => Some(Version::V0),
             1 => Some(Version::V1),
@@ -136,7 +136,7 @@ impl Version {
     /// `true` when this lockfile version is at least `other`. Used to gate
     /// strict parse-time checks introduced in a later version.
     #[inline]
-    pub const fn at_least(self, other: Version) -> bool {
+    pub(crate) const fn at_least(self, other: Version) -> bool {
         (self as u32) >= (other as u32)
     }
 }
@@ -149,7 +149,7 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(
@@ -164,10 +164,6 @@ pub(crate) struct Stringifier;
 
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
-
-    // pub fn save(this: &Lockfile) {
-    //     let _ = this;
-    // }
 
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
@@ -289,7 +285,7 @@ impl Stringifier {
         Version::CURRENT
     }
 
-    pub(crate) fn save_from_binary_inner(
+    fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -344,14 +340,13 @@ impl Stringifier {
                     let mut key: Vec<u8> = Vec::new();
                     {
                         use std::io::Write;
-                        write!(
+                        let _ = write!(
                             &mut key,
                             "{}{}{}",
                             bstr::BStr::new(node.relative_path),
                             if node.depth == 0 { "" } else { "/" },
                             bstr::BStr::new(dep.name.slice(buf)),
-                        )
-                        .ok();
+                        );
                     }
                     pkg_map.put(&key, ());
                 }
@@ -479,22 +474,21 @@ impl Stringifier {
 
                     if lockfile.patched_dependencies.count() > 0 {
                         use std::io::Write;
-                        write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf))).ok();
+                        let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
                         match res.tag {
                             ResolutionTag::Workspace => {
                                 if let Some(workspace_version) =
                                     lockfile.workspace_versions.get(&pkg_name_hash)
                                 {
-                                    write!(&mut temp_buf, "{}", workspace_version.fmt(buf)).ok();
+                                    let _ = write!(&mut temp_buf, "{}", workspace_version.fmt(buf));
                                 }
                             }
                             _ => {
-                                write!(
+                                let _ = write!(
                                     &mut temp_buf,
                                     "{}",
                                     res.fmt(buf, bun_core::fmt::PathSep::Posix)
-                                )
-                                .ok();
+                                );
                             }
                         }
 
@@ -985,7 +979,7 @@ impl Stringifier {
                             };
                             {
                                 use std::io::Write;
-                                write!(&mut temp_buf, "{}", repo.fmt(prefix, buf)).ok();
+                                let _ = write!(&mut temp_buf, "{}", repo.fmt(prefix, buf));
                             }
                             write!(
                                 writer,
@@ -1457,9 +1451,9 @@ pub enum ParseError {
 
 bun_core::oom_from_alloc!(ParseError);
 
-pub(crate) type PkgPathSet = PkgMap<()>;
+type PkgPathSet = PkgMap<()>;
 
-pub(crate) struct PkgMap<T> {
+struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
 
@@ -1473,7 +1467,7 @@ impl<T> PkgMap<T> {
     // No `Entry` alias — inherent associated types are
     // unstable; callers name `T` directly.
 
-    pub(crate) fn init() -> Self {
+    fn init() -> Self {
         Self {
             map: StringHashMap::default(),
         }
@@ -1481,7 +1475,7 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    pub(crate) fn get_or_put(
+    fn get_or_put(
         &mut self,
         name: &[u8],
     ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
@@ -1491,24 +1485,56 @@ impl<T> PkgMap<T> {
         self.map.get_or_put(name)
     }
 
-    pub(crate) fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
+    fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
         self.map.put_assume_capacity(name.as_ref(), value);
     }
 
-    pub(crate) fn get(&self, name: &[u8]) -> Option<&T> {
+    fn get(&self, name: &[u8]) -> Option<&T> {
         self.map.get(name)
     }
 
-    pub(crate) fn contains(&self, path: &[u8]) -> bool {
+    fn contains(&self, path: &[u8]) -> bool {
         self.map.contains_key(path)
     }
 
-    pub(crate) fn find_resolution(
+    fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
+    ) -> Result<&T, ResolveError> {
+        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
+    }
+
+    /// Like `find_resolution`, but stops the upward walk one level above a
+    /// bundled package, mirroring `Tree::hoist_dependency`, which never
+    /// searches past a bundled dependency's hoist root when it re-derives
+    /// optional peer edges (#37346).
+    ///
+    /// Only `"bundled": true` entries bound the walk: a transitive dependency
+    /// of a bundled package also inherits the bundle's hoist root in
+    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
+    /// indistinguishable from an ordinary conflict-nested package whose hoist
+    /// root is the lockfile root.
+    fn find_resolution_bounded_at_bundle(
+        &self,
+        pkg_path: &[u8],
+        dep: &Dependency,
+        string_buf: &[u8],
+        path_buf: &mut [u8],
+        bundled_pkgs: &PkgPathSet,
+    ) -> Result<&T, ResolveError> {
+        self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
+    }
+
+    fn find_resolution_impl(
+        &self,
+        pkg_path: &[u8],
+        dep: &Dependency,
+        string_buf: &[u8],
+        path_buf: &mut [u8],
+        bundled_pkgs: Option<&PkgPathSet>,
     ) -> Result<&T, ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
@@ -1520,6 +1546,7 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
+        let mut at_bundle_root = false;
         let mut valid = true;
         while valid {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
@@ -1529,8 +1556,12 @@ impl<T> PkgMap<T> {
                 return Ok(entry);
             }
 
-            if offset == 0 {
+            if offset == 0 || at_bundle_root {
                 return Err(ResolveError::Unresolvable);
+            }
+
+            if let Some(bundled_pkgs) = bundled_pkgs {
+                at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
@@ -1599,7 +1630,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
 }
 
-pub fn parse_into_binary_lockfile(
+pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,
@@ -2348,14 +2379,6 @@ pub fn parse_into_binary_lockfile(
                     );
                     return Err(ParseError::UnexpectedResolution);
                 }
-                Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
-                    log.add_error_fmt(
-                        source,
-                        item_loc(source, key_loc, res_info_idx),
-                        format_args!("Invalid package version: {}", bstr::BStr::new(res_str)),
-                    );
-                    return Err(ParseError::InvalidSemver);
-                }
             };
 
             let mut npm_url_needs_integrity = false;
@@ -2969,8 +2992,21 @@ pub fn parse_into_binary_lockfile(
                 let res_id = match peer_res_id {
                     Some(id) => id,
                     None => {
-                        match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
-                        {
+                        // Bounded so the loaded lockfile binds optional peers
+                        // exactly like the hoister that re-derives them after
+                        // `Package::clone` resets them (#37346).
+                        let found = if dep.behavior.is_optional_peer() {
+                            pkg_map.find_resolution_bounded_at_bundle(
+                                pkg_path,
+                                dep,
+                                string_buf,
+                                &mut path_buf[..],
+                                &bundled_pkgs,
+                            )
+                        } else {
+                            pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
+                        };
+                        match found {
                             Ok(&id) => id,
                             Err(ResolveError::InvalidPackageKey) => {
                                 log.add_error(Some(source), row.key_loc, b"Invalid package path");

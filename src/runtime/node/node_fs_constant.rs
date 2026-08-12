@@ -1,7 +1,7 @@
 // File Copy Constants
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Copyfile(pub i32);
+pub struct Copyfile(pub(crate) i32);
 
 impl Copyfile {
     /// Wrap a raw flags value.
@@ -10,8 +10,8 @@ impl Copyfile {
         Self(raw)
     }
 
-    pub(crate) const EXCLUSIVE: i32 = 1;
-    pub(crate) const FORCE: i32 = 4;
+    const EXCLUSIVE: i32 = 1;
+    const FORCE: i32 = 4;
 
     #[inline]
     pub(crate) fn is_force_clone(self) -> bool {
@@ -29,4 +29,4 @@ pub(crate) const COPYFILE_EXCL: i32 = Copyfile::EXCLUSIVE;
 ///
 /// Constant for fs.copyFile. Copy operation will attempt to create a copy-on-write reflink.
 /// If the underlying platform does not support copy-on-write, then the operation will fail with an error.
-pub(crate) const COPYFILE_FICLONE_FORCE: i32 = Copyfile::FORCE;
+const COPYFILE_FICLONE_FORCE: i32 = Copyfile::FORCE;

@@ -566,7 +566,7 @@ pub fn enqueue_dependency_to_root(
 /// All-void callback set used by `enqueueDependencyToRoot` and `runAndWaitFn`:
 /// `Ctx = ()`, no callbacks, so the `HAS_*` const-gates compile out the
 /// callback paths.
-pub(crate) struct VoidRunTasksCallbacks;
+struct VoidRunTasksCallbacks;
 impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
     type Ctx = ();
 }
@@ -579,43 +579,38 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-/// # Safety
-/// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
-/// being transferred to the patch-task fifo.
-pub unsafe fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
+/// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once
+/// in `run_tasks` after the thread pool pushes it onto `patch_task_queue`.
+pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
     bun_output::scoped_log!(
         PackageManager,
-        "Enqueue patch task: 0x{:x} {}",
-        task as usize,
-        // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-        unsafe { (*task).callback.tag_name() }
+        "Enqueue patch task: {:p} {}",
+        task,
+        task.callback.tag_name()
     );
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
     }
 
-    this.patch_task_fifo.write_item_assume_capacity(task);
+    this.patch_task_fifo
+        .write_item_assume_capacity(bun_core::heap::into_raw(task));
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-/// # Safety
-/// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
-/// being transferred to the patch-task fifo.
-pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
+pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask>) {
     bun_output::scoped_log!(
         PackageManager,
-        "Enqueue patch task pre: 0x{:x} {}",
-        task as usize,
-        // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-        unsafe { (*task).callback.tag_name() }
+        "Enqueue patch task pre: {:p} {}",
+        task,
+        task.callback.tag_name()
     );
-    // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-    unsafe { (*task).pre = true };
+    task.pre = true;
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
     }
 
-    this.patch_task_fifo.write_item_assume_capacity(task);
+    this.patch_task_fifo
+        .write_item_assume_capacity(bun_core::heap::into_raw(task));
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -655,7 +650,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let version: dependency::Version = 'version: {
-        if dependency.version.tag == dependency::version::Tag::Npm {
+        // An `npm:` alias names its registry target explicitly, so only plain
+        // dependencies may be redirected to a same-named alias elsewhere in the tree.
+        if dependency.version.tag == dependency::version::Tag::Npm
+            && !dependency.version.npm().is_alias
+        {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -921,9 +920,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
-                                    // SAFETY: `patch_task` is a non-null `heap::alloc`.
-                                    let cb = unsafe { &(*patch_task).callback };
-                                    if cb.is_calc_hash()
+                                    if patch_task.callback.is_calc_hash()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::CalcPatchHash
                                     {
@@ -932,9 +929,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
-                                        // SAFETY: `patch_task` is a non-null `heap::alloc`.
-                                        unsafe { enqueue_patch_task(this, patch_task) };
-                                    } else if cb.is_apply()
+                                        enqueue_patch_task(this, patch_task);
+                                    } else if patch_task.callback.is_apply()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
                                     {
@@ -943,8 +939,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );
-                                        // SAFETY: `patch_task` is a non-null `heap::alloc`.
-                                        unsafe { enqueue_patch_task(this, patch_task) };
+                                        enqueue_patch_task(this, patch_task);
                                     }
                                 }
                             }
@@ -1680,11 +1675,7 @@ fn enqueue_git_clone(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1716,9 +1707,7 @@ fn enqueue_git_clone(
                 PackageIndexEntry::Id(p) => *p,
                 PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
             };
-            let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-            // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
-            let mut pt = unsafe { bun_core::heap::take(pt) };
+            let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
             pt.callback.apply_mut().task_id = Some(task_id);
             Some(pt)
         } else {
@@ -1800,9 +1789,7 @@ pub fn enqueue_git_checkout(
                     PackageIndexEntry::Id(p) => *p,
                     PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
                 };
-                let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
-                let mut pt = bun_core::heap::take(pt);
+                let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -1864,11 +1851,7 @@ fn enqueue_local_tarball(
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
-        // provenance for `assume_mut()` in `Task::callback`.
-        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
-            &mut *this,
-        ))),
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {
@@ -1942,7 +1925,7 @@ pub(crate) enum ResolvedPackageTask {
     NetworkTask(*mut NetworkTask),
 
     /// Apply patch task or calc patch hash task
-    PatchTask(*mut PatchTask),
+    PatchTask(Box<PatchTask>),
 }
 
 #[derive(Default)]
@@ -1976,9 +1959,10 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // Update direct deps of the current workspace; catalogs are root-scoped.
+            && (dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(
@@ -2749,7 +2733,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_download(
+    pub(crate) fn enqueue_tarball_for_download(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2768,7 +2752,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_reading(
+    pub(crate) fn enqueue_tarball_for_reading(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2787,7 +2771,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_git_for_checkout(
+    pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
         alias: &[u8],
@@ -2806,7 +2790,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_package_for_download(
+    pub(crate) fn enqueue_package_for_download(
         &mut self,
         name: &[u8],
         dependency_id: DependencyID,

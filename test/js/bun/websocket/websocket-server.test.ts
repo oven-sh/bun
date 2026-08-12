@@ -1373,7 +1373,7 @@ function test(
   ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
-  it.concurrent(
+  it(
     label,
     async () => {
       let isDone = false;

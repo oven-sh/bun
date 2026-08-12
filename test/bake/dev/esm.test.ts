@@ -273,6 +273,48 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+devTest("import() with an options object returns the module namespace", {
+  // Every import() in a dev server module is lowered to hmr.dynamicImport().
+  // Modules the dev server did not bundle (builtins, externals, URLs) fall
+  // through to a real import(), which must be returned to the caller when
+  // import options are present, the same as when they are absent.
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const x = 1;
+    `,
+    "routes/index.ts": `
+      export default async function (req, meta) {
+        const builtin = await import("node:path");
+        const builtinWithOptions = import("node:path", { with: {} });
+        const specifier = "node:" + "path";
+        const computedWithOptions = import(specifier, { with: {} });
+        const bundledWithOptions = import("../dep", { with: {} });
+        return Response.json({
+          builtinWithOptions: [
+            builtinWithOptions instanceof Promise,
+            (await builtinWithOptions) === builtin,
+          ],
+          computedWithOptions: [
+            computedWithOptions instanceof Promise,
+            (await computedWithOptions) === builtin,
+          ],
+          bundledWithOptions: [
+            bundledWithOptions instanceof Promise,
+            (await bundledWithOptions).x,
+          ],
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      builtinWithOptions: [true, true],
+      computedWithOptions: [true, true],
+      bundledWithOptions: [true, 1],
+    });
+  },
+});
 devTest("importer tracking survives flipping a module from ESM to CJS", {
   // https://github.com/oven-sh/bun/issues/31942
   files: {

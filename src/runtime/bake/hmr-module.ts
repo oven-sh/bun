@@ -142,7 +142,7 @@ export class HMRModule {
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts
-      ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
+      ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "return import(specifier, opts)"))(id, opts)
       : import(id);
   }
 

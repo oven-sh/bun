@@ -12,9 +12,9 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   WorkPool::schedule(this.task());               // accessor returns &mut Task
 //   WorkPool::schedule(&mut self.task);            // coerces to *mut Task
 //
-// are banned; `&raw mut (*p).task`, `&raw mut self.task`, `T::field_of(p)`,
-// `T::task_of(p)` (an associated fn given the object's pointer) are the
-// shapes to use.
+// are banned; `&raw mut (*p).task`, `&raw mut self.task` and `T::field_of(p)`
+// (`bun_core::IntrusiveField`, given the object's pointer) are the shapes to
+// use.
 //
 // The pool calls back with exactly the pointer it was given, and every
 // trampoline behind these sites `container_of`s it back to the embedding
@@ -26,21 +26,29 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // callback reads and writes, and the allocation the completion may free, are
 // outside it. Stacked Borrows rejects every out-of-range access; Tree Borrows
 // (what `bun run rust:miri` uses) rejects the writes and the free. A raw
-// projection from the object's pointer (`&raw mut (*p).task`) keeps `p`'s
-// provenance; that is what `WorkPool::schedule_owned` does
-// (src/threading/work_pool.rs) and what `CompressionStream::write` in
-// src/runtime/node/node_zlib_binding.rs, the instance this was written for,
-// does now via `CompressionStreamImpl::task_of`.
+// projection from the object's pointer (`&raw mut (*p).task`, which is what
+// `IntrusiveField::field_of` computes) keeps `p`'s provenance; that is what
+// `WorkPool::schedule_owned` does (src/threading/work_pool.rs) and what
+// `CompressionStream::write` in src/runtime/node/node_zlib_binding.rs, the
+// instance this was written for, does now.
 //
-// Scope: the argument expression at the `WorkPool::schedule(` call. A pointer
-// projected the wrong way somewhere else and passed in through a local is the
-// same bug and is not caught here. This lint is about the range of the pointer
-// the pool gets; `&raw mut self.task` has the whole object's range and passes
-// here, and the separate problem with it (the `&mut self` it is taken through
-// stays protected while the pool thread is already running) is the subject of
-// work-pool-schedule-projection.test.ts (#37768). Siblings:
-// self-receiver-reclaim.test.ts, fn-long-mut-reborrow.test.ts,
-// frozen-nonnull-reborrow.test.ts.
+// Scope: the argument expression at the `WorkPool::schedule(` call. Every
+// method call in that position goes through a reference (an accessor returns
+// one, a cell's `.as_ptr()` auto-refs the field), so any method call is
+// banned, whether it is the whole argument (`x.task()`), the tail of one
+// (`T::task(x).as_ptr()`) or an operand (`JsCell::as_ptr(x.task())`), and so
+// is a call nested in a call (`JsCell::as_ptr(T::task(x))`); the shapes that
+// pass are place projections and one associated fn applied to a raw pointer or
+// a local, and what that fn does inside is not checked (the tree's is
+// `field_of`, whose body is the trait's). Not covered: a pointer
+// projected the wrong way somewhere else and passed in through a local, and
+// tasks that go into a `Batch::from(..)` and are scheduled later. This lint is
+// about the range of the pointer the pool gets; `&raw mut self.task` has the
+// whole object's range and passes here, and the separate problem with it (the
+// `&mut self` it is taken through stays protected while the pool thread is
+// already running) is the subject of work-pool-schedule-projection.test.ts
+// (#37768). Siblings: self-receiver-reclaim.test.ts,
+// fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -63,19 +71,20 @@ const tracked: Set<string> | null = (() => {
 // they do not match.
 const SCHEDULE = /\bWorkPool::schedule\s*\(/g;
 
-// A method-call chain rooted at a receiver (`this.task()`, `self.task.as_ptr()`,
-// `(*this).task.as_ptr()`, `self.task_mut()`): an accessor auto-refs the field
-// or returns a reference to it, so the pointer that comes out covers the field
-// only. Associated-fn calls (`T::task_of(p)`, `JsCell::raw_get(..)`) are not
-// rooted at a receiver and do not match.
-const METHOD_CHAIN = /^(?:[\w:]+|\(\s*\*\s*[\w.]+\s*\))(?:\.\w+)*(?:\.\w+\s*\([^()]*\)\s*)+$/;
+// A method call anywhere in the argument (`this.task()`, `self.task.as_ptr()`,
+// `(*this).task.as_ptr()`, `self.task_mut()`, `JsCell::as_ptr(this.task())`).
+// Field paths without a call (`&raw mut (*p).task`) and associated-fn calls
+// (`T::field_of(p)`) have no `.name(` and do not match.
+const METHOD_CALL = /\.\w+(?:::<[^>]*>)?\s*\(/;
+// A call whose argument is itself a call (`JsCell::as_ptr(T::task(this))`):
+// whatever the inner call returned is what gets projected, and an associated
+// fn is only in the clear when it is applied to a raw pointer or a local.
+// `addr_of_mut!((*p).task)` has `!(` in front of its parens and does not match.
+const NESTED_CALL = /\w\s*\([^()]*\w\s*\(/;
 // A reference formed anywhere in the argument: `&mut self.task` coercing to
 // `*mut Task`, `from_mut(&mut self.task)`, `JsCell::as_ptr(&self.task)`.
 // `&raw mut` / `&raw const` are the raw projections this lint asks for.
 const REFERENCE = /&(?!\s*raw\b)/;
-// The reference-to-pointer conversions, in case the reference itself is
-// spelled somewhere the regex above does not see (a macro, a cast chain).
-const FROM_REF = /\bfrom_(?:mut|ref)\b/;
 
 /** The argument text of the call whose opening paren is at `open`, or null if unbalanced. */
 function argumentAt(source: string, open: number): string | null {
@@ -98,7 +107,7 @@ function normalize(argument: string): string {
 
 function isBanned(argument: string): boolean {
   const arg = normalize(argument);
-  return METHOD_CHAIN.test(arg) || REFERENCE.test(arg) || FROM_REF.test(arg);
+  return METHOD_CALL.test(arg) || NESTED_CALL.test(arg) || REFERENCE.test(arg);
 }
 
 /** Byte offsets (into `stripped`) of every banned schedule call in one file. */
@@ -158,7 +167,7 @@ test("scans a non-empty set of tracked Rust sources containing schedule calls", 
 
 test("the classifier recognizes the spellings it claims to", () => {
   const banned = [
-    // `CompressionStream::write` before `task_of`: `task()` returns
+    // `CompressionStream::write` as it was: `task()` returns
     // `&JsCell<WorkPoolTask>`.
     "this.task().as_ptr()",
     // `FileCloser::on_io_request_closed`: `task()` returns `&mut WorkPoolTask`.
@@ -166,6 +175,12 @@ test("the classifier recognizes the spellings it claims to", () => {
     "self.task.as_ptr()",
     "(*this).task.as_ptr()",
     "self.task_mut()",
+    // The same accessors in other positions.
+    "JsCell::as_ptr(this.task())",
+    "JsCell::as_ptr(T::task(this))",
+    "T::task(this).as_ptr()",
+    "<T as CompressionStreamImpl>::task(this).as_ptr()",
+    "this.task().as_ptr().cast::<WorkPoolTask>()",
     "&mut self.task",
     "&mut (*this).task",
     "&self.task as *const _ as *mut _",
@@ -184,9 +199,8 @@ test("the classifier recognizes the spellings it claims to", () => {
     "&raw mut (*st).task",
     "&raw mut (*subtask).work_task",
     "unsafe { &raw mut (*job).task }",
-    "unsafe { T::task_of(this_ptr) }",
+    "unsafe { T::field_of(this_ptr) }",
     "unsafe { T::field_of(raw) }",
-    "unsafe { ::bun_jsc::JsCell::raw_get(&raw mut (*this).task) }",
     "core::ptr::addr_of_mut!((*this).task)",
     // A pointer projected elsewhere is out of scope.
     "task",

@@ -163,20 +163,6 @@ impl<T> JsCell<T> {
     pub const fn as_ptr(&self) -> *mut T {
         self.0.get()
     }
-
-    /// Raw pointer to the inner `T` of the cell `this` points at, keeping
-    /// `this`'s provenance (`UnsafeCell::raw_get`). `as_ptr` goes through a
-    /// `&JsCell<T>`, which is a reborrow of just the cell: a pointer that is
-    /// later `container_of`'d back to the enclosing object (intrusive task
-    /// fields) has to be projected from the enclosing object's pointer with
-    /// this instead, `JsCell::raw_get(&raw mut (*obj).field)`.
-    ///
-    /// Safe for the same reason `UnsafeCell::raw_get` is: nothing is read,
-    /// the result is only as valid as `this`.
-    #[inline(always)]
-    pub const fn raw_get(this: *const Self) -> *mut T {
-        core::cell::UnsafeCell::raw_get(this.cast::<core::cell::UnsafeCell<T>>())
-    }
 }
 
 impl<T: Default> Default for JsCell<T> {

@@ -691,7 +691,8 @@ let childReport = '';
 child.stderr.on('data', d => { childReport += d; });
 child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
 child.on('disconnect', () => got.push('disconnect'));
-child.on('exit', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
+// 'close' waits for 'exit', 'disconnect' and the end of the stderr pipe; 'exit' can beat the other two.
+child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
 `,
       "child.js": `
 const net = require('node:net');

@@ -182,7 +182,7 @@ pub use bun_http_types::{ETag, MimeType};
 
 use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -241,7 +241,12 @@ impl Default for Flags {
 
 // ───────────────────────────── globals ─────────────────────────────
 
-pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
+/// Next `async_http_id`. The id keys the abort tracker and every JS-thread ->
+/// HTTP-thread message for a request, so it must stay unique for the life of
+/// the process; a 32-bit counter wraps within the lifetime of a busy process.
+/// Starts at 1: 0 marks requests without a signal store, which are never
+/// looked up by id.
+pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU64 = AtomicU64::new(1);
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread.
@@ -867,7 +872,7 @@ pub struct HTTPClient<'a> {
     /// `HTTPContext.pending_h2_connects` Vec — not an owned Box.
     pub(crate) pending_h2: Option<NonNull<h2::PendingConnect>>,
     pub(crate) signals: Signals,
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
     pub(crate) hostname: Option<&'a [u8]>,
     pub(crate) unix_socket_path: ZigStringSlice,
     /// `fetch({ compress })` — when set, the body is compressed lazily at
@@ -984,7 +989,7 @@ pub(crate) fn http_thread_mut() -> &'static mut HTTPThread {
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
 pub(crate) static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
-    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
+    Option<bun_collections::ArrayHashMap<u64, bun_uws::AnySocket>>,
 > = bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1203,7 +1208,7 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
 /// `*mut` API imposed, now centralized here so 5 call sites drop their
 /// `unsafe` block).
 #[inline]
-fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+fn abort_tracker() -> &'static mut ArrayHashMap<u64, uws::AnySocket> {
     // SAFETY: same single-thread invariant as http_thread(). Every call site
     // is a per-statement reborrow (audited in r3); no two `&mut` overlap.
     unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }

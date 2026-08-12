@@ -46,7 +46,7 @@ pub struct AsyncHTTP<'a> {
 
     pub client: HTTPClient<'a>,
     pub err: Option<crate::Error>,
-    pub async_http_id: u32,
+    pub async_http_id: u64,
 
     pub elapsed: u64,
 
@@ -68,6 +68,15 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
+
+/// `bun:internal-for-testing`: advance the id counter by `count` and return
+/// the id the next signalled request will be given, so a test can hold two
+/// live requests more than 2^32 ids apart without issuing that many requests.
+pub fn skip_ids_for_testing(count: u64) -> u64 {
+    crate::ASYNC_HTTP_ID_MONOTONIC
+        .fetch_add(count, Ordering::Relaxed)
+        .wrapping_add(count)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // helpers
@@ -151,7 +160,7 @@ fn make_client<'a>(
     header_buf: &'a [u8],
     hostname: Option<&'a [u8]>,
     signals: Signals,
-    async_http_id: u32,
+    async_http_id: u64,
     http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,

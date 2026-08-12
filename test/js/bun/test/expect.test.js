@@ -293,6 +293,67 @@ describe("expect()", () => {
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "b": "1" }));
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "2" }));
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
+      expect(new Headers({ "a": "" })).not.toEqual(new Headers({ "b": "" }));
+      // insertion order and name casing are not observable, so they don't matter
+      expect(new Headers({ "a": "1", "content-type": "text/plain" })).toEqual(
+        new Headers({ "Content-Type": "text/plain", "A": "1" }),
+      );
+      expect(new Headers({ "content-type": "text/plain" })).not.toEqual(new Headers({ "content-type": "text/html" }));
+      expect(new Headers({ "content-type": "text/plain" })).not.toEqual(new Headers({ "accept": "text/plain" }));
+      // appending a non-cookie header combines it into one value
+      expect(
+        new Headers([
+          ["accept", "x"],
+          ["accept", "y"],
+        ]),
+      ).toEqual(new Headers({ "accept": "x, y" }));
+    });
+
+    test("Headers with several set-cookie values", () => {
+      /** @param {...string} values */
+      const cookies = (...values) => {
+        const headers = new Headers({ "content-type": "text/plain", "x-a": "1" });
+        for (const value of values) headers.append("set-cookie", value);
+        return headers;
+      };
+
+      expect(cookies("k=1")).toEqual(cookies("k=1"));
+      expect(cookies("k=1", "j=2")).toEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2")).toStrictEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2", "i=3")).toEqual(cookies("k=1", "j=2", "i=3"));
+      expect(cookies("k=1", "j=2")).toEqual(new Headers(cookies("k=1", "j=2")));
+      expect(cookies("k=1", "j=2")).toEqual(
+        new Headers([
+          ["Set-Cookie", "k=1"],
+          ["X-A", "1"],
+          ["set-cookie", "j=2"],
+          ["Content-Type", "text/plain"],
+        ]),
+      );
+      expect([cookies("k=1", "j=2")]).toContainEqual(cookies("k=1", "j=2"));
+      expect({ headers: cookies("k=1", "j=2") }).toEqual({ headers: cookies("k=1", "j=2") });
+
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1", "j=3"));
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1"));
+      expect(cookies("k=1")).not.toEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1, j=2"));
+      // set-cookie order is observable through getSetCookie() and iteration
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("j=2", "k=1"));
+      expect(cookies("k=1", "j=2")).not.toStrictEqual(cookies("j=2", "k=1"));
+      expect(cookies("k=1", "k=1")).not.toEqual(cookies("k=1", "j=2"));
+
+      const differentCommonHeader = cookies("k=1", "j=2");
+      differentCommonHeader.set("content-type", "text/html");
+      expect(cookies("k=1", "j=2")).not.toEqual(differentCommonHeader);
+
+      const differentUncommonHeader = cookies("k=1", "j=2");
+      differentUncommonHeader.set("x-a", "2");
+      expect(cookies("k=1", "j=2")).not.toEqual(differentUncommonHeader);
+
+      // same number of entries overall, distributed differently
+      const oneCookieOneExtraHeader = cookies("k=1");
+      oneCookieOneExtraHeader.set("x-b", "2");
+      expect(cookies("k=1", "j=2")).not.toEqual(oneCookieOneExtraHeader);
     });
 
     // TODO: FormData

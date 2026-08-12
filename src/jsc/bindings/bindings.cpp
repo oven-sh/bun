@@ -959,12 +959,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
         // calculatedClassName is "Object" for `{}` and for a null-prototype object
         // alike; jest's toStrictEqual tells them apart (the latter has no constructor).
-        JSValue proto1 = o1->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue proto2 = o2->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (proto1.isNull() != proto2.isNull()) {
-            return false;
+        // The node entry point already compared the prototypes by identity above.
+        if constexpr (!checkPrototypes) {
+            JSValue proto1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue proto2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (proto1.isNull() != proto2.isNull()) {
+                return false;
+            }
         }
     }
 
@@ -3105,7 +3108,7 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
 }
 
 // node:assert deepStrictEqual / node:util.isDeepStrictEqual: strict deepEquals
-// plus node's [[Prototype]] identity rule (Bun.deepEquals only compares class names).
+// plus node's [[Prototype]] identity rule (Bun.deepEquals compares class names, not prototype identity).
 bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<true, false, true>(JSValue0, JSValue1, globalObject);

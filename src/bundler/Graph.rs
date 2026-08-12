@@ -244,7 +244,7 @@ impl<'a> Graph<'a> {
                 }
             }
 
-            DeferredBatchTask::schedule(transpiler);
+            DeferredBatchTask::schedule(transpiler, self.heap);
 
             return true;
         }

@@ -43,7 +43,10 @@ export const tart = {
         mkdirSync(cloneLock);
         break;
       } catch {
-        if (waited >= 120) rmSync(cloneLock, { recursive: true, force: true });
+        if (waited >= 120) {
+          rmSync(cloneLock, { recursive: true, force: true });
+          waited = 0;
+        }
         await sleep(1000);
       }
     }

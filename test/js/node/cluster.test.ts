@@ -451,6 +451,104 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
+// Windows cannot let two workers accept() on copies of one listening socket: the worker that loses
+// the race for a connection blocks inside accept() and its event loop never runs again, so it stops
+// answering IPC and never exits. TCP listens under SCHED_NONE go through the primary there instead.
+test.skipIf(!isWindows)(
+  "SCHED_NONE: two workers on one port stay responsive and exit after bursts of connections",
+  async () => {
+    using dir = tempDir("cluster-shared-accept-race", {
+      "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const BURSTS = 8;
+  const PER_BURST = 16;
+  const workers = [cluster.fork(), cluster.fork()];
+  const ports = new Set();
+  const exits = [];
+  let listening = 0;
+
+  cluster.on("listening", (worker, address) => {
+    ports.add(address.port);
+    if (++listening !== workers.length) return;
+    run(address.port).catch(err => {
+      console.log("error:", err.message);
+      process.exit(1);
+    });
+  });
+
+  cluster.on("exit", (worker, code, signal) => {
+    exits.push(code ?? signal);
+    if (exits.length === workers.length) console.log("exits:", exits.join(","));
+  });
+
+  function connectOnce(port) {
+    return new Promise((resolve, reject) => {
+      const c = net.connect(port, "127.0.0.1");
+      let data = "";
+      c.setEncoding("utf8");
+      c.on("data", chunk => (data += chunk));
+      c.on("error", reject);
+      c.on("close", () => (data === "hi" ? resolve() : reject(new Error("got " + JSON.stringify(data)))));
+    });
+  }
+
+  function pingWorkers(burst) {
+    return Promise.all(
+      workers.map(worker => {
+        return new Promise(resolve => {
+          const stuck = setTimeout(() => {
+            console.log("worker " + worker.id + " stopped answering after burst " + burst);
+            process.exit(1);
+          }, 10_000);
+          worker.once("message", () => {
+            clearTimeout(stuck);
+            resolve();
+          });
+          worker.send("ping");
+        });
+      }),
+    );
+  }
+
+  async function run(port) {
+    for (let burst = 1; burst <= BURSTS; burst++) {
+      const connections = [];
+      for (let i = 0; i < PER_BURST; i++) connections.push(connectOnce(port));
+      await Promise.all(connections);
+      await pingWorkers(burst);
+    }
+    console.log("served:", BURSTS * PER_BURST, "ports:", ports.size);
+    for (const worker of workers) worker.disconnect();
+  }
+} else {
+  net.createServer(socket => socket.end("hi")).listen(0, "127.0.0.1");
+  process.on("message", message => {
+    if (message === "ping") process.send("pong");
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "served: 128 ports: 1\nexits: 0,0\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
     "main.ts": `
@@ -807,11 +905,10 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
-test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "cert.pem": tlsCerts.cert,
-    "key.pem": tlsCerts.key,
-    "main.ts": `
+const netWorkerAfterTlsWorkerFixture = {
+  "cert.pem": tlsCerts.cert,
+  "key.pem": tlsCerts.key,
+  "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -824,11 +921,18 @@ if (cluster.isPrimary) {
   const tlsWorker = cluster.fork({ ROLE: "tls" });
   cluster.once("listening", () => {
     const netWorker = cluster.fork({ ROLE: "net" });
-    netWorker.on("message", msg => {
-      console.log("net listen error code:", msg.code, msg.msg);
+    const done = code => {
       tlsWorker.kill();
       netWorker.kill();
-      process.exit(0);
+      process.exit(code);
+    };
+    netWorker.on("message", msg => {
+      console.log("net listen error code:", msg.code, msg.msg);
+      done(0);
+    });
+    netWorker.on("listening", () => {
+      console.log("net worker is listening on the TLS worker's socket");
+      done(1);
     });
   });
 } else if (process.env.ROLE === "tls") {
@@ -839,11 +943,27 @@ if (cluster.isPrimary) {
   server.listen(0);
 }
 `,
-  });
+};
+
+test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
+  const dir = tempDirWithFiles("bun-test", netWorkerAfterTlsWorkerFixture);
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("net listen error code: EINVAL");
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
 }, 30_000);
+
+// On Windows the primary serves TCP listens under SCHED_NONE too (two workers accepting on copies of
+// one socket is what hangs a worker there), so the plain worker is refused under either policy.
+test.skipIf(!isWindows)(
+  "SCHED_NONE on Windows: plain worker listening on a key owned by a TLS shared-only handle fails with EINVAL",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", netWorkerAfterTlsWorkerFixture);
+    const { stdout } = await bunRun(joinP(dir, "main.ts"), { NODE_CLUSTER_SCHED_POLICY: "none" });
+    expect(stdout).toContain("net listen error code: EINVAL");
+    expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  },
+  30_000,
+);
 
 test.skipIf(isWindows)(
   "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",

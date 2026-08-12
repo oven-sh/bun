@@ -380,8 +380,8 @@ describe("Bun.build", () => {
 
   test.concurrent("outdir BuildArtifact reports the output path as its size", async () => {
     // The same module under two names, so the two artifacts differ only in
-    // the length of the output path, which the artifact holds both as `.path`
-    // and as the path of the file it reads from.
+    // the length of the output path, which the artifact holds twice: as
+    // `.path` and as the path of the file it reads from.
     const shortEntry = "entry.js";
     const longEntry = "entry-" + Buffer.alloc(100, "x").toString() + ".js";
     using dir = tempDir("build-artifact-size-outdir", {
@@ -393,9 +393,7 @@ describe("Bun.build", () => {
     const [long] = (await Bun.build({ entrypoints: [join(String(dir), longEntry)], outdir })).outputs;
     const extraPathBytes = long.path.length - short.path.length;
     expect(extraPathBytes).toBe(longEntry.length - shortEntry.length);
-    expect(estimateShallowMemoryUsageOf(long) - estimateShallowMemoryUsageOf(short)).toBeGreaterThanOrEqual(
-      extraPathBytes,
-    );
+    expect(estimateShallowMemoryUsageOf(long) - estimateShallowMemoryUsageOf(short)).toBe(2 * extraPathBytes);
   });
 
   test.concurrent("in-memory BuildArtifact bytes are reported to the GC", async () => {
@@ -407,7 +405,7 @@ describe("Bun.build", () => {
     using dir = tempDir("build-artifact-extra-memory", {
       "entry.js": `export const s = ${JSON.stringify(Buffer.alloc(artifactBytes, "abcdefghij").toString())};`,
       "run.js": `
-        const { heapStats } = require("bun:jsc");
+        import { heapStats } from "bun:jsc";
         const { outputs: [artifact] } = await Bun.build({ entrypoints: ["./entry.js"] });
         Bun.gc(true);
         const extraMemorySize = heapStats().extraMemorySize;

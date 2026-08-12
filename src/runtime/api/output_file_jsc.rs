@@ -133,8 +133,7 @@ impl OutputFileJsc for OutputFile {
             }
         };
 
-        // `BuildArtifact::estimated_size` reports this to the GC; the wrapper
-        // created below reports it as allocated, so it has to be computed first.
+        // `BuildArtifact::estimated_size` only reads this cache.
         blob.calculate_estimated_byte_size();
 
         let build_output = Box::new(BuildArtifact {

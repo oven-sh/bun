@@ -1914,10 +1914,8 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    /// `BuildArtifact__estimatedSize`, reported to the GC when the wrapper is
-    /// created and on every mark. Runs on the GC thread too, so it only reads
-    /// the estimate `output_file_jsc` cached into `blob` when the artifact was
-    /// built; nothing in an artifact changes after that.
+    /// Called from GC marker threads, so this only reads the estimate
+    /// `output_file_jsc` caches into `blob`.
     pub(crate) fn estimated_size(&self) -> usize {
         // The blob's estimate includes `size_of::<Blob>()`, which is part of
         // `size_of::<Self>()`.

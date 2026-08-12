@@ -1401,16 +1401,22 @@ test("file routes report the blob they hold in the server's memory cost", async 
 
   // A Bun.file() route gets a Blob that was sized when it was handed to JS.
   // The same file served through a bundled HTML import manifest entry is
-  // opened natively and has to cost the same.
+  // opened natively (from the same path string) and has to cost the same.
   const viaBunFile = costWithRoute(Bun.file(indexPath));
   const viaManifest = costWithRoute({
     index: indexPath,
     files: [{ input: "index.html", path: indexPath, loader: "html", isEntry: true, headers: {} }],
   });
-  expect(viaManifest).toBeGreaterThanOrEqual(viaBunFile);
 
-  // A route built from a BuildArtifact (directly or as a Response body) holds
-  // a blob pointing at the artifact's output path.
-  expect(costWithRoute(long) - costWithRoute(short)).toBeGreaterThanOrEqual(extraPathBytes);
-  expect(costWithRoute(new Response(long)) - costWithRoute(new Response(short))).toBeGreaterThanOrEqual(extraPathBytes);
+  expect({
+    manifestRouteOverBunFileRoute: viaManifest - viaBunFile,
+    // A route built from a BuildArtifact, directly or as a Response body,
+    // holds a blob whose file path is the artifact's output path.
+    artifactRouteExtraBytes: costWithRoute(long) - costWithRoute(short),
+    responseRouteExtraBytes: costWithRoute(new Response(long)) - costWithRoute(new Response(short)),
+  }).toEqual({
+    manifestRouteOverBunFileRoute: 0,
+    artifactRouteExtraBytes: extraPathBytes,
+    responseRouteExtraBytes: extraPathBytes,
+  });
 });

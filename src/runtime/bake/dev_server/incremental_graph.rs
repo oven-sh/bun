@@ -251,6 +251,27 @@ struct TempLookup {
     seen: bool,
 }
 
+/// A file's "imports" linked list while `process_chunk_dependencies` rebuilds
+/// it. Edges are appended in import record order because `trace_imports`
+/// walks this list to decide the order CSS files are emitted in, which has to
+/// match the source file (and therefore what `bun build` produces).
+#[derive(Default)]
+struct NewImports {
+    head: Option<EdgeIndex>,
+    tail: Option<EdgeIndex>,
+}
+
+impl NewImports {
+    fn append<const SIDE: bake::Side>(&mut self, edges: &mut [Edge<SIDE>], edge_index: EdgeIndex) {
+        edges[edge_index.get() as usize].next_import = None;
+        match self.tail {
+            Some(tail) => edges[tail.get() as usize].next_import = Some(edge_index),
+            None => self.head = Some(edge_index),
+        }
+        self.tail = Some(edge_index);
+    }
+}
+
 /// Parameterized via `adt_const_params` on `bake::Side`; `File` itself is
 /// still the folded union (see TODO above) until a trait dispatch picks the
 /// per-side layout.
@@ -819,11 +840,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let quick_lookup_values_to_care_len = quick_lookup.count();
 
         // A new import linked list is constructed from scratch.
-        let mut new_imports: Option<EdgeIndex> = None;
+        let mut new_imports = NewImports::default();
 
         if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
             if ctx.server_seen_bit_set.is_set(file_index.get() as usize) {
-                self.first_import[file_index.get() as usize] = new_imports;
+                self.first_import[file_index.get() as usize] = None;
                 return Ok(());
             }
             // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is
@@ -860,7 +881,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
-        self.first_import[file_index.get() as usize] = new_imports;
+        self.first_import[file_index.get() as usize] = new_imports.head;
 
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(
@@ -875,7 +896,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
-        new_imports: &mut Option<EdgeIndex>,
+        new_imports: &mut NewImports,
         file_index: FileIndex<SIDE>,
         index: bun_ast::Index,
     ) -> Result<(), crate::Error> {
@@ -913,7 +934,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
-        new_imports: &mut Option<EdgeIndex>,
+        new_imports: &mut NewImports,
         file_index: FileIndex<SIDE>,
         bundler_index: bun_ast::Index,
     ) -> Result<(), crate::Error> {
@@ -959,7 +980,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
-        new_imports: &mut Option<EdgeIndex>,
+        new_imports: &mut NewImports,
         file_index: FileIndex<SIDE>,
         ir_flags: bun_ast::ImportRecordFlags,
         ir_source_index: bun_ast::Index,
@@ -1020,19 +1041,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         let gop = quick_lookup.get_or_put(imported_file_index)?;
-        if gop.found_existing {
+        let edge = if gop.found_existing {
             if gop.value_ptr.seen {
                 return Ok(EdgeAttachmentResult::Continue);
             }
             gop.value_ptr.seen = true;
-            let ei = gop.value_ptr.edge_index;
-            self.edges[ei.get() as usize].next_import = *new_imports;
-            *new_imports = Some(ei);
+            gop.value_ptr.edge_index
         } else {
             // A new edge is needed to represent the dependency and import.
             let first_dep = self.first_dep[imported_file_index.get() as usize];
             let edge = self.new_edge(Edge {
-                next_import: *new_imports,
+                next_import: None,
                 next_dependency: first_dep,
                 prev_dependency: None,
                 imported: imported_file_index,
@@ -1041,7 +1060,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             if let Some(dep) = first_dep {
                 self.edges[dep.get() as usize].prev_dependency = Some(edge);
             }
-            *new_imports = Some(edge);
             self.first_dep[imported_file_index.get() as usize] = Some(edge);
 
             self.dev_incremental_result().had_adjusted_edges = true;
@@ -1050,7 +1068,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 edge_index: edge,
                 seen: true,
             };
-        }
+            edge
+        };
+        new_imports.append(&mut self.edges, edge);
         Ok(EdgeAttachmentResult::Continue)
     }
 

@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -691,6 +691,96 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+
+// None of these `@import` anything, so the comment each served chunk starts
+// with names the file the HTML or script referenced.
+const orderedCssFiles = {
+  "one.css": `.one { color: red; }`,
+  "two.css": `.two { color: red; }`,
+  "three.css": `.three { color: red; }`,
+  "four.css": `.four { color: red; }`,
+  "five.css": `.five { color: red; }`,
+};
+// https://github.com/oven-sh/bun/issues/30488 (<link> tags were served in
+// reverse order) and https://github.com/oven-sh/bun/issues/28117 (same for CSS
+// imported from a script). `bun build` emits one.css through five.css in this
+// order.
+devTest("html route links stylesheets in source order", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["one.css", "two.css", "three.css"],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./four.css";
+      import "./five.css";
+    `,
+    ...orderedCssFiles,
+  },
+  async test(dev) {
+    expect(await linkedStylesheets(dev)).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+
+    // Rebuilding a file re-links the edges it already had in the same order.
+    await dev.writeNoChanges("index.html");
+    await dev.writeNoChanges("index.ts");
+    expect(await linkedStylesheets(dev)).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+
+    await dev.write(
+      "index.html",
+      emptyHtmlFile({
+        styles: ["three.css", "one.css", "two.css"],
+        scripts: ["index.ts"],
+      }),
+    );
+    expect(await linkedStylesheets(dev)).toEqual(["three.css", "one.css", "two.css", "four.css", "five.css"]);
+
+    await dev.write(
+      "index.ts",
+      `
+        import "./five.css";
+        import "./four.css";
+      `,
+    );
+    expect(await linkedStylesheets(dev)).toEqual(["three.css", "one.css", "two.css", "five.css", "four.css"]);
+  },
+});
+devTest("framework route lists styles in source order", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      import "../two.css";
+      import "../three.css";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+    ...orderedCssFiles,
+  },
+  async test(dev) {
+    const styles: string[] = await dev.fetch("/").json();
+    expect(await stylesheetFileNames(dev, styles)).toEqual(["one.css", "two.css", "three.css"]);
+  },
+});
+
+/** The stylesheets the served HTML links, in the order it links them. */
+async function linkedStylesheets(dev: Dev): Promise<string[]> {
+  const html = await dev.fetch("/").text();
+  const hrefs = Array.from(html.matchAll(/<link rel="stylesheet" href="(\/_bun\/asset\/[^"]+\.css)">/g), m => m[1]);
+  return stylesheetFileNames(dev, hrefs);
+}
+
+/** Resolves served CSS chunk URLs to the file name in the comment each chunk starts with. */
+function stylesheetFileNames(dev: Dev, hrefs: string[]): Promise<string[]> {
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await dev.fetch(href).text();
+      const header = css.match(/^\/\* (.*) \*\/\n/);
+      if (!header) throw new Error(`${href} does not start with a file name comment:\n${css}`);
+      return header[1];
+    }),
+  );
+}
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

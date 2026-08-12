@@ -19,53 +19,34 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 
-import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
+import type { Config } from "../../scripts/build/config.ts";
 import { buildEnv } from "../../scripts/build/configure.ts";
 
-/** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
-function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
-  return {
-    cc: "/fake/llvm/bin/clang",
-    cxx: "/fake/llvm/bin/clang++",
-    hostCc: undefined,
-    hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
-    ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
-    ld: "/fake/llvm/bin/ld.lld",
-    ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
-    strip: "/fake/bin/strip",
-    llvmStrip: "/fake/llvm/bin/llvm-strip",
-    dsymutil: "/fake/llvm/bin/dsymutil",
-    bun: "/fake/bin/bun",
-    jsRuntime: "/fake/bin/bun",
-    esbuild: "/fake/bin/esbuild",
+/** The fields buildEnv() reads. */
+const cfg = (overrides: Partial<Config> = {}) =>
+  ({
     ccache: undefined,
-    cmake: "/fake/bin/cmake",
-    cargo: undefined,
-    cargoHome: undefined,
-    rustupHome: undefined,
-    msvcLinker: undefined,
-    rc: undefined,
-    mt: undefined,
-    nasm: undefined,
+    cacheDir: "/cache",
+    cwd: "/repo",
+    buildDir: "/repo/build/debug",
+    ci: false,
     ...overrides,
-  };
-}
-
-/** A host-targeted config rooted in `dir` (build dir and cache dir), so nothing outside the temp dir is referenced. */
-function hostConfig(dir: string, toolchain: Toolchain = mockToolchain()): Config {
-  return resolveConfig({ buildDir: dir, cacheDir: dir }, toolchain);
-}
+  }) as Config;
 
 /**
- * Mirrors a build helper: a script file (not `-e`, which bun already runs
- * with a single GC marker), a full GC, then the names of the process's
+ * The control below asserts on JSC's default, so neither the variable under
+ * test nor JSC's own spelling of it may leak in from the environment running
+ * this test file. Bun.spawn drops undefined entries.
+ */
+const defaultEnv: Record<string, string | undefined> = {
+  ...bunEnv,
+  BUN_JSC_numberOfGCMarkers: undefined,
+  JSC_numberOfGCMarkers: undefined,
+};
+
+/**
+ * Stands in for a build helper: a script file (not `-e`, which bun already
+ * runs with a single marker), a full GC, then the names of the process's
  * threads. JSC names its parallel markers "HeapHelper" on Linux.
  */
 const threadNamesFixture = `
@@ -75,12 +56,12 @@ const threadNamesFixture = `
   console.log(JSON.stringify(names));
 `;
 
-async function threadNames(extraEnv: Record<string, string>): Promise<string[]> {
+async function threadNames(env: Record<string, string | undefined>): Promise<string[]> {
   using dir = tempDir("build-ninja-env", { "helper.ts": threadNamesFixture });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "helper.ts"],
     cwd: String(dir),
-    env: { ...bunEnv, ...extraEnv },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -92,14 +73,12 @@ async function threadNames(extraEnv: Record<string, string>): Promise<string[]> 
 
 describe("buildEnv", () => {
   test("caps the build's bun helper processes at one GC marker", () => {
-    using dir = tempDir("build-ninja-env", {});
-    expect(buildEnv(hostConfig(String(dir)))).toEqual({ BUN_JSC_numberOfGCMarkers: "1" });
+    expect(buildEnv(cfg())).toEqual({ BUN_JSC_numberOfGCMarkers: "1" });
   });
 
   test("keeps the ccache variables alongside it", () => {
-    using dir = tempDir("build-ninja-env", {});
-    expect(buildEnv(hostConfig(String(dir), mockToolchain({ ccache: "/fake/bin/ccache" })))).toMatchObject({
-      CCACHE_DIR: resolve(String(dir), "ccache"),
+    expect(buildEnv(cfg({ ccache: "/usr/bin/ccache" }))).toMatchObject({
+      CCACHE_DIR: resolve("/cache", "ccache"),
       BUN_JSC_numberOfGCMarkers: "1",
     });
   });
@@ -109,7 +88,7 @@ describe("buildEnv", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "helper.ts"],
       cwd: String(dir),
-      env: { ...bunEnv, ...buildEnv(hostConfig(String(dir))) },
+      env: { ...defaultEnv, ...buildEnv(cfg()) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -124,12 +103,11 @@ describe("buildEnv", () => {
   test.concurrent.skipIf(!isLinux || availableParallelism() < 2)(
     "without it a helper script starts parallel GC marker threads",
     async () => {
-      expect(await threadNames({})).toContain("HeapHelper");
+      expect(await threadNames(defaultEnv)).toContain("HeapHelper");
     },
   );
 
   test.concurrent.skipIf(!isLinux)("with it a helper script starts none", async () => {
-    using dir = tempDir("build-ninja-env", {});
-    expect(await threadNames(buildEnv(hostConfig(String(dir))))).not.toContain("HeapHelper");
+    expect(await threadNames({ ...defaultEnv, ...buildEnv(cfg()) })).not.toContain("HeapHelper");
   });
 });

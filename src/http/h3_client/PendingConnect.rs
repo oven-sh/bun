@@ -99,8 +99,7 @@ impl PendingConnect {
     /// DNS worker may call from off the HTTP thread; mirror
     /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list and
     /// wake the loop. `drain_resolved` runs from `HTTPThread.drainEvents` on the
-    /// next loop iteration after the wakeup. Once pushed, the HTTP thread may
-    /// free `this` at any time, so it is not touched here.
+    /// next loop iteration after the wakeup.
     ///
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
     pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
@@ -164,6 +163,5 @@ unsafe impl Send for Resolved {}
 /// to the HTTP thread — projecting a shared `&` to an interior field from the
 /// DNS worker would alias that exclusive borrow under Stacked Borrows. A
 /// dedicated `Sync` static sidesteps that without weakening the singleton
-/// accessor's `&mut` contract; `SHARED` in `HTTPThread.rs` is the same
-/// arrangement for everything request owners on other threads hand over.
+/// accessor's `&mut` contract.
 static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());

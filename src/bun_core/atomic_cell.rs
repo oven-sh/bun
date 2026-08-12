@@ -484,15 +484,10 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
 /// This is the worker-thread sibling of `JsCell<T>` (which is JS-thread-
 /// affine and additionally documents reentrancy as the hazard).
 ///
-/// Until [`claim`](Self::claim) is called, `get()` does *not* assert
-/// (matching `RacyCell`). This lets a static be initialized on the spawning
-/// thread, then claimed from the worker thread's entry point. A static that
-/// is never claimed is just a `RacyCell` with a misleading type, so
-/// `test/internal/source-lints/thread-cell-claimed.test.ts` requires a
-/// `claim()` for every `ThreadCell` static. Before switching a `RacyCell`
-/// over, cross-thread callers therefore have to either move to a separate
-/// `Sync` static (`bun_http`'s HTTP thread) or be confined to the fields
-/// [`get_unchecked`](Self::get_unchecked) documents (`bun_io`'s request loop).
+/// **Migration note:** until [`claim`](Self::claim) is called, `get()` does
+/// *not* assert (matching `RacyCell`). This lets a static be initialized on
+/// the spawning thread, then claimed from the worker thread's entry point.
+/// `test/internal/source-lints/thread-cell-claimed.test.ts` requires that `claim()` for every static.
 #[repr(C)]
 pub struct ThreadCell<T: ?Sized> {
     #[cfg(debug_assertions)]

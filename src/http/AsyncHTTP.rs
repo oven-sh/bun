@@ -357,12 +357,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         return;
     }
 
-    // `Bun__fetchPreconnect` reaches here without going through any path that
-    // calls `HTTPThread::init`, so if `fetch.preconnect()` is the process's
-    // first HTTP operation nothing would have started the thread that drains
-    // what `schedule()` below enqueues (it asserts as much). `init` is
-    // idempotent (`Once`) and every other JS-side entry point (`send_sync`,
-    // `FetchTasklet::start`, S3) passes default opts too.
+    // `fetch.preconnect()` may be the process's first HTTP operation; `schedule()` asserts this ran.
     crate::http_thread::init(&Default::default());
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {

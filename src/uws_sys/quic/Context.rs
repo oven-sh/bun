@@ -17,6 +17,11 @@ unsafe extern "C" {
         stream_ext: c_uint,
     ) -> *mut Context;
 
+    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
+    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
+    // `noalias`/`readonly` attribute. Shims taking only the handle + value
+    // types (incl. fn-pointer callbacks) are `safe fn`.
+
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
         host: *const c_char,
@@ -28,10 +33,6 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
 
-    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
-    // `noalias`/`readonly` attribute. Shims taking only the handle + value
-    // types (incl. fn-pointer callbacks) are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),

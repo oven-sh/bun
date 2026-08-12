@@ -947,27 +947,20 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type: `init_once` writes it before spawning the thread, `on_start` `claim()`s
-// it, and from then on debug builds panic on access from any other thread.
-// Other threads never need it — everything they hand to the HTTP thread goes
-// through `Sync` statics instead (`SHARED` in `HTTPThread.rs`, behind the
-// associated `HTTPThread::schedule*` fns and `shutdown_for_exit`; `RESOLVED` in
-// `h3_client/PendingConnect.rs`).
+// type. `claim()` is invoked from `HTTPThread::on_start`; other threads use `SHARED` (HTTPThread.rs).
 pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// The HTTP thread's own state. HTTP-thread-only (see [`HTTP_THREAD`]); code
-/// on other threads uses the associated `HTTPThread::schedule*` fns instead.
+/// HTTP-thread-only; other threads use the associated `HTTPThread::schedule*` fns.
 #[inline]
 pub(crate) fn http_thread() -> &'static mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
     // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
-    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`. Cost is
-    // a single relaxed-on-x86 atomic load.
+    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`.
     assert!(
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"

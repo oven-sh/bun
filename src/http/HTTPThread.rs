@@ -83,27 +83,14 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
-/// The HTTP thread's inbox: everything other threads hand to it, plus the loop
-/// pointer they wake it through. Producers (whichever thread owns a request,
-/// via the associated `HttpThread::schedule*` fns and `shutdown_for_exit`; DNS
-/// workers via `h3_client::PendingConnect`) and the consuming HTTP thread
-/// (`drain_events`, `dealloc_in_flight_for_exit`) all hold only `&SHARED`, and
-/// every field is interior-mutable, so none of this is covered by the
-/// `&'static mut HttpThread` the HTTP thread holds across `process_events` for
-/// the life of the process. `HttpThread` itself is HTTP-thread-only: `on_start`
-/// claims `HTTP_THREAD`, so a debug build panics if `http_thread()` is ever
-/// called from anywhere else. `h3_client::PendingConnect`'s `RESOLVED` is the
-/// same split for the h3 DNS handoff.
+/// Touched by other threads, so it lives outside the `&'static mut HttpThread` the HTTP thread holds.
 struct Shared {
     queued_tasks: Queue,
     queued_shutdowns: Guarded<Vec<ShutdownMessage>>,
     queued_writes: Guarded<Vec<WriteMessage>>,
     queued_receive_resumes: Guarded<Vec<u32>>,
     queued_cert_check_resumes: Guarded<Vec<CertCheckResumeMessage>>,
-    /// `HttpThread::uws_loop`, published (Release) by `on_start` right before
-    /// it enters `process_events`. Null until then, which makes
-    /// [`HttpThread::wakeup`] a no-op; anything queued that early is picked
-    /// up by the first `drain_events` regardless.
+    /// Published by `on_start` right before `process_events`; `wakeup` is a no-op while it is null.
     uws_loop: AtomicPtr<uws::Loop>,
 }
 
@@ -116,8 +103,7 @@ static SHARED: Shared = Shared {
     uws_loop: AtomicPtr::new(core::ptr::null_mut()),
 };
 
-/// State owned by the HTTP thread. Only reachable through `http_thread()`, on
-/// the HTTP thread; state that other threads touch lives in `Shared`.
+/// HTTP-thread-only (`HTTP_THREAD` is claimed in `on_start`); other threads only touch `Shared`.
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
     /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
@@ -402,11 +388,10 @@ impl HttpThread {
 
     /// Mutable access to the live uSockets event loop.
     ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] and outlives the HTTP
-    /// thread. The loop is a separate C heap allocation disjoint from `self`.
-    /// HTTP-thread-only at every caller — other threads only reach the loop
-    /// through [`HttpThread::wakeup`], which goes through `SHARED.uws_loop` and
-    /// the raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
+    /// INVARIANT: `uws_loop` is set once in [`on_start`] and outlives the HTTP thread. The loop is a
+    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
+    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
+    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
     /// upgrade repeated in `process_events`.
     #[inline]
     fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
@@ -962,10 +947,7 @@ impl HttpThread {
         }
     }
 
-    // The `schedule*` associated fns below (and `schedule` / `wakeup` further
-    // down) are the cross-thread entry points: they only touch `SHARED`.
-    // Everything taking `self` is HTTP-thread-only.
-
+    // Associated fns (no `self`) are callable from any thread; they only touch `SHARED`.
     pub fn schedule_receive_resume(async_http_id: u32) {
         {
             let mut queued = SHARED.queued_receive_resumes.lock();
@@ -1092,25 +1074,18 @@ impl HttpThread {
         }
     }
 
-    /// Make the HTTP thread's loop return from its poll so it runs
-    /// [`drain_events`](Self::drain_events). Any thread; a no-op until
-    /// `on_start` has published the loop.
+    /// Any thread. A no-op until `on_start` has published the loop.
     pub(crate) fn wakeup() {
-        // Acquire pairs with the Release store in `on_start`, which publishes
-        // the loop's initialization along with the pointer.
         let loop_ = SHARED.uws_loop.load(Ordering::Acquire);
         if !loop_.is_null() {
-            // SAFETY: once published, the loop is the HTTP thread's live loop
-            // and is never destroyed (`process_events` never returns).
-            // `us_wakeup_loop` is uSockets' thread-safe wake and takes the raw
-            // pointer, so no `&mut Loop` is formed here next to the one
-            // `process_events` holds across `tick()`.
+            // SAFETY: the Acquire load pairs with the Release store in `on_start`, so the loop it
+            // published is fully initialized; it is never destroyed (`process_events` never
+            // returns). `us_wakeup_loop` is the thread-safe wake and takes the raw pointer, so no
+            // `&mut Loop` is formed here next to the one `process_events` holds across `tick()`.
             unsafe { uws::us_wakeup_loop(loop_) };
         }
     }
 
-    /// Whether [`schedule`](Self::schedule) has queued tasks that
-    /// [`drain_events`](Self::drain_events) has not popped yet.
     pub(crate) fn has_queued_tasks() -> bool {
         !SHARED.queued_tasks.is_empty()
     }
@@ -1120,11 +1095,7 @@ impl HttpThread {
         if batch.len == 0 {
             return;
         }
-        // Every caller is expected to `init()` first; a task scheduled by one
-        // that forgot would sit in the queue until something else happened to
-        // start the thread (`async_http::preconnect` once skipped `init`), so
-        // fail loudly instead. The message entry points above don't need this:
-        // they only ever refer to requests that already went through here.
+        // A caller that skipped `init()` would otherwise hang (`async_http::preconnect` once did).
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
             "HTTPThread::schedule() called before HTTPThread::init()"
@@ -1315,8 +1286,6 @@ mod _event_loop_draft {
             }
         }
 
-        // From here on only this thread may touch `HTTP_THREAD`; debug builds
-        // panic on any `http_thread()` call from another thread.
         crate::HTTP_THREAD.claim();
         let thread = crate::http_thread_mut();
         thread.loop_ = loop_;
@@ -1345,8 +1314,7 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes the loop (and its initialization above) to
-        // `wakeup()` callers on other threads, which Acquire-load it.
+        // Release pairs with the Acquire load in `wakeup`.
         SHARED.uws_loop.store(uws_loop, Ordering::Release);
         thread.process_events();
     }
@@ -1421,9 +1389,7 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
 #[must_use]
 pub fn shutdown_for_exit() -> bool {
     if SHARED.uws_loop.load(Ordering::Acquire).is_null() {
-        // The thread was never started, or `on_start` hasn't reached
-        // `process_events` yet — either way no `start_queued_task` can have
-        // run, so no boxes exist.
+        // Never started, or not yet in `process_events`: `start_queued_task` has not run, no boxes.
         return true;
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);

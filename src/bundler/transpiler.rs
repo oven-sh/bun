@@ -722,9 +722,7 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
-    /// Quiet the loader's `[0.12ms] ".env"` output unless the log level is
-    /// `info` or lower. For the loader's owner only: `Bun.build`'s transpiler,
-    /// the macro VM and `Bun.Transpiler` run on another VM's loader.
+    /// Only for the loader's owner; `Bun.build`, macros and `Bun.Transpiler` run on another VM's.
     pub fn apply_log_level_to_env_loader(&mut self) {
         let quiet = !self.log().level.at_least(bun_ast::Level::Info);
         self.env_mut().quiet = quiet;
@@ -1167,9 +1165,6 @@ impl<'a> Transpiler<'a> {
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
     /// match the struct field types — the same `*Log` is aliased into
     /// `linker.log` / `resolver.log` (see `set_log`).
-    ///
-    /// A loader passed in is used as-is (it may be another VM's); only the
-    /// process-wide one adopted for `None` is configured from `log`.
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,

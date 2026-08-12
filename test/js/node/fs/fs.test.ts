@@ -4174,7 +4174,7 @@ describe("fs/promises", () => {
   // or parentPath -> Set of names for Dirents), so that the listings below can
   // be compared with a readdirSync() of the same tree without sorting each one.
   // Sorting thousands of entries per listing is what made these tests slow.
-  function listingShape(entries: string[] | Dirent[], withFileTypes: boolean) {
+  function listingShape(entries: unknown[], withFileTypes: boolean) {
     if (!withFileTypes) return new Set(entries as string[]);
     const byDirectory = new Map<string, Set<string>>();
     for (const { parentPath, name } of entries as Dirent[]) {

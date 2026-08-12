@@ -51,7 +51,18 @@ async function servedCss(dev: Dev, route: string): Promise<string> {
   return fetchCss(dev, urls[0]);
 }
 
-/** A route with a bundling error anywhere in its graph serves the error page instead of the HTML. */
+/**
+ * A route with a bundling error anywhere in its graph serves the error page
+ * instead of the HTML.
+ *
+ * Requesting such a route re-bundles it, and when the HTML file itself still
+ * compiles (the failure is in a stylesheet) the HTML module is pushed to
+ * connected clients as a plain JS hot update, which kills a client that has
+ * that page loaded (https://github.com/oven-sh/bun/issues/31908). Clients on
+ * other routes and clients showing the error page are unaffected, and recovery
+ * writes never push the HTML module. So: only call this for a route whose page
+ * no connected client has loaded, unless the HTML file is the failing file.
+ */
 async function expectBuildFailed(dev: Dev, route: string) {
   const res = await dev.fetch(route);
   expect(res.status).toBe(500);
@@ -494,11 +505,7 @@ devTest("bundling errors in stylesheets and recovering from them", {
         );
         await c.style("body").color.expect.toBe("red");
       }
-      // The failing route is fetched, and the recovery is checked, without a
-      // connected client: re-bundling the route while its CSS root is failing
-      // or recovering currently ships the HTML route as a JS module without
-      // the route-reload flag, which trips a client-side debug assert
-      // (tracked in https://github.com/oven-sh/bun/issues/31908).
+      // The client that had this page loaded is gone, see expectBuildFailed.
       await expectBuildFailed(dev, "/resolve");
       await dev.write(
         "resolve.css",
@@ -533,9 +540,8 @@ devTest("bundling errors in stylesheets and recovering from them", {
           errors: ["keep.css:4:1: error: Unexpected end of input"],
         },
       );
-      // The route is not fetched while it is broken: that re-bundles the HTML
-      // file, and the recovery below would then reload the page instead of
-      // hot-swapping the stylesheet (https://github.com/oven-sh/bun/issues/31908).
+      // Not fetched while broken: this client has the page loaded and has to
+      // survive until the stylesheet is hot-swapped back in (see expectBuildFailed).
       await c.style("body").color.expect.toBe("red");
 
       await dev.write(
@@ -568,6 +574,7 @@ devTest("bundling errors in stylesheets and recovering from them", {
 
     // css file with initial syntax error gets recovered
     {
+      let blue: string;
       {
         await using c = await dev.client("/initial", {
           errors: ["initial.css:3:3: error: Unexpected end of input"],
@@ -594,7 +601,8 @@ devTest("bundling errors in stylesheets and recovering from them", {
           { errors: null },
         );
         await c.style("body").color.expect.toBe("#00f");
-        expect(await servedCss(dev, "/initial")).toMatchInlineSnapshot(`
+        blue = await servedCss(dev, "/initial");
+        expect(blue).toMatchInlineSnapshot(`
           "/* initial.css */
           body {
             color: #00f;
@@ -613,8 +621,19 @@ devTest("bundling errors in stylesheets and recovering from them", {
           },
         );
       }
-      // Fetched after the client is gone for the same reason as above.
+      // The client that had this page loaded is gone, see expectBuildFailed.
       await expectBuildFailed(dev, "/initial");
+      // Recovering a second time serves the stylesheet again (and leaves the
+      // shared server without failures, like the other cases in this group).
+      await dev.write(
+        "initial.css",
+        `
+          body {
+            color: blue;
+          }
+        `,
+      );
+      expect(await servedCss(dev, "/initial")).toBe(blue);
     }
   },
 });
@@ -655,7 +674,6 @@ devTest("stylesheets created after the server starts, changing html link tags", 
           errors: ['before.css:2:21: error: Could not resolve: "before.png". Maybe you need to "bun install"?'],
         },
       );
-      await expectBuildFailed(dev, "/before");
       await c.expectReload(async () => {
         await dev.write("before.png", imageFixtures.bun);
       });
@@ -691,7 +709,12 @@ devTest("stylesheets created after the server starts, changing html link tags", 
       await dev.write("relink.html", emptyHtmlFile({ styles: ["relink-other.css"] }), {
         errors: ['relink.html: error: Could not resolve: "relink-other.css". Maybe you need to "bun install"?'],
       });
+      // The HTML file itself is what fails here, so fetching is safe with the
+      // page loaded, and the page keeps its old stylesheet meanwhile. (Checking
+      // that also drains the ack the client sent for the rebuild the fetch
+      // triggered, before the next write waits for acks of its own.)
       await expectBuildFailed(dev, "/relink");
+      await c.style(".test").color.expect.toBe("#00f");
       await c.expectReload(async () => {
         await dev.write(
           "relink-other.css",
@@ -954,10 +977,9 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       }
       "
     `);
+    // Both clients are gone by now, see expectBuildFailed. A fresh load of
+    // either page after the fix is checked over HTTP below.
     await expectBuildFailed(dev, "/first");
-
-    // Recovery happens with no client connected, see
-    // https://github.com/oven-sh/bun/issues/31908.
     await dev.write(
       "first.css",
       `

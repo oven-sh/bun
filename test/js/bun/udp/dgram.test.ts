@@ -1,5 +1,7 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { constants as osConstants } from "node:os";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -358,6 +360,32 @@ describe("bind()", () => {
     // The in-flight first bind must still complete normally.
     await listening;
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  // A udp6 bind sets IPV6_V6ONLY inside bsd_create_udp_socket(); when that
+  // failed, 'error' used to carry a code-less "Failed to bind socket"
+  // (udp_socket.test.ts covers the descriptor that leaked along with it). The
+  // option does not fail on its own, so the failure is injected; on Windows
+  // the errno would need to be a WSA code.
+  test.skipIf(!fault.available() || isWindows)("emits the errno of a failing IPV6_V6ONLY setsockopt", async () => {
+    await using socket = createSocket("udp6");
+    const { promise: error, resolve: onError, reject } = Promise.withResolvers<any>();
+    socket.on("error", onError);
+    socket.on("listening", () => reject(new Error("expected bind() to fail")));
+    fault.set({ syscall: "udp_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
+    try {
+      socket.bind(0, "::1");
+      const { name, code, syscall, address, message } = await error;
+      expect({ name, code, syscall, address, message }).toEqual({
+        name: "Error",
+        code: "ENOPROTOOPT",
+        syscall: "bind",
+        address: "::1",
+        message: "bind ENOPROTOOPT ::1",
+      });
+    } finally {
+      fault.clear();
+    }
   });
 });
 

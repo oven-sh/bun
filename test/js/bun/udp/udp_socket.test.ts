@@ -1,7 +1,9 @@
 import { udpSocket } from "bun";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
+import { afterEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, disableAggressiveGCScope, getFDCount, isWindows, randomPort } from "harness";
+import { constants as osConstants } from "node:os";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -190,6 +192,69 @@ describe("udpSocket()", () => {
       const remaining = await countUDPSocketsAfterGC(5);
       expect(remaining).toBeLessThan(10);
       expect(heapStats().protectedObjectTypeCounts.UDPSocket || 0).toBe(0);
+    });
+  });
+
+  // bsd_create_udp_socket() used to return straight out of a failing
+  // IPV6_V6ONLY setsockopt, leaking the descriptor it had just created and
+  // reporting a code-less "Failed to bind socket". Setting that option on a
+  // brand-new socket does not fail on its own, so the failure is injected.
+  // Windows: getFDCount() cannot see SOCKET handles and the errno would need
+  // to be a WSA code.
+  describe.skipIf(!fault.available() || isWindows)("IPV6_V6ONLY setsockopt failure while binding", () => {
+    afterEach(() => fault.clear());
+
+    const options = { hostname: "::1", port: 0 } as const;
+
+    function injectSetsockoptFailure() {
+      fault.set({ syscall: "udp_v6only", action: "errno", errno: osConstants.errno.ENOPROTOOPT });
+    }
+
+    async function creationError(): Promise<any> {
+      let socket;
+      try {
+        socket = await udpSocket(options);
+      } catch (error) {
+        return error;
+      }
+      socket.close();
+      throw new Error("expected udpSocket() to fail");
+    }
+
+    test("reports the setsockopt errno", async () => {
+      injectSetsockoptFailure();
+      const { name, code, syscall, address, message } = await creationError();
+      expect({ name, code, syscall, address, message }).toEqual({
+        name: "Error",
+        code: "ENOPROTOOPT",
+        syscall: "bind",
+        address: "::1",
+        message: "bind ENOPROTOOPT ::1",
+      });
+
+      // The one-shot rule is spent, so the same options bind normally now.
+      const socket = await udpSocket(options);
+      socket.close();
+    });
+
+    test("closes the descriptor it created", async () => {
+      // Take the baseline after one failure so anything the error path sets
+      // up lazily is not counted against the loop.
+      injectSetsockoptFailure();
+      await creationError();
+
+      const before = getFDCount();
+      const iterations = 8;
+      const codes: string[] = [];
+      for (let i = 0; i < iterations; i++) {
+        injectSetsockoptFailure();
+        codes.push((await creationError()).code);
+      }
+      // Used to leak exactly one descriptor per failed creation.
+      expect({ codes, leakedDescriptors: getFDCount() - before }).toEqual({
+        codes: Array(iterations).fill("ENOPROTOOPT"),
+        leakedDescriptors: 0,
+      });
     });
   });
 

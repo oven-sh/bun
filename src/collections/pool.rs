@@ -543,25 +543,20 @@ mod tests {
     static RESETS: AtomicUsize = AtomicUsize::new(0);
 
     /// `DROPS`/`RESETS` are process-wide but libtest runs `#[test]`s on parallel
-    /// threads, so every test asserting on them holds this for its duration,
-    /// and everything that touches a pool goes through [`in_pool_thread`] so
-    /// that the pool's teardown happens while it is still held.
+    /// threads, so every test asserting on them holds this for its duration
+    /// (pool teardown included: see [`in_pool_thread`]).
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn serial() -> MutexGuard<'static, ()> {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Runs `body` on a fresh thread (an empty pool) and waits for that thread
-    /// to exit, which is when the pool's `thread_local!` free list drops the
-    /// nodes still cached in it. Their `DROPS` therefore land before this
-    /// returns, while the caller still holds `SERIAL`, and the caller asserts
-    /// them. Using the `#[test]` thread for the body instead is the race this
-    /// avoids: libtest reports a test as finished before its thread has exited,
-    /// so the cached nodes would be dropped after `SERIAL` was released, inside
-    /// whichever test holds it next. `thread::scope` would not do either: its
-    /// implicit join only waits for the closure to return, not for the thread's
-    /// TLS destructors; `JoinHandle::join` waits for the thread itself.
+    /// Runs `body` on its own thread and joins it, so the pool's `thread_local!`
+    /// free list is torn down (dropping the nodes still cached in it) before
+    /// this returns, i.e. while the caller still holds `SERIAL`; on the `#[test]`
+    /// thread that teardown would run after the test has released it. Keep the
+    /// explicit `join()`: `thread::scope`'s implicit join does not wait for the
+    /// thread's TLS destructors.
     fn in_pool_thread(body: impl FnOnce() + Send + 'static) {
         let name = std::thread::current()
             .name()
@@ -693,8 +688,7 @@ mod tests {
                 assert_eq!(drops(), before);
             });
 
-            // The thread's free list went away with the thread, taking the one
-            // node it still owned.
+            // Thread exit dropped the free list and the node it still held.
             assert_eq!(drops(), before + 1);
         }
     }
@@ -764,8 +758,7 @@ mod tests {
                 assert_eq!(drops(), before);
             });
 
-            // The released node stayed cached until the thread's free list was
-            // dropped.
+            // Thread exit dropped the free list and the released node in it.
             assert_eq!(drops(), before + 1);
         }
     }

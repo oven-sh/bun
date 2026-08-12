@@ -777,6 +777,11 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // - setTimeout/setInterval: generation-stale timers only self-cancelled when
 //   they FIRED, so a module-scope long timer held a Strong on its wrapper
 //   until the deadline (effectively forever for hour-scale timers).
+// - AbortSignal.timeout with an abort listener: the swap unlinked the native
+//   timer but left the signal believing it still had one, and the GC keeps a
+//   pending timeout signal's wrapper (hence its listener, hence the global)
+//   alive for as long as the signal says so. Same story when the timer sat in
+//   the fake-timer heap of a file that never called useRealTimers().
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -847,6 +852,28 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       makeLeakFixture(`
         setTimeout(() => {}, 3_600_000);
         setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout",
+      makeLeakFixture(`
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending in a fake-timer heap", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout-fake",
+      makeLeakFixture(`
+        import { vi } from "bun:test";
+        vi.useFakeTimers();
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

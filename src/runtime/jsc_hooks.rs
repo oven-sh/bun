@@ -1764,8 +1764,8 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
     // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
     // next, which walks both heaps and releases `TimeoutObject` pins and
-    // unlinks `AbortSignalTimeout` timers at a point where no user JS can touch
-    // the outgoing signals.
+    // discards `AbortSignalTimeout` timers at a point where no user JS can
+    // touch the outgoing signals.
     {
         let all = timer_all();
         // SAFETY: `state` is non-null so `timer_all()` is non-null; single

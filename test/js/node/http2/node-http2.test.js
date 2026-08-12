@@ -4365,6 +4365,42 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback emits 'clientError' once when the listener destroys the socket with the error", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, () => {});
+  const codes = [];
+  // socket.destroy(err) re-emits err as the socket's 'error', which must not
+  // come back around as a second 'clientError' (Node's socketOnError detaches
+  // itself before emitting). That 'error' precedes the socket's 'close', so
+  // by 'close' every 'clientError' for this error has been emitted.
+  const {
+    promise: serverSocketClosed,
+    resolve: onServerSocketClosed,
+    reject: onClientFailed,
+  } = Promise.withResolvers();
+  server.on("clientError", (err, socket) => {
+    codes.push(err.code);
+    socket.once("close", onServerSocketClosed);
+    socket.destroy(err);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => client.write("GARBAGE\r\n\r\n"),
+  );
+  // Once the server has destroyed the connection a reset here is expected;
+  // before that, a client error means the garbage never reached the server.
+  client.on("error", err => {
+    if (codes.length === 0) onClientFailed(err);
+  });
+  try {
+    await serverSocketClosed;
+    expect(codes).toEqual(["HPE_INVALID_METHOD"]);
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

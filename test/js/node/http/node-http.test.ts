@@ -4139,3 +4139,101 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+describe("'clientError' on a server.emit('connection') socket fires once per error", () => {
+  // Node's socketOnError stops listening for the socket's 'error' before it
+  // emits 'clientError', so the socket.destroy(err) done by the listener below
+  // (or by the default handler) cannot feed the same error back in as a second
+  // 'clientError'. The socket emits that 'error' right before its 'close', so
+  // once the server half has closed every 'clientError' for the error is in.
+  function serveOneError(drive: (clientSide: any, serverSide: any) => void): Promise<any[]> {
+    const server = createServer(() => {});
+    const errors: any[] = [];
+    server.on("clientError", (err, socket) => {
+      errors.push(err);
+      socket.destroy(err);
+    });
+    const [clientSide, serverSide] = duplexPair();
+    clientSide.resume();
+    const closed = new Promise<any[]>(resolve => serverSide.on("close", () => resolve(errors)));
+    server.emit("connection", serverSide);
+    drive(clientSide, serverSide);
+    return closed;
+  }
+
+  it("for a parse error in received data", async () => {
+    const errors = await serveOneError(clientSide => clientSide.write("GARBAGE\r\n\r\n"));
+    expect(errors.map(err => ({ code: err.code, rawPacket: String(err.rawPacket) }))).toEqual([
+      { code: "HPE_INVALID_METHOD", rawPacket: "GARBAGE\r\n\r\n" },
+    ]);
+  });
+
+  it("for a request cut short by the client ending the connection", async () => {
+    const errors = await serveOneError(clientSide =>
+      clientSide.end("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10\r\n\r\nabc"),
+    );
+    expect(errors.map(err => err.code)).toEqual(["HPE_INVALID_EOF_STATE"]);
+  });
+
+  it("for an error emitted by the socket itself, which carries no rawPacket", async () => {
+    const errors = await serveOneError((_clientSide, serverSide) =>
+      serverSide.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" })),
+    );
+    expect(errors.map(err => ({ code: err.code, rawPacket: err.rawPacket }))).toEqual([
+      { code: "ECONNRESET", rawPacket: undefined },
+    ]);
+  });
+
+  // The default handler's shape from Node's test-http-server-destroy-socket-on-client-error:
+  // one 400 reply, then destroy(err), whose 'error' reaches the user's own
+  // socket listeners untouched (the re-entry used to overwrite rawPacket first).
+  it("with no listener: one 400 reply, and the socket's own 'error' listeners see the error intact", async () => {
+    const server = createServer(() => {});
+    const socketErrors: any[] = [];
+    server.on("connection", socket => {
+      socket.on("error", (err: any) => socketErrors.push({ code: err.code, rawPacket: String(err.rawPacket) }));
+    });
+    // Nothing may listen for 'clientError' here (a listener disables the
+    // default reply), so count the emits at the source instead.
+    let clientErrorEmits = 0;
+    const emit = server.emit;
+    server.emit = function (event: string | symbol, ...args: any[]) {
+      if (event === "clientError") clientErrorEmits++;
+      return emit.call(server, event, ...args);
+    };
+    const [clientSide, serverSide] = duplexPair();
+    const replied = new Promise<string>(resolve => clientSide.once("data", chunk => resolve(String(chunk))));
+    const closed = new Promise<void>(resolve => serverSide.on("close", () => resolve()));
+    server.emit("connection", serverSide);
+    clientSide.write("GARBAGE\r\n\r\n");
+    const reply = await replied;
+    await closed;
+    expect({ reply, clientErrorEmits, socketErrors }).toEqual({
+      reply: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+      clientErrorEmits: 1,
+      socketErrors: [{ code: "HPE_INVALID_METHOD", rawPacket: "GARBAGE\r\n\r\n" }],
+    });
+  });
+
+  // Node's test-http-socket-error-listeners: a listener that keeps the socket
+  // open gets one 'clientError' per bad chunk, and the replacement 'error'
+  // listener is installed once, not once per error.
+  it("a listener that keeps the socket open gets one 'clientError' per bad chunk without piling up 'error' listeners", async () => {
+    const server = createServer(() => {});
+    const [clientSide, serverSide] = duplexPair();
+    clientSide.resume();
+    const { promise: done, resolve: onDone } = Promise.withResolvers<number>();
+    let count = 0;
+    server.on("clientError", () => {
+      if (++count === 12) {
+        onDone(serverSide.listenerCount("error"));
+      } else {
+        clientSide.write("*");
+      }
+    });
+    server.emit("connection", serverSide);
+    clientSide.write("*");
+    expect(await done).toBe(1);
+    serverSide.destroy();
+  });
+});

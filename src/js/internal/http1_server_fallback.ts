@@ -7,6 +7,8 @@ const { SafeSet } = require("internal/primordials");
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 
+function noopOnError() {}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head = null;
@@ -366,11 +368,17 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   };
 
-  function onHttp1SocketError(err, rawPacket) {
-    // Match Node's http _connectionListener: attach err.rawPacket and, when no
-    // 'clientError' listener is present, write the same raw error response
-    // Node's socketOnError does before destroying.
-    prepareError(err, parser, rawPacket);
+  // Node's socketOnError, reached both as the socket's 'error' listener and
+  // directly for parse errors. Detaching first matters: socket.destroy(err),
+  // here or in the user's 'clientError' listener, re-emits err as 'error',
+  // which would otherwise come straight back here as a second 'clientError'.
+  function onHttp1SocketError(err) {
+    socket.removeListener("error", onHttp1SocketError);
+    if (socket.listenerCount("error", noopOnError) === 0) {
+      socket.on("error", noopOnError);
+    }
+    // When no 'clientError' listener is present, write the same raw error
+    // response Node's socketOnError does before destroying.
     if (!server.emit("clientError", err, socket)) {
       if (socket.writable && !socket.destroyed) {
         const code = err?.code;
@@ -386,10 +394,14 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.destroy(err);
     }
   }
+  function onHttp1ParseError(err, rawPacket) {
+    prepareError(err, parser, rawPacket);
+    onHttp1SocketError(err);
+  }
   function onHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, data);
+      onHttp1ParseError(ret, data);
       return;
     }
     if (pendingUpgrade) {
@@ -399,7 +411,7 @@ function connectionListenerHTTP1(server, socket, options) {
       const upgradeReq = pendingUpgrade;
       pendingUpgrade = null;
       socket.removeListener("data", onHttp1SocketData);
-      socket.removeListener("error", onHttp1SocketErrorListener);
+      socket.removeListener("error", onHttp1SocketError);
       socket.removeListener("end", onHttp1SocketEnd);
       connections.delete(socket);
       try {
@@ -416,15 +428,12 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     }
   }
-  function onHttp1SocketErrorListener(err) {
-    onHttp1SocketError(err, undefined);
-  }
   // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
   // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
     const ret = parser.finish();
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, undefined);
+      onHttp1ParseError(ret, undefined);
       return;
     }
     if (!server.httpAllowHalfOpen) {
@@ -440,7 +449,7 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   }
   socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
+  socket.on("error", onHttp1SocketError);
   socket.once("end", onHttp1SocketEnd);
   socket.once("close", () => {
     connections.delete(socket);

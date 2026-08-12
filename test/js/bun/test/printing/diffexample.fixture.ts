@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 
 function normalizeInspectError(e: any) {
   let str = Bun.inspect(e, { colors: true });
@@ -354,4 +354,28 @@ test.skipIf(!Bun.enableANSIColors)("mix of whitespace-only and non-whitespace-on
       "
     `);
   }
+});
+
+// Values that compare unequal but render to the same text. The diff would be
+// empty, so the message says so instead.
+test("serializes to the same string - toStrictEqual, hole vs undefined", () => {
+  expect([1, , 3]).toStrictEqual([1, undefined, 3]);
+});
+
+test("serializes to the same string - toEqual, single line", () => {
+  expect(Symbol("a")).toEqual(Symbol("a"));
+});
+
+test("serializes to the same string - toMatchObject", () => {
+  expect({ id: Symbol("a") }).toMatchObject({ id: Symbol("a") });
+});
+
+test("serializes to the same string - toHaveBeenCalledWith", () => {
+  const fn = mock();
+  fn(Symbol("a"));
+  expect(fn).toHaveBeenCalledWith(Symbol("a"));
+});
+
+test("serializes to the same string - toHaveProperty", () => {
+  expect({ id: Symbol("a") }).toHaveProperty("id", Symbol("a"));
 });

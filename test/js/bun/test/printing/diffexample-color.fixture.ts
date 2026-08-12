@@ -107,3 +107,16 @@ try {
 } catch (e) {
   console.log(e.message);
 }
+
+// Unequal values that render to the same text: single-line and multi-line.
+try {
+  expect(Symbol("a")).toEqual(Symbol("a"));
+} catch (e) {
+  console.log(e.message);
+}
+
+try {
+  expect([1, , 3]).toStrictEqual([1, undefined, 3]);
+} catch (e) {
+  console.log(e.message);
+}

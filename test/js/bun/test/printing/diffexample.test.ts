@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
   return output
-    .replaceAll(/ \[[0-9\.]+ms\]/g, "")
+    .replaceAll(/ \[[0-9\.]+m?s\]/g, "")
     .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)")
     .replaceAll(
       "test\\js\\bun\\test\\printing\\diffexample.fixture.ts:",
@@ -16,6 +16,16 @@ function cleanAnsiEscapes(output: string) {
 
 test("no color", async () => {
   const noColorSpawn = Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
+    stdio: ["inherit", "pipe", "pipe"],
+    env: {
+      ...bunEnv,
+      FORCE_COLOR: "0",
+    },
+  });
+  // Started before the first run is awaited: two sequential runs of the
+  // fixture exceed the default test timeout with a debug build.
+  const colorSpawn = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
     stdio: ["inherit", "pipe", "pipe"],
     env: {
@@ -714,25 +724,95 @@ test("no color", async () => {
           at <anonymous> (FILE:LINE)
     (fail) mix of whitespace-only and non-whitespace-only differences
     (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
+    357 | });
+    358 | 
+    359 | // Values that compare unequal but render to the same text. The diff would be
+    360 | // empty, so the message says so instead.
+    361 | test("serializes to the same string - toStrictEqual, hole vs undefined", () => {
+    362 |   expect([1, , 3]).toStrictEqual([1, undefined, 3]);
+                             ^
+    error: expect(received).toStrictEqual(expected)
+
+    Expected: [
+      1,
+      undefined,
+      3,
+    ]
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - toStrictEqual, hole vs undefined
+    361 | test("serializes to the same string - toStrictEqual, hole vs undefined", () => {
+    362 |   expect([1, , 3]).toStrictEqual([1, undefined, 3]);
+    363 | });
+    364 | 
+    365 | test("serializes to the same string - toEqual, single line", () => {
+    366 |   expect(Symbol("a")).toEqual(Symbol("a"));
+                                ^
+    error: expect(received).toEqual(expected)
+
+    Expected: Symbol(a)
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - toEqual, single line
+    365 | test("serializes to the same string - toEqual, single line", () => {
+    366 |   expect(Symbol("a")).toEqual(Symbol("a"));
+    367 | });
+    368 | 
+    369 | test("serializes to the same string - toMatchObject", () => {
+    370 |   expect({ id: Symbol("a") }).toMatchObject({ id: Symbol("a") });
+                                        ^
+    error: expect(received).toMatchObject(expected)
+
+    Expected: {
+      "id": Symbol(a),
+    }
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - toMatchObject
+    371 | });
+    372 | 
+    373 | test("serializes to the same string - toHaveBeenCalledWith", () => {
+    374 |   const fn = mock();
+    375 |   fn(Symbol("a"));
+    376 |   expect(fn).toHaveBeenCalledWith(Symbol("a"));
+                       ^
+    error: expect(received).toHaveBeenCalledWith(...expected)
+
+    Expected: [
+      Symbol(a),
+    ]
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - toHaveBeenCalledWith
+    375 |   fn(Symbol("a"));
+    376 |   expect(fn).toHaveBeenCalledWith(Symbol("a"));
+    377 | });
+    378 | 
+    379 | test("serializes to the same string - toHaveProperty", () => {
+    380 |   expect({ id: Symbol("a") }).toHaveProperty("id", Symbol("a"));
+                                        ^
+    error: expect(received).toHaveProperty(path, value)
+
+    Expected: Symbol(a)
+    Received: serializes to the same string
+
+          at <anonymous> (FILE:LINE)
+    (fail) serializes to the same string - toHaveProperty
 
      0 pass
      2 skip
      1 todo
-     16 fail
-     16 expect() calls
-    Ran 19 tests across 1 file.
+     21 fail
+     21 expect() calls
+    Ran 24 tests across 1 file.
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
 
-  const colorSpawn = Bun.spawn({
-    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "0",
-    },
-  });
   await colorSpawn.exited;
   const colorStderr = cleanOutput(cleanAnsiEscapes(await colorSpawn.stderr.text()));
   const colorStdout = cleanAnsiEscapes(await colorSpawn.stdout.text());
@@ -877,6 +957,20 @@ test("color", async () => {
 
     \x1B[32m- Expected  - 1\x1B[0m
     \x1B[31m+ Received  + 1\x1B[0m
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    Expected: \x1B[32mSymbol(a)\x1B[0m
+    Received: serializes to the same string
+
+    \x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoStrictEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+    Expected: \x1B[32m[
+      1,
+      undefined,
+      3,
+    ]\x1B[0m
+    Received: serializes to the same string
 
     "
   `);

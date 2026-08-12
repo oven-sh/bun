@@ -1310,8 +1310,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
-            // Bun__Process__exit returns in a worker (only requests termination); don't
-            // fall through to the emit logic and report handled so exit code is preserved.
+            // Bun__Process__exit returns in a worker and under `bun run --watch` (only
+            // requests termination); don't fall through to the emit logic and report
+            // handled so exit code is preserved.
             return true;
         }
     }

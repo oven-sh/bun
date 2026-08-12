@@ -239,9 +239,42 @@ test("--hot: process.exit() exits the process (no keepalive)", async () => {
 
   expect(stdout).toContain("HOT_RAN");
   expect(stdout).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  expect(stderr).toBe("");
   // Exited on its own with the given code instead of staying alive as a watcher.
-  if (exitCode !== 3) console.error(stderr);
   expect(exitCode).toBe(3);
+});
+
+// Ctrl+C must still stop the watcher: process.exit() from a user's signal
+// handler is a real exit, not a keepalive unwind.
+it.skipIf(isWindows)("--watch: process.exit() in a SIGINT handler exits the watcher", async () => {
+  using dir = tempDir("watch-sigint-exit", {
+    "index.ts": `process.on("SIGINT", () => { process.exit(7); });\nconsole.log("READY");\nsetInterval(() => {}, 1000);\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stderrText = proc.stderr.text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  while (!out.includes("READY")) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
+    out += decoder.decode(value, { stream: true });
+  }
+
+  proc.kill("SIGINT");
+  // The handler's exit code is honored and the watcher is gone.
+  expect(await proc.exited).toBe(7);
+  await reader.cancel();
+  expect(await stderrText).toBe("");
 });
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its

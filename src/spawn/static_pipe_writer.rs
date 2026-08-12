@@ -22,11 +22,8 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
     const POLL_OWNER_TAG: bun_io::PollTag;
-    /// Called once, from the writer's close; the writer does not touch the process
-    /// afterwards, so the impl may free `*this` (and run arbitrary code doing so).
-    ///
     /// # Safety
-    /// `this` must point to a live `Self`.
+    /// `this` must be a live `Self`. Called once, from the writer's close; the impl may free it.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
 }
 

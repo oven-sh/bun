@@ -2957,21 +2957,31 @@ pub mod bv2_impl {
 
             this.linker.dev_server = this.dev_server;
 
-            let tp = ThreadPool::init(&*this, thread_pool)?;
+            let mut tp = ThreadPool::init(&*this, thread_pool)?;
+            if let Err(errno) = tp.start() {
+                tp.deinit();
+                this.transpiler.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Failed to create a worker thread for the bundler: {errno}. The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
+                    ),
+                );
+                return Err(errno.into());
+            }
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
-            // Install the watcher only after `ThreadPool::init()` has succeeded —
-            // the `?` above is the last early-return in this fn, so the watcher's
-            // raw `*mut BundleV2` can't outlive the box it points at (the caller
-            // drops the box on every error path until `generate_from_cli` leaks it).
+            // Install the watcher only after the thread pool is up — the
+            // `start()` check above is the last early-return in this fn, so the
+            // watcher's raw `*mut BundleV2` can't outlive the box it points at
+            // (the caller drops the box on every error path until
+            // `generate_from_cli` leaks it).
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
                 // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
-            this.graph.pool().start();
             Ok(this)
         }
 

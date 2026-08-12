@@ -32,6 +32,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsiz
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
+use bun_sys::SystemErrno;
 
 /// Debug instrumentation: when `BUN_THREADPOOL_STATS=1`, each pool records
 /// aggregate worker idle/busy nanoseconds and dumps them on drop. Zero-cost
@@ -706,6 +707,21 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
+/// See [`ThreadPool::spawn_worker`].
+#[cold]
+#[inline(never)]
+fn exit_with_stranded_tasks(errno: SystemErrno) -> ! {
+    Output::err(
+        errno,
+        "failed to create a worker thread for the thread pool; the work already queued on it could never run",
+        (),
+    );
+    bun_core::note!(
+        "the process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+    );
+    bun_core::Global::exit(1)
+}
+
 // NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
 // `_mi_os_numa_node_count()` once on the spawning thread so workers don't race
 // the `/sys/devices/system/node/node%u` slow path, but mimalloc is built as
@@ -716,7 +732,12 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
-    pub fn warm(&self, count: u16) {
+    ///
+    /// Workers only exit at shutdown, so once the pool has one it stays usable
+    /// and a failed spawn merely ends the warm-up. The error is the OS refusing
+    /// the pool its *first* worker: nothing scheduled afterwards could run, and
+    /// a caller that warms before scheduling can still fail cleanly.
+    pub fn warm(&self, count: u16) -> Result<(), SystemErrno> {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
         self.is_running.store(true, Ordering::Relaxed);
         let target = count.min((self.max_threads & 0x3FFF) as u16);
@@ -731,26 +752,58 @@ impl ThreadPool {
                 sync = current;
                 continue;
             }
-            let stack_size = self.stack_size as usize;
-            // `BackRef<ThreadPool>: Send` (ThreadPool is `Sync`); pool's `join()`
-            // waits for every worker, so the back-reference invariant holds.
-            let pool = bun_ptr::BackRef::new(self);
-            match std::thread::Builder::new()
-                .stack_size(stack_size)
-                .spawn(move || Thread::run(pool))
-            {
-                Ok(_handle) => {
-                    // Dropping JoinHandle detaches the thread.
-                }
-                Err(_) => {
-                    // SAFETY: `&self` keeps the pool live; `null` thread makes
-                    // `unregister` return right after undoing the `spawned`
-                    // increment CAS'd above (no per-thread wait past notify).
-                    return unsafe { Self::unregister(self, ptr::null_mut()) };
-                }
+            let pool_was_empty = sync.spawned() == 0;
+            if let Err(errno) = self.spawn_worker(pool_was_empty) {
+                return if pool_was_empty { Err(errno) } else { Ok(()) };
             }
             sync = new_sync;
         }
+        Ok(())
+    }
+
+    /// Spawns the worker whose `spawned` slot the caller just CAS'd into
+    /// `sync`; on failure the slot is released again and the OS error returned.
+    ///
+    /// The pool's first worker (`pool_was_empty`) gets one retry, as in
+    /// `Watcher::start`: `EAGAIN` from `pthread_create` is often momentary
+    /// (a fork storm, an exec'd image's threads not reaped yet), and unlike a
+    /// later spawn, whose failure only costs parallelism, this one failing
+    /// leaves the pool unable to run anything.
+    ///
+    /// When that happens with tasks already queued, nothing can ever run them.
+    /// `schedule()` is fire-and-forget, so there is no caller to hand the error
+    /// to; whoever waits on those tasks (`wait_for_all()`, the bundler's or
+    /// `bun install`'s event loop, a `node:fs` promise) would wait forever.
+    /// Exiting with the error is the only way left to report it.
+    fn spawn_worker(&self, pool_was_empty: bool) -> Result<(), SystemErrno> {
+        let stack_size = self.stack_size as usize;
+        let spawn = || {
+            // `BackRef<ThreadPool>: Send` (ThreadPool is `Sync`); pool's `join()`
+            // waits for every worker, so the back-reference invariant holds.
+            let pool = bun_ptr::BackRef::new(self);
+            std::thread::Builder::new()
+                .stack_size(stack_size)
+                .spawn(move || Thread::run(pool))
+        };
+        let spawned = spawn().or_else(|first| {
+            if !pool_was_empty {
+                return Err(first);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            spawn().map_err(|_| first)
+        });
+        let err = match spawned {
+            // Dropping the JoinHandle detaches the thread.
+            Ok(_handle) => return Ok(()),
+            Err(err) => err,
+        };
+        let errno = SystemErrno::from_io_error(&err).unwrap_or(SystemErrno::EAGAIN);
+        // SAFETY: `&self` keeps the pool live for the whole call.
+        let workers_left = unsafe { Self::unspawn(self) };
+        if workers_left == 0 && self.wait_group.pending() > 0 {
+            exit_with_stranded_tasks(errno);
+        }
+        Err(errno)
     }
 
     #[inline(never)]
@@ -794,26 +847,12 @@ impl ThreadPool {
                             return self.idle_event.notify();
                         }
 
-                        // We signaled to spawn a new thread
+                        // We signaled to spawn a new thread. A failure needs no
+                        // handling here: either the existing workers drain the
+                        // queue on their own, or `spawn_worker` found the queued
+                        // tasks stranded and did not return.
                         if can_wake && (sync.spawned() as u32) < self.max_threads {
-                            let stack_size = self.stack_size as usize;
-                            // `BackRef<ThreadPool>: Send`; see `warm()`.
-                            let pool = bun_ptr::BackRef::new(self);
-                            match std::thread::Builder::new()
-                                .stack_size(stack_size)
-                                .spawn(move || Thread::run(pool))
-                            {
-                                Ok(_handle) => {
-                                    // detach by dropping
-                                }
-                                Err(_) => {
-                                    // SAFETY: `&self` keeps the pool live; `null` thread makes
-                                    // `unregister` return right after undoing the `spawned`
-                                    // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
-                                }
-                            }
-                            return;
+                            let _ = self.spawn_worker(sync.spawned() == 0);
                         }
 
                         return;
@@ -944,41 +983,56 @@ impl ThreadPool {
         }
     }
 
+    /// Un-spawn one thread, either because spawning it failed or because it is
+    /// exiting. Returns the number of workers the pool still counts (running
+    /// ones plus spawns in flight).
+    ///
     /// # Safety
-    /// `pool` is the worker's owning pool. After `(*pool).join_event.notify()`
-    /// the joiner may return and the pool may be **deallocated**, so this fn
-    /// takes `*const Self` (no `&self` protector) and never touches `pool`
-    /// past that point — the shutdown chain follows worker-stack `.next` links.
-    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) {
-        // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
+    /// `pool` must be live on entry. After `(*pool).join_event.notify()` the
+    /// joiner may return and the pool may be **deallocated**, so this fn takes
+    /// `*const Self` (no `&self` protector), never touches `pool` past that
+    /// point, and callers must not touch it after this returns unless they
+    /// hold a `&self` of their own.
+    unsafe fn unspawn(pool: *const Self) -> u16 {
         let one_spawned = {
             let mut s = Sync::zero();
             s.set_spawned(1);
             s
         };
+        // The Acquire half pairs with the Release of an earlier un-spawn by
+        // another thread: observing its decrement also makes the
+        // `wait_group.add()` its `schedule()` did visible to `spawn_worker`'s
+        // stranded-tasks check.
         // SAFETY: `pool` is live until at least the `join_event.notify()` below
         // wakes the joiner.
-        let sync = unsafe { (*pool).sync.fetch_sub(one_spawned, Ordering::Release) };
+        let sync = unsafe { (*pool).sync.fetch_sub(one_spawned, Ordering::AcqRel) };
         debug_assert!(sync.spawned() > 0);
+        let workers_left = sync.spawned() - 1;
 
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
-        if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
+        if sync.state() == SyncState::Shutdown && workers_left == 0 {
             // SAFETY: `pool` is live until this notify wakes the joiner (same
             // invariant as the `fetch_sub` above); not touched after this line.
             unsafe { (*pool).join_event.notify() };
         }
+        workers_left
+    }
+
+    /// # Safety
+    /// `pool` is the worker's owning pool; see [`Self::unspawn`] — it may be
+    /// deallocated once that returns, so the shutdown chain below follows
+    /// worker-stack `.next` links only. `thread` is the calling worker's own
+    /// stack-local `Thread` (set in `ThreadRegistration::new`).
+    unsafe fn unregister(pool: *const Self, thread: NonNull<Thread>) {
+        // SAFETY: per the contract above, `pool` is live on entry.
+        unsafe { Self::unspawn(pool) };
         // ── `*pool` may be invalid past this point. ──
 
-        // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
-        let Some(thread) = NonNull::new(maybe_thread) else {
-            return;
-        };
-        // `maybe_thread` is the calling worker's own stack-local `Thread`
-        // (set in `ThreadRegistration::new`); it lives on this OS thread's
-        // stack and outlives the entire `unregister` call. BackRef invariant
-        // — pointee outlives holder — covers the `join_event.wait()` and
-        // `.next` reads below.
+        // Wait for a shutdown signal by the thread pool join()er.
+        // `thread` lives on this OS thread's stack and outlives the entire
+        // `unregister` call. BackRef invariant — pointee outlives holder —
+        // covers the `join_event.wait()` and `.next` reads below.
         let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait();
 
@@ -1055,14 +1109,14 @@ thread_local! {
 /// worker, so it strictly outlives this guard.
 struct ThreadRegistration {
     pool: bun_ptr::BackRef<ThreadPool>,
-    thread: *mut Thread,
+    thread: NonNull<Thread>,
 }
 
 impl ThreadRegistration {
     /// SAFETY: `thread` must point to the caller's stack-local `Thread`.
-    unsafe fn new(pool: &ThreadPool, thread: *mut Thread) -> Self {
-        CURRENT.with(|c| c.set(thread));
-        pool.register(thread);
+    unsafe fn new(pool: &ThreadPool, thread: NonNull<Thread>) -> Self {
+        CURRENT.with(|c| c.set(thread.as_ptr()));
+        pool.register(thread.as_ptr());
         Self {
             pool: bun_ptr::BackRef::new(pool),
             thread,
@@ -1185,12 +1239,13 @@ impl Thread {
             run_buffer: node::Buffer::default(),
             thread_pool,
         };
-        let self_ptr: *mut Thread = &raw mut self_;
+        let self_nonnull = NonNull::from(&mut self_);
+        let self_ptr: *mut Thread = self_nonnull.as_ptr();
         // `BackRef` invariant: pool's `join()` waits for every worker, so the
         // pointee outlives this fn. Hoist a single shared ref for the hot loop.
         let pool: &ThreadPool = thread_pool.get();
-        // SAFETY: self_ptr is our stack-local Thread.
-        let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
+        // SAFETY: self_nonnull is our stack-local Thread.
+        let _registration = unsafe { ThreadRegistration::new(pool, self_nonnull) };
 
         let stats = stats_enabled();
         let mut is_waking = false;

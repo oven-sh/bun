@@ -3202,7 +3202,7 @@ impl DevServer {
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
+        let bv2 = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
             Some(bundler::bundle_v2::BakeOptions {
@@ -3228,7 +3228,19 @@ impl DevServer {
             )),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
-        )?;
+        );
+        let mut bv2: Box<BundleV2<'static>> = match bv2 {
+            Ok(bv2) => bv2,
+            // The worker pool could not get a single thread; `init` put the
+            // reason in `self.log`. No bundle can run while that holds, and the
+            // callers of this fn abort on any error, so exit showing the reason
+            // rather than with a crash report.
+            Err(bundler::Error::Sys(_)) => {
+                let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+                bun_core::Global::exit(1);
+            }
+            Err(err) => return Err(err.into()),
+        };
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
         let dev_handle = self.bundler_handle();

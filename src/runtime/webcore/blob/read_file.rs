@@ -484,6 +484,23 @@ impl ReadFile {
         }
     }
 
+    /// A named pipe's whole read, as its own pool task: `JobContext::run` holds a
+    /// VM borrow and VM teardown waits for borrows, so waiting for a writer must
+    /// not happen inside it. Waiting before the first read also keeps a FIFO
+    /// with no writer yet from reading as empty.
+    #[cfg(target_os = "macos")]
+    fn read_named_pipe_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+        // `&mut self.task` (intrusive) scheduled by `run_async_with_fd`;
+        // recover parent.
+        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        if this.block_until_readable() {
+            this.do_read_loop();
+        } else {
+            this.on_finish();
+        }
+    }
+
     /// Pick the read target: `buffer`'s spare capacity if it is at least as
     /// large as `stack_buffer`, otherwise `stack_buffer`; capped by
     /// `max_length - read_off`. Returns `(use_stack, target)` so the caller
@@ -780,12 +797,11 @@ impl ReadFile {
         if self.could_block {
             #[cfg(target_os = "macos")]
             if self.is_named_pipe {
-                // Before the first read too: with no writer yet, read() says EOF.
-                if self.block_until_readable() {
-                    self.do_read_loop();
-                } else {
-                    self.on_finish();
-                }
+                self.task = WorkPoolTask {
+                    node: Default::default(),
+                    callback: Self::read_named_pipe_task,
+                };
+                WorkPool::schedule(&raw mut self.task);
                 return;
             }
 

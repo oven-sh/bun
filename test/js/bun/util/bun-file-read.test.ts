@@ -58,13 +58,13 @@ describe("Bun.file read-loop target selection", () => {
   });
 });
 
-// Whole-file reads of a named pipe. Every one of these ends with the reader
+// Whole-file reads of a named pipe. All but the last end with the reader
 // having drained the pipe and then learning that the last writer closed; on
 // macOS that EOF is invisible to kqueue and poll(2) (they only see buffered
 // bytes on a FIFO), so the reader has to wait for it differently than it does
 // for a pipe(2) pipe, and each of these used to leave the child blocked
 // forever there.
-describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
+describe.skipIf(isWindows)("reading a named pipe", () => {
   function readFifoInChild(script: string, fifo: string, stdin: number | "ignore" = "ignore") {
     return Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -202,6 +202,76 @@ describe.skipIf(isWindows)("reading a named pipe to EOF", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify("stdin is a named pipe\n"), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The macOS wait is a select(2); this is the case where a plain fd_set
+  // would not hold the descriptor (FD_SETSIZE is 1024 there).
+  it.concurrent("Bun.file(fd) reads a FIFO whose descriptor number is above FD_SETSIZE", async () => {
+    using dir = tempDir("bun-file-read-fifo-high-fd", {});
+    const fifo = path.join(String(dir), "high.fifo");
+    mkfifo(fifo);
+
+    await using proc = readFifoInChild(
+      `import { constants, openSync } from "node:fs";
+       while (openSync("/dev/null", "r") < 1024) {}
+       const fd = openSync(process.env.FIFO, constants.O_RDONLY | constants.O_NONBLOCK);
+       const text = await Bun.file(fd).text();
+       process.stdout.write(JSON.stringify({ fd, text }));`,
+      fifo,
+    );
+    using writer = await openWriterOnceChildIsReading(fifo, proc);
+    writeSync(writer.fd, "read through a high fd\n");
+    writer.close();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { fd, text } = JSON.parse(stdout);
+    expect(fd).toBeGreaterThanOrEqual(1024);
+    expect(text).toBe("read through a high fd\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A read that is waiting for a writer which never shows up must not keep
+  // its VM from shutting down: the wait has to happen outside the job's VM
+  // borrow, which terminate() waits for.
+  it.concurrent("terminate() completes while a worker's read is waiting on an idle writer", async () => {
+    using dir = tempDir("bun-file-read-fifo-worker", {
+      "main.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.addEventListener("message", ({ data }) => console.log(data));
+        // Our stdin is closed once the test has connected a writer to the FIFO.
+        await Bun.stdin.text();
+        worker.terminate();
+        await closed;
+        console.log("terminated");
+      `,
+      "worker.ts": `
+        const read = Bun.file(process.env.FIFO!).text();
+        postMessage("reading");
+        await read;
+        postMessage("the read finished, which it should not have");
+      `,
+    });
+    const fifo = path.join(String(dir), "idle.fifo");
+    mkfifo(fifo);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, FIFO: fifo },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Connecting a writer proves the worker's read has the FIFO open; never
+    // writing to it keeps that read waiting for the rest of the test.
+    using _idleWriter = await openWriterOnceChildIsReading(fifo, proc);
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "reading\nterminated\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

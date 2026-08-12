@@ -5,6 +5,7 @@
 // Buffer.alloc / writeInt32BE sequences.
 
 import net from "node:net";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Server helpers shared by every fault-injection test.
@@ -17,6 +18,17 @@ export async function listeningServer(
   const server = net.createServer(onSocket);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   return { port: (server.address() as net.AddressInfo).port, server };
+}
+
+/** Start a server on a unix domain socket inside `dir` (a `tempDir` the caller owns); connect to it with the SQL `path` option. */
+export async function listeningUnixServer(
+  dir: string,
+  onSocket: (socket: net.Socket) => void,
+): Promise<{ path: string; server: net.Server }> {
+  const server = net.createServer(onSocket);
+  const path = join(dir, "db.sock");
+  await new Promise<void>(resolve => server.listen(path, resolve));
+  return { path, server };
 }
 
 /** Reserve and immediately release a port so connecting to it is refused. */
@@ -356,15 +368,36 @@ export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
   return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
 }
 
+// MySQL Protocol::ERR_Packet, page_protocol_basic_err_packet.html (CLIENT_PROTOCOL_41 form):
+//   Int<1>(0xff) Int<2>(error_code) String<1>('#') String<5>(sql_state) String<EOF>(error_message)
+// Defaults to ER_ACCESS_DENIED_ERROR, the rejection a server sends when authentication fails.
+export function mysqlErrPacket(seq: number, opts: { code?: number; sqlState?: string; message?: string } = {}): Buffer {
+  const code = Buffer.alloc(2);
+  code.writeUInt16LE(opts.code ?? 1045, 0);
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([
+      Buffer.from([0xff]),
+      code,
+      Buffer.from(`#${opts.sqlState ?? "28000"}`),
+      Buffer.from(opts.message ?? "Access denied", "utf-8"),
+    ]),
+  );
+}
+
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:
 //   Int<1>(0x01) String<EOF>(plugin-specific payload)
 export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
   return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
 }
 
-// caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —
-// page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
+// caching_sha2_password single-byte AuthMoreData payloads, page_caching_sha2_authentication_exchanges.html:
+// the server answers the scramble with fast_auth_success or perform_full_authentication; a client asked for
+// full authentication sends request_public_key over plain TCP, and the NUL-terminated password over TLS or
+// a unix socket.
+export const MYSQL_REQUEST_PUBLIC_KEY = 0x02;
 export const MYSQL_FAST_AUTH_SUCCESS = 0x03;
+export const MYSQL_PERFORM_FULL_AUTHENTICATION = 0x04;
 
 // MySQL Protocol::AuthSwitchRequest — page_protocol_connection_phase_packets_protocol_auth_switch_request.html:
 //   Int<1>(0xfe) NulString(plugin_name) String<EOF>(plugin_provided_data)

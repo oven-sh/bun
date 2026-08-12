@@ -1,13 +1,19 @@
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { describe, expect, test } from "bun:test";
+import { describeWithContainer, tempDir } from "harness";
 import { createHash } from "node:crypto";
+import type { Server, Socket } from "node:net";
 import {
   listeningServer,
+  listeningUnixServer,
   MYSQL_FAST_AUTH_SUCCESS,
   MYSQL_MOCK_AUTH_DATA_PART_1,
   MYSQL_MOCK_AUTH_DATA_PART_2,
+  MYSQL_PERFORM_FULL_AUTHENTICATION,
+  MYSQL_REQUEST_PUBLIC_KEY,
   mysqlAuthMoreData,
+  mysqlAuthSwitchRequest,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlParseHandshakeResponse41,
@@ -217,4 +223,142 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
   } finally {
     server.close();
   }
+});
+
+// perform_full_authentication (AuthMoreData 0x04) asks the client for the password itself, and
+// what the client may put on the wire depends on the transport. libmysqlclient, mysql2
+// (`config.ssl || config.socketPath`) and go-sql-driver (`Net == "unix"`) treat a unix socket
+// like TLS and send the NUL-terminated password; only plain TCP has to fetch the server's RSA
+// key first, which is what allowPublicKeyRetrieval gates.
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_caching_sha2_authentication_exchanges.html
+describe("caching_sha2_password full authentication", () => {
+  const password = "bunbun";
+  const CLEARTEXT_PASSWORD = Buffer.concat([Buffer.from(password), Buffer.from([0])]).toString("hex");
+  const PUBLIC_KEY_REQUEST = Buffer.from([MYSQL_REQUEST_PUBLIC_KEY]).toString("hex");
+
+  type Exchange = {
+    transport: "unix" | "tcp";
+    allowPublicKeyRetrieval?: boolean;
+    /** Reach caching_sha2_password through an AuthSwitchRequest instead of the greeting. */
+    viaAuthSwitch?: boolean;
+  };
+
+  /**
+   * Scripted server: answers the client's scramble (or AuthSwitchResponse) with
+   * perform_full_authentication and reports the one packet the client sends back, or `[]`
+   * if it sends none. The password is accepted with OK; anything else gets the
+   * ER_ACCESS_DENIED_ERROR a real server would answer with.
+   */
+  function fullAuthServer(opts: Exchange, sockets: Set<Socket>) {
+    const afterFullAuth = Promise.withResolvers<string[]>();
+    const onSocket = (socket: Socket) => {
+      sockets.add(socket);
+      let buffered = Buffer.alloc(0);
+      let phase: "handshake-response" | "auth-switch-response" | "full-auth" | "done" = "handshake-response";
+      socket.write(
+        mysqlHandshakeV10({ authPlugin: opts.viaAuthSwitch ? "mysql_native_password" : "caching_sha2_password" }),
+      );
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        sockets.delete(socket);
+        afterFullAuth.resolve([]);
+      });
+      socket.on("data", chunk => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          switch (phase) {
+            case "handshake-response":
+              if (opts.viaAuthSwitch) {
+                phase = "auth-switch-response";
+                socket.write(mysqlAuthSwitchRequest(seq + 1, "caching_sha2_password", Buffer.alloc(20, 0x63)));
+                return;
+              }
+              phase = "full-auth";
+              socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([MYSQL_PERFORM_FULL_AUTHENTICATION])));
+              return;
+            case "auth-switch-response":
+              phase = "full-auth";
+              socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([MYSQL_PERFORM_FULL_AUTHENTICATION])));
+              return;
+            case "full-auth": {
+              phase = "done";
+              const sent = payload.toString("hex");
+              socket.write(sent === CLEARTEXT_PASSWORD ? mysqlOkPacket(seq + 1) : mysqlErrPacket(seq + 1));
+              afterFullAuth.resolve([sent]);
+              return;
+            }
+            case "done":
+              // COM_QUIT from the close() below.
+              return;
+          }
+        });
+      });
+    };
+    return { onSocket, afterFullAuth: afterFullAuth.promise };
+  }
+
+  async function fullAuthExchange(opts: Exchange) {
+    using dir = tempDir("mysql-full-auth", {});
+    const sockets = new Set<Socket>();
+    const { onSocket, afterFullAuth } = fullAuthServer(opts, sockets);
+    let server: Server;
+    let endpoint: { path: string } | { hostname: string; port: number };
+    if (opts.transport === "unix") {
+      const unix = await listeningUnixServer(String(dir), onSocket);
+      server = unix.server;
+      endpoint = { path: unix.path };
+    } else {
+      const tcp = await listeningServer(onSocket);
+      server = tcp.server;
+      endpoint = { hostname: "127.0.0.1", port: tcp.port };
+    }
+
+    const db = new SQL({
+      adapter: "mysql",
+      ...endpoint,
+      username: "u",
+      password,
+      database: "d",
+      tls: false,
+      max: 1,
+      allowPublicKeyRetrieval: opts.allowPublicKeyRetrieval,
+    });
+    let outcome: string | { code: string };
+    try {
+      outcome = await db.connect().then(
+        () => "connected",
+        (e: { code?: string }) => ({ code: e?.code ?? String(e) }),
+      );
+    } finally {
+      await db.close({ timeout: 0 });
+      // Settles afterFullAuth (with []) if the client neither answered nor hung up.
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+    return { outcome, afterFullAuth: await afterFullAuth };
+  }
+
+  test.each<{ name: string } & Exchange>([
+    { name: "with the default options", transport: "unix" },
+    { name: "even with allowPublicKeyRetrieval", transport: "unix", allowPublicKeyRetrieval: true },
+    { name: "after an AuthSwitchRequest", transport: "unix", viaAuthSwitch: true },
+  ])("over a unix socket the password is sent as is $name", async opts => {
+    expect(await fullAuthExchange(opts)).toEqual({
+      outcome: "connected",
+      afterFullAuth: [CLEARTEXT_PASSWORD],
+    });
+  });
+
+  test("over TCP nothing is sent unless allowPublicKeyRetrieval is set", async () => {
+    expect(await fullAuthExchange({ transport: "tcp" })).toEqual({
+      outcome: { code: "ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED" },
+      afterFullAuth: [],
+    });
+  });
+
+  test("over TCP with allowPublicKeyRetrieval the public key is requested, never the password", async () => {
+    expect(await fullAuthExchange({ transport: "tcp", allowPublicKeyRetrieval: true })).toEqual({
+      outcome: { code: "ERR_MYSQL_SERVER_ERROR" },
+      afterFullAuth: [PUBLIC_KEY_REQUEST],
+    });
+  });
 });

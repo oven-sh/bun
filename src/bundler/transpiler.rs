@@ -722,15 +722,9 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
-    /// Silence the env loader's load-time output (the `[0.12ms] ".env"` line
-    /// and unreadable-file errors) unless the log level is `info` or lower.
-    ///
-    /// For the loader's owner only: [`Self::init`] when it adopts the
-    /// process-wide loader, and the VMs that create their own loader
-    /// (`bun test` in test_command.rs, Workers in web_worker.rs). A
-    /// `Transpiler` built on a loader that belongs to another VM must leave it
-    /// alone: `Bun.build`'s transpiler and the macro VM run on other threads,
-    /// and `Bun.Transpiler` has its own log level.
+    /// Quiet the loader's `[0.12ms] ".env"` output unless the log level is
+    /// `info` or lower. For the loader's owner only: `Bun.build`'s transpiler,
+    /// the macro VM and `Bun.Transpiler` run on another VM's loader.
     pub fn apply_log_level_to_env_loader(&mut self) {
         let quiet = !self.log().level.at_least(bun_ast::Level::Info);
         self.env_mut().quiet = quiet;
@@ -1174,11 +1168,8 @@ impl<'a> Transpiler<'a> {
     /// match the struct field types — the same `*Log` is aliased into
     /// `linker.log` / `resolver.log` (see `set_log`).
     ///
-    /// `env_loader_: None` adopts the process-wide loader (creating it on
-    /// first use) and configures it from `log`. A loader passed in is used
-    /// as-is; configuring it is its owner's job (see
-    /// [`Self::apply_log_level_to_env_loader`]), and some callers pass a
-    /// loader another VM owns, from another thread.
+    /// A loader passed in is used as-is (it may be another VM's); only the
+    /// process-wide one adopted for `None` is configured from `log`.
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,

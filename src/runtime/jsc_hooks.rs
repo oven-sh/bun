@@ -448,9 +448,7 @@ unsafe fn init_runtime_state(
         let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
         // Forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
-        // `NODE_ENV=test` into it after init). Nothing here configures that
-        // loader: the macro VM passes one that belongs to another VM, so its
-        // owner does (`Transpiler::apply_log_level_to_env_loader`).
+        // `NODE_ENV=test` into it after init).
         match bun_bundler::Transpiler::init(arena, log, args, opts.env_loader.map(|p| p.as_ptr())) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`

@@ -4343,10 +4343,8 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
-        /// Recreate each symlink with the target string it has in the source
-        /// (`cp -R`). Otherwise a relative target is resolved against the
-        /// source link's directory first, which is `fs.cp`'s default
-        /// (`verbatimSymlinks: false`).
+        /// `cp -R`: keep each link's target as stored. Off (`fs.cp`'s default), a
+        /// relative target is resolved against the source link's directory.
         pub(crate) verbatim_symlinks: bool,
     }
 
@@ -8550,12 +8548,9 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
-    /// `verbatim_symlinks` arm of the Windows reparse-point branch in
-    /// `copy_single_file_sync`: recreates the link with the target string
-    /// stored in `src`. A directory link falls back to a junction when
-    /// symlinks cannot be created; a junction only holds an absolute target,
-    /// so a relative one is anchored at the copied link's own directory, which
-    /// is where the relative link would have been resolved from.
+    /// The junction `symlink_or_junction` falls back to needs an absolute
+    /// target, so a relative one is resolved from the copied link's directory,
+    /// which is where the symlink would have resolved it from.
     #[cfg(windows)]
     fn cp_symlink_verbatim(
         src: &OSPathSliceZ,

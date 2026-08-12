@@ -552,9 +552,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("cannot cancel work whose execute callback is running, and still completes it", async () => {
       const output = await checkSameOutput("test_napi_async_work_cancel_running", []);
-      expect(output).toBe(
-        ["cancel while running: napi_generic_failure", "complete status: napi_ok", "resolved to undefined"].join("\n"),
-      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
+        "cancel while running: napi_generic_failure",
+        "complete status: napi_ok",
+        "resolved to undefined",
+      ]);
     });
   });
 

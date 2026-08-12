@@ -134,22 +134,39 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(end - start).toBeLessThan(100);
 });
 
-test("AbortSignal.timeout() passed to spawn still fires after the child has exited", async () => {
-  // The subprocess lets go of the signal when the child exits. The caller
-  // still holds it, so its timer has to keep running.
-  const signal = AbortSignal.timeout(1000);
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "0"],
-    env: bunEnv,
-    stdio: ["ignore", "ignore", "ignore"],
-    signal,
+// The subprocess lets go of the signal when the child exits. The caller still
+// holds it, so its timer has to keep running.
+describe("AbortSignal.timeout() still fires after the child has exited", () => {
+  async function expectTimeoutAfterExit(signal: AbortSignal, exitCode: number | null) {
+    // Proves nothing unless the child was gone before the timer fired.
+    expect(exitCode).toBe(0);
+    expect(signal.aborted).toBe(false);
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+    expect(signal.reason).toBeInstanceOf(DOMException);
+    expect(signal.reason.name).toBe("TimeoutError");
+  }
+
+  test("Bun.spawn", async () => {
+    const signal = AbortSignal.timeout(1000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "0"],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      signal,
+    });
+    await expectTimeoutAfterExit(signal, await proc.exited);
   });
-  await proc.exited;
-  // Proves nothing unless the child was gone before the timer fired.
-  expect(signal.aborted).toBe(false);
-  await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
-  expect(signal.reason).toBeInstanceOf(DOMException);
-  expect(signal.reason.name).toBe("TimeoutError");
+
+  test("Bun.spawnSync", async () => {
+    const signal = AbortSignal.timeout(1000);
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "0"],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      signal,
+    });
+    await expectTimeoutAfterExit(signal, exitCode);
+  });
 });
 
 describe("Bun.spawn option validation", () => {

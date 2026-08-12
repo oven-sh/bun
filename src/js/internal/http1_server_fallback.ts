@@ -269,6 +269,8 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req = null;
   let pendingUpgrade = null;
+  // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
+  let requestsCount = 0;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
@@ -317,7 +319,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
-    res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+    const { maxRequestsPerSocket } = server;
+    res._maxRequestsPerSocket = maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -333,6 +336,27 @@ function connectionListenerHTTP1(server, socket, options) {
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
     });
+
+    // Node's parserOnIncoming maxRequestsPerSocket routing (the native dispatcher's
+    // reachedRequestsLimit branch in _http_server.ts). Like the Expect routing below, Node only
+    // counts HTTP/1.1 requests. maxRequestsOnConnectionReached makes renderNativeHeaders
+    // advertise Connection: close on the response that reaches the limit and on every 503 past
+    // it; as in Node, nothing here closes the connection itself.
+    if (
+      versionMajor === 1 &&
+      versionMinor === 1 &&
+      typeof maxRequestsPerSocket === "number" &&
+      maxRequestsPerSocket > 0
+    ) {
+      requestsCount++;
+      res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestsCount;
+      if (maxRequestsPerSocket < requestsCount) {
+        server.emit("dropRequest", req, socket);
+        res.writeHead(503);
+        res.end();
+        return 0;
+      }
+    }
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).

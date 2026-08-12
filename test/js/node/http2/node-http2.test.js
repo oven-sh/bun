@@ -4365,6 +4365,83 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", async () => {
+  const served = [];
+  const dropped = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    served.push([req.url, res.maxRequestsOnConnectionReached]);
+    res.end("served");
+  });
+  // Like http.Server (and Node's Http2SecureServer), the limit is a property on the server.
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", (req, socket) => dropped.push([req.url, socket.encrypted === true]));
+  await new Promise(resolve => server.listen(0, resolve));
+  const { promise: connected, resolve: onConnect, reject: onConnectError } = Promise.withResolvers();
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    onConnect,
+  );
+  socket.on("error", onConnectError);
+  try {
+    await connected;
+    // Requests go out one at a time (never pipelined) and every response here is either
+    // Content-Length framed or the bodiless chunked 503 (a lone terminating chunk).
+    let received = "";
+    let waiter;
+    function takeResponse() {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd === -1) return undefined;
+      const head = received.slice(0, headEnd);
+      let bodyEnd = headEnd + 4;
+      const contentLength = /^Content-Length: (\d+)$/m.exec(head);
+      if (contentLength) {
+        bodyEnd += Number(contentLength[1]);
+      } else if (/^Transfer-Encoding: chunked$/m.test(head)) {
+        bodyEnd += "0\r\n\r\n".length;
+      }
+      if (received.length < bodyEnd) return undefined;
+      const response = received.slice(0, bodyEnd);
+      received = received.slice(bodyEnd);
+      return response;
+    }
+    function deliver() {
+      if (!waiter) return;
+      const response = takeResponse();
+      if (response === undefined) return;
+      const { resolve } = waiter;
+      waiter = undefined;
+      resolve(response);
+    }
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      deliver();
+    });
+    socket.on("close", () => {
+      waiter?.reject(new Error(`connection closed while waiting for a response; received ${JSON.stringify(received)}`));
+      waiter = undefined;
+    });
+    async function request(path) {
+      waiter = Promise.withResolvers();
+      const { promise } = waiter;
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+      const raw = await promise;
+      return {
+        statusCode: Number(raw.slice("HTTP/1.1 ".length, "HTTP/1.1 ".length + 3)),
+        connection: /^Connection: (.*)$/m.exec(raw)?.[1],
+        body: raw.slice(raw.indexOf("\r\n\r\n") + 4).replace(/^0\r\n\r\n$/, ""),
+      };
+    }
+
+    expect(await request("/1")).toEqual({ statusCode: 200, connection: "close", body: "served" });
+    expect(await request("/2")).toEqual({ statusCode: 503, connection: "close", body: "" });
+    expect(served).toEqual([["/1", true]]);
+    expect(dropped).toEqual([["/2", true]]);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

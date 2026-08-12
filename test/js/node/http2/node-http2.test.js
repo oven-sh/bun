@@ -4332,6 +4332,43 @@ describe("http2 raw-headers arrays with array values", () => {
     }
   });
 
+  // request() reads :method back to decide whether the stream ends with the HEADERS frame. An array
+  // in that slot (one element, or an empty one after the value) is sent as the method it holds, and
+  // like node the stream is then left open for the caller to end.
+  it("request() accepts an array in the :method slot", async () => {
+    let received;
+    const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
+      received = [];
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        if (rawHeaders[i] === ":method") received.push(rawHeaders[i + 1]);
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    try {
+      const outcomes = [];
+      for (const headers of [
+        [":method", "GET", ":path", "/"],
+        [":method", ["GET"], ":path", "/"],
+        [":method", "GET", ":method", [], ":path", "/"],
+        { ":method": ["GET"], ":path": "/" },
+      ]) {
+        const req = client.request(headers);
+        const endedByRequest = req.writableEnded;
+        await exchange(req);
+        outcomes.push({ received, endedByRequest });
+      }
+      expect(outcomes).toEqual([
+        { received: ["GET"], endedByRequest: true },
+        { received: ["GET"], endedByRequest: false },
+        { received: ["GET"], endedByRequest: false },
+        { received: ["GET"], endedByRequest: false },
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   it("sends each element of a single-value header when strictSingleValueFields is off", async () => {
     let received;
     const { client, close } = await peers(

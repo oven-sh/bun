@@ -6313,7 +6313,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       let rejectContentLengthOnNoPayload = false;
-      if (NoPayloadMethods.has(method.toUpperCase())) {
+      if (typeof method === "string" && NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
         // (validated above) is honored, so { endStream: false } stays open.

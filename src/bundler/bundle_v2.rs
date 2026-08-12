@@ -5291,33 +5291,21 @@ pub mod bv2_impl {
 
                 let asts = self.graph.ast.slice();
                 let css_asts = asts.items_css();
-                // SoA columns are physically disjoint slabs but rustc cannot
-                // see that through `&Slice`. Route the two columns we mutate (`parts`,
-                // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
-                // no `&mut` intermediate) so the per-index `&mut` does not conflict
-                // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
-                // `find_reachable_files` (~L1457). The slab does not resize for the
-                // duration of this loop and no other `&mut` to these columns exists.
-                let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
-                let import_records_col: *mut import_record::List =
-                    ast_raw.import_records.cast::<import_record::List>();
+                let parts = asts.items_parts();
+                let all_import_records = asts.items_import_records();
 
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let part_list = unsafe { &mut *parts_col.add(index) };
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let import_records = unsafe { &mut *import_records_col.add(index) };
+                    let import_records = &all_import_records[index];
                     let maybe_css = &css_asts[index];
                     let target = asts.items_target()[index];
                     // Dev Server proceeds even with failed files.
                     // These files are filtered out via the lack of any parts.
                     //
                     // Actual empty files will contain a part exporting an empty object.
-                    if part_list.len() != 0 {
+                    if parts[index].len() != 0 {
                         if maybe_css.is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
@@ -5372,21 +5360,19 @@ pub mod bv2_impl {
                             }
 
                             // Discover all CSS roots.
-                            for record in import_records.as_mut_slice() {
+                            for record in import_records.as_slice() {
                                 if !record.source_index.is_valid() {
                                     continue;
                                 }
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // SAFETY: `source_index < ast.len()` (validated above); read
-                                // via the raw column ptr so we don't reborrow `asts.parts()`
-                                // while `import_records` (a sibling column) is held `&mut`.
-                                if unsafe {
-                                    (*parts_col.add(record.source_index.get() as usize)).len()
-                                } == 0
-                                {
-                                    record.source_index = Index::INVALID;
+                                // A CSS file that failed to bundle has no parts and must
+                                // not become a CSS chunk. The record keeps its source
+                                // index: the HTML rewriter and the HMR import conversion
+                                // use it to recognize the import as a stylesheet, and the
+                                // importer's output stays cached after the CSS recovers.
+                                if parts[record.source_index.get() as usize].len() == 0 {
                                     continue;
                                 }
 

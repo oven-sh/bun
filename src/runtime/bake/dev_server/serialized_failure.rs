@@ -225,10 +225,10 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
             _ = w.write_int_le::<u32>(0);
             return;
         }
-        debug_assert!(loc.column >= 0); // zero based and not negative
-
         _ = w.write_int_le::<i32>(loc.line);
-        _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
+        // One-based; 0 means the message has a line but no column (native plugins
+        // can log such a location), which the client renders without an underline.
+        _ = w.write_int_le::<u32>(loc.column.max(0) as u32);
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 
         // TODO: syntax highlighted line text + give more context lines

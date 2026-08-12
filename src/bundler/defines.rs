@@ -55,8 +55,13 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var.
+    //
+    // The bytes are copied into `bump` as well: `value` borrows a `Box<[u8]>`
+    // inside the env map, which `Bun__setEnvValue` replaces (freeing the old
+    // box) every time JS assigns one of the proxy vars, while this `Define`
+    // table lives as long as the transpiler (the whole DevServer in bake).
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));

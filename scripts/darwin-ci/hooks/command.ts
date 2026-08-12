@@ -1,9 +1,8 @@
-import { $ } from "bun";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "../lib/config";
 import { guest } from "../lib/guest";
-import { fail } from "../lib/shell";
+import { fail, runInherit, shellQuote } from "../lib/shell";
 import { tart } from "../lib/tart";
 
 const env = process.env;
@@ -26,14 +25,16 @@ const hostOnlyEnv = new Set([
 
 if (!command.includes("runner.node.mjs")) {
   console.log("--- running on host (not a test step)");
-  process.exit((await $`bash -c ${command}`.nothrow()).exitCode);
+  // same flags buildkite-agent's own command runner uses, so a failing middle line still fails the step
+  process.exit(await runInherit(["bash", "-e", "-o", "pipefail", "-c", command], { cwd: checkout }));
 }
 
 let cleaned = false;
 async function cleanup(): Promise<void> {
   if (cleaned) return;
   cleaned = true;
-  await tart.destroy(vm);
+  // pre-exit destroys it again and reaps whatever this misses, so a failure here must not override the test status
+  await tart.destroy(vm).catch((error: unknown) => console.error(`failed to destroy ${vm}: ${error}`));
 }
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => cleanup().finally(() => process.exit(130)));
@@ -61,10 +62,11 @@ async function runInGuest(): Promise<number> {
   console.log(`+++ :test_tube: ${command}`);
   const socket = "/tmp/bk-job-api.sock";
   const forward = ["-o", "StreamLocalBindUnlink=yes", "-R", `${socket}:${env.BUILDKITE_AGENT_JOB_API_SOCKET}`];
-  const status = await g.run(
-    `BUILDKITE_AGENT_JOB_API_SOCKET=${socket} BUILDKITE_AGENT_JOB_API_TOKEN=${env.BUILDKITE_AGENT_JOB_API_TOKEN ?? ""} /bin/bash ~/job.sh`,
-    forward,
-  );
+  const jobEnv = [
+    `BUILDKITE_AGENT_JOB_API_SOCKET=${socket}`,
+    `BUILDKITE_AGENT_JOB_API_TOKEN=${shellQuote(env.BUILDKITE_AGENT_JOB_API_TOKEN ?? "")}`,
+  ];
+  const status = await g.run(`${jobEnv.join(" ")} /bin/bash ~/job.sh`, forward);
 
   console.log("--- :outbox_tray: collect reports");
   await g.collectReports("work", checkout);
@@ -87,9 +89,12 @@ async function retryBoot(): Promise<string | undefined> {
 async function pushEnv(g: ReturnType<typeof guest>): Promise<void> {
   const lines = Object.entries(env)
     .filter(([key]) => /^(BUILDKITE|BUN_|EXPECTED_PLATFORM_)|^(CI|ASAN_OPTIONS)$/.test(key) && !hostOnlyEnv.has(key))
-    .map(([key, value]) => `${key}=${$.escape(String(value ?? ""))}`);
+    .map(([key, value]) => `${key}=${shellQuote(value ?? "")}`);
   const file = `/tmp/${vm}.env`;
-  writeFileSync(file, lines.join("\n") + "\n");
-  await g.push(file, "job.env");
-  unlinkSync(file);
+  writeFileSync(file, lines.join("\n") + "\n", { mode: 0o600 });
+  try {
+    await g.push(file, "job.env");
+  } finally {
+    unlinkSync(file);
+  }
 }

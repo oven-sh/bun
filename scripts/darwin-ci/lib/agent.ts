@@ -1,9 +1,22 @@
-import { $ } from "bun";
 import { join } from "node:path";
 import { ciUserHome, ciUserId } from "./ci-user";
-import { config, releaseTier } from "./config";
+import { config } from "./config";
+import { bootstrapCheckout } from "./host";
 import { plist } from "./launchd";
-import { consoleUser, fail, output, poll, sleep, succeeds, sudoRead, sudoWrite } from "./shell";
+import { darwinReleaseTier } from "./release-tier.mjs";
+import {
+  consoleUser,
+  fail,
+  poll,
+  probe,
+  run,
+  runInheritOrThrow,
+  sleep,
+  spawn,
+  succeeds,
+  sudoRead,
+  sudoWrite,
+} from "./shell";
 
 const path = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const agentLabel = "com.buildkite.buildkite-agent";
@@ -17,13 +30,14 @@ async function agentToken(): Promise<string> {
   );
 }
 
-type TartAgentOptions = { release: number; spawn: number };
+export type TartAgentOptions = { release: number; spawn: number };
 
-export async function installTartAgent({ release, spawn }: TartAgentOptions): Promise<void> {
+export async function installTartAgent({ release, spawn: workers }: TartAgentOptions): Promise<void> {
   const user = config.ciUser;
   if ((await consoleUser()) !== user)
     fail(`${user} is not logged in at the console; run setup-user, reboot, then retry`);
-  const baked = await succeeds($`sudo -u ${user} -H ${config.tart.bin} get ${config.tart.image}`);
+  const asCiUser = ["sudo", "-u", user, "-H"];
+  const baked = await succeeds([...asCiUser, config.tart.bin, "get", config.tart.image]);
   if (!baked) fail(`no ${config.tart.image} image for ${user}; run bake as ${user} first`);
 
   const home = await ciUserHome();
@@ -34,17 +48,17 @@ export async function installTartAgent({ release, spawn }: TartAgentOptions): Pr
   const hooks = join(config.installDir, "hooks");
   const owner = `${user}:staff`;
 
-  await $`sudo install -d -o ${user} -g staff ${builds} ${logs} ${join(home, ".buildkite-agent")}`;
+  await run(["sudo", "install", "-d", "-o", user, "-g", "staff", builds, logs, join(home, ".buildkite-agent")]);
 
   await sudoWrite(
     configPath,
     [
       `token="${await agentToken()}"`,
       `name="%hostname-tart-${release}-%spawn"`,
-      `tags="queue=${config.queue},os=darwin,arch=aarch64,distro=macOS,release=${release},release-tier=${releaseTier(release)},tart=true"`,
+      `tags="queue=${config.queue},os=darwin,arch=aarch64,distro=macOS,release=${release},release-tier=${darwinReleaseTier(release)},tart=true"`,
       `hooks-path="${hooks}"`,
       `build-path="${builds}"`,
-      `spawn=${spawn}`,
+      `spawn=${workers}`,
       `cancel-grace-period=30`,
       "",
     ].join("\n"),
@@ -71,11 +85,12 @@ export async function installTartAgent({ release, spawn }: TartAgentOptions): Pr
     }),
   );
 
+  const tartAsCiUser = `${asCiUser.join(" ")} ${config.tart.bin}`;
   const nightly = [
     `PATH=${path}`,
     `launchctl bootout gui/${uid}/${agentLabel}`,
     "sleep 40",
-    `for vm in $(sudo -u ${user} tart list --source local --quiet | grep '^bk-'); do sudo -u ${user} tart delete $vm; done`,
+    `for vm in $(${tartAsCiUser} list --source local --quiet | grep '^bk-'); do ${tartAsCiUser} delete $vm; done`,
     `rm -rf ${builds}/* /tmp/bk-*.log`,
     "shutdown -r now",
   ].join("; ");
@@ -89,28 +104,33 @@ export async function installTartAgent({ release, spawn }: TartAgentOptions): Pr
     }),
   );
 
-  await $`sudo launchctl bootout system/buildkite-agent`.quiet().nothrow();
-  await $`sudo launchctl bootout system/${cleanupLabel}`.quiet().nothrow();
+  await spawn(["sudo", "launchctl", "bootout", "system/buildkite-agent"]);
+  await spawn(["sudo", "launchctl", "bootout", `system/${cleanupLabel}`]);
   await unload(`gui/${uid}/${agentLabel}`);
-  await $`sudo launchctl bootstrap gui/${uid} /Library/LaunchAgents/${agentLabel}.plist`;
-  await $`sudo launchctl bootstrap system /Library/LaunchDaemons/${cleanupLabel}.plist`;
+  await run(["sudo", "launchctl", "bootstrap", `gui/${uid}`, `/Library/LaunchAgents/${agentLabel}.plist`]);
+  await run(["sudo", "launchctl", "bootstrap", "system", `/Library/LaunchDaemons/${cleanupLabel}.plist`]);
 
   await sleep(4000);
-  console.log(await output($`sudo tail -4 ${join(logs, "buildkite-agent.log")}`));
+  console.log(
+    (await probe(["sudo", "tail", "-4", join(logs, "buildkite-agent.log")])) ?? "(agent log not written yet)",
+  );
 }
 
 export async function installBareAgent(): Promise<void> {
-  const checkout = join(process.env.HOME!, "bun-bootstrap");
   const token = await agentToken();
-  await $`sudo env BUILDKITE_AGENT_TOKEN=${token} PATH=${path} node scripts/agent.mjs install`.cwd(checkout);
-  await sleep(4000);
-  console.log(
-    await output($`tail -4 ${join(process.env.HOME!, "Library", "Logs", "buildkite-agent", "buildkite-agent.log")}`),
+  await runInheritOrThrow(
+    ["sudo", "env", `PATH=${path}`, `BUILDKITE_AGENT_TOKEN=${token}`, "node", "scripts/agent.mjs", "install"],
+    {
+      cwd: bootstrapCheckout,
+    },
   );
+  await sleep(4000);
+  const log = join(process.env.HOME!, "Library", "Logs", "buildkite-agent", "buildkite-agent.log");
+  console.log((await probe(["tail", "-4", log])) ?? "(agent log not written yet)");
 }
 
 // bootout returns before a busy agent has finished its cancel grace period, and bootstrap fails with EIO until it has
 async function unload(target: string): Promise<void> {
-  await $`sudo launchctl bootout ${target}`.quiet().nothrow();
-  await poll(30, 2000, async () => ((await succeeds($`sudo launchctl print ${target}`)) ? undefined : true));
+  await spawn(["sudo", "launchctl", "bootout", target]);
+  await poll(30, 2000, async () => ((await succeeds(["sudo", "launchctl", "print", target])) ? undefined : true));
 }

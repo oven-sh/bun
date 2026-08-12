@@ -21,6 +21,7 @@ guest's macOS version, and a guest cannot be newer than its host.
 host.sh            first contact: installs brew and bun, then runs `main.ts provision`
 main.ts            provision | setup-user | bake | install-agent
 lib/               host hardening, tailscale, the unprivileged CI user, tart, bake, agent config
+lib/release-tier.mjs  the `release-tier` thresholds, also imported by scripts/agent.mjs for bare hosts
 hooks/             agent hooks for tart hosts (command, pre-exit, environment)
 guest/bake.sh      runs inside the guest once, at bake time
 guest/job.sh       runs inside the guest for every job
@@ -37,7 +38,12 @@ its hooks path. It asks for one reboot the first time and is re-run after it.
 `scripts/bootstrap.sh` on the host and installs the `scripts/agent.mjs` service.
 
 `bake` is safe on a live host: it builds a staging image and swaps it in only
-after the toolchain verifies. Re-run it when toolchain pins move.
+after the toolchain verifies, under the same lock the command hook clones
+with. Re-run it when toolchain pins move.
+
+Everything here runs on whatever bun `host.sh` pinned when the host was first
+provisioned, so it sticks to `Bun.spawn` with argv arrays and stays off
+`Bun.$`.
 
 ## Bringing up a host
 

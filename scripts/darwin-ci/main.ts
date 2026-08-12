@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { installBareAgent, installTartAgent } from "./lib/agent";
+import { installBareAgent, installTartAgent, type TartAgentOptions } from "./lib/agent";
 import { bake } from "./lib/bake";
 import { ciUserExists, enableAutoLogin, ensureCiUser } from "./lib/ci-user";
 import { config } from "./lib/config";
@@ -9,6 +8,7 @@ import {
   bootstrapToolchain,
   brewInstall,
   disableRemoteManagement,
+  ensureShellProfiles,
   hardenSshd,
   installBuildkiteAgent,
   installSelf,
@@ -16,7 +16,7 @@ import {
   setHostname,
   tailnetSummary,
 } from "./lib/host";
-import { consoleUser, fail, step } from "./lib/shell";
+import { consoleUser, fail, runInheritOrThrow, step } from "./lib/shell";
 
 const usage = `usage:
   main.ts provision <hostname> <tart|bare> [--tags <tailscale tags>]   converge a freshly imaged host
@@ -38,7 +38,6 @@ const { positionals, values } = parseArgs({
 });
 
 const [subcommand, ...args] = positionals;
-const agentOptions = { release: Number(values.release), spawn: Number(values.spawn) };
 
 switch (subcommand) {
   case "provision":
@@ -51,7 +50,7 @@ switch (subcommand) {
     await bake({ base: values.base!, ref: values.ref! });
     break;
   case "install-agent":
-    await installTartAgent(agentOptions);
+    await installTartAgent(agentOptions());
     break;
   default:
     fail(usage);
@@ -62,18 +61,31 @@ function parseMode(mode: string | undefined): "tart" | "bare" {
   return fail(usage);
 }
 
+function positiveInteger(name: "release" | "spawn"): number {
+  const value = values[name]!;
+  if (!/^[1-9]\d*$/.test(value)) fail(`--${name} must be a positive integer, got ${JSON.stringify(value)}`);
+  return Number(value);
+}
+
+function agentOptions(): TartAgentOptions {
+  return { release: positiveInteger("release"), spawn: positiveInteger("spawn") };
+}
+
 async function setupUser(): Promise<void> {
   await ensureCiUser();
   await enableAutoLogin();
 }
 
 async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
+  const agent = mode === "tart" ? agentOptions() : undefined;
+
   step("remote management off, sshd key-only");
   await disableRemoteManagement();
   await hardenSshd();
 
   step(`hostname ${name}`);
   await setHostname(name);
+  await ensureShellProfiles();
 
   step("tailscale");
   await joinTailnet(name, values.tags);
@@ -84,14 +96,14 @@ async function provision(name: string, mode: "tart" | "bare"): Promise<void> {
   step(`install scripts to ${config.installDir}`);
   await installSelf();
 
-  if (mode === "tart") await provisionTart();
+  if (agent) await provisionTart(agent);
   else await provisionBare();
 
   step("done");
   console.log(`tailscale: ${await tailnetSummary()}`);
 }
 
-async function provisionTart(): Promise<void> {
+async function provisionTart(agent: TartAgentOptions): Promise<void> {
   if (process.arch !== "arm64") fail("tart mode needs Apple Silicon; use bare on Intel");
   const user = config.ciUser;
   const main = `${config.installDir}/main.ts`;
@@ -111,10 +123,22 @@ async function provisionTart(): Promise<void> {
   }
 
   step(`bake ${config.tart.image} as ${user}`);
-  await $`sudo -u ${user} -H /usr/local/bin/bun ${main} bake --base ${values.base!} --ref ${values.ref!}`;
+  await runInheritOrThrow([
+    "sudo",
+    "-u",
+    user,
+    "-H",
+    "/usr/local/bin/bun",
+    main,
+    "bake",
+    "--base",
+    values.base!,
+    "--ref",
+    values.ref!,
+  ]);
 
   step("agent");
-  await installTartAgent(agentOptions);
+  await installTartAgent(agent);
 }
 
 async function provisionBare(): Promise<void> {

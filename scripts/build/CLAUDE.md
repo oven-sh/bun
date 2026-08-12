@@ -154,9 +154,9 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 For `mode: "full"` (the normal case):
 
-1. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
-2. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-3. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_bin` → `libbun_rust.a`.
+1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
+2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_bin` → `libbun_rust.a` (after resolving just lolhtml, its path dep). Codegen and cargo are emitted before the deps on purpose: ninja runs equally-weighted ready edges in emission order, and cargo is the critical path — emitted after the deps, it did not start until ~1000 vendored `cc` edges had been dispatched (~50s into a CI build).
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.

@@ -2,9 +2,9 @@
  * The bun executable target — orchestrates everything.
  *
  * This is where all the phases come together:
- *   - resolve all deps → lib paths + include dirs
  *   - emit codegen → generated .cpp/.h/.rs
  *   - emit cargo build → libbun_rust.a
+ *   - resolve all deps → lib paths + include dirs
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
@@ -179,13 +179,42 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // ─── Step 1: resolve all deps ───
+  // ─── Step 1: codegen + rust ───
+  // Emitted before the deps: ninja dispatches equally-weighted ready edges in emission order, and cargo is the critical path.
+  const codegen = emitCodegen(n, cfg, sources);
+  const depsByName = new Map<string, ResolvedDep>();
+
+  // One cargo invocation produces a single staticlib that occupies the
+  // same slot in the link as the C++ archive. Rust `include!`s codegen
+  // `.rs` outputs (written as side effects of the generate-classes /
+  // bundle-modules / generate-jssink edges), so the codegen output set
+  // is forwarded as implicit inputs to order it first.
+  //
+  // cpp-only: skip rust entirely (runs on a separate CI machine).
+  let rustObjects: string[] = [];
+  if (cfg.mode !== "cpp-only") {
+    // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
+    // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
+    // not built into a separate archive — cargo needs `vendor/lolhtml/` on
+    // disk before it resolves the manifest. The `.ref` stamp's content is
+    // the pinned commit, so a bump re-invokes cargo.
+    const lolhtmlDep = resolveDep(n, cfg, lolhtml, depsByName);
+    assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+    depsByName.set(lolhtml.name, lolhtmlDep);
+    rustObjects = emitRust(n, cfg, {
+      codegenInputs: codegen.rustInputs,
+      codegenOrderOnly: codegen.rustOrderOnly,
+      rustSources: sources.rust,
+      vendorStamps: lolhtmlDep.outputs,
+    });
+  }
+
+  // ─── Step 2: resolve all deps ───
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
-  const depsByName = new Map<string, ResolvedDep>();
   for (const dep of allDeps) {
-    const resolved = resolveDep(n, cfg, dep, depsByName);
+    const resolved = depsByName.get(dep.name) ?? resolveDep(n, cfg, dep, depsByName);
     if (resolved !== null) {
       deps.push(resolved);
       depsByName.set(dep.name, resolved);
@@ -215,33 +244,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
-  // ─── Step 2: codegen ───
-  const codegen = emitCodegen(n, cfg, sources);
-
-  // ─── Step 3: rust ───
-  // One cargo invocation produces a single staticlib that occupies the
-  // same slot in the link as the C++ archive. Rust `include!`s codegen
-  // `.rs` outputs (written as side effects of the generate-classes /
-  // bundle-modules / generate-jssink edges), so the codegen output set
-  // is forwarded as implicit inputs to order it first.
-  //
-  // cpp-only: skip rust entirely (runs on a separate CI machine).
-  let rustObjects: string[] = [];
-  if (cfg.mode !== "cpp-only") {
-    rustObjects = emitRust(n, cfg, {
-      codegenInputs: codegen.rustInputs,
-      codegenOrderOnly: codegen.rustOrderOnly,
-      rustSources: sources.rust,
-      // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
-      // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
-      // not built into a separate archive — cargo needs `vendor/lolhtml/` on
-      // disk before it resolves the manifest. The `.ref` stamp's content is
-      // the pinned commit, so a bump re-invokes cargo.
-      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
-    });
-  }
-
-  // ─── Step 4: configure-time generated header + assemble flags ───
+  // ─── Step 3: configure-time generated header + assemble flags ───
   // bun_dependency_versions.h — written at configure time, not a ninja rule.
   // BunProcess.cpp includes it for process.versions. writeIfNotChanged
   // semantics so bumping an unrelated dep doesn't recompile everything.
@@ -259,7 +262,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
   const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
 
-  // ─── Step 5: PCH ───
+  // ─── Step 4: PCH ───
   // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
   const usePch = !cfg.ci || cfg.mode !== "full";
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
@@ -287,7 +290,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     });
   }
 
-  // ─── Step 6: compile C/C++ ───
+  // ─── Step 5: compile C/C++ ───
   n.comment("─── C/C++ compilation ───");
   n.blank();
 
@@ -429,7 +432,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // cfg.archiveDeps they live in depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
-  // ─── Step 7: cpp-only / archive-link → archive (cpp-only returns here) ───
+  // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
   // build-rust step produces libbun_rust.a independently; build-bun
   // downloads both artifacts and links them. Archive name uses the exe
@@ -467,7 +470,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
   }
 
-  // ─── Step 7: link ───
+  // ─── Step 6: link ───
   n.comment("─── Link ───");
   n.blank();
 
@@ -505,7 +508,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
-  // ─── Step 8: post-link (strip, dsymutil, smoke test) ───
+  // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };

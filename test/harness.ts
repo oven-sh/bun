@@ -508,8 +508,12 @@ export async function bunRun(
   var path = require("path");
   const args = Array.isArray(fileOrArgs) ? fileOrArgs : [fileOrArgs];
   const cwd = Array.isArray(fileOrArgs) ? undefined : path.dirname(fileOrArgs);
+  // Fixtures may import "bun:internal-for-testing" (e.g. socket.test.ts's
+  // kqueue fixture). Release builds gate that module behind --expose-internals
+  // (debug builds always allow it, so adding the flag is harmless there too).
+  const cmd = [bunExe(), "--expose-internals", ...args];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
+    cmd,
     cwd,
     env: {
       ...bunEnv,

@@ -2183,9 +2183,8 @@ function validateWindowSize(windowSize) {
 }
 hideFromStack(validateWindowSize);
 
-// Node only type-checks the numbers (the code is converted to a uint32 on the way out), and
-// destroy(error, code) comes through here too, so a range check would make destroy() throw:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#goaway)
+// Same checks, in the same order, as Http2Session#goaway (validateNumber, not a range check):
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js
 function validateGoawayArguments(code, lastStreamID, opaqueData) {
   if (opaqueData !== undefined) {
     validateBuffer(opaqueData, "opaqueData");

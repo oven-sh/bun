@@ -496,7 +496,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let str_ = arg.to_js_string(global)?;
-        let view = str_.view(global);
+        let view = str_.view(global)?;
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }

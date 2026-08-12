@@ -1580,6 +1580,68 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   expect(exitCode).toBe(0);
 });
 
+it("send()/publish() with a string that cannot be flattened throw and send nothing", async () => {
+  // A 16-bit rope string of the maximum length (2^31 - 1 chars). Building it
+  // only allocates rope nodes, but a flat 16-bit buffer of that length fails
+  // WTF::StringImpl::isValidLength, so reading the string throws JSC's
+  // "Out of memory" RangeError without any allocation being attempted. The
+  // native side used to ignore that exception, write an empty text frame to
+  // the peer, and only then let the exception surface.
+  let huge = "\u0100";
+  for (let i = 0; i < 30; i++) huge = huge + huge + "\u0100";
+  expect(huge.length).toBe(2 ** 31 - 1);
+
+  // Each entry is either what the call returned or { name, message } of what it threw.
+  const outcomes: unknown[] = [];
+  await using server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, srv) {
+      if (srv.upgrade(req)) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      publishToSelf: true,
+      open(ws) {
+        ws.subscribe("topic");
+        for (const attempt of [
+          () => ws.send(huge),
+          () => ws.sendText(huge),
+          () => ws.publish("topic", huge),
+          () => ws.publishText("topic", huge),
+          () => server.publish("topic", huge),
+        ]) {
+          try {
+            outcomes.push(attempt());
+          } catch (e) {
+            outcomes.push({ name: (e as Error).name, message: (e as Error).message });
+          }
+        }
+        ws.send("done");
+      },
+      message() {},
+    },
+  });
+
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  client.onmessage = e => {
+    received.push(e.data);
+    if (e.data === "done") done.resolve();
+  };
+  client.onerror = () => done.reject(new Error("client websocket errored"));
+  client.onclose = () => done.reject(new Error("client websocket closed before receiving 'done'"));
+  await done.promise;
+  client.onclose = null;
+  client.close();
+
+  expect({ received, outcomes }).toEqual({
+    received: ["done"],
+    outcomes: Array(5).fill({ name: "RangeError", message: "Out of memory" }),
+  });
+});
+
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
 describe.concurrent("publish() return value reflects subscriber backpressure", () => {

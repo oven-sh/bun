@@ -4993,7 +4993,7 @@ impl Resolver {
                 if record_type_str.length() == 0 {
                     break 'brk RecordType::DEFAULT;
                 }
-                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this)?.slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -5186,7 +5186,7 @@ impl Resolver {
             };
         }
 
-        let name = name_str.to_slice(global_this);
+        let name = name_str.to_slice(global_this)?;
         let resolver = global_resolver(global_this);
 
         resolver.do_lookup(name.slice(), port, options, global_this)
@@ -5966,7 +5966,7 @@ impl Resolver {
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_str.to_slice(global_this);
+        let addr_slice = addr_str.to_slice(global_this)?;
         let addr_s = addr_slice.slice();
 
         let port_value = arguments[1];

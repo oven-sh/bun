@@ -276,7 +276,7 @@ impl SubscriptionCtx {
                 // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
                 // deref (`as_string()` returns a live cell for string values).
                 bun_jsc::JSString::opaque_ref(channel_name.as_string())
-                    .get_zig_string(global_object)
+                    .get_zig_string(global_object)?
             );
             return Ok(());
         };

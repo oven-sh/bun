@@ -1431,7 +1431,7 @@ impl UDPSocket {
                 // plain cast (no `toPrimitive`, no user JS). `JSString` is an
                 // `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
                 string_slices
-                    .push(bun_jsc::JSString::opaque_ref(val.as_string()).to_slice(global_this));
+                    .push(bun_jsc::JSString::opaque_ref(val.as_string()).to_slice(global_this)?);
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1528,7 +1528,9 @@ impl UDPSocket {
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
                 // SAFETY: to_js_string returned non-null on success path.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
+                payload_str = payload_arg
+                    .to_js_string(global_this)?
+                    .to_slice(global_this)?;
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(

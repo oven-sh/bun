@@ -1388,7 +1388,11 @@ impl Expect {
                     let type_name = if matcher_fn.is_null() {
                         bun_core::String::static_("null")
                     } else {
-                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
+                        bun_core::String::init(
+                            matcher_fn
+                                .js_type_string(global_this)
+                                .get_zig_string(global_this)?,
+                        )
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",

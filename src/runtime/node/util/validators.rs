@@ -3,10 +3,10 @@ use core::fmt;
 use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> JsResult<ZigString> {
     let js_type = value.js_type();
     if js_type.is_array() {
-        return ZigString::static_("array");
+        return Ok(ZigString::static_("array"));
     }
     value
         .js_type_string(global_object)
@@ -43,7 +43,10 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
+    let actual_type = match get_type_name(global_this, value) {
+        Ok(actual_type) => actual_type,
+        Err(e) => return e,
+    };
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -395,7 +398,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
+        let actual_type = get_type_name(global_this, value)?;
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(

@@ -4070,6 +4070,298 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+// An array in a value slot of the raw [name, value, ...] headers form is sent as one field per
+// element, like an array value in the object form (node: buildNgHeaderString treats both forms the
+// same). Every assertion below is on the flat list the peer decoded from the wire, so it sees one
+// name/value pair per field; the expected values were checked against node v26.3.0.
+describe.concurrent("http2 raw-headers arrays with array values", () => {
+  function nonPseudoFields(rawHeaders) {
+    const fields = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      if (!rawHeaders[i].startsWith(":")) fields.push(rawHeaders[i], rawHeaders[i + 1]);
+    }
+    return fields;
+  }
+
+  async function peers(onStream, { serverOptions, clientOptions, waitForConnect = true } = {}) {
+    const server = http2.createServer(serverOptions);
+    server.on("stream", onStream);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const authority = `127.0.0.1:${server.address().port}`;
+    const client = http2.connect(`http://${authority}`, clientOptions);
+    if (waitForConnect) await new Promise(resolve => client.once("connect", resolve));
+    return {
+      client,
+      authority,
+      close() {
+        client.destroy();
+        server.close();
+      },
+    };
+  }
+
+  // Ends the request and resolves with the response head once the stream has closed.
+  function exchange(req) {
+    return new Promise((resolve, reject) => {
+      let response;
+      req.on("response", (headers, _flags, rawHeaders) => (response = { headers, rawHeaders }));
+      req.on("error", reject);
+      req.on("close", () => resolve(response));
+      req.resume();
+      req.end();
+    });
+  }
+
+  // The request is made on a connecting session in the second case, so it is queued and only
+  // encoded once the session connects.
+  for (const waitForConnect of [true, false]) {
+    it(`request() sends one field per element (${waitForConnect ? "connected" : "connecting"} session)`, async () => {
+      let received;
+      const { client, authority, close } = await peers(
+        (stream, headers, _flags, rawHeaders) => {
+          received = {
+            path: headers[":path"],
+            sensitive: headers[http2.sensitiveHeaders],
+            fields: nonPseudoFields(rawHeaders),
+          };
+          stream.respond({ ":status": 200 });
+          stream.end();
+        },
+        { waitForConnect },
+      );
+      try {
+        const arrayThenScalar = ["d1"];
+        const scalarThenArray = ["e2", "e3"];
+        const raw = [
+          ...[":path", ["/raw"]],
+          ...["x-multi", ["a", "b"]],
+          ...["x-number", [1, 2]],
+          ...["x-one", ["only"]],
+          ...["x-none", []],
+          ...["content-type", []],
+          ...["x-plain", "p"],
+          ...["x-dup", arrayThenScalar, "x-dup", "d2"],
+          ...["x-dup2", "e1", "x-dup2", scalarThenArray],
+          ...["x-secret", ["s1", "s2"]],
+        ];
+        raw[http2.sensitiveHeaders] = ["x-secret"];
+        const req = client.request(raw);
+        await exchange(req);
+
+        expect(received).toEqual({
+          path: "/raw",
+          // The receiver lists a name once per field that arrived never-indexed.
+          sensitive: ["x-secret", "x-secret"],
+          fields: [
+            ...["x-multi", "a", "x-multi", "b"],
+            ...["x-number", "1", "x-number", "2"],
+            ...["x-one", "only"],
+            ...["x-plain", "p"],
+            ...["x-dup", "d1", "x-dup", "d2"],
+            ...["x-dup2", "e1", "x-dup2", "e2", "x-dup2", "e3"],
+            ...["x-secret", "s1", "x-secret", "s2"],
+          ],
+        });
+        // Deriving sentHeaders (a later duplicate is appended to the name's array) must not append
+        // into the caller's arrays, which are what gets encoded.
+        expect({ arrayThenScalar, scalarThenArray }).toEqual({
+          arrayThenScalar: ["d1"],
+          scalarThenArray: ["e2", "e3"],
+        });
+        expect(req.sentHeaders).toEqual({
+          ":method": "GET",
+          ":authority": authority,
+          ":scheme": "http",
+          ":path": ["/raw"],
+          "x-multi": ["a", "b"],
+          "x-number": [1, 2],
+          "x-one": ["only"],
+          "x-none": [],
+          "content-type": [],
+          "x-plain": "p",
+          "x-dup": ["d1", "d2"],
+          "x-dup2": ["e1", ["e2", "e3"]],
+          "x-secret": ["s1", "s2"],
+          [http2.sensitiveHeaders]: ["x-secret"],
+        });
+      } finally {
+        close();
+      }
+    });
+  }
+
+  it("respond() sends one field per element", async () => {
+    let sent;
+    const arrayThenScalar = ["d1"];
+    const { client, close } = await peers(stream => {
+      stream.respond(
+        [
+          ...[":status", "200"],
+          ...["set-cookie", ["c1=1", "c2=2"]],
+          ...["x-multi", ["a", "b"]],
+          ...["x-none", []],
+          ...["x-dup", arrayThenScalar, "x-dup", "d2"],
+          ...["x-plain", "p"],
+        ],
+        { sendDate: false },
+      );
+      sent = stream.sentHeaders;
+      stream.end();
+    });
+    try {
+      const { headers, rawHeaders } = await exchange(client.request({ ":path": "/" }));
+      expect(rawHeaders).toEqual([
+        ...[":status", "200"],
+        ...["set-cookie", "c1=1", "set-cookie", "c2=2"],
+        ...["x-multi", "a", "x-multi", "b"],
+        ...["x-dup", "d1", "x-dup", "d2"],
+        ...["x-plain", "p"],
+      ]);
+      // What a receiver makes of those fields: set-cookie stays a list, other repeated fields are
+      // joined with ", ", and an empty array sends nothing at all.
+      expect(headers).toEqual({
+        ":status": 200,
+        "set-cookie": ["c1=1", "c2=2"],
+        "x-multi": "a, b",
+        "x-dup": "d1, d2",
+        "x-plain": "p",
+        [http2.sensitiveHeaders]: [],
+      });
+      expect(sent).toEqual({
+        ":status": "200",
+        "set-cookie": ["c1=1", "c2=2"],
+        "x-multi": ["a", "b"],
+        "x-none": [],
+        "x-dup": ["d1", "d2"],
+        "x-plain": "p",
+      });
+      expect(arrayThenScalar).toEqual(["d1"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("request() applies the single-value rule to array values", async () => {
+    let received;
+    const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
+      received = nonPseudoFields(rawHeaders);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    try {
+      const attempts = [
+        [":path", "/", "content-type", ["text/plain", "text/html"]],
+        [":path", "/", "content-type", ["text/plain"], "content-type", "text/html"],
+        [":path", "/", "content-type", "text/plain", "content-type", ["text/html"]],
+        [":path", ["/a", "/b"]],
+      ];
+      const thrown = attempts.map(raw => {
+        try {
+          client.request(raw);
+          return null;
+        } catch (err) {
+          return { name: err.constructor.name, code: err.code, message: err.message };
+        }
+      });
+      const singleValue = name => ({
+        name: "TypeError",
+        code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
+        message: `Header field "${name}" must only have a single value`,
+      });
+      expect(thrown).toEqual([
+        singleValue("content-type"),
+        singleValue("content-type"),
+        singleValue("content-type"),
+        singleValue(":path"),
+      ]);
+
+      // An empty array sends nothing, so it does not count as an occurrence of the field either.
+      await exchange(client.request([":path", "/", "content-type", [], "content-type", "text/html"]));
+      expect(received).toEqual(["content-type", "text/html"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("sends each element of a single-value header when strictSingleValueFields is off", async () => {
+    let received;
+    const { client, close } = await peers(
+      (stream, _headers, _flags, rawHeaders) => {
+        received = nonPseudoFields(rawHeaders);
+        stream.respond([":status", "200", "content-type", ["text/plain", "text/html"]], { sendDate: false });
+        stream.end();
+      },
+      { serverOptions: { strictSingleValueFields: false }, clientOptions: { strictSingleValueFields: false } },
+    );
+    try {
+      const { rawHeaders } = await exchange(client.request([":path", "/", "content-type", ["a/b", "c/d"]]));
+      expect(received).toEqual(["content-type", "a/b", "content-type", "c/d"]);
+      expect(rawHeaders).toEqual([":status", "200", "content-type", "text/plain", "content-type", "text/html"]);
+    } finally {
+      close();
+    }
+  });
+
+  // Each element is validated like a single value: the same ERR_HTTP2_INVALID_HEADER_VALUE the
+  // object form raises for these elements.
+  for (const [label, element] of [
+    ["containing LF", "a\nb"],
+    ["that is null", null],
+  ]) {
+    it(`request() and respond() reject an array element ${label}`, async () => {
+      const describeError = err => ({ name: err.constructor.name, code: err.code, message: err.message });
+      const invalidValue = {
+        name: "TypeError",
+        code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+        message: 'Invalid value for header "x-custom"',
+      };
+
+      // One session per call that throws: a block rejected part-way through encoding leaves that
+      // session's HPACK encoder ahead of the peer (pre-existing, not specific to arrays).
+      {
+        const { client, close } = await peers(() => {});
+        try {
+          let outcome = "returned";
+          try {
+            client.request([":path", "/", "x-custom", ["ok", element]]);
+          } catch (err) {
+            outcome = describeError(err);
+          }
+          expect(outcome).toEqual(invalidValue);
+        } finally {
+          close();
+        }
+      }
+
+      // respond() throws the same way; the stream is then closed so the client's request completes
+      // without ever having received a response head.
+      {
+        let outcome = "not called";
+        const { client, close } = await peers(stream => {
+          try {
+            stream.respond([":status", "200", "x-custom", ["ok", element]]);
+            outcome = "responded";
+          } catch (err) {
+            outcome = describeError(err);
+          }
+          stream.close(http2.constants.NGHTTP2_CANCEL);
+        });
+        try {
+          const req = client.request({ ":path": "/" });
+          req.on("error", () => {});
+          let response = null;
+          req.on("response", headers => (response = headers));
+          await new Promise(resolve => req.on("close", resolve));
+          expect({ outcome, response }).toEqual({ outcome: invalidValue, response: null });
+        } finally {
+          close();
+        }
+      }
+    });
+  }
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

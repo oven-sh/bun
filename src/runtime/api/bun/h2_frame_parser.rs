@@ -8840,6 +8840,8 @@ impl H2FrameParser {
         // Raw (flat [name, value, ...] array) headers form: encode each pair in
         // its given order, pseudo-headers first (same two-pass split as the
         // object form below), preserving interleaved duplicates on the wire.
+        // A value slot holding an array sends one field per element, exactly
+        // like an array value in the object form.
         let headers_are_raw_pairs = headers_arg.js_type().is_array();
         if headers_are_raw_pairs {
             for ignore_pseudo_headers in 0..2usize {
@@ -8895,22 +8897,6 @@ impl H2FrameParser {
                         continue;
                     }
 
-                    if let Some(idx) = this.single_value_index_checked(validated_name) {
-                        if single_value_headers[idx] {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                format_args!(
-                                    "Header field \"{}\" must only have a single value",
-                                    BStr::new(validated_name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                        single_value_headers[idx] = true;
-                    }
-
-                    let value_str = value_js.to_js_string(global_object)?;
-
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
                     } else {
@@ -8920,48 +8906,107 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
-                    let value = value_slice.slice();
-                    if !is_valid_header_value(value) {
-                        return Err(global_object
-                            .err(
-                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                format_args!(
-                                    "Invalid value for header \"{}\"",
-                                    BStr::new(validated_name)
-                                ),
-                            )
-                            .throw());
-                    }
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
-                    );
-
-                    if let Err(err) = this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
+                    let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
+                        let value_str = item.to_js_string(global_object)?;
+                        let value_slice = value_str.to_slice(global_object);
+                        let value = value_slice.slice();
+                        if !is_valid_header_value(value) {
                             return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
+                        bun_output::scoped_log!(
+                            H2FrameParser,
+                            "encode header {} {}",
+                            BStr::new(validated_name),
+                            BStr::new(value)
+                        );
+
+                        if let Err(err) = this.encode_header_into_list(
+                            &mut encoded_headers,
+                            validated_name,
+                            value,
+                            never_index,
+                        ) {
+                            if matches!(err, crate::Error::Alloc(_)) {
+                                return Err(global_object
+                                    .throw(format_args!("Failed to allocate header buffer")));
+                            }
+                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
+                                return Ok(Some(JSValue::js_number(-1.0)));
+                            };
+                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+                            let stream = unsafe { &mut *stream };
+                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
+                                && stream_ctx_arg.is_object()
+                            {
+                                stream.set_context(stream_ctx_arg, global_object);
+                            }
+                            this.schedule_header_compression_session_error();
+                            return Ok(Some(JSValue::js_number(stream_id as f64)));
                         }
-                        this.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        Ok(None)
+                    };
+
+                    if value_js.js_type().is_array() {
+                        let mut value_iter = value_js.array_iterator(global_object)?;
+                        // node (buildNgHeaderString): an empty array sends nothing and does not
+                        // count as an occurrence of a single-value field.
+                        if value_iter.len == 0 {
+                            continue;
+                        }
+                        if let Some(idx) = this.single_value_index_checked(validated_name) {
+                            if value_iter.len > 1 || single_value_headers[idx] {
+                                let exception = global_object.to_type_error(
+                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                );
+                                return Err(global_object.throw_value(exception));
+                            }
+                            single_value_headers[idx] = true;
+                        }
+                        while let Some(item) = value_iter.next()? {
+                            if item.is_empty_or_undefined_or_null() {
+                                return Err(global_object
+                                    .err(
+                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                        format_args!(
+                                            "Invalid value for header \"{}\"",
+                                            BStr::new(validated_name)
+                                        ),
+                                    )
+                                    .throw());
+                            }
+                            if let Some(ret) = encode_value(item)? {
+                                return Ok(ret);
+                            }
+                        }
+                    } else {
+                        if let Some(idx) = this.single_value_index_checked(validated_name) {
+                            if single_value_headers[idx] {
+                                let exception = global_object.to_type_error(
+                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                );
+                                return Err(global_object.throw_value(exception));
+                            }
+                            single_value_headers[idx] = true;
+                        }
+                        if let Some(ret) = encode_value(value_js)? {
+                            return Ok(ret);
+                        }
                     }
                 }
             }

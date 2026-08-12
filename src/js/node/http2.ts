@@ -3752,19 +3752,7 @@ class ServerHttp2Stream extends Http2Stream {
         headers.push(HTTP2_HEADER_DATE, utcDate());
       }
       rawHeadersList = headers;
-      const headersObject = { __proto__: null };
-      for (let i = 0; i < rawHeadersList.length; i += 2) {
-        const key = rawHeadersList[i];
-        const value = rawHeadersList[i + 1];
-        const existing = headersObject[key];
-        if (existing === undefined) headersObject[key] = value;
-        else if ($isArray(existing)) existing.push(value);
-        else headersObject[key] = [existing, value];
-      }
-      if (rawHeadersList[sensitiveHeaders] !== undefined) {
-        headersObject[sensitiveHeaders] = rawHeadersList[sensitiveHeaders];
-      }
-      headers = headersObject;
+      headers = rawHeadersToObject(rawHeadersList, rawHeadersList[sensitiveHeaders]);
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
@@ -4067,6 +4055,25 @@ function buildSensitiveNames(headers, sensitives) {
     }
   }
   return map;
+}
+
+// The object form (node's sentHeaders shape) of an outbound raw [name, value, ...] list: keys keep
+// their casing, a repeated name accumulates its values into an array. An array given as a value is
+// copied first: the list itself is what gets encoded, so accumulating a later duplicate into the
+// caller's array would also put that duplicate on the wire twice.
+function rawHeadersToObject(rawHeadersList, sensitives) {
+  const headersObject = { __proto__: null };
+  for (let i = 0; i < rawHeadersList.length; i += 2) {
+    const key = rawHeadersList[i];
+    let value = rawHeadersList[i + 1];
+    if ($isArray(value)) value = value.slice();
+    const existing = headersObject[key];
+    if (existing === undefined) headersObject[key] = value;
+    else if ($isArray(existing)) existing.push(value);
+    else headersObject[key] = [existing, value];
+  }
+  if (sensitives !== undefined) headersObject[sensitiveHeaders] = sensitives;
+  return headersObject;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -6173,19 +6180,7 @@ class ClientHttp2Session extends Http2Session {
           if (path !== undefined) throw $ERR_HTTP2_CONNECT_PATH();
         }
         rawHeadersList = additionalPseudoHeaders.length ? additionalPseudoHeaders.concat(raw) : raw;
-        const headersObject = { __proto__: null };
-        for (let i = 0; i < rawHeadersList.length; i += 2) {
-          const key = rawHeadersList[i];
-          const value = rawHeadersList[i + 1];
-          const existing = headersObject[key];
-          if (existing === undefined) headersObject[key] = value;
-          else if ($isArray(existing)) existing.push(value);
-          else headersObject[key] = [existing, value];
-        }
-        if (raw[sensitiveHeaders] !== undefined) {
-          headersObject[sensitiveHeaders] = raw[sensitiveHeaders];
-        }
-        headers = headersObject;
+        headers = rawHeadersToObject(rawHeadersList, raw[sensitiveHeaders]);
       } else if (!$isObject(headers)) {
         throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
       } else {

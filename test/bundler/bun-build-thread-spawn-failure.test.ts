@@ -11,14 +11,22 @@ import { join } from "node:path";
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const skip = !isLinux || !cc;
 
-// The "Bundler" thread is the only thread bun creates with Rust's default
-// 2 MiB stack: JSC's helpers ask for their own sizes, the allocators pass no
-// attributes at all, and bun's thread pools use 4 MiB. So this stack size
-// singles out the bundle thread and everything else keeps working.
+// Nothing at pthread_create() time says which thread is being created (the name
+// is set by the thread itself, and under ASAN every thread even gets the same
+// entry point), so the shim narrows it down three ways. The thread has to be
+// created by the main thread, the one running Bun.build() / the request handler,
+// with Rust's default 2 MiB stack (bun's pools and its HTTP client thread use
+// 4 MiB, the allocators pass no attributes), and only while the fixture has the
+// BUNDLE_THREAD_SPAWN_ARMED_FILE in place, which it is exactly around the calls
+// that start the bundle thread. JSC's on-demand threads also use 2 MiB on ASAN
+// builds; the fixtures run a GC right before arming so those are already up.
+// Other std-spawned 2 MiB threads (file watchers, the Bun.file() IO thread)
+// would be caught too, so the fixtures must not use fs.watch or Bun.file()
+// while armed.
 const BUNDLE_THREAD_STACK_SIZE = 2 * 1024 * 1024;
 
-// BUNDLE_THREAD_SPAWN_PLAN has one letter per attempt to create such a thread:
-// 'f' fails it with EAGAIN, 's' lets it through; the last letter repeats.
+// BUNDLE_THREAD_SPAWN_PLAN has one letter per such attempt: 'f' fails it with
+// EAGAIN, 's' lets it through; the last letter repeats.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -26,14 +34,18 @@ const SHIM_C = /* c */ `
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+static const char *armed_file;
 static const char *plan;
 static size_t plan_len;
 static size_t attempts;
 
 __attribute__((constructor)) static void init(void) {
   real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
+  armed_file = getenv("BUNDLE_THREAD_SPAWN_ARMED_FILE");
   plan = getenv("BUNDLE_THREAD_SPAWN_PLAN");
   plan_len = plan ? strlen(plan) : 0;
 }
@@ -41,7 +53,8 @@ __attribute__((constructor)) static void init(void) {
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
   size_t stack_size = 0;
   if (attr) pthread_attr_getstacksize(attr, &stack_size);
-  if (stack_size == ${BUNDLE_THREAD_STACK_SIZE} && plan_len > 0) {
+  if (stack_size == ${BUNDLE_THREAD_STACK_SIZE} && plan_len > 0 && armed_file &&
+      syscall(SYS_gettid) == getpid() && access(armed_file, F_OK) == 0) {
     size_t i = __sync_fetch_and_add(&attempts, 1);
     if (plan[i < plan_len ? i : plan_len - 1] == 'f') return EAGAIN;
   }
@@ -52,19 +65,40 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 const EXPECTED_ERROR =
   "Failed to start the bundler thread: EAGAIN. The process or thread limit may have been reached (ulimit -u, or the container's pids limit).";
 
+// The sync fs calls arm and disarm the shim without creating threads themselves.
+const ARM_HELPERS = /* js */ `
+import { unlinkSync, writeFileSync } from "node:fs";
+function arm() {
+  Bun.gc(true);
+  writeFileSync(process.env.BUNDLE_THREAD_SPAWN_ARMED_FILE, "");
+}
+function disarm() {
+  unlinkSync(process.env.BUNDLE_THREAD_SPAWN_ARMED_FILE);
+}
+`;
+
 // Prints one JSON line per Bun.build() call; `throw` is taken from argv so the
 // same fixture covers the rejecting and the { success: false } flavors.
+// Bun.build() starts the bundle thread before it returns its promise.
 const BUILD_FIXTURE = /* js */ `
+${ARM_HELPERS}
 const [, , throwArg, count] = process.argv;
 for (let i = 0; i < Number(count); i++) {
   let onEnd = "not called";
   const plugin = { name: "record", setup(build) { build.onEnd(result => { onEnd = result.success; }); } };
+  arm();
+  let build;
   try {
-    const result = await Bun.build({
+    build = Bun.build({
       entrypoints: [import.meta.dirname + "/entry.js"],
       throw: throwArg === "throw",
       plugins: [plugin],
     });
+  } finally {
+    disarm();
+  }
+  try {
+    const result = await build;
     console.log(JSON.stringify({ settled: "resolved", success: result.success, logs: result.logs.map(l => l.message), onEnd }));
   } catch (e) {
     console.log(JSON.stringify({ settled: "rejected", name: e.name, message: e.message, errors: e.errors.map(err => err.message), onEnd }));
@@ -77,10 +111,17 @@ for (let i = 0; i < Number(count); i++) {
 // request and writes a failed build's log to stderr, so the second request
 // shows whether the thread gets started again.
 const SERVE_FIXTURE = /* js */ `
+${ARM_HELPERS}
 import index from "./index.html";
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: { hmr: false }, routes: { "/": index } });
-const first = await fetch(server.url);
-const second = await fetch(server.url);
+arm();
+let first, second;
+try {
+  first = await fetch(server.url);
+  second = await fetch(server.url);
+} finally {
+  disarm();
+}
 console.log(JSON.stringify({ first: first.status, second: second.status }));
 server.stop(true);
 `;
@@ -115,12 +156,20 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
+let runs = 0;
+
 async function runWithPlan(plan: string, ...args: string[]) {
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, BUNDLE_THREAD_SPAWN_PLAN: plan },
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+      BUNDLE_THREAD_SPAWN_PLAN: plan,
+      // Per run: a fixture that crashes while armed must not arm the others.
+      BUNDLE_THREAD_SPAWN_ARMED_FILE: join(String(dir), `armed-${runs++}`),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

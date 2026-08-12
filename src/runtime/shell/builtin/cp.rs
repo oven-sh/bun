@@ -581,9 +581,7 @@ impl ShellCpTask {
         }
     }
 
-    /// Is `tgt`, where the copy of the directory `src` would land, `src` itself or
-    /// below it? Compared by identity (so symlinked paths count), skipping the
-    /// parts of `tgt` that do not exist yet.
+    /// Is `tgt` (where the copy of directory `src` lands) `src` or below it? Compared by inode.
     fn dir_copy_relation(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> resolve_path::ParentEqual {
         use resolve_path::ParentEqual;
 

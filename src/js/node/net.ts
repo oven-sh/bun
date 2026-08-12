@@ -42,7 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError, kUpgradeClientTLS } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -144,6 +144,7 @@ const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
+const kStandaloneWrap = Symbol("kStandaloneWrap");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -299,6 +300,9 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
+  // Only tls.connect() installs the onConnectSecure half; a constructor wrap gets _finishInit alone.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
+  const connectSecure = !self[kStandaloneWrap];
   // Node has no try/catch around these emits; a listener throw reaches
   // InternalCallbackScope as uncaughtException. reportError mirrors that
   // without changing Bun.connect's handshake-throw-to-error-handler contract.
@@ -306,7 +310,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
+    if (connectSecure && !verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
       const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
@@ -321,7 +325,8 @@ function onClientHandshakeComplete(self, socket, verifyError) {
         if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1686-L1688
-          self.emit("secure", self);
+          // A wrap's 'secure' listeners read ssl.verifyError(), which is null once destroyed.
+          if (connectSecure) self.emit("secure", self);
           return;
         }
       } else {
@@ -333,7 +338,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
     self.secureConnecting = false;
     self.emit(kSecureConnectDone);
-    self.emit("secureConnect", verifyError);
+    if (connectSecure) self.emit("secureConnect", verifyError);
     const pendingSession = self[kpendingSession];
     if (pendingSession) {
       self[kpendingSession] = null;
@@ -1941,10 +1946,6 @@ Socket.prototype.connect = function connect(...args) {
         }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
-        let tlsSocket;
-        if (!connection && (tlsSocket = tls.socket)) {
-          connection = tlsSocket;
-        }
       }
       if (connection) {
         if (
@@ -1995,10 +1996,7 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
-          connection.on("end", events[1]);
-          connection.on("drain", events[2]);
-          connection.on("close", events[3]);
+          listenToUpgradedDuplex(this, connection, events);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2025,8 +2023,13 @@ Socket.prototype.connect = function connect(...args) {
               throw new Error("Invalid socket");
             }
           } else {
+            // Destroying a not-yet-upgraded wrap destroys the stream under it, like Node's JSStreamSocket.doClose.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L242-L253
+            const destroyConnection = () => connection.destroy();
+            this.once("close", destroyConnection);
             // wait to be connected
             connection.once("connect", () => {
+              this.removeListener("close", destroyConnection);
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
               // start a handshake on a dead socket.
@@ -2046,10 +2049,7 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
-                connection.on("end", events[1]);
-                connection.on("drain", events[2]);
-                connection.on("close", events[3]);
+                listenToUpgradedDuplex(this, connection, events);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2279,6 +2279,20 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
+// The stream's 'error' becomes the TLS socket's (as in Node); unhandled, it would also swallow the 'close' below.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function listenToUpgradedDuplex(self, connection, events) {
+  connection.on("data", events[0]);
+  connection.on("end", events[1]);
+  connection.on("drain", events[2]);
+  connection.on("close", events[3]);
+  connection.on("error", onUpgradedDuplexError.bind(self));
+}
+
+function onUpgradedDuplexError(err) {
+  if (!this.destroyed) this.destroy(err);
+}
+
 function drainOnreadTail(self, fromRead?) {
   if (self[kOnreadTail] === undefined) return false;
   if (fromRead) self[kOnreadReadRequested] = true;
@@ -2361,10 +2375,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
-    connection.on("data", events[0]);
-    connection.on("end", events[1]);
-    connection.on("drain", events[2]);
-    connection.on("close", events[3]);
+    listenToUpgradedDuplex(this, connection, events);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2390,10 +2401,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
-      connection.on("data", events[0]);
-      connection.on("end", events[1]);
-      connection.on("drain", events[2]);
-      connection.on("close", events[3]);
+      listenToUpgradedDuplex(this, connection, events);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2422,6 +2430,12 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);
   });
+};
+
+// Client-side counterpart for `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade minus onConnectSecure.
+Socket.prototype[kUpgradeClientTLS] = function (connection) {
+  this[kStandaloneWrap] = true;
+  Socket.prototype.connect.$call(this, { socket: connection });
 };
 
 Socket.prototype.read = function read(size) {
@@ -3074,11 +3088,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
   }
 
   //TLS
-  let connection = self[ksocket];
-  const optionsSocket = options.socket;
-  if (optionsSocket) {
-    connection = optionsSocket;
-  }
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
@@ -3092,10 +3101,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      let tlsSocket;
-      if (!connection && (tlsSocket = tls.socket)) {
-        connection = tlsSocket;
-      }
     }
     self.authorized = false;
     self.secureConnecting = true;
@@ -3222,11 +3227,6 @@ function internalConnectMultiple(context, canceled?) {
   }
 
   //TLS
-  let connection = self[ksocket];
-  const contextOptionsSocket = context.options.socket;
-  if (contextOptionsSocket) {
-    connection = contextOptionsSocket;
-  }
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS === "function") {
@@ -3240,10 +3240,6 @@ function internalConnectMultiple(context, canceled?) {
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      let tlsSocket;
-      if (!connection && (tlsSocket = tls.socket)) {
-        connection = tlsSocket;
-      }
     }
     self.authorized = false;
     self.secureConnecting = true;

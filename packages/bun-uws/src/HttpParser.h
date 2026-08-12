@@ -1405,7 +1405,13 @@ struct HttpResponseData;
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-                if constexpr (!ConsumeMinimally) {
+                /* In the ConsumeMinimally (fallback buffer) pass the body bytes are not
+                 * in this buffer: consumePostPadded streams them from the caller's data
+                 * afterwards, but only while remainingStreamingBytes is non-zero. So a
+                 * Content-Length: 0 message must be completed here in either pass (as
+                 * the no-body branch below always is), or it never gets its fin chunk
+                 * and the connection never counts as between requests. */
+                if (!ConsumeMinimally || remainingStreamingBytes == 0) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;

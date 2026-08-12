@@ -1337,7 +1337,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
+      data->markDone();
       uwsRes->resetTimeout();
     }
     else
@@ -1346,7 +1346,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
+      data->markDone();
       uwsRes->resetTimeout();
     }
   }
@@ -1418,7 +1418,7 @@ extern "C"
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
+      data->markDone();
       uwsRes->resetTimeout();
       /* No close gate here: callers (FileResponseStream::finish,
        * DevServer/HTMLBundle error paths) keep using the response after this
@@ -1446,7 +1446,7 @@ extern "C"
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone(uwsRes);
+      data->markDone();
       uwsRes->resetTimeout();
       /* No close gate here; see the SSL arm above. */
     }

@@ -44,7 +44,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
 
     /* When we are done with a response we mark it like so */
-    void markDone(uWS::HttpResponse<SSL> *uwsRes) {
+    void markDone() {
         onAborted = nullptr;
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
@@ -57,11 +57,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-
-        HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
-        /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -166,9 +161,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * keep-alive socket; only the connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
-        /* A response is in flight again (a new request dispatched, or a queued
-         * pipelined response activated), so the connection is not idle. */
-        this->isIdle = false;
     }
 
     /* Set or clear a flag from a runtime bool. */
@@ -208,6 +200,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* No request message is being received: set when a message has been fully
+     * received (head and body), cleared as soon as the next one starts arriving
+     * (its head is parsed, or a partial head is left buffered). Starts out false:
+     * like Node's ConnectionsList (which registers the parser as active when the
+     * connection is set up), a connection that has not sent its first request
+     * yet is waiting on headersTimeout, not idle. Maintained by HttpContext. */
+    bool betweenRequests = false;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
@@ -221,12 +220,27 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* An idle keep-alive connection, as Node's server.closeIdleConnections()
+     * defines it (ConnectionsList::idle() plus its _httpMessage.finished check):
+     * between request messages, with the current response (if any) completed and
+     * no pipelined response queued behind it. This is what App::closeIdle() and
+     * HTTP_CLOSE_WHEN_IDLE act on. A connection that became a CONNECT/Upgrade
+     * tunnel receives no further request messages, so only its response state
+     * counts: a node:http tunnel keeps the response it was created from pending
+     * for as long as it lives (never idle), whereas a Bun.serve CONNECT that has
+     * been answered has nothing left to do on the connection. */
+    bool isIdle() const {
+        return (betweenRequests || isConnectRequest)
+            && !(state & HTTP_RESPONSE_PENDING)
+            && nodeHttpQueuedPipelinedCount == 0;
+    }
+
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
-            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
+            || ((state & HTTP_CLOSE_WHEN_IDLE) && isIdle());
     }
 
 #ifdef UWS_WITH_PROXY
@@ -249,10 +263,11 @@ template <bool SSL>
 struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     /* lastMessageStartMs: when the request currently being received started
      * arriving (or when the connection was accepted, before its first
-     * request); 0 once the message has been fully received (idle).
+     * request); only meaningful while !betweenRequests.
      * headersCompleted: whether that request's head has been fully parsed.
-     * Mirrors last_message_start_/headers_completed_ in Node's http parser
-     * ConnectionsList, which back server.headersTimeout/requestTimeout. */
+     * Together with betweenRequests this mirrors last_message_start_ /
+     * headers_completed_ in Node's http parser ConnectionsList, which back
+     * server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the

@@ -276,11 +276,12 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
         // like Node freeing the parser for upgraded connections.
         return false;
     }
-    uint64_t start = httpResponseData->lastMessageStartMs;
-    if (start == 0) {
-        // Idle: no request message is currently being received.
+    if (httpResponseData->betweenRequests) {
+        // No request message is currently being received (Node's
+        // ConnectionsList::idle() set); lastMessageStartMs is stale.
         return false;
     }
+    uint64_t start = httpResponseData->lastMessageStartMs;
     uint64_t now = uWS::nodeCompatMonotonicMs();
     uint64_t elapsed = now > start ? now - start : 0;
     if (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs) {

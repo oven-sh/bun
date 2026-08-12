@@ -404,10 +404,8 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
-    /// The pool thread transpiles under `loop_handle.borrow_if_running()` (the
-    /// transpiler it copies is VM-owned) and counts as embedded work from
-    /// `schedule` until it has pushed the slot back to the store queue, so the
-    /// VM's teardown waits for both.
+    /// The pool thread transpiles under `borrow_if_running()` and is counted as
+    /// embedded work from `schedule` until it has pushed the slot back.
     pub(crate) loop_handle: crate::LoopHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) fetcher: Fetcher,
@@ -449,9 +447,8 @@ impl Fetcher {
     }
 }
 
-/// A finished job's result, moved out of its slot (`TranspilerJob::take_completion`)
-/// so the slot can be returned to the store before `AsyncModule::fulfill` runs.
-/// `specifier` and `referrer` carry the +1 that `fulfill` releases.
+/// A finished job's result, moved out of its slot so the slot can go back to
+/// the store before `AsyncModule::fulfill` runs.
 struct Completion {
     promise: JSValue,
     global_this: BackRef<JSGlobalObject>,
@@ -530,29 +527,21 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    /// Hands the job back to the JS thread, which completes it
-    /// (`run_from_js_thread`) or releases it (`release_queued_jobs_for_teardown`);
-    /// either way it writes the slot and `put()`s it (a `Box` free once the hive
-    /// is full) as soon as the push lands. Takes the pointer, not `&mut self`: a
-    /// reference argument stays protected until its call returns, so the JS
-    /// thread would be writing to, or freeing, protected memory. The caller must
-    /// not hold a reference into `*this` across the call either.
+    /// Hands the job to the JS thread, which recycles or frees the slot as soon
+    /// as the push lands: no reference to it (a `&mut self` included, it stays
+    /// protected until the call returns) may be live across the push.
     ///
     /// # Safety
-    /// `this` is the live slot `transpile()` scheduled, still owned by the pool
-    /// thread; nothing on this thread touches `*this` afterwards.
+    /// `this` is the live slot this pool thread owns; it is not touched afterwards.
     unsafe fn dispatch_to_main_thread(this: *mut Self) {
-        // SAFETY: fn contract; both accesses end at the `;`, before the push.
+        // SAFETY: fn contract; both accesses end before the push.
         let (vm, loop_handle) = unsafe { ((*this).vm, (*this).loop_handle.clone()) };
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
-        // SAFETY: `this` is non-null per fn contract; the queue is
-        // concurrent-safe (UnboundedQueue uses atomics). The JS thread owns the
-        // job from here on.
+        // SAFETY: `this` is non-null (fn contract); the queue is concurrent-safe.
         unsafe { (*transpiler_store).queue.push(NonNull::new_unchecked(this)) };
-        // The VM waits for embedded work before closing its handle, so this is
-        // queued.
+        // The VM waits for embedded work before closing its handle, so this is queued.
         let crate::vm_handle::Posted::Queued =
             loop_handle.post_task(ConcurrentTask::create_from(transpiler_store))
         else {
@@ -560,19 +549,15 @@ impl TranspilerJob {
         };
     }
 
-    /// Completes the import. The slot goes back to the store first (a `Box`
-    /// free when it was heap-spilled; `fulfill` runs script, which may claim it
-    /// again), so this takes the pointer rather than a `&mut self` that would
-    /// still be protected while the slot is dropped or freed.
+    /// The slot is recycled or freed before `fulfill` runs script, so, as in
+    /// `dispatch_to_main_thread`, no reference to it may be live at that point.
     ///
     /// # Safety
-    /// `this` is a live job popped from the store queue; the caller does not
-    /// touch it afterwards.
+    /// `this` is a live job popped from the store queue; it is not touched afterwards.
     unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
-        // SAFETY: fn contract; both accesses end at the `;`, before the put.
+        // SAFETY: fn contract; both accesses end before the put.
         let (vm, completion) = unsafe { ((*this).vm, (*this).take_completion()) };
-        // SAFETY: `vm` outlives the job; `this` is the slot `transpile()` claimed
-        // from this store and nothing uses it past this point.
+        // SAFETY: `vm` outlives the job; `this` came from this store's `get_init`.
         unsafe { (*vm).transpiler_store.store.put(this) };
 
         let Completion {
@@ -596,8 +581,7 @@ impl TranspilerJob {
         )
     }
 
-    /// Moves everything `AsyncModule::fulfill` needs out of the slot and
-    /// resets it, leaving only what `store.put()`'s drop glue releases.
+    /// Moves the result out of the slot and resets it for `store.put()`.
     fn take_completion(&mut self) -> Completion {
         let promise = self.promise.swap();
         let global_this = self.global_this;
@@ -607,9 +591,7 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        // Take RAII ownership out of the job; `into_ffi()` in the caller
-        // transfers the +1 strings to `AsyncModule::fulfill` → C++
-        // `Zig::ResolvedSource`.
+        // The caller's `into_ffi()` transfers the +1 strings to `AsyncModule::fulfill`.
         let mut owned_resolved_source = core::mem::take(&mut self.resolved_source);
         let resolved_source = owned_resolved_source.as_mut();
         let specifier = 'brk: {
@@ -666,18 +648,16 @@ impl TranspilerJob {
         // SAFETY: as above.
         let handle = unsafe { (*this).loop_handle.clone() };
         if let Some(_vm) = handle.borrow_if_running() {
-            // SAFETY: live slot, exclusively ours until dispatched. The `&mut`
-            // this autoref forms ends with the statement, before the dispatch
-            // publishes the slot.
+            // SAFETY: live slot, exclusively ours until dispatched; the `&mut`
+            // ends with this statement.
             unsafe { (*this).run() };
         }
-        // SAFETY: as above; the dispatch is this thread's last touch of the slot.
+        // SAFETY: as above; this thread's last touch of the slot.
         unsafe { Self::dispatch_to_main_thread(this) };
         handle.embedded_work_finished();
     }
 
-    /// Fills in `resolved_source` or `parse_error`; the caller hands the job
-    /// back to the JS thread afterwards, on every return path.
+    /// Fills in `resolved_source` or `parse_error`; the caller dispatches.
     fn run(&mut self) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second

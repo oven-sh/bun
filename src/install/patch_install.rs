@@ -148,17 +148,14 @@ impl PatchTask {
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
         let this = unsafe { PatchTask::from_task_ptr(task) };
-        // SAFETY: as above. The main thread reclaims the task's `Box` as soon as
-        // the push below lands, so the `&mut` the autoref forms is scoped to
-        // its statement and the push goes through `this`, not a reference.
+        // SAFETY: as above; the `&mut` ends with its statement. The main thread
+        // frees the task as soon as the push below lands.
         let mgr = unsafe {
             (*this).run_from_thread_pool_impl();
             (*this).manager.as_ptr()
         };
-        // SAFETY: `this` is non-null (recovered from a live task). `mgr` is a
-        // long-lived BACKREF; the worker thread only touches the lock-free
-        // `patch_task_queue` and the event-loop wake atomics, neither of which
-        // alias data the main thread holds an exclusive borrow on.
+        // SAFETY: `this` is non-null (as above). `mgr` is a long-lived BACKREF;
+        // the lock-free queue and the wake atomics are all this thread touches.
         unsafe {
             (*mgr)
                 .patch_task_queue

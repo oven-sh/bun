@@ -129,6 +129,11 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
+    /// Set when `size` is a window the caller asked for with `slice()`. A
+    /// file-backed blob otherwise holds `MAX_SIZE` there until something
+    /// (`.size`, `exists()`, ...) caches the file's stat size into it, and a
+    /// cached stat size must not be mistaken for a window.
+    pub size_is_explicit: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while
     /// the JS cell is the sole owner.
@@ -162,6 +167,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
+            size_is_explicit: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
@@ -375,6 +381,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            size_is_explicit: Cell::new(self.size_is_explicit.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),

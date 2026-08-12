@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -273,6 +274,140 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
       expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
+  });
+
+  // The file -> file copy took the destination blob's `size` as the number of
+  // bytes to copy. On an unsliced Bun.file() that field only holds the stat
+  // size cached by `.size` / `exists()`, so the copy was cut to the
+  // destination's previous length: 0 bytes for the `exists()` guard in #4930.
+  describe("Bun.file -> Bun.file is not capped by the destination's cached size", () => {
+    const source = Buffer.alloc(100_000, "S").toString();
+
+    // uv_fs_copyfile (Windows) and fcopyfile over an existing file (macOS)
+    // resolve with 0 regardless of this fix, so only Linux checks the count.
+    function expectCopiedWhole(destPath, written) {
+      expect(fs.statSync(destPath).size).toBe(source.length);
+      expect(fs.readFileSync(destPath, "utf8")).toBe(source);
+      if (isLinux) expect(written).toBe(source.length);
+    }
+
+    // Each primer caches the destination's current size onto a blob and
+    // returns the blob to write to. The cached size lives on the blob, so the
+    // clone and the whole-file slice have to be the destination themselves.
+    const primers = [
+      [
+        "f.size",
+        (f, size) => {
+          expect(f.size).toBe(size);
+          return f;
+        },
+      ],
+      [
+        "await f.exists()",
+        async f => {
+          expect(await f.exists()).toBe(true);
+          return f;
+        },
+      ],
+      [
+        "expect(f).toHaveLength()",
+        (f, size) => {
+          expect(f).toHaveLength(size);
+          return f;
+        },
+      ],
+      [
+        "structuredClone(f), which stats f while serializing it",
+        f => {
+          structuredClone(f);
+          return f;
+        },
+      ],
+      [
+        "f.size, writing to structuredClone(f)",
+        (f, size) => {
+          expect(f.size).toBe(size);
+          return structuredClone(f);
+        },
+      ],
+      [
+        "f.slice().size, writing to the whole-file slice",
+        (f, size) => {
+          const whole = f.slice();
+          expect(whole.size).toBe(size);
+          return whole;
+        },
+      ],
+    ];
+
+    describe.each([
+      ["shorter", "short"],
+      ["empty", ""],
+    ])("%s existing destination", (_, existing) => {
+      it.each(primers)("primed by %s", async (_, prime) => {
+        using dir = tempDir("bun-write-dest-size-cached", { "src.bin": source, "dest.bin": existing });
+        const destPath = join(String(dir), "dest.bin");
+        const dest = await prime(Bun.file(destPath), existing.length);
+
+        const written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+        expectCopiedWhole(destPath, written);
+      });
+    });
+
+    it("primed by exists() on a destination that does not exist yet (#4930)", async () => {
+      using dir = tempDir("bun-write-dest-exists-guard", { "in.txt": source });
+      const outPath = join(String(dir), "out.txt");
+      const out = Bun.file(outPath);
+      expect(await out.exists()).toBe(false);
+
+      const written = await Bun.write(out, Bun.file(join(String(dir), "in.txt")));
+      expectCopiedWhole(outPath, written);
+    });
+
+    it("primed by .size on an fd destination", async () => {
+      using dir = tempDir("bun-write-fd-dest-size-cached", { "src.bin": source, "dest.bin": "short" });
+      const destPath = join(String(dir), "dest.bin");
+      const fd = fs.openSync(destPath, "r+");
+      let written;
+      try {
+        const dest = Bun.file(fd);
+        expect(dest.size).toBe(5);
+        written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+      } finally {
+        fs.closeSync(fd);
+      }
+      expectCopiedWhole(destPath, written);
+    });
+
+    // The cached size is also wrong in the other direction: the Windows copy
+    // padded the shorter copy back out to it.
+    it("primed by .size, a shorter source replaces a longer destination", async () => {
+      using dir = tempDir("bun-write-dest-shrinks", {
+        "src.bin": "tiny",
+        "dest.bin": Buffer.alloc(1000, "D").toString(),
+      });
+      const destPath = join(String(dir), "dest.bin");
+      const dest = Bun.file(destPath);
+      expect(dest.size).toBe(1000);
+
+      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.bin")));
+      expect(fs.readFileSync(destPath, "utf8")).toBe("tiny");
+      if (isLinux) expect(written).toBe(4);
+    });
+
+    // A window the caller asked for with slice() still bounds the copy, and
+    // survives structuredClone.
+    it.each([
+      ["f.slice(0, 4)", f => f.slice(0, 4)],
+      ["structuredClone(f.slice(0, 4))", f => structuredClone(f.slice(0, 4))],
+    ])("a destination sliced with %s is still bounded by the slice", async (_, slice) => {
+      using dir = tempDir("bun-write-dest-window", { "src.bin": source, "dest.bin": "0123456789" });
+      const destPath = join(String(dir), "dest.bin");
+
+      const written = await Bun.write(slice(Bun.file(destPath)), Bun.file(join(String(dir), "src.bin")));
+      expect(fs.readFileSync(destPath, "utf8")).toBe("SSSS");
+      if (isLinux) expect(written).toBe(4);
+    });
   });
 
   it("Bun.file", async () => {

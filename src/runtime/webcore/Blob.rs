@@ -780,10 +780,15 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                // Version 4: the window end of a sliced file-backed blob. An
+                // unsliced blob puts MAX_SIZE on the wire even once it has
+                // cached a stat size, so the receiver stats the file itself
+                // (like v3) instead of turning that stale size into a window.
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -1948,6 +1953,9 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // `slice()` of a still-unresolved file blob yields `MAX_SIZE`, which
+        // is not a window.
+        blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -3305,6 +3313,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -4210,6 +4219,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {
@@ -4685,6 +4695,15 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // Only a slice() window on the destination bounds the copy. Otherwise
+        // `size` is at most the stat size that `.size` / `exists()` cached, and
+        // passing it would cut the copy to the destination's old length (0 when
+        // it did not exist yet) instead of replacing the file.
+        let max_length = if destination_blob.size_is_explicit.get() {
+            destination_blob.size.get()
+        } else {
+            MAX_SIZE
+        };
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4692,7 +4711,7 @@ pub(crate) fn write_file_with_source_destination(
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                max_length,
                 options.mode,
             ));
         }
@@ -4702,7 +4721,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_store,
                 source_store,
                 destination_blob.offset.get(),
-                destination_blob.size.get(),
+                max_length,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

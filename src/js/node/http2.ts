@@ -6569,11 +6569,7 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
-const {
-  connectionListenerHTTP1,
-  closeIdleHttp1Connections,
-  kHttp1Connections,
-} = require("internal/http1_server_fallback");
+const { connectionListenerHTTP1, closeIdleHttp1Connections } = require("internal/http1_server_fallback");
 
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
@@ -6797,7 +6793,6 @@ class Http2SecureServer extends tls.Server {
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
-      this[kHttp1Connections] = new SafeSet();
       const http1Options = { ...options, ...options.http1Options };
       this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
       this.headersTimeout = http1Options.headersTimeout ?? 60000;

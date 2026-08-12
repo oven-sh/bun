@@ -4304,6 +4304,79 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// Node's Http2SecureServer#close() runs http's closeIdleConnections() over the allowHTTP1
+// connections, and a connection only counts as idle between requests: one that has not sent a
+// request yet, or is still sending one, is left open (and still served), while one that finished
+// an exchange is destroyed.
+it("http2 allowHTTP1 server.close() only destroys fallback connections that are between requests", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) =>
+    res.end(`served ${req.url}`),
+  );
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+
+  // Resolves once the server has accepted the connection too: Http2SecureServer sets the HTTP/1
+  // fallback up in its own 'secureConnection' listener, which runs before this one.
+  async function connectHttp1() {
+    const accepted = new Promise(resolve => server.once("secureConnection", resolve));
+    const client = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] });
+    client.on("error", () => {});
+    await new Promise(resolve => client.once("secureConnect", resolve));
+    return { client, serverSocket: await accepted };
+  }
+  function readHttp1Body(client) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let raw = "";
+    client.on("data", function onData(chunk) {
+      raw += chunk.toString("latin1");
+      const headersEnd = raw.indexOf("\r\n\r\n");
+      if (headersEnd === -1) return;
+      const body = raw.slice(headersEnd + 4);
+      if (body.length < Number(/\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd))[1])) return;
+      client.off("data", onData);
+      resolve(body);
+    });
+    client.once("close", () =>
+      reject(new Error(`connection closed before a response arrived, got: ${JSON.stringify(raw)}`)),
+    );
+    return promise;
+  }
+
+  const fresh = await connectHttp1();
+  const partial = await connectHttp1();
+  const done = await connectHttp1();
+  try {
+    const partialHeadArrived = new Promise(resolve => partial.serverSocket.once("data", resolve));
+    partial.client.write("GET /partial HTTP/1.1\r\nHost: localhost\r\n");
+    await partialHeadArrived;
+    const doneBody = readHttp1Body(done.client);
+    done.client.write("GET /done HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await doneBody).toBe("served /done");
+
+    const serverClosed = new Promise(resolve => server.once("close", resolve));
+    server.close();
+    expect({
+      fresh: fresh.serverSocket.destroyed,
+      partial: partial.serverSocket.destroyed,
+      done: done.serverSocket.destroyed,
+    }).toEqual({ fresh: false, partial: false, done: true });
+
+    // The connections close() left alone still get their requests served; with Connection: close
+    // the server ends them afterwards, which is what lets the close() above complete.
+    const freshBody = readHttp1Body(fresh.client);
+    fresh.client.write("GET /fresh HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const partialBody = readHttp1Body(partial.client);
+    partial.client.write("Connection: close\r\n\r\n");
+    expect(await Promise.all([freshBody, partialBody])).toEqual(["served /fresh", "served /partial"]);
+    await serverClosed;
+  } finally {
+    fresh.client.destroy();
+    partial.client.destroy();
+    done.client.destroy();
+    if (server.listening) server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

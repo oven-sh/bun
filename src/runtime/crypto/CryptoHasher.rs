@@ -257,7 +257,7 @@ impl CryptoHasher {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
-            if string_value.is_undefined_or_null() {
+            if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
             string_value.get_zig_string(global)?
@@ -1416,17 +1416,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.digested.get() {
-            return Err(global
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!(
-                        "{} hasher already digested, create a new instance to update",
-                        H::NAME
-                    ),
-                )
-                .throw());
-        }
         let this_value = callframe.this();
         let input = callframe.argument(0);
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
@@ -1442,6 +1431,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
+        }
+        if this.digested.get() {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!(
+                        "{} hasher already digested, create a new instance to update",
+                        H::NAME
+                    ),
+                )
+                .throw());
         }
         this.hashing.with_mut(|h| h.update(buffer.slice()));
         Ok(this_value)

@@ -1676,10 +1676,7 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
-    const SSL_SESSION *sess = SSL_get_session(ssl);
-    if ((curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) ||
-        (sess && SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION &&
-         SSL_session_reused(ssl))) {
+    if (curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) {
       return X509_V_OK;
     }
   }
@@ -2760,13 +2757,16 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
 /* Whether the SNI-selected context of this connection demands closing on a
  * client-certificate verification error (requestCert && rejectUnauthorized
  * of the per-serverName entry). */
-int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
-  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
-  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
-  if (!ctx) return 0;
+int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
+  if (!ctx || us_ctx_sni_policy_ex_idx < 0) return 0;
   uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
   return (packed & US_SNI_POLICY_REQUEST_CERT) &&
          (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
+}
+
+int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.

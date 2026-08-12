@@ -530,7 +530,22 @@ impl ShellMvBatchedTask {
             return bun_sys::unlinkat(src_dir, src);
         }
 
+        // Windows `lstatat` never reports S_IFLNK; follow there so a reparse-point source fails the dev/ino compare.
+        let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
+
         if S::ISDIR(mode) {
+            let sd = Dir::from_fd(shell_openat(
+                src_dir,
+                src,
+                O::RDONLY | O::DIRECTORY | src_nofollow,
+                0,
+            )?);
+            let sst = bun_sys::fstat(sd.fd())?;
+            if sst.st_dev != st.st_dev || sst.st_ino != st.st_ino {
+                return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
+            }
+            let st = sst;
+            let mode = st.st_mode as bun_core::Mode;
             // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
             if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
                 if e.get_errno() != E::EEXIST {
@@ -540,8 +555,12 @@ impl ShellMvBatchedTask {
                 bun_sys::rmdirat(dst_dir, dst)?;
                 bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
             }
-            let sd = Dir::from_fd(shell_openat(src_dir, src, O::RDONLY | O::DIRECTORY, 0)?);
-            let dd = Dir::from_fd(shell_openat(dst_dir, dst, O::RDONLY | O::DIRECTORY, 0)?);
+            let dd = Dir::from_fd(shell_openat(
+                dst_dir,
+                dst,
+                O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
+                0,
+            )?);
             // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
             let mut nbuf = bun_paths::path_buffer_pool::get();
@@ -567,7 +586,18 @@ impl ShellMvBatchedTask {
             return Err(bun_sys::Error::from_code(E::ENOTSUP, Tag::rename));
         }
 
-        let in_ = File::openat(src_dir, src.as_bytes(), O::RDONLY | O::CLOEXEC, 0)?;
+        let in_ = File::openat(
+            src_dir,
+            src.as_bytes(),
+            O::RDONLY | O::CLOEXEC | src_nofollow,
+            0,
+        )?;
+        let fst = bun_sys::fstat(in_.fd())?;
+        if fst.st_dev != st.st_dev || fst.st_ino != st.st_ino {
+            return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
+        }
+        let st = fst;
+        let mode = st.st_mode as bun_core::Mode;
         // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
         let _ = bun_sys::unlinkat(dst_dir, dst);
         let out = File::openat(

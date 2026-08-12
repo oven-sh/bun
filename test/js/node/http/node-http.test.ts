@@ -4140,6 +4140,15 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
+// A GET with exactly `totalHeaders` header fields: Host first, X-* fillers, and optionally
+// Connection: close last.
+function manyHeaderRequest(path: string, totalHeaders: number, { close = false } = {}) {
+  const lines = ["Host: example.test"];
+  while (lines.length < (close ? totalHeaders - 1 : totalHeaders)) lines.push(`X-H${lines.length}: v${lines.length}`);
+  if (close) lines.push("Connection: close");
+  return `GET ${path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+}
+
 describe("connectionListener requireHostHeader", () => {
   // Drives one raw request through server.emit("connection", ...) (the JS fallback parser).
   // `head` settles once the first response head arrived, `ended` once the server ended the
@@ -4240,5 +4249,168 @@ describe("connectionListener requireHostHeader", () => {
     expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(await client.ended).toEndWith("served:example.test");
     expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  // The native parser hands header blocks to JS 32 fields at a time, so a Host header that is
+  // followed by enough other headers only reaches the request if every block is assembled.
+  for (const totalHeaders of [32, 64]) {
+    it(`dispatches an HTTP/1.1 request whose Host header is one of ${totalHeaders} header fields`, async () => {
+      const onRequest = mock((req, res) => res.end(`served:${req.headers.host}:${req.rawHeaders.length / 2}`));
+      const server = createServer(onRequest);
+      using client = rawRequestOverEmittedConnection(server, manyHeaderRequest("/", totalHeaders, { close: true }));
+      expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(await client.ended).toEndWith(`served:example.test:${totalHeaders}`);
+      expect(onRequest).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("rejects a Host-less HTTP/1.1 request only after the Upgrade/CONNECT hand-off declined it", async () => {
+    {
+      // An Upgrade with a listener is handed off, Host or not (Node's parserOnIncoming order).
+      const onRequest = mock(() => {});
+      const onUpgrade = mock((req, socket) =>
+        socket.end(`HTTP/1.1 101 Switching Protocols\r\nX-Host: ${req.headers.host}\r\n\r\n`),
+      );
+      const server = createServer(onRequest);
+      server.on("upgrade", onUpgrade);
+      using client = rawRequestOverEmittedConnection(
+        server,
+        "GET /ws HTTP/1.1\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(await client.ended).toBe("HTTP/1.1 101 Switching Protocols\r\nX-Host: undefined\r\n\r\n");
+      expect(onUpgrade).toHaveBeenCalledTimes(1);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+    {
+      const onRequest = mock(() => {});
+      const onConnect = mock((req, socket) =>
+        socket.end(`HTTP/1.1 200 Connection Established\r\nX-Target: ${req.url}\r\n\r\n`),
+      );
+      const server = createServer(onRequest);
+      server.on("connect", onConnect);
+      using client = rawRequestOverEmittedConnection(server, "CONNECT example.test:443 HTTP/1.1\r\n\r\n");
+      expect(await client.ended).toBe("HTTP/1.1 200 Connection Established\r\nX-Target: example.test:443\r\n\r\n");
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+    {
+      // Without an 'upgrade' listener the request falls through to normal dispatch, where the
+      // Host check applies.
+      const onRequest = mock((req, res) => res.end("served"));
+      const server = createServer(onRequest);
+      using client = rawRequestOverEmittedConnection(
+        server,
+        "GET /ws HTTP/1.1\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+      expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+  });
+
+  it("treats a Host header cut off by maxHeadersCount as missing, like Node", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const server = createServer(onRequest);
+    server.maxHeadersCount = 3;
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "GET / HTTP/1.1\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\nHost: example.test\r\n\r\n",
+    );
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectionListener header assembly", () => {
+  // One kept-alive connection served through server.emit("connection", ...).
+  function keepAliveConnection(server: Server) {
+    const [clientSide, serverSide] = duplexPair();
+    let received = "";
+    clientSide.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    server.emit("connection", serverSide);
+    return {
+      write(rawRequest: string) {
+        clientSide.write(rawRequest);
+      },
+      get received() {
+        return received;
+      },
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  // `served` collects summarize(req) for every request; serve() writes one request and returns
+  // once its response has closed, i.e. once the connection is free for the next one.
+  function recordingServer(summarize: (req: IncomingMessage) => unknown) {
+    const served: unknown[] = [];
+    let responseClosed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        served.push(summarize(req));
+        res.on("close", responseClosed.resolve);
+        res.end("ok");
+      });
+    });
+    return {
+      server,
+      served,
+      async serve(connection: ReturnType<typeof keepAliveConnection>, rawRequest: string) {
+        responseClosed = Promise.withResolvers<void>();
+        connection.write(rawRequest);
+        await responseClosed.promise;
+      },
+    };
+  }
+
+  it("delivers every header of requests larger than the parser's 32-field block, across a kept-alive connection", async () => {
+    const { server, served, serve } = recordingServer(req => [req.url, req.headers.host, req.rawHeaders.length / 2]);
+    using connection = keepAliveConnection(server);
+    await serve(connection, manyHeaderRequest("/first", 40));
+    // Once the parser has delivered a request in blocks it keeps doing so on that connection, so
+    // a small request after a large one goes through the assembled path as well.
+    await serve(connection, manyHeaderRequest("/second", 2));
+    await serve(connection, manyHeaderRequest("/third", 70));
+    expect(served).toEqual([
+      ["/first", "example.test", 40],
+      ["/second", "example.test", 2],
+      ["/third", "example.test", 70],
+    ]);
+    expect(connection.received.match(/HTTP\/1\.1 200 OK/g)).toHaveLength(3);
+  });
+
+  it("files a chunked body's trailers on its own request only", async () => {
+    const { server, served, serve } = recordingServer(req => [req.url, req.trailers, req.rawHeaders.length / 2]);
+    using connection = keepAliveConnection(server);
+    await serve(
+      connection,
+      "POST /with-trailer HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nTrailer: X-Checksum\r\n\r\n" +
+        "3\r\nabc\r\n0\r\nX-Checksum: 123\r\n\r\n",
+    );
+    await serve(connection, "GET /after HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(served).toEqual([
+      ["/with-trailer", { "x-checksum": "123" }, 3],
+      ["/after", {}, 1],
+    ]);
+  });
+
+  it("applies server.maxHeadersCount to both the single-block and the assembled header paths", async () => {
+    const { server, served, serve } = recordingServer(req => [
+      req.url,
+      req.headers.host,
+      Object.keys(req.headers).length,
+    ]);
+    server.maxHeadersCount = 3;
+    using connection = keepAliveConnection(server);
+    await serve(connection, manyHeaderRequest("/five", 5));
+    await serve(connection, manyHeaderRequest("/forty", 40));
+    expect(served).toEqual([
+      ["/five", "example.test", 3],
+      ["/forty", "example.test", 3],
+    ]);
   });
 });

@@ -4424,9 +4424,18 @@ it("http2 allowHTTP1 fallback answers an HTTP/1.1 request without a Host header 
   }
 });
 
+// The native parser hands header blocks to JS 32 fields at a time; 40 fields puts Host in a block
+// the fallback has to assemble before it can look for it.
+function fortyHeaderRequest() {
+  const lines = ["Host: example.test"];
+  while (lines.length < 39) lines.push(`X-H${lines.length}: v${lines.length}`);
+  lines.push("Connection: close");
+  return `GET / HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+}
+
 it("http2 allowHTTP1 fallback still dispatches Host-less HTTP/1.0 requests and Host-carrying HTTP/1.1 requests", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
-    res.end(`served:${req.httpVersion}:${req.headers.host}`);
+    res.end(`served:${req.httpVersion}:${req.headers.host}:${req.rawHeaders.length / 2}`);
   });
   await new Promise(resolve => server.listen(0, resolve));
   try {
@@ -4434,6 +4443,7 @@ it("http2 allowHTTP1 fallback still dispatches Host-less HTTP/1.0 requests and H
     for (const rawRequest of [
       "GET / HTTP/1.0\r\n\r\n",
       "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+      fortyHeaderRequest(),
     ]) {
       const client = rawHttp1RequestOverAlpn(server, rawRequest);
       try {
@@ -4444,7 +4454,7 @@ it("http2 allowHTTP1 fallback still dispatches Host-less HTTP/1.0 requests and H
         client.socket.destroy();
       }
     }
-    expect(bodies).toEqual(["served:1.0:undefined", "served:1.1:example.test"]);
+    expect(bodies).toEqual(["served:1.0:undefined:0", "served:1.1:example.test:2", "served:1.1:example.test:40"]);
   } finally {
     server.close();
   }

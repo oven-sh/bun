@@ -525,6 +525,14 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
+/// SAFETY CONTRACT: `new_file_name` and `existing_file_name` MUST each point to
+/// a NUL-terminated wide string that stays alive for the duration of the call;
+/// both Win32 and the debug log below read them up to the NUL.
+#[allow(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "LPCWSTR wrapper with the same contract as the Win32 call it forwards to (documented \
+              above); every caller hands it the pointer of a NUL-terminated wide buffer"
+)]
 pub fn CreateHardLinkW(
     new_file_name: LPCWSTR,
     existing_file_name: LPCWSTR,
@@ -1011,8 +1019,17 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     if rc != 0 { Some(module) } else { None }
 }
 
+/// `module` is an opaque handle (as returned by
+/// [`get_module_handle_from_address`]); it is never dereferenced here, and
+/// `GetModuleFileNameW` fails cleanly (returns 0) on a handle it does not know.
+#[allow(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "HMODULE is an opaque token forwarded by value to GetModuleFileNameW, which validates \
+              it; the only memory written is `buf`, whose length is passed alongside"
+)]
 pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
-    // SAFETY: buf valid for buf.len()
+    // SAFETY: `buf` is valid for writes of the `buf.len()` u16s passed as its
+    // capacity; `module` is passed through by value.
     let rc = unsafe {
         externs::GetModuleFileNameW(
             module,
@@ -1040,7 +1057,7 @@ pub use bun_windows_sys::externs::GetConsoleOutputCP;
 pub use bun_windows_sys::externs::SetConsoleCP;
 pub use bun_windows_sys::externs::SetStdHandle;
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct DeleteFileOptions {
     pub(crate) dir: Option<HANDLE>,
     pub(crate) remove_dir: bool,
@@ -1230,15 +1247,17 @@ pub fn exe_image_range() -> core::ops::Range<usize> {
     // SAFETY: null module name returns the exe's HMODULE, which on Windows is
     // its mapped base address. The IMAGE_DOS_HEADER at `base` and
     // IMAGE_NT_HEADERS at `base + e_lfanew` are part of the loader-mapped
-    // image and remain valid for the process lifetime.
+    // image and remain valid for the process lifetime. The PE format does not
+    // require `e_lfanew` to be 4-byte aligned, hence the unaligned reads.
     unsafe {
         let base = bun_windows_sys::kernel32::GetModuleHandleW(ptr::null()) as usize;
-        let e_lfanew = *(base as *const u8).add(0x3C).cast::<u32>() as usize;
+        let e_lfanew = (base as *const u8).add(0x3C).cast::<u32>().read_unaligned() as usize;
         // IMAGE_NT_HEADERS64: Signature(4) + IMAGE_FILE_HEADER(20) +
         // IMAGE_OPTIONAL_HEADER64.SizeOfImage at offset 56.
-        let size_of_image = *(base as *const u8)
+        let size_of_image = (base as *const u8)
             .add(e_lfanew + 4 + 20 + 56)
-            .cast::<u32>() as usize;
+            .cast::<u32>()
+            .read_unaligned() as usize;
         base..base + size_of_image
     }
 }
@@ -1378,6 +1397,14 @@ pub mod rescle {
         Utf16(#[from] bun_core::strings::ToUTF16Error),
     }
 
+    /// SAFETY CONTRACT: `exe_path` MUST point to a NUL-terminated wide path
+    /// that stays alive for the duration of the call; it is handed to the C++
+    /// rescle shim as-is, which reads it up to the NUL.
+    #[allow(
+        clippy::not_unsafe_ptr_arg_deref,
+        reason = "`exe_path` is forwarded untouched to the rescle FFI entry point under the contract \
+                  documented above; the only caller passes a NUL-terminated wide path buffer"
+    )]
     pub fn set_windows_metadata(
         exe_path: *const u16,
         icon: Option<&[u8]>,
@@ -1526,7 +1553,7 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct UpdateStdioModeFlagsOpts {
     pub set: DWORD,
     pub unset: DWORD,
@@ -2054,34 +2081,6 @@ pub(crate) fn FreeEnvironmentStringsW(penv: *mut u16) {
     // SAFETY: penv from GetEnvironmentStringsW
     let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
     debug_assert!(rc != 0);
-}
-
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum GetEnvironmentVariableError {
-    #[error("EnvironmentVariableNotFound")]
-    EnvironmentVariableNotFound,
-    #[error("Unexpected")]
-    Unexpected,
-}
-
-pub fn GetEnvironmentVariableW(
-    lpName: LPWSTR,
-    lpBuffer: *mut u16,
-    nSize: DWORD,
-) -> Result<DWORD, GetEnvironmentVariableError> {
-    // SAFETY: caller provides valid buffer
-    let rc = unsafe { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
-
-    if rc == 0 {
-        match Win32Error::get() {
-            Win32Error::ENVVAR_NOT_FOUND => {
-                return Err(GetEnvironmentVariableError::EnvironmentVariableNotFound);
-            }
-            _ => return Err(GetEnvironmentVariableError::Unexpected),
-        }
-    }
-
-    Ok(rc)
 }
 
 pub mod env;

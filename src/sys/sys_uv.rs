@@ -208,12 +208,13 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
     } else {
         // On Windows `StatFS == uv_statfs_t`, so the libuv result *is* the
         // public type.
-        // SAFETY: libuv guarantees `req.ptr` points to a valid `uv_statfs_t`
-        // on success; the pointer carries no alignment guarantee for `StatFS`,
-        // so read it by value via `read_unaligned`. The value is copied out
-        // *before* `FsReq::drop` runs `uv_fs_req_cleanup` and frees the
-        // backing allocation.
+        // SAFETY: `uv_fs_statfs` succeeded, so `req.ptr` holds the
+        // `uv_statfs_t` it allocated.
         let p = unsafe { req.ptr_as::<StatFS>() };
+        // SAFETY: `p` is valid for reads of one `uv_statfs_t`; it carries no
+        // alignment guarantee for `StatFS`, so read it by value via
+        // `read_unaligned`. The value is copied out *before* `FsReq::drop` runs
+        // `uv_fs_req_cleanup` and frees the backing allocation.
         Result::Ok(unsafe { core::ptr::read_unaligned(p) })
     }
 }
@@ -344,6 +345,8 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
+        // SAFETY: `uv_fs_readlink` succeeded, so `req.ptr` is the link target
+        // it allocated (null-checked below).
         let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() }.cast_mut();
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(

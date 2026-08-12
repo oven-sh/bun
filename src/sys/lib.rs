@@ -1948,6 +1948,8 @@ mod posix_impl {
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let rc = check_p!(
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
+                // a valid NUL-terminated C string.
                 unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
                 Tag::open,
                 path
@@ -2028,6 +2030,7 @@ mod posix_impl {
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let n = check!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
                 Tag::read
             );
@@ -2054,6 +2057,7 @@ mod posix_impl {
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let n = check!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
                 Tag::write
             );
@@ -3961,6 +3965,9 @@ mod windows_impl {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
+        // SAFETY: FFI; the handles are passed by value (a stale `fd` fails with
+        // ERROR_INVALID_HANDLE), `target` is the only out-param and lives
+        // across the call.
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
@@ -3986,6 +3993,8 @@ mod windows_impl {
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = WPathBuffer::default();
+        // SAFETY: FFI; `wbuf` is valid for writes of the `wbuf.len()` u16s
+        // passed as its capacity.
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
@@ -4023,8 +4032,8 @@ mod windows_impl {
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        let mut wf = WPathBuffer::default();
-        let mut wt = WPathBuffer::default();
+        let mut wf = bun_paths::w_path_buffer_pool::get();
+        let mut wt = bun_paths::w_path_buffer_pool::get();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
@@ -4103,7 +4112,7 @@ mod windows_impl {
         if sub.is_empty() || sub == b"." {
             return Ok(());
         }
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
@@ -4178,7 +4187,7 @@ mod windows_impl {
         // makePath (NtCreateFile rejects them anyway).
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
-        let mut z = bun_core::PathBuffer::default();
+        let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
@@ -4194,12 +4203,12 @@ mod windows_impl {
         let src_dir = src_dir.as_fd();
         let dest_dir = dest_dir.as_fd();
         // No native `linkat` on Windows — resolve to absolute and CreateHardLinkW.
-        let mut sb = bun_core::PathBuffer::default();
-        let mut db = bun_core::PathBuffer::default();
+        let mut sb = bun_paths::path_buffer_pool::get();
+        let mut db = bun_paths::path_buffer_pool::get();
         let s = super::get_fd_path(src_dir, &mut sb)?;
         let d = super::get_fd_path(dest_dir, &mut db)?;
-        let mut sj = bun_core::PathBuffer::default();
-        let mut dj = bun_core::PathBuffer::default();
+        let mut sj = bun_paths::path_buffer_pool::get();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let s_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut sj.0,
             &[s, src.as_bytes()],
@@ -4216,9 +4225,9 @@ mod windows_impl {
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(dirfd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, dest.as_bytes()],
@@ -4228,9 +4237,9 @@ mod windows_impl {
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let fd = fd.as_fd();
         // No `readlinkat` on Windows — resolve and call `readlink`.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, path.as_bytes()],
@@ -4239,9 +4248,9 @@ mod windows_impl {
     }
     pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, _flags: i32) -> Maybe<()> {
         let dir = dir.as_fd();
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(dir, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, path.as_bytes()],
@@ -4286,6 +4295,8 @@ mod windows_impl {
         }
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
+        // SAFETY: FFI; `wpath` is the NUL-terminated wide path `to_kernel32_path`
+        // just wrote into `wbuf`, which outlives the call.
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
@@ -4328,6 +4339,9 @@ mod windows_impl {
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
+        // SAFETY: FFI; `cb` is `None`, so libuv runs the request synchronously
+        // and the null loop is only stored in `req`, never dereferenced. `req`
+        // outlives the call (and is cleaned up below), `path` is NUL-terminated.
         let rc = unsafe {
             uv::uv_fs_utime(
                 core::ptr::null_mut(),
@@ -4352,6 +4366,9 @@ mod windows_impl {
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
+        // SAFETY: same as `utimens` above: `cb` is `None` so the call is
+        // synchronous and the null loop is never dereferenced, `req` outlives
+        // the call, `path` is NUL-terminated.
         let rc = unsafe {
             uv::uv_fs_lutime(
                 core::ptr::null_mut(),
@@ -4399,6 +4416,8 @@ mod windows_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // GetFileSizeEx.
         let mut size: i64 = 0;
+        // SAFETY: FFI; the handle is passed by value and `size` is a live
+        // `LARGE_INTEGER`-sized local for the out-param.
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &raw mut size) };
         if ok == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
@@ -4421,6 +4440,8 @@ mod windows_impl {
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
+        // SAFETY: FFI; `fds` is exactly the `[uv_file; 2]` out-array `uv_pipe`
+        // writes, and it lives across the call.
         let rc = unsafe { uv::uv_pipe(&raw mut fds, 0, 0) };
         if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) {
             return Err(err);
@@ -4441,6 +4462,8 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // SetFilePointerEx.
         let mut new: i64 = 0;
+        // SAFETY: FFI; the handle is passed by value and `new` is a live
+        // `LARGE_INTEGER`-sized local for the out-param.
         let ok = unsafe {
             w::SetFilePointerEx(
                 fd.native() as w::HANDLE,
@@ -4472,15 +4495,17 @@ mod windows_impl {
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        // SAFETY: FFI; `wpath` is the NUL-terminated wide path `to_w_dir_path`
+        // just wrote into `wbuf`, which outlives the call.
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let p = super::get_fd_path(fd, &mut buf)?;
-        let mut zb = bun_core::PathBuffer::default();
+        let mut zb = bun_paths::path_buffer_pool::get();
         zb.0[..p.len()].copy_from_slice(p);
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
@@ -4498,6 +4523,9 @@ mod windows_impl {
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
+        // SAFETY: FFI; `len <= buf.len()`, so Winsock writes at most `buf.len()`
+        // bytes into `buf`, which is borrowed for the call. The socket is
+        // passed by value (a bad one fails with WSAENOTSOCK).
         let rc =
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
@@ -4511,6 +4539,9 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
+        // SAFETY: FFI; `len <= buf.len()`, so Winsock reads at most `buf.len()`
+        // bytes from `buf`, which is borrowed for the call. The socket is
+        // passed by value (a bad one fails with WSAENOTSOCK).
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(
@@ -4661,6 +4692,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
+            // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
+            // (ptr, len) pair of layout-compatible iovecs (asserted above).
             let rc = unsafe {
                 libc::pwritev(
                     fd.native(),
@@ -5327,6 +5360,7 @@ pub mod c {
         sbytes: *mut i64,
         flags: c_int,
     ) -> c_int {
+        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
         unsafe { libc::sendfile(fd, s, off, nbytes, hdtr.cast(), sbytes, flags) }
     }
 
@@ -7769,8 +7803,11 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
                 .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
         }
         fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
+        // SAFETY: `kif` is a live local; `addr_of!` only forms the field's
+        // address, it reads nothing.
         let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) }.cast::<u8>();
+        // SAFETY: kernel wrote a NUL-terminated path into kf_path (and `kif`
+        // was zeroed, so an unfilled kf_path is an empty string).
         let len = unsafe { libc::strlen(path_ptr.cast()) };
         // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
         out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
@@ -8812,6 +8849,7 @@ pub mod freebsd {
         nevents: c_int,
         timeout: *const libc::timespec,
     ) -> c_int {
+        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
     }
     /// `copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
@@ -8828,6 +8866,8 @@ pub mod freebsd {
         len: usize,
         flags: u32,
     ) -> libc::ssize_t {
+        // SAFETY: caller contract (`unsafe fn`) — the offset pointers are
+        // forwarded verbatim (null is allowed by the syscall).
         unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
 }
@@ -9128,7 +9168,7 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 }
 
 /// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
-/// paths into stack buffers.
+/// paths into pooled path buffers.
 pub fn renameat_concurrently_a(
     from_dir_fd: Fd,
     from: &[u8],
@@ -9136,15 +9176,15 @@ pub fn renameat_concurrently_a(
     to: &[u8],
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    // Z-terminate both paths into stack buffers.
-    let mut from_buf = bun_paths::PathBuffer::default();
+    // Z-terminate both paths into pooled path buffers.
+    let mut from_buf = bun_paths::path_buffer_pool::get();
     let from_len = from.len().min(from_buf.0.len() - 1);
     from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
     from_buf.0[from_len] = 0;
     // SAFETY: NUL-terminated above.
     let from_z = ZStr::from_buf(&from_buf.0[..], from_len);
 
-    let mut to_buf = bun_paths::PathBuffer::default();
+    let mut to_buf = bun_paths::path_buffer_pool::get();
     let to_len = to.len().min(to_buf.0.len() - 1);
     to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
     to_buf.0[to_len] = 0;

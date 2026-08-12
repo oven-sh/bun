@@ -418,10 +418,8 @@ mod errno_name_tests {
     use super::*;
     use bun_core::coreutils_error_map;
 
-    /// `init` is called with `i64` on purpose: that is the discriminant entry
-    /// point on every target. On Windows `init` is generic and an unsuffixed
-    /// literal picks the `c_int` impl, which maps Win32/libuv codes instead
-    /// (`init_dispatches_on_argument_type` below).
+    /// `i64` is the discriminant entry point on every target; on Windows an
+    /// unsuffixed literal would pick the Win32-code `c_int` impl instead.
     #[test]
     fn errno_mapping() {
         assert_eq!(system_errno_name(2), Some("ENOENT"));
@@ -449,11 +447,8 @@ mod errno_name_tests {
         }
     }
 
-    /// On Windows `init` dispatches on the argument type. `i64` (`from_errno`
-    /// and the shared socket error paths) is a discriminant lookup that only
-    /// falls back to the Win32/WSA table for values that are not discriminants;
-    /// `c_int` (`Bun__errnoName`, libuv results) and `u32` (`GetLastError()`)
-    /// are always mapped. The same number means different things on each path.
+    /// Windows `init` dispatches on the argument type: `i64` is a discriminant
+    /// lookup (WSA table as fallback), `c_int` and `u32` are always mapped.
     #[cfg(windows)]
     #[test]
     fn init_dispatches_on_argument_type() {
@@ -466,8 +461,7 @@ mod errno_name_tests {
         assert_eq!(SystemErrno::init(12_i64), Some(SystemErrno::ENOMEM));
         assert_eq!(SystemErrno::init(12_i32), None);
         assert_eq!(SystemErrno::init(12_u32), None);
-        // WSAEADDRINUSE is not a discriminant, so the i64 path reaches the WSA
-        // table, in either sign (udp bind widens usockets' negated getaddrinfo code).
+        // WSAEADDRINUSE is not a discriminant: i64 falls through to the WSA table, either sign.
         assert_eq!(SystemErrno::init(10048_i64), Some(SystemErrno::EADDRINUSE));
         assert_eq!(SystemErrno::init(-10048_i64), Some(SystemErrno::EADDRINUSE));
         assert_eq!(SystemErrno::init(10048_i32), Some(SystemErrno::EADDRINUSE));

@@ -116,8 +116,6 @@ impl FileRoute {
     }
 
     pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
-        // `memory_cost` reads the estimate this caches; a blob that was never
-        // handed to JS (`AnyRoute::from_options`) arrives without one.
         blob.calculate_estimated_byte_size();
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {

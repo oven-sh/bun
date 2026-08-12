@@ -1914,14 +1914,9 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    /// Called from GC marker threads, so this only reads the estimate
-    /// `output_file_jsc` caches into `blob`.
     pub(crate) fn estimated_size(&self) -> usize {
-        // The blob's estimate includes `size_of::<Blob>()`, which is part of
-        // `size_of::<Self>()`.
-        core::mem::size_of::<Self>() - core::mem::size_of::<Blob>()
-            + self.blob.estimated_size()
-            + self.path.len()
+        let fields_outside_blob = core::mem::size_of::<Self>() - core::mem::size_of::<Blob>();
+        fields_outside_blob + self.blob.estimated_size() + self.path.len()
     }
 
     #[bun_jsc::host_fn(method)]

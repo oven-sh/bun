@@ -133,21 +133,18 @@ impl OutputFileJsc for OutputFile {
             }
         };
 
-        // `BuildArtifact::estimated_size` only reads this cache.
         blob.calculate_estimated_byte_size();
 
-        let build_output = Box::new(BuildArtifact {
-            blob,
-            hash: self.hash,
-            loader: self.input_loader,
-            output_kind: self.output_kind,
-            path,
-        });
-
-        // Ownership transfers to the JS `BuildArtifact` wrapper (`finalize`
-        // reclaims it). Typed `Box`-taking entry point — the leak/from_raw pair
-        // lives once in the `#[js_class]` shim.
-        BuildArtifact::to_js_boxed(build_output, global_object)
+        BuildArtifact::to_js_boxed(
+            Box::new(BuildArtifact {
+                blob,
+                hash: self.hash,
+                loader: self.input_loader,
+                output_kind: self.output_kind,
+                path,
+            }),
+            global_object,
+        )
     }
 
     fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error> {

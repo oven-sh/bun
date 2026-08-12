@@ -911,8 +911,7 @@ pub enum ServePluginsState {
         // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
         dev_server: Option<NonNull<DevServer>>,
     },
-    /// Shared by every build this server runs (`HTMLBundle::Route`, DevServer);
-    /// released when the last `ServePlugins` ref drops.
+    /// Shared by every build this server runs; released with the last `ServePlugins` ref.
     Loaded(JSBundler::OwnedPlugin),
     /// Error information is not stored as it is already reported.
     Err,
@@ -1137,9 +1136,7 @@ impl ServePlugins {
         };
         drop(promise); // Drop on JscStrong releases the slot.
 
-        // Routes and the DevServer hold this pointer without a ref of their own:
-        // the server that owns them holds a counted ref on `self`, and `self`
-        // owns the cell until it drops.
+        // Handed out raw: the server owning the routes/DevServer also holds a ref on `self`.
         let plugin_ptr = plugin.as_non_null();
         self.state = ServePluginsState::Loaded(plugin);
 

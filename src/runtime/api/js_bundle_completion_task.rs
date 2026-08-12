@@ -88,15 +88,12 @@ pub struct JSBundleCompletionTask {
     pub(crate) started_at_ns: u64,
 }
 
-/// The plugin cell a build runs against, and whether this task releases it.
-/// The task drops it wherever it gives up its JS-side state (`deinit`, the
-/// queued branch of `stop_for_vm_teardown`); only `Owned` releases the cell.
+/// The plugin cell a build runs against; only `Owned` releases it (on drop).
 pub(crate) enum BuildPlugins {
     /// `Bun.build({ plugins })`: created for this one build.
     Owned(OwnedPlugin),
-    /// HTML route build: the cell belongs to the server's `ServePlugins`,
-    /// which shares it across every build that server runs (same lifetime
-    /// the route's own server back-reference relies on).
+    /// HTML route build: owned by the server's `ServePlugins`, which outlives
+    /// the build like the route's own server back-reference does.
     Borrowed(NonNull<Plugin>),
 }
 
@@ -149,8 +146,7 @@ impl JSBundleCompletionTask {
         if boxed.poll_ref.is_active() {
             boxed.poll_ref.disable();
         }
-        // Owned fields (`config`, `log`, `result`, `promise`, `plugins`) drop
-        // with the Box; `BuildPlugins::Owned` releases the plugin cell here.
+        // Owned fields (`config`, `log`, `result`, `promise`, `plugins`) drop with the Box.
     }
 }
 
@@ -245,8 +241,7 @@ impl JSBundleCompletionTask {
         Ok(value != JSValue::UNDEFINED)
     }
 
-    /// Mutable borrow of the attached `Plugin`, if any (see [`BuildPlugins`]
-    /// for why the cell is live while the field is `Some`).
+    /// Mutable borrow of the attached `Plugin`, if any.
     #[inline]
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
         self.plugins.as_mut().map(BuildPlugins::plugin_mut)
@@ -622,8 +617,7 @@ impl JSBundleCompletionTask {
                 .is_ok()
             {
                 (*this).poll_ref.disable();
-                // Must happen on this (JS) thread: the bundle thread drops the
-                // rest of `*this` in `free_released_unstarted`.
+                // Released here on the JS thread; the bundle thread drops the rest.
                 (*this).plugins = None;
                 (*this).promise = jsc::JSPromiseStrong::default();
                 let handle = (*this).loop_handle.clone();

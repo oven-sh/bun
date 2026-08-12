@@ -165,6 +165,21 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     }
 }
 
+/// `st_size` as a byte count. `off_t` is signed on unix (a negative size,
+/// which only a misbehaving filesystem reports, clamps to 0); libuv's
+/// `uv_stat_t::st_size` is already `u64`.
+#[inline]
+pub fn stat_size(s: &Stat) -> u64 {
+    #[cfg(unix)]
+    {
+        s.st_size.max(0) as u64
+    }
+    #[cfg(windows)]
+    {
+        s.st_size
+    }
+}
+
 impl PosixStat {
     /// Convert platform-specific bun.Stat to PosixStat
     pub fn init(stat_: &Stat) -> PosixStat {

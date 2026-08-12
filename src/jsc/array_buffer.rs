@@ -243,7 +243,7 @@ impl ArrayBuffer {
             bun_sys::Result::Ok(fstat) => fstat,
         };
 
-        let size = stat.st_size;
+        let size = usize::try_from(bun_sys::stat_size(&stat)).expect("int cast");
 
         if size == 0 {
             fd.close();
@@ -254,10 +254,8 @@ impl ArrayBuffer {
         // It creates a new memory mapping.
         // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
         // So we clone it when it's small.
-        // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
-        if (size as i64) < Self::MMAP_THRESHOLD as i64 {
-            let result =
-                Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
+        if size < Self::MMAP_THRESHOLD {
+            let result = Self::to_js_buffer_from_fd(fd, size, global);
             fd.close();
             return Ok(result);
         }
@@ -268,14 +266,13 @@ impl ArrayBuffer {
         let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
         #[cfg(not(unix))]
         let (prot, map_flags) = (0i32, 0i32);
-        let map_len = usize::try_from(size.max(0)).expect("int cast");
-        let result = bun_sys::mmap(ptr::null_mut(), map_len, prot, map_flags, fd, 0);
+        let result = bun_sys::mmap(ptr::null_mut(), size, prot, map_flags, fd, 0);
         fd.close();
 
         match result {
             bun_sys::Result::Ok(buf) => {
                 // `buf` is a fresh mmap region whose ownership transfers to JSC.
-                Ok(JSBuffer__fromMmap(global, buf.cast(), map_len))
+                Ok(JSBuffer__fromMmap(global, buf.cast(), size))
             }
             bun_sys::Result::Err(err) => {
                 let err_js = err.to_js(global);

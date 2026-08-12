@@ -169,7 +169,7 @@ impl DirectoryRoute {
             }
         };
 
-        let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+        let size = bun_sys::stat_size(&stat);
 
         let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);

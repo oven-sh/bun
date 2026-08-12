@@ -6150,7 +6150,7 @@ fn resolve_file_stat(store: &StoreRef) {
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
+                        bun_sys::stat_size(&stat)
                     } else {
                         MAX_SIZE
                     };
@@ -6165,7 +6165,7 @@ fn resolve_file_stat(store: &StoreRef) {
         PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
             bun_sys::Result::Ok(stat) => {
                 file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
+                    bun_sys::stat_size(&stat)
                 } else {
                     MAX_SIZE
                 };

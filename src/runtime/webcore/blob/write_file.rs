@@ -137,22 +137,6 @@ impl FileOpener for WriteFile {
     ) -> Retry {
         mkdir_if_not_exists(self, &err, path, display_path)
     }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!("WriteFile is POSIX-only; see WriteFileWindows")
-    }
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
-        unreachable!("WriteFile is POSIX-only")
-    }
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
-        unreachable!()
-    }
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
-        unreachable!()
-    }
 }
 
 impl MkdirpTarget for WriteFile {

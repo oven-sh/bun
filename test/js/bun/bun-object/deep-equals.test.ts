@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import util from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -144,24 +145,32 @@ describe("Bun.deepEquals strict mode", () => {
     expect(Bun.deepEquals({ __proto__: null, a: 1 }, { __proto__: null, a: 1, b: undefined })).toBe(true);
   });
 
-  it("compares the prototype a Proxy reports, not the Proxy itself", () => {
-    const nullProto = new Proxy(Object.create(null), {});
+  // node's skipPrototype mode shares this implementation, with every prototype check disabled.
+  it("does not apply the null-prototype rule in skipPrototype mode", () => {
+    const nullProto = Object.assign(Object.create(null), { a: 1 });
+    expect(util.isDeepStrictEqual(nullProto, { a: 1 })).toBe(false);
+    expect(util.isDeepStrictEqual(nullProto, { a: 1 }, true)).toBe(true);
+    expect(util.isDeepStrictEqual({ a: 1 }, nullProto, true)).toBe(true);
+  });
+
+  it("sees through a Proxy to a null-prototype target", () => {
     const plain = new Proxy({}, {});
+    const nullProto = new Proxy(Object.create(null), {});
     expect(Bun.deepEquals(nullProto, new Proxy(Object.create(null), {}), true)).toBe(true);
     expect(Bun.deepEquals(nullProto, plain, true)).toBe(false);
     expect(Bun.deepEquals(plain, nullProto, true)).toBe(false);
+  });
 
-    const err = new Error("getPrototypeOf trap");
-    const throwing = new Proxy(
-      {},
-      {
-        getPrototypeOf() {
-          throw err;
-        },
-      },
-    );
-    expect(() => Bun.deepEquals(throwing, plain, true)).toThrow(err);
-    expect(() => Bun.deepEquals(plain, throwing, true)).toThrow(err);
+  it("uses the prototype a Proxy's getPrototypeOf trap reports, not the target's", () => {
+    const plain = new Proxy({}, {});
+    const nullProto = new Proxy(Object.create(null), {});
+    // Both targets are extensible, so the traps may legally contradict them.
+    const reportsNull = new Proxy({}, { getPrototypeOf: () => null });
+    expect(Bun.deepEquals(reportsNull, plain, true)).toBe(false);
+    expect(Bun.deepEquals(reportsNull, nullProto, true)).toBe(true);
+    const reportsObject = new Proxy(Object.create(null), { getPrototypeOf: () => Object.prototype });
+    expect(Bun.deepEquals(reportsObject, plain, true)).toBe(true);
+    expect(Bun.deepEquals(reportsObject, nullProto, true)).toBe(false);
   });
 });
 

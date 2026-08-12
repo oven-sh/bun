@@ -862,7 +862,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     int err = 0;
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
-        host, (unsigned short) port, flags, &err, ls);
+        host, (unsigned short) port, flags, &err, NULL, ls);
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
 
@@ -1214,12 +1214,12 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     int err = 0;
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
-        "::", 0, 0, &err, ls);
+        "::", 0, 0, &err, NULL, ls);
     if (!ls->udp) {
         err = 0;
         ls->udp = us_create_udp_socket(ctx->loop,
             us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
-            "0.0.0.0", 0, 0, &err, ls);
+            "0.0.0.0", 0, 0, &err, NULL, ls);
     }
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);

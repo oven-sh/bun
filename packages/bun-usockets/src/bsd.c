@@ -1604,9 +1604,12 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
     return 0;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err, int *dns_error) {
     if (err != NULL) {
         *err = 0;
+    }
+    if (dns_error != NULL) {
+        *dns_error = 0;
     }
 
     struct addrinfo hints, *result;
@@ -1621,8 +1624,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 
     int gai_result = getaddrinfo(host, port_string, &hints, &result);
     if (gai_result != 0) {
-        if (err != NULL) {
-            *err = -gai_result;
+        /* An EAI_* code shares its numeric range with errno values (and is negative on
+         * glibc), so it must not go out through `err`. */
+        if (dns_error != NULL) {
+            *dns_error = gai_result;
         }
         return LIBUS_SOCKET_ERROR;
     }

@@ -633,6 +633,7 @@ impl UDPSocket {
             .set(UDPSocketConfig::from_js(global_this, options, this_value)?);
 
         let mut err: c_int = 0;
+        let mut dns_error: c_int = 0;
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
@@ -679,10 +680,10 @@ impl UDPSocket {
                 config.port,
                 config.flags,
                 Some(&mut err),
+                Some(&mut dns_error),
                 this_ptr.cast::<c_void>(),
             )
         };
-        drop(hostname_z);
         this.socket.set(if created.is_null() {
             None
         } else {
@@ -698,6 +699,19 @@ impl UDPSocket {
                 dgram_rollback_adoption(fd, previous);
             }
             this.closed.set(true);
+            // The hostname never resolved: `dns_error` is a raw getaddrinfo(3)
+            // code, not an errno. Report it the way `Bun.connect`/`fetch` do
+            // (`getaddrinfo ENOTFOUND <hostname>`, with `syscall`/`hostname`).
+            if let Some(dns_err) = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+                        dns_err,
+                        b"getaddrinfo",
+                        hostname_z.as_bytes(),
+                    )
+                    .to_error_instance(global_this),
+                ));
+            }
             if err != 0 {
                 let code: &'static str = SystemErrno::init(err as i64)
                     .map(Into::into)

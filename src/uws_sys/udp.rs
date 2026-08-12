@@ -14,6 +14,10 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Socket {
+    /// Returns null on failure. `err` then receives the errno of the failing
+    /// socket call; if `host` itself did not resolve, `dns_error` receives the
+    /// raw getaddrinfo(3) return code instead (map it with
+    /// `c_ares::Error::init_eai`, never as an errno) and `err` stays 0.
     pub fn create(
         loop_: *mut Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
@@ -24,6 +28,7 @@ impl Socket {
         port: c_ushort,
         options: c_int,
         err: Option<&mut c_int>,
+        dns_error: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
         // SAFETY: thin wrapper over us_create_udp_socket; all pointer args are
@@ -39,6 +44,10 @@ impl Socket {
                 port,
                 options,
                 match err {
+                    Some(e) => std::ptr::from_mut::<c_int>(e),
+                    None => core::ptr::null_mut(),
+                },
+                match dns_error {
                     Some(e) => std::ptr::from_mut::<c_int>(e),
                     None => core::ptr::null_mut(),
                 },
@@ -209,6 +218,7 @@ unsafe extern "C" {
         port: c_ushort,
         options: c_int,
         err: *mut c_int,
+        dns_error: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
     fn us_udp_socket_connect(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;

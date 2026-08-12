@@ -234,8 +234,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
 
-/* Creates an UDP socket bound to the hostname and port */
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
+/* Creates an UDP socket bound to the hostname and port. On failure `err` (optional) holds the errno of
+ * the failing socket call; when `host` itself did not resolve, `dns_error` (optional) holds the
+ * getaddrinfo(3) return code and `err` is 0. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err, int *dns_error);
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 

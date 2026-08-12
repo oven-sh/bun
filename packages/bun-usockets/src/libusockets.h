@@ -225,7 +225,9 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
+/* Returns NULL on failure. `err` (optional) then holds the errno of the failing socket call; when `host`
+ * itself did not resolve, `dns_error` (optional) holds the getaddrinfo(3) return code and `err` is 0. */
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, int *dns_error, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 

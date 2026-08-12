@@ -181,6 +181,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     unsigned short port,
     int flags,
     int *err,
+    int *dns_error,
     void *user
 ) {
 
@@ -188,7 +189,7 @@ struct us_udp_socket_t *us_create_udp_socket(
      * drain the error queue; without one it only poisons subsequent sends. */
     if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
     else flags &= ~LIBUS_UDP_LINUX_RECVERR;
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err, dns_error);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }

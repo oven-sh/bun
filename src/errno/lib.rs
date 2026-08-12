@@ -418,8 +418,7 @@ mod errno_name_tests {
     use super::*;
     use bun_core::coreutils_error_map;
 
-    /// `i64` is the discriminant entry point on every target; on Windows an
-    /// unsuffixed literal would pick the Win32-code `c_int` impl instead.
+    // `_i64` matters: on Windows a bare literal selects the Win32-code `c_int` impl of `init`.
     #[test]
     fn errno_mapping() {
         assert_eq!(system_errno_name(2), Some("ENOENT"));
@@ -447,8 +446,6 @@ mod errno_name_tests {
         }
     }
 
-    /// Windows `init` dispatches on the argument type: `i64` is a discriminant
-    /// lookup (WSA table as fallback), `c_int` and `u32` are always mapped.
     #[cfg(windows)]
     #[test]
     fn init_dispatches_on_argument_type() {

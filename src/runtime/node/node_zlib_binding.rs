@@ -243,18 +243,10 @@ pub(crate) trait CompressionStreamImpl:
     // Intrusive refcount.
     fn ref_(&self);
     /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
-    /// `heap::take`) when it hits zero.
-    ///
-    /// Raw-pointer receiver so the destroy path keeps the
-    /// allocation's full write provenance (routing through `&self` and casting
-    /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
-    /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
-    /// `release_unrun`, `finalize`) holds the original `m_ctx` pointer: the GC
-    /// hands it to `finalize`, and `write` posts it (taken from the wrapper via
-    /// `T::from_js`); the bracketed `ref_()`/`deref()` in `write_sync` can never
-    /// hit zero while the JS wrapper's +1 is still live, so its
-    /// `(&T as *const T).cast_mut()` provenance is sufficient (only the
-    /// `Cell<u32>` is touched).
+    /// `heap::take`) when it hits zero. A call that can hit zero must pass the
+    /// wrapper's own `m_ctx` pointer, never a cast `&self` (`finalize` gets it
+    /// from the GC, the write completion from `write`); `write_sync`'s
+    /// bracketed pair cannot hit zero while the wrapper's ref is live.
     ///
     /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
     /// in `constructor()`. After this returns, `*this` may have been freed.
@@ -419,12 +411,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let _ = (in_off, in_len, out_off, out_len);
 
         Self::throw_unless_idle(this, global_this)?;
-        // The pool posts this pointer back and the completion may free through
-        // it (see `deref`), so it is the wrapper's `m_ctx`, not `this` cast. The
-        // thunk downcast `this_value` to produce `this`, so this cannot fail.
-        let this_ptr: *mut T =
+        // The completion may `deref` this to zero, so it is the wrapper's pointer, not `this` cast.
+        let m_ctx: *mut T =
             T::from_js(this_value).expect("write: this_value is not this handle's wrapper");
-        debug_assert!(core::ptr::eq(this_ptr.cast_const(), this));
+        debug_assert!(core::ptr::eq(m_ctx.cast_const(), this));
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
@@ -474,8 +464,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // The task is a field of this JS-owned stream: counted, so the VM waits
         // for it (see `VmHandle::embedded_work_scheduled`).
         this.loop_handle().embedded_work_scheduled();
-        // SAFETY: `this_ptr` is `this`, live for the whole call.
-        WorkPool::schedule(unsafe { T::field_of(this_ptr) });
+        // SAFETY: `m_ctx` is `this`, live for the whole call.
+        WorkPool::schedule(unsafe { T::field_of(m_ctx) });
 
         Ok(JSValue::UNDEFINED)
     }
@@ -483,9 +473,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     // struct-init site in `write` above.
     fn async_job_run_task(task: *mut WorkPoolTask) {
-        // SAFETY: the pool calls back with the pointer `write` scheduled,
-        // `T::field_of` of the `m_ctx` pointer, and the `ref_()` taken there
-        // keeps the stream alive.
+        // SAFETY: `task` is the `T::field_of(m_ctx)` that `write` scheduled;
+        // the `ref_()` taken there keeps the stream alive.
         let this: *mut T = unsafe { T::from_task_ptr(task) };
         Self::async_job_run(this);
     }
@@ -1031,8 +1020,7 @@ macro_rules! __impl_compression_stream {
             }
         }
 
-        // `task` is a `JsCell<WorkPoolTask>`; `JsCell` is `repr(transparent)`,
-        // so the task sits at `offset_of!(task)` like a bare field would.
+        // The field is a `repr(transparent)` `JsCell<WorkPoolTask>`, so its offset is the task's.
         ::bun_threading::intrusive_work_task!($native, task);
 
         /// `T.js.*` — cached-property accessors emitted by

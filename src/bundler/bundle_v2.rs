@@ -1111,26 +1111,15 @@ pub mod bv2_impl {
                     outstanding: Default::default(),
                 }
                 }
-                /// Bundle thread. Hops to the JS thread to call the `onResolve`
-                /// plugin chain, unless the pass is already cancelled (that VM is
-                /// stopping and will never answer): then the request fails here
-                /// and now.
-                ///
-                /// Takes the pointer, not `&mut self`: the same pointer goes into
-                /// `Graph::outstanding_resolves` and into the task, because from
-                /// here on the request is reached through both. The next push
-                /// writes this request's link through the list's pointer and the
-                /// answer comes back through the task's; were those two reborrows
-                /// of a `&mut self`, that write would invalidate the task's
-                /// pointer under the aliasing model (Miri rejects the answer's
-                /// reborrow), and the `&mut self` itself would claim exclusivity
-                /// for a call during which the JS thread may already be writing
-                /// `value`.
+                /// Bundle thread: links the request into the pass and hops to the JS
+                /// thread for the `onResolve` chain (a cancelled pass only links it,
+                /// for `is_done` to fail). Pointer receiver because `this` itself
+                /// has to be what both the list and the task hold; the reasoning is
+                /// in test/internal/source-lints/bundler-plugin-dispatch-raw-request.test.ts.
                 ///
                 /// # Safety
-                /// `this` is an arena slot holding an `init`ed, not yet dispatched
-                /// request, and the caller does not use it afterwards: the pass
-                /// gets it back through the list or the answer.
+                /// `this` is a fresh arena slot holding an `init`ed request, and the
+                /// caller does not use it again.
                 pub(crate) unsafe fn dispatch(this: *mut Self) {
                     // SAFETY: `this` is live (fn contract) and this is the thread
                     // that owns the pass `bv2` (set by `init`) points at; plugins
@@ -1264,9 +1253,7 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Bundle thread. Hops to the JS thread to call the `onLoad`
-                /// plugin chain, unless the pass is already cancelled. Pointer
-                /// receiver for the reason given on `Resolve::dispatch`.
+                /// Bundle thread: as `Resolve::dispatch`, for the `onLoad` chain.
                 ///
                 /// # Safety
                 /// As `Resolve::dispatch`.
@@ -5651,9 +5638,6 @@ pub mod bv2_impl {
                             original_target,
                         },
                     );
-                    // Arena-owned: the slot lives as long as the pass, which
-                    // holds it in `outstanding_resolves` until the JS thread
-                    // answers (or the pass is cancelled).
                     let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
                     // SAFETY: fresh slot, `init`ed above, not used again here.
                     unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
@@ -5694,7 +5678,6 @@ pub mod bv2_impl {
                             original_target: target,
                         },
                     );
-                    // Arena-owned; see `enqueue_on_resolve_plugin_if_needed`.
                     let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
                     // SAFETY: fresh slot, `init`ed above, not used again here.
                     unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
@@ -5755,9 +5738,6 @@ pub mod bv2_impl {
                         bstr::BStr::new(&parse.path.text)
                     );
                     let load = jsc_api::JSBundler::Load::init(self, parse);
-                    // Arena-owned: the slot lives as long as the pass, which
-                    // holds it in `outstanding_loads` until the JS thread
-                    // answers (or the pass is cancelled).
                     let load: *mut jsc_api::JSBundler::Load = self.arena_create(load);
                     // SAFETY: fresh slot, `init`ed above, not used again here.
                     unsafe { jsc_api::JSBundler::Load::dispatch(load) };

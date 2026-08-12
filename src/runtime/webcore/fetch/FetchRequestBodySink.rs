@@ -222,10 +222,8 @@ impl FetchRequestBodySink {
             self.source.clear();
             if let Some(task) = self.task.take() {
                 let err_js = err.map(|e| e.to_js(&task.global_this));
-                // The `+1` taken in `start_request_stream` kept the tasklet
-                // live while `task` was `Some`; `write_end_request` is the
-                // balancing release. It may free the tasklet, and `*self` with
-                // it via `clear_sink`, so do not touch `self` afterwards.
+                // Releases the `start_request_stream` ref; that may free the
+                // tasklet and, through `clear_sink`, `*self`.
                 FetchTasklet::write_end_request(task.as_ptr(), err_js);
             }
             return;

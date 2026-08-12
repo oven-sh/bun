@@ -10,7 +10,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //   T::deref(std::ptr::from_ref(this).cast_mut());
 //   Self::deref_nn(NonNull::from(self));
 //   drop(ScopedRef::adopt(std::ptr::from_mut(self)));
-//   let p = std::ptr::from_mut(self); ... Self::deref(p);
+//   let p = NonNull::from(self); ... Self::deref_nn(p);
 //
 // is banned. A release may be the object's last one, and then the destructor
 // frees the allocation the reference still points at. While the reference is
@@ -76,23 +76,27 @@ const POINTER_FROM_REFERENCE = [
 // rustfmt line break cannot hide it.
 const DIRECT = new RegExp(RELEASE + String.raw`\s*(?:` + POINTER_FROM_REFERENCE + ")", "g");
 
-// `let p = std::ptr::from_mut(self);` / `let p = self as *mut Self;`, whose
-// binding is then released (`deref(p)`) further down the same function. The
+// The same pointer stored first (`let p = std::ptr::from_mut(self);`,
+// `let p = NonNull::from(self);`, ...) and released (`deref(p)`,
+// `deref_nn(p)`, `deref(p.as_ptr())`) further down the same function. The
 // function ends at the next `fn` item; a closure inside it is still the same
 // function for this purpose.
-const SELF_POINTER_BINDING =
-  /let\s+(?:mut\s+)?(\w+)\s*(?::[^=;]*)?=\s*(?:(?:std::|core::)?ptr::from_mut(?:::<[^>]*>)?\(\s*self\s*\)|self\s+as\s+\*mut\b[^;]*)\s*;/g;
+const POINTER_BINDING = new RegExp(
+  String.raw`let\s+(?:mut\s+)?(\w+)\s*(?::[^=;]*)?=\s*(?:` + POINTER_FROM_REFERENCE + String.raw`)[^;]*;`,
+  "g",
+);
 const FN_ITEM = /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s/m;
 
 function releaseOfBinding(name: string): RegExp {
-  return new RegExp(RELEASE + String.raw`\s*` + name + String.raw`\s*[,)]`);
+  // `name` is a `\w+` capture, so it needs no escaping.
+  return new RegExp(RELEASE + String.raw`\s*` + name + String.raw`(?:\.as_ptr\(\))?\s*[,)]`);
 }
 
 /** Byte offsets (into `stripped`) of every banned release in one file. */
 function findReleases(stripped: string): number[] {
   const hits: number[] = [];
   for (const m of stripped.matchAll(DIRECT)) hits.push(m.index);
-  for (const binding of stripped.matchAll(SELF_POINTER_BINDING)) {
+  for (const binding of stripped.matchAll(POINTER_BINDING)) {
     const start = binding.index + binding[0].length;
     const rest = stripped.slice(start);
     const fnEnd = rest.search(FN_ITEM);
@@ -124,8 +128,8 @@ const ALLOW: Record<string, number> = {
   // `finalize(&mut self)`, reached through the generated `JSSink` finalize
   // thunk, releases the wrapper's ref, which is the last one for an idle
   // sink; the second site releases the keep-alive ref while the wrapper's ref
-  // is still held. Needs the thunk to hand over the raw pointer; tracked
-  // separately.
+  // is still held. #37716 converts the thunk and removes both sites: drop
+  // this entry when it lands.
   "src/runtime/webcore/FileSink.rs": 2,
   // Harmless: every `close()` caller releases its own creation ref only after
   // `close()` returns.
@@ -138,6 +142,9 @@ const ALLOW: Record<string, number> = {
   // Harmless: `stmt` is a local reborrow and the queued request holds its own
   // ref on the statement until `release_statement`.
   "src/sql_jsc/postgres/PostgresSQLConnection.rs": 1,
+  // Harmless: `do_run`'s error paths undo the `ref_()` taken a few lines up
+  // while the on-stack JS wrapper holds its own ref.
+  "src/sql_jsc/postgres/PostgresSQLQuery.rs": 1,
 };
 
 const counts: Record<string, number> = {};
@@ -184,8 +191,13 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let this_ptr = std::ptr::from_mut(self);\nif done {\n    FetchTasklet::deref(this_ptr);\n    return;\n}",
     "let this: *mut Self = self as *mut Self;\nSelf::deref(this);",
     "let this = std::ptr::from_mut(self);\nlet _guard = unsafe { ScopedRef::adopt(this) };",
+    "let this = NonNull::from(self);\nSelf::deref_nn(this);",
+    "let this = core::ptr::NonNull::from(self);\nunsafe { T::deref(this.as_ptr()) };",
+    "let p = std::ptr::from_ref::<T>(this).cast_mut();\nunsafe { T::deref(p) };",
+    "let p = &raw mut *self;\nunsafe { RefCount::<Self>::deref(p) };",
   ];
   const allowed = [
+    "let this = NonNull::from(self);\nregister(this);",
     "FetchTasklet::deref_from_thread(task);",
     "let _js_ref = is_done.then(|| unsafe { ScopedRef::adopt(this) });",
     "drop(unsafe { ScopedRef::<FetchTasklet>::adopt(task.as_ptr()) });",

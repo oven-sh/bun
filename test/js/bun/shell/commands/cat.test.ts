@@ -1,8 +1,8 @@
 import type { FileSink } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, writeSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
+import { closeSync, writeSync } from "node:fs";
 
 // On POSIX the shell only runs its own `cat` when this flag is set (see
 // `Kind::DISABLED_ON_POSIX`); otherwise it spawns the system binary. The

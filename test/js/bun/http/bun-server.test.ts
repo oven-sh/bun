@@ -1157,6 +1157,136 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  // The idle sweep (closeIdleConnections() and the graceful stop() pass) picks
+  // its victims over the whole connection list before it closes any of them.
+  // Three idle keep-alive connections are interleaved with two busy ones in
+  // accept order, so the list alternates between sockets the sweep closes and
+  // sockets it must leave alone; every idle one has to go and every busy one
+  // has to survive with its response intact. Over TLS the closes are deferred
+  // (close_notify first, the socket stays in the list until the peer replies),
+  // which is the other shape the second pass has to cope with.
+  async function runMixedSweepFixture(mode: "sweep" | "stop", transport: "tcp" | "tls") {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const tls = require("tls");
+          const { tls: serverTls } = require(${JSON.stringify(require.resolve("harness"))});
+          const mode = ${JSON.stringify(mode)};
+          const transport = ${JSON.stringify(transport)};
+          const release = Promise.withResolvers();
+          let inflight = 0;
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            tls: transport === "tls" ? serverTls : undefined,
+            async fetch(req) {
+              if (new URL(req.url).pathname === "/slow") {
+                inflight++;
+                await release.promise;
+              }
+              return new Response("ok");
+            },
+          });
+          const port = server.port;
+          const tick = () => new Promise(r => setImmediate(r));
+          function dial() {
+            const c = transport === "tls"
+              ? tls.connect({ port, host: "127.0.0.1", ca: serverTls.cert, rejectUnauthorized: false })
+              : net.connect(port, "127.0.0.1");
+            const state = { c, buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            return new Promise((resolve, reject) => {
+              c.on(transport === "tls" ? "secureConnect" : "connect", () => resolve(state));
+              c.on("error", reject);
+            });
+          }
+          const countOks = s => (s.buf.match(/\\r\\nok/g) || []).length;
+          const idle = [];
+          const busy = [];
+          for (let i = 0; i < 3; i++) {
+            const a = await dial();
+            a.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            while (countOks(a) < 1) await tick();
+            idle.push(a);
+            if (i < 2) {
+              const b = await dial();
+              b.c.write("GET /slow HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+              while (inflight < i + 1) await tick();
+              busy.push(b);
+            }
+          }
+
+          let closedFirst;
+          let stopped;
+          if (mode === "sweep") {
+            closedFirst = server.closeIdleConnections();
+          } else {
+            stopped = server.stop(false);
+          }
+          while (!idle.every(s => s.closed)) await tick();
+          const busyClosedBySweep = busy.some(s => s.closed);
+          release.resolve();
+          // The spared connections still deliver their held responses.
+          while (!busy.every(s => countOks(s) === 1)) await tick();
+          let out;
+          if (mode === "sweep") {
+            // One-shot: nothing was marked, so they keep serving; a second
+            // sweep then finds exactly these two idle.
+            for (const b of busy) b.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            while (!busy.every(s => countOks(s) === 2)) await tick();
+            const closedSecond = server.closeIdleConnections();
+            while (!busy.every(s => s.closed)) await tick();
+            out = { closedFirst, busyClosedBySweep, closedSecond };
+            server.stop(true);
+          } else {
+            // Marked close-when-idle by the stop() pass: the server closes each
+            // as its response completes (the clients never hang up), and the
+            // drain promise resolves once the last one is gone.
+            while (!busy.every(s => s.closed)) await tick();
+            await stopped;
+            out = { busyClosedBySweep, drained: true };
+          }
+          console.log(JSON.stringify(out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, out: JSON.parse(stdout.trim() || "null"), exitCode };
+  }
+
+  test("closeIdleConnections() closes every idle connection of an interleaved set and counts them", async () => {
+    expect(await runMixedSweepFixture("sweep", "tcp")).toEqual({
+      stderr: "",
+      out: { closedFirst: 3, busyClosedBySweep: false, closedSecond: 2 },
+      exitCode: 0,
+    });
+  });
+
+  test("closeIdleConnections() over TLS closes every idle connection of an interleaved set and counts them", async () => {
+    expect(await runMixedSweepFixture("sweep", "tls")).toEqual({
+      stderr: "",
+      out: { closedFirst: 3, busyClosedBySweep: false, closedSecond: 2 },
+      exitCode: 0,
+    });
+  });
+
+  test("stop() closes every idle connection of an interleaved set and drains the busy ones afterwards", async () => {
+    expect(await runMixedSweepFixture("stop", "tcp")).toEqual({
+      stderr: "",
+      out: { busyClosedBySweep: false, drained: true },
+      exitCode: 0,
+    });
+  });
+
   test("websocket-only server: a second stop() returns the still-pending promise", async () => {
     // After upgrade() the filter fires -1, so a websocket-only server has
     // active_connection_count == 0 and only the has_active_web_sockets() term

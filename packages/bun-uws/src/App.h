@@ -21,6 +21,7 @@
 #include <string>
 #include <charconv>
 #include <string_view>
+#include <vector>
 
 namespace uWS {
     /* Safari 15.0 - 15.3 has a completely broken compression implementation (client_no_context_takeover not
@@ -402,21 +403,37 @@ public:
      * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
      * Returns the number of connections closed. */
     size_t closeIdle(bool closeWhenIdle = false) {
-        auto *group = httpContext->getSocketGroup();
-        struct us_socket_t *s = group->head_sockets;
-        size_t closed = 0;
-        while (s) {
+        /* Collect first, close afterwards. us_socket_close dispatches
+         * HttpContext::onClose (connection filters, node:http's socket close
+         * hook, onAborted) synchronously, and a handler there may close a
+         * sibling: the very socket a `next` cached across the close would step
+         * onto (see us_socket_group_close_all_ex). This pass runs no handlers,
+         * so following s->next is sound. close_all's group->iterator is not an
+         * option here: the timeout sweep in loop.c owns it while it dispatches,
+         * and a timeout handler (node:http 'timeout', a Bun.serve abort
+         * listener) can call server.closeIdleConnections() from inside that
+         * dispatch; taking it over would cut the rest of that sweep short. */
+        std::vector<us_socket_t *> idle;
+        for (us_socket_t *s = httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
             /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
              * adopted into its own group), so the ext block is an HttpResponseData. */
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-            struct us_socket_t *next = s->next;
             if (data->isIdle) {
-                us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
-                closed++;
+                idle.push_back(s);
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
-            s = next;
+        }
+        size_t closed = 0;
+        for (us_socket_t *s : idle) {
+            /* Closed from inside an earlier close's handler. A closed socket
+             * stays allocated until the end of the loop iteration, so the flag
+             * is still readable. */
+            if (us_socket_is_closed(s)) {
+                continue;
+            }
+            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            closed++;
         }
         return closed;
     }

@@ -314,12 +314,13 @@ impl FetchTasklet {
     /// INVARIANT: every `*mut FetchTasklet` threaded through the HTTP-thread
     /// callback (`callback`), the drain hook (`on_write_request_data_drain` /
     /// `resume_request_data_stream`), the progress hop (`on_progress_update`),
-    /// the request-body release (`write_end_request`), and the JS-thread
-    /// enqueue (`queue` → `node`) was produced by
+    /// the stashes `start_request_stream` makes for `write_end_request`, and
+    /// the JS-thread enqueue (`queue` → `node`) was produced by
     /// `heap::into_raw(Box<FetchTasklet>)` in `get()` and is kept alive by the
-    /// intrusive `ref_count` until `deinit`. Access on either thread is
-    /// serialised: HTTP-thread writes happen under `mutex.lock()` and
-    /// JS-thread access is single-threaded.
+    /// intrusive `ref_count` until `deinit`; `write_end_request`'s in-frame
+    /// callers pass a pointer made from the `&mut` the hop currently holds.
+    /// Access on either thread is serialised: HTTP-thread writes happen under
+    /// `mutex.lock()` and JS-thread access is single-threaded.
     ///
     /// An entry point that owns a ref adopts it into a [`ScopedRef`] before
     /// calling this; the guard (which may free the tasklet) drops after the
@@ -609,7 +610,11 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    fn start_request_stream(&mut self) {
+    /// `this` is the allocation pointer the hop was dispatched with; it is what
+    /// gets stashed past this frame (the sink's back-pointer and the promise
+    /// ctx), so the releases made through those later carry the allocation's
+    /// provenance rather than that of a borrow that has long ended.
+    fn start_request_stream(&mut self, this: *mut FetchTasklet) {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
             self.request_body,
@@ -631,8 +636,8 @@ impl FetchTasklet {
         // assign_to_stream-result side (on_resolve/on_reject or the synchronous
         // Fulfilled/Rejected/undefined branches below), or by the sink's
         // `finalize` as a fallback if that path never runs. The synchronous
-        // branches release it while our caller, the progress hop, still holds
-        // the JS-side ref.
+        // branches release it inside this frame, while our caller, the
+        // progress hop, still holds the JS-side ref; they go through `self`.
         self.ref_();
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
 
@@ -651,10 +656,12 @@ impl FetchTasklet {
             return;
         }
 
-        // `self_ptr` is the live heap tasklet; the +1 above keeps it alive
-        // until `write_end_request`/`finalize` clears `task`.
+        // SAFETY: `this` is this tasklet's allocation pointer (see the fn doc);
+        // the +1 above keeps it live until `write_end_request` / `finalize`
+        // takes `task`.
+        let task = unsafe { bun_ptr::BackRef::from_raw_mut(this) };
         let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
-            task: Some(bun_ptr::BackRef::new_mut(self)),
+            task: Some(task),
             high_water_mark: 16384,
             ..Default::default()
         }));
@@ -709,7 +716,7 @@ impl FetchTasklet {
                     bun_jsc::js_promise::Status::Pending => {
                         assignment_result.then(
                             &global_this,
-                            self_ptr,
+                            this,
                             on_resolve_request_stream_shim,
                             on_reject_request_stream_shim,
                         );
@@ -926,12 +933,17 @@ impl FetchTasklet {
         let is_done = !shared.result.has_more;
         // SAFETY: `this` is live; the final hop owns the JS-side ref.
         let _js_ref = is_done.then(|| unsafe { ScopedRef::adopt(this) });
-        Self::from_raw_mut(this).on_progress_update_locked(is_done)
+        Self::from_raw_mut(this).on_progress_update_locked(this, is_done)
     }
 
     /// Entered with `mutex` held; unlocks it on every path. The caller holds
     /// the JS-side ref throughout, so no release reached from here is the last.
-    fn on_progress_update_locked(&mut self, is_done: bool) -> JsTerminatedResult<()> {
+    /// `this` is only passed on to `start_request_stream` for stashing.
+    fn on_progress_update_locked(
+        &mut self,
+        this: *mut FetchTasklet,
+        is_done: bool,
+    ) -> JsTerminatedResult<()> {
         let vm = self.global_this.bun_vm();
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
@@ -965,7 +977,7 @@ impl FetchTasklet {
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
-            self.start_request_stream();
+            self.start_request_stream(this);
             // Makes wpt-h2 number-chunk test deterministic.
             // `assign_to_stream` kicks off `await reader.read()`; an invalid
             // chunk type (e.g. a JS number) throws inside `sink.write` and lands in

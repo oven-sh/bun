@@ -7,6 +7,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // An intrusive-refcount release applied to a pointer spelled from a reference
 //
 //   FetchTasklet::deref(std::ptr::from_mut(self));
+//   RefCount::<Self>::deref(self);                 // the same, by coercion
 //   T::deref(std::ptr::from_ref(this).cast_mut());
 //   Self::deref_nn(NonNull::from(self));
 //   drop(ScopedRef::adopt(std::ptr::from_mut(self)));
@@ -35,10 +36,21 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // reference is a local reborrow rather than a parameter the release is not UB,
 // but the raw pointer it was made from is in scope; adopt that instead.
 //
-// This lint knows the `deref` family of release names and `ScopedRef::adopt`
-// (`ScopedRef::new` takes its own ref and is balanced, so it is not a release);
-// a release spelled `unref`/`release` is out of its reach. Siblings:
-// fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts.
+// Scope: this is a ratchet over the spellings a grep can see, namely the
+// `deref` family of release names and `ScopedRef::adopt` applied to the
+// receiver spelled as a pointer inline, to the receiver itself (a bare `self`
+// argument to a `*mut` parameter is always a coerced reference; raw-pointer
+// receivers do not exist outside bun_alloc), or to a local bound to one of
+// those. It does not see the same release behind a helper, above all
+// `deref(self.as_ctx_ptr())`, which is how the R-2 `&self` wrappers
+// (Subprocess, sockets, websocket_client, the SQL connections, ...) spell it
+// and which bun_ptr's `AsCtxPtr` doc currently endorses; nor a `&mut`-typed
+// local, a guard (`ScopedRef::new`, `ref_scope`) whose drop happens to be the
+// last release, or a release named `unref`/`release`. Those populations need
+// their own audit; do not read a clean run here as proof that a type is free
+// of the bug. Siblings: self-receiver-reclaim.test.ts (the same shape with a
+// free instead of a release), fn-long-mut-reborrow.test.ts,
+// frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -56,10 +68,11 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// `deref(`, `deref_from_thread(`, `deref_nn(`, `deref_with_context(`,
-// `rc_deref(`, however qualified (`\b` keeps `some_other_deref(` out), and
-// `ScopedRef::adopt(` / `ScopedRef::<T>::adopt(`.
-const RELEASE = String.raw`(?:\b(?:rc_)?deref(?:_from_thread|_nn|_with_context)?|\bScopedRef(?:::<[^>]*>)?::adopt)\(`;
+// A call to `deref(`, `deref_from_thread(`, `deref_nn(`, `deref_with_context(`,
+// `rc_deref(`, however qualified (`\b` keeps `some_other_deref(` out), or to
+// `ScopedRef::adopt(` / `ScopedRef::<T>::adopt(`. The lookbehind keeps the
+// definition `fn deref(self)` of a by-value release from counting as a call.
+const RELEASE = String.raw`(?<!\bfn\s+)(?:\b(?:rc_)?deref(?:_from_thread|_nn|_with_context)?|\bScopedRef(?:::<[^>]*>)?::adopt)\(`;
 
 // A pointer spelled from a reference. `ptr::from_mut` / `ptr::from_ref` only
 // accept references, so any argument counts; the remaining spellings are
@@ -72,17 +85,18 @@ const POINTER_FROM_REFERENCE = [
   String.raw`&raw\s+mut\s+\*\s*self\b`,
 ].join("|");
 
-// Release applied directly to such a pointer. `\s*` between the two so a
-// rustfmt line break cannot hide it.
-const DIRECT = new RegExp(RELEASE + String.raw`\s*(?:` + POINTER_FROM_REFERENCE + ")", "g");
+// Release applied directly to such a pointer, or to `self` itself, which the
+// `*mut` parameter coerces. `\s*` between the two so a rustfmt line break
+// cannot hide it.
+const DIRECT = new RegExp(RELEASE + String.raw`\s*(?:` + POINTER_FROM_REFERENCE + String.raw`|self\s*(?=[,)]))`, "g");
 
 // The same pointer stored first (`let p = std::ptr::from_mut(self);`,
-// `let p = NonNull::from(self);`, ...) and released (`deref(p)`,
-// `deref_nn(p)`, `deref(p.as_ptr())`) further down the same function. The
-// function ends at the next `fn` item; a closure inside it is still the same
-// function for this purpose.
+// `let p = NonNull::from(self);`, `let p: *mut Self = self;`, ...) and
+// released (`deref(p)`, `deref_nn(p)`, `deref(p.as_ptr())`) further down the
+// same function. The function ends at the next `fn` item; a closure inside it
+// is still the same function for this purpose.
 const POINTER_BINDING = new RegExp(
-  String.raw`let\s+(?:mut\s+)?(\w+)\s*(?::[^=;]*)?=\s*(?:` + POINTER_FROM_REFERENCE + String.raw`)[^;]*;`,
+  String.raw`let\s+(?:mut\s+)?(\w+)\s*(?::[^=;]*)?=\s*(?:(?:` + POINTER_FROM_REFERENCE + String.raw`)[^;]*|self\s*);`,
   "g",
 );
 const FN_ITEM = /^[ \t]*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s/m;
@@ -116,6 +130,20 @@ function lineOf(text: string, offset: number): number {
 // harmless (another ref provably outlives the call) or tracked for its own
 // fix. Lower the count when you convert one; do not add entries.
 const ALLOW: Record<string, number> = {
+  // `on_close` releases under a `ref_scope` guard (that guard's own drop is
+  // then the last release, still inside `&mut self`); `maybe_release`'s
+  // close branch releases what can be the last ref. Tracked separately.
+  "src/http/h2_client/ClientSession.rs": 2,
+  // Harmless: `detach` drops a per-stream ref while the session's owner holds
+  // its own.
+  "src/http/h3_client/ClientSession.rs": 1,
+  // `detach_and_deref(&mut self)` can drop the tunnel's last ref. Tracked
+  // separately.
+  "src/http/ProxyTunnel.rs": 1,
+  // `on_reader_done` / `on_reader_error(&mut self)` release the reader's own
+  // ref right after `on_close_io` dropped the owner's, so it frees the reader;
+  // the parent macro has the raw pointer to pass instead. Tracked separately.
+  "src/runtime/api/bun/subprocess/SubprocessPipeReader.rs": 2,
   // Harmless: guarded by `ref_count > 1`; the final release goes through
   // `DeferredDerefTask` precisely because the caller still uses the object.
   "src/runtime/api/html_rewriter.rs": 1,
@@ -125,12 +153,6 @@ const ALLOW: Record<string, number> = {
   // Harmless: every `disarm` caller (`arm`, `finalize`, `deinit`) holds or
   // has already consumed its own ref across the call.
   "src/runtime/valkey_jsc/js_valkey.rs": 1,
-  // `finalize(&mut self)`, reached through the generated `JSSink` finalize
-  // thunk, releases the wrapper's ref, which is the last one for an idle
-  // sink; the second site releases the keep-alive ref while the wrapper's ref
-  // is still held. #37716 converts the thunk and removes both sites: drop
-  // this entry when it lands.
-  "src/runtime/webcore/FileSink.rs": 2,
   // Harmless: every `close()` caller releases its own creation ref only after
   // `close()` returns.
   "src/spawn/process.rs": 1,
@@ -195,9 +217,20 @@ test("the patterns match the banned spellings and nothing else", () => {
     "let this = core::ptr::NonNull::from(self);\nunsafe { T::deref(this.as_ptr()) };",
     "let p = std::ptr::from_ref::<T>(this).cast_mut();\nunsafe { T::deref(p) };",
     "let p = &raw mut *self;\nunsafe { RefCount::<Self>::deref(p) };",
+    "unsafe { RefCount::<Self>::deref(self) };",
+    "unsafe { PipeReader::deref(self) }",
+    "drop(unsafe { ScopedRef::adopt(self) });",
+    "let this: *mut Self = self;\nunsafe { Self::deref(this) };",
   ];
   const allowed = [
     "let this = NonNull::from(self);\nregister(this);",
+    // Not seen, by the scope note at the top; listed so the boundary is explicit.
+    "unsafe { Self::deref(self.as_ctx_ptr()) };",
+    "let x = self.field;\nSelf::deref(x);",
+    "self.deref();",
+    // Definitions of by-value releases, not calls.
+    "pub fn deref(self) {\n    dispatch!(self, (), |_T, ctx| ctx.deref())\n}",
+    "unsafe fn rc_deref(self, ctx: ()) {}",
     "FetchTasklet::deref_from_thread(task);",
     "let _js_ref = is_done.then(|| unsafe { ScopedRef::adopt(this) });",
     "drop(unsafe { ScopedRef::<FetchTasklet>::adopt(task.as_ptr()) });",

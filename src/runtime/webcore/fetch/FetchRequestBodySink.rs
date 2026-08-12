@@ -199,17 +199,39 @@ impl FetchRequestBodySink {
         ))
     }
 
+    /// JS entry (`end_from_js` / the JSSink forwarder). Only JS-pump sinks have
+    /// a JS object, so this only ever reaches the non-releasing branch.
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        self.end_from_stream(err.map(StreamError::Error));
+        Self::end_from_stream(self, err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
 
     /// Native-path terminator called from `SinkHandle::end`. Carries the full
     /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
     /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
-    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
-        if self.ended {
+    ///
+    /// Takes the raw pointer, like `NetworkSink::end_from_stream`: the release
+    /// at the end may free the tasklet and, through `clear_sink`, this sink.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
+        // SAFETY: `this` is the live sink behind the handle; the borrow is
+        // scoped to this call and nothing touches `*this` after it.
+        let Some((task, err_js)) = (unsafe { (*this).end_and_take_task(err) }) else {
             return;
+        };
+        FetchTasklet::write_end_request(task.as_ptr(), err_js);
+    }
+
+    /// Marks the sink ended. For a native source, returns the tasklet ref to
+    /// release (the one `start_request_stream` took) and the error to end it
+    /// with; the JS pump path closes the source instead and its pump promise
+    /// does the releasing.
+    fn end_and_take_task(
+        &mut self,
+        err: Option<StreamError>,
+    ) -> Option<(BackRef<FetchTasklet, bun_ptr::Mut>, Option<JSValue>)> {
+        if self.ended {
+            return None;
         }
         self.ended = true;
         if matches!(
@@ -220,20 +242,16 @@ impl FetchRequestBodySink {
             // field; detach (not cancel) so we don't re-enter the source while
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
-            if let Some(task) = self.task.take() {
-                let err_js = err.map(|e| e.to_js(&task.global_this));
-                // Releases the `start_request_stream` ref; that may free the
-                // tasklet and, through `clear_sink`, `*self`.
-                FetchTasklet::write_end_request(task.as_ptr(), err_js);
-            }
-            return;
+            let task = self.task.take()?;
+            let err_js = err.map(|e| e.to_js(&task.global_this));
+            return Some((task, err_js));
         }
-        // JS pump path: the assign_to_stream result handler is the single balancing release.
         let sys_err = match err {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
         self.source.close(sys_err);
+        None
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

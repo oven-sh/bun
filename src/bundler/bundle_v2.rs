@@ -1092,17 +1092,6 @@ pub mod bv2_impl {
                 /// holds (`Graph::outstanding_resolves`); bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Resolve>,
             }
-            impl Default for Resolve {
-                fn default() -> Self {
-                    Self {
-                    bv2: core::ptr::null_mut(),
-                    import_record: MiniImportRecord::default(),
-                    value: ResolveValue::Pending,
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    outstanding: Default::default(),
-                }
-                }
-            }
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1122,15 +1111,33 @@ pub mod bv2_impl {
                     outstanding: Default::default(),
                 }
                 }
-                /// Hops to the JS thread to call the `onResolve` plugin chain —
-                /// unless the pass is already cancelled (that VM is stopping and
-                /// will never answer): then the request fails here and now.
-                pub(crate) fn dispatch(&mut self) {
-                    // SAFETY: `bv2` is a valid backref set by `init`; plugins is
-                    // Some (asserted by `enqueue_on_js_loop_for_plugins`).
+                /// Bundle thread. Hops to the JS thread to call the `onResolve`
+                /// plugin chain, unless the pass is already cancelled (that VM is
+                /// stopping and will never answer): then the request fails here
+                /// and now.
+                ///
+                /// Takes the pointer, not `&mut self`: the same pointer goes into
+                /// `Graph::outstanding_resolves` and into the task, because from
+                /// here on the request is reached through both. The next push
+                /// writes this request's link through the list's pointer and the
+                /// answer comes back through the task's; were those two reborrows
+                /// of a `&mut self`, that write would invalidate the task's
+                /// pointer under the aliasing model (Miri rejects the answer's
+                /// reborrow), and the `&mut self` itself would claim exclusivity
+                /// for a call during which the JS thread may already be writing
+                /// `value`.
+                ///
+                /// # Safety
+                /// `this` is an arena slot holding an `init`ed, not yet dispatched
+                /// request, and the caller does not use it afterwards: the pass
+                /// gets it back through the list or the answer.
+                pub(crate) unsafe fn dispatch(this: *mut Self) {
+                    // SAFETY: `this` is live (fn contract) and this is the thread
+                    // that owns the pass `bv2` (set by `init`) points at; plugins
+                    // is Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
-                        let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_resolves.push(self);
+                        let bv2 = &mut *(*this).bv2;
+                        bv2.graph.outstanding_resolves.push(this);
                         if bv2.graph.cancelled {
                             // Failed by `is_done` at the loop's top level (not
                             // here, mid-caller); make sure it runs again.
@@ -1138,7 +1145,7 @@ pub mod bv2_impl {
                             return;
                         }
                         let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                            bun_event_loop::Task::init(this),
                         );
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
@@ -1257,14 +1264,17 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Hops to the JS thread to call the `onLoad` plugin chain —
-                /// unless the pass is already cancelled: see `Resolve::dispatch`.
-                pub(crate) fn dispatch(&mut self) {
-                    // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
-                    // by `enqueue_on_js_loop_for_plugins`).
+                /// Bundle thread. Hops to the JS thread to call the `onLoad`
+                /// plugin chain, unless the pass is already cancelled. Pointer
+                /// receiver for the reason given on `Resolve::dispatch`.
+                ///
+                /// # Safety
+                /// As `Resolve::dispatch`.
+                pub(crate) unsafe fn dispatch(this: *mut Self) {
+                    // SAFETY: as `Resolve::dispatch`.
                     unsafe {
-                        let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_loads.push(self);
+                        let bv2 = &mut *(*this).bv2;
+                        bv2.graph.outstanding_loads.push(this);
                         if bv2.graph.cancelled {
                             // Failed by `is_done` at the loop's top level (not
                             // here, mid-caller); make sure it runs again.
@@ -1273,7 +1283,7 @@ pub mod bv2_impl {
                         }
                         let concurrent_task =
                             bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                                bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                                bun_event_loop::Task::init(this),
                             );
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
@@ -5628,13 +5638,7 @@ pub mod bv2_impl {
                     );
                     self.increment_scan_counter();
 
-                    // Arena-owned; the dispatch
-                    // chain holds the raw `*mut Resolve` until the JS thread calls
-                    // back, at which point the bundle pass is still alive.
-                    // SAFETY: arena outlives the bundle pass.
-                    let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
-                    *resolve = jsc_api::JSBundler::Resolve::init(
+                    let resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
                             kind: import_record.kind,
@@ -5647,8 +5651,12 @@ pub mod bv2_impl {
                             original_target,
                         },
                     );
-
-                    resolve.dispatch();
+                    // Arena-owned: the slot lives as long as the pass, which
+                    // holds it in `outstanding_resolves` until the JS thread
+                    // answers (or the pass is cancelled).
+                    let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
+                    // SAFETY: fresh slot, `init`ed above, not used again here.
+                    unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
                     return true;
                 }
             }
@@ -5671,13 +5679,9 @@ pub mod bv2_impl {
                         bstr::BStr::new(entry_point)
                     );
 
-                    // Arena-owned.
-                    // SAFETY: arena outlives the bundle pass.
-                    let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
                     self.increment_scan_counter();
 
-                    *resolve = jsc_api::JSBundler::Resolve::init(
+                    let resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
                             kind: ImportKind::EntryPointBuild,
@@ -5690,8 +5694,10 @@ pub mod bv2_impl {
                             original_target: target,
                         },
                     );
-
-                    resolve.dispatch();
+                    // Arena-owned; see `enqueue_on_resolve_plugin_if_needed`.
+                    let resolve: *mut jsc_api::JSBundler::Resolve = self.arena_create(resolve);
+                    // SAFETY: fresh slot, `init`ed above, not used again here.
+                    unsafe { jsc_api::JSBundler::Resolve::dispatch(resolve) };
                     return true;
                 }
             }
@@ -5748,12 +5754,13 @@ pub mod bv2_impl {
                         bstr::BStr::new(&parse.path.namespace),
                         bstr::BStr::new(&parse.path.text)
                     );
-                    // Arena-owned; the dispatch
-                    // chain holds the raw `*mut Load` until the JS thread calls back.
-                    let load_val = jsc_api::JSBundler::Load::init(self, parse);
-                    // SAFETY: arena outlives the bundle pass.
-                    let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
-                    load.dispatch();
+                    let load = jsc_api::JSBundler::Load::init(self, parse);
+                    // Arena-owned: the slot lives as long as the pass, which
+                    // holds it in `outstanding_loads` until the JS thread
+                    // answers (or the pass is cancelled).
+                    let load: *mut jsc_api::JSBundler::Load = self.arena_create(load);
+                    // SAFETY: fresh slot, `init`ed above, not used again here.
+                    unsafe { jsc_api::JSBundler::Load::dispatch(load) };
                     return true;
                 }
             }

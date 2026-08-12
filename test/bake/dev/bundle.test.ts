@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -863,5 +863,59 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+
+// With `[serve.static] env = "inline"`, DevServer builds its define table from
+// the VM's env map once at startup and keeps it for the life of the server.
+// Assigning a proxy variable on process.env replaces that variable's entry in
+// the env map, so the define must own a copy of the value instead of pointing
+// into the map; otherwise every rebuild of a module that reads the variable
+// inlines freed memory.
+const startupProxy = "http://proxy-at-startup.example:8080/" + Buffer.alloc(120, "a").toString();
+async function clientBundle(dev: Dev) {
+  const html = await dev.fetch("/").text();
+  const scripts = [...html.matchAll(/src="([^"]+\.js)"/g)];
+  expect(scripts).toHaveLength(1);
+  return dev.fetch(scripts[0][1]).text();
+}
+devTest("inlined env var survives a runtime process.env write to a proxy variable", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      env = "inline"
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `console.log("v1", process.env.HTTPS_PROXY);`,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/set-proxy") {
+            process.env.HTTPS_PROXY = "http://changed-at-runtime.example:1/";
+            return new Response("ok");
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  env: { HTTPS_PROXY: startupProxy },
+  async test(dev) {
+    const before = await clientBundle(dev);
+    expect(before).toContain('"v1"');
+    expect(before).toContain(startupProxy);
+
+    await dev.fetch("/set-proxy").equals("ok");
+
+    // Rebuilding index.ts prints the define again, now that the env map entry
+    // it was created from is gone.
+    await dev.write("index.ts", `console.log("v2", process.env.HTTPS_PROXY);`);
+    const after = await clientBundle(dev);
+    expect(after).toContain('"v2"');
+    expect(after).toContain(startupProxy);
+    expect(after).not.toContain("changed-at-runtime");
   },
 });

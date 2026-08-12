@@ -168,6 +168,44 @@ describe("web worker", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A worker's transpiler builds its process.env defines from the worker's env
+  // map when the worker starts. Assigning a proxy variable replaces that map
+  // entry, so a module transpiled afterwards must not read the old entry's
+  // memory. Spawned so the launch value is set without touching this
+  // process's proxy settings.
+  test("worker-env: a module transpiled after the worker assigns HTTPS_PROXY sees a real value", async () => {
+    const launchValue = "http://proxy-at-launch.example:8080/" + Buffer.alloc(120, "a").toString();
+    const workerValue = "http://assigned-in-worker.example:1/" + Buffer.alloc(120, "b").toString();
+    using dir = tempDir("worker-env-proxy-define", {
+      "main.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        worker.onerror = e => { console.error(e.message); process.exit(1); };
+        worker.onmessage = e => {
+          console.log(JSON.stringify(e.data));
+          worker.terminate();
+        };
+      `,
+      "worker.ts": `
+        process.env.HTTPS_PROXY = ${JSON.stringify(workerValue)};
+        const { proxy } = await import("./mod.ts");
+        postMessage(proxy);
+      `,
+      "mod.ts": `export const proxy = process.env.HTTPS_PROXY;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, HTTPS_PROXY: launchValue },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Either value is a correct answer (it depends on whether worker
+    // transpiles inline process.env reads); bytes of a freed map entry are not.
+    expect(JSON.parse(stdout)).toBeOneOf([launchValue, workerValue]);
+    expect(exitCode).toBe(0);
+  });
+
   test("worker-env with a lot of properties", done => {
     const obj: any = {};
 

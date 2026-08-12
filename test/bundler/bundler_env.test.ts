@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -118,3 +119,78 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+// The define table is built from the env map when the build is configured.
+// Assigning one of the proxy variables on process.env (the only process.env
+// writes that reach the native env map) replaces the map entry that define was
+// built from, so the define has to own its value: here that write happens
+// while the build is still running, from a macro and from a plugin.
+const proxyAtStart = "http://proxy-at-start.example:8080/" + Buffer.alloc(120, "a").toString();
+
+describe("bundler/cli", () => {
+  itBundled("env/inline survives macro proxy write", {
+    backend: "cli",
+    dotenv: "inline",
+    env: { HTTPS_PROXY: proxyAtStart },
+    files: {
+      "/a.ts": /* ts */ `
+        import { setProxy } from "./macro.ts" with { type: "macro" };
+        setProxy();
+        console.log(process.env.HTTPS_PROXY);
+      `,
+      "/macro.ts": /* ts */ `
+        export function setProxy() {
+          process.env.HTTPS_PROXY = "http://changed-by-macro.example:1/";
+          return 0;
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(proxyAtStart);
+      api.expectFile("/out.js").not.toContain("changed-by-macro");
+    },
+    run: {
+      env: { HTTPS_PROXY: "http://not-inlined.example:1/" },
+      stdout: proxyAtStart + "\n",
+    },
+  });
+});
+
+describe("bundler/api", () => {
+  test.concurrent("env: inline survives a plugin assigning a proxy variable during the build", async () => {
+    using dir = tempDir("bundler-env-inline-plugin-proxy", {
+      "entry.ts": `export const replaced = "by the plugin";`,
+      "build.ts": /* ts */ `
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          env: "inline",
+          plugins: [{
+            name: "assign-proxy",
+            setup(build) {
+              build.onLoad({ filter: /entry\\.ts$/ }, () => {
+                process.env.HTTPS_PROXY = "http://changed-by-plugin.example:1/";
+                return { loader: "ts", contents: "export const proxy = process.env.HTTPS_PROXY;" };
+              });
+            },
+          }],
+        });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+        process.stdout.write(await result.outputs[0].text());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, HTTPS_PROXY: proxyAtStart },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain(`var proxy = ${JSON.stringify(proxyAtStart)};`);
+    expect(stdout).not.toContain("changed-by-plugin");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

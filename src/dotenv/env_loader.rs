@@ -336,6 +336,7 @@ impl Loader {
     /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
+    /// The returned URL borrows the map entry, which `Map::put` frees.
     pub fn get_http_proxy(
         &self,
         is_http: bool,
@@ -1394,6 +1395,7 @@ impl Map {
         }
     }
 
+    /// Frees the old value; JS hits this via `Bun__setEnvValue`, so don't hold borrows across JS.
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         #[cfg(all(windows, debug_assertions))]

@@ -7623,22 +7623,38 @@ pub fn kevent(
     }
 }
 
+/// Whether `stat` describes a named pipe, i.e. a FIFO vnode (created with
+/// mkfifo and opened by path, or inherited that way), as opposed to a
+/// `pipe(2)` pipe. Both report `S_IFIFO`; a FIFO carries the device number of
+/// the filesystem it lives on, while XNU's `pipe_stat` leaves `st_dev` 0.
+///
+/// Only FIFO vnodes need [`block_until_writable`], and this errs in the
+/// direction that stays correct: a `pipe(2)` pipe taken for a named pipe
+/// merely waits on the calling thread instead of the io thread, whereas a
+/// named pipe taken for a `pipe(2)` pipe would be parked in kqueue and hang.
+/// That is also why it keys off `st_dev` rather than something like
+/// `F_GETPATH`, which can fail for a FIFO that was unlinked after being
+/// opened.
+#[cfg(target_os = "macos")]
+pub fn is_named_pipe(stat: &Stat) -> bool {
+    S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
+}
+
 /// Blocks the calling thread in `select(2)` until a `write(2)` to `fd` would
 /// not block, either because buffer space became available or because the
 /// other end went away, in which case the write that follows reports it
 /// (EPIPE). Retries on EINTR.
 ///
-/// This is how a named pipe (a FIFO vnode, as opposed to a `pipe(2)` pipe)
-/// has to be waited on under macOS. XNU attaches kqueue `EVFILT_WRITE`
-/// filters for a FIFO to its vnode, where they only fire while the pipe has
-/// free space (`vnode_writable_space_count`); the last reader closing posts
-/// nothing to the vnode, and a full pipe nobody reads from never gains free
-/// space again, so a writer parked in kqueue, or in `poll(2)`, which XNU
-/// implements on top of kqueue, waits forever. `select(2)` instead goes
-/// through `fifo_select` to the FIFO's underlying socket, whose writability
-/// includes the `SS_CANTSENDMORE` state that the last reader's close sets.
-/// `pipe(2)` pipes are not affected: their own kqueue filter reports
-/// `EV_EOF`.
+/// This is how a named pipe (see [`is_named_pipe`]) has to be waited on under
+/// macOS. XNU attaches kqueue `EVFILT_WRITE` filters for a FIFO to its vnode,
+/// where they only fire while the pipe has free space
+/// (`vnode_writable_space_count`); the last reader closing posts nothing to
+/// the vnode, and a full pipe nobody reads from never gains free space again,
+/// so a writer parked in kqueue, or in `poll(2)`, which XNU implements on top
+/// of kqueue, waits forever. `select(2)` instead goes through `fifo_select` to
+/// the FIFO's underlying socket, whose writability includes the
+/// `SS_CANTSENDMORE` state that the last reader's close sets. `pipe(2)` pipes
+/// are not affected: their own kqueue filter reports `EV_EOF`.
 #[cfg(target_os = "macos")]
 pub fn block_until_writable(fd: Fd) -> Maybe<()> {
     debug_assert!(fd.is_valid());

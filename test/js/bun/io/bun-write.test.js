@@ -8,6 +8,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -635,6 +636,37 @@ const IS_UV_FS_COPYFILE_DISABLED =
       fifo.closeReader();
 
       expect(await settled).toEqual({ code: "EPIPE", syscall: "write" });
+    });
+
+    // On macOS the wait above is done differently for a FIFO than for a
+    // pipe(2) pipe, whose kqueue filter does see its reader go away, and
+    // Bun.write() tells them apart by fstat: both are FIFOs to it, but only a
+    // pipe(2) pipe reports st_dev 0 (bun_sys::is_named_pipe). The pipe(2) pipe
+    // comes from a shell pipeline; Bun.spawn()'s own stdio pipes are socket
+    // pairs. Linux does not make the distinction (pipes have a device number
+    // there too), which is why the classification is macOS only.
+    it("tells a FIFO from a pipe(2) pipe by st_dev", async () => {
+      using dir = tempDir("bun-write-fifo-st-dev", {});
+      using fifo = openFifo(dir);
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e "$SCRIPT" | cat`],
+        env: {
+          ...bunEnv,
+          BUN: bunExe(),
+          SCRIPT: `const stat = require("fs").fstatSync(1); console.log(JSON.stringify({ isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }));`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stat = fs.fstatSync(fifo.writer);
+
+      expect({ pipe: JSON.parse(stdout), fifo: { isFIFO: stat.isFIFO(), hasDevice: stat.dev !== 0 }, stderr }).toEqual({
+        pipe: { isFIFO: true, hasDevice: !isMacOS },
+        fifo: { isFIFO: true, hasDevice: true },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
     });
   });
 

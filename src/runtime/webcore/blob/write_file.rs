@@ -91,9 +91,10 @@ pub struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
-    /// A FIFO vnode as opposed to a `pipe(2)` pipe. kqueue never reports its
-    /// reader going away, so its waits happen in `bun_sys::block_until_writable`
-    /// on the pool thread instead of going through the io thread.
+    /// The destination is a named pipe (`bun_sys::is_named_pipe`). kqueue never
+    /// reports its reader going away, so its waits happen in
+    /// `bun_sys::block_until_writable` on the pool thread instead of going
+    /// through the io thread.
     #[cfg(target_os = "macos")]
     pub(crate) is_named_pipe: bool,
     pub(crate) close_after_io: bool,
@@ -476,16 +477,11 @@ impl WriteFile {
             false
         };
 
+        // Regular files, the common case, are never stat'ed for this.
         #[cfg(target_os = "macos")]
         {
-            // `pipe(2)` pipes are S_IFIFO too; XNU's pipe_stat leaves their
-            // st_dev 0, whereas a FIFO on a filesystem carries its volume's
-            // device number.
             self.is_named_pipe = self.could_block
-                && matches!(
-                    sys::fstat(fd),
-                    Ok(stat) if bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
-                );
+                && matches!(sys::fstat(fd), Ok(stat) if bun_sys::is_named_pipe(&stat));
         }
 
         // We have never supported offset in Bun.write().

@@ -264,9 +264,11 @@ describe.concurrent("bunshell cp -R of a directory", () => {
   });
 
   // Deep enough that the directory walk overflowed the worker thread's stack
-  // while it still used one stack frame per directory. Skipped on macOS:
-  // PATH_MAX is 1024 there, so a tree this deep cannot be created.
-  test.skipIf(isMacOS)("a tree 1000 directories deep is copied", async () => {
+  // while it still used one stack frame per directory. A tree this deep cannot
+  // be copied on macOS (PATH_MAX is 1024) or on Windows, where the copy creates
+  // its destination paths through MAX_PATH (260 char) limited calls and stops
+  // with ENAMETOOLONG about 100 levels down.
+  test.skipIf(isMacOS || isWindows)("a tree 1000 directories deep is copied", async () => {
     const deepest = Array(1000).fill("a").join("/");
     using dir = setup("deep", work => {
       mkdirSync(join(work, "deep", deepest), { recursive: true });

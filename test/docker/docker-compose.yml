@@ -166,7 +166,7 @@ services:
       # Without a healthcheck `up --wait` returns as soon as the container is
       # running, i.e. before redis-server has bound its ports (same window as
       # squid below, just shorter). ensure() callers connect immediately.
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-e", "ping"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -192,8 +192,11 @@ services:
       - redis-data:/data
     healthcheck:
       # redis-server binds 6379 and the 6380 TLS port in the same step, so a
-      # plain ping covers both listeners.
-      test: ["CMD", "redis-cli", "ping"]
+      # plain ping covers both listeners. -e: /data is a volume with appendonly
+      # on and the ports are bound before the AOF is replayed; without -e
+      # redis-cli exits 0 on the -LOADING error reply and the replay window
+      # would count as healthy.
+      test: ["CMD", "redis-cli", "-e", "ping"]
       interval: 5s
       timeout: 5s
       retries: 30

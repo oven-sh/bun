@@ -8,7 +8,7 @@ use crate::ipc as IPC;
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
-use bun_event_loop::SpawnSyncEventLoop::TickState;
+use bun_event_loop::SpawnSyncEventLoop::{TickState, VmEventLoopHandle};
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
@@ -1063,6 +1063,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
+    // The handle that was current before `prepare()` is kept on this frame
+    // (not in the shared `SpawnSyncEventLoop`) so that a spawnSync nested
+    // inside this one's wait restores the right handle at each level.
+    let mut previous_loop_handle: VmEventLoopHandle = None;
     // For IS_SYNC, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
@@ -1073,7 +1077,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             let sync_loop = (*jsc_vm_ptr)
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr);
-            sync_loop.prepare(jsc_vm_ptr.cast());
+            previous_loop_handle = sync_loop.prepare(jsc_vm_ptr.cast());
             // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
             // (bun_event_loop is below bun_jsc); the accessor returns the
             // concrete `jsc::EventLoop` allocation created via the runtime
@@ -1099,7 +1103,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
+                    .cleanup(jsc_vm_ptr_cleanup.cast(), previous_loop_handle, main_loop.cast());
             }
         }
     }

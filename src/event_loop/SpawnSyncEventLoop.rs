@@ -100,10 +100,6 @@ pub struct SpawnSyncEventLoop {
     // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
 
-    /// On POSIX, we need to temporarily override the VM's event_loop_handle
-    /// Store the original so we can restore it
-    original_event_loop_handle: VmEventLoopHandle,
-
     #[cfg(windows)]
     uv_timer: Option<NonNull<libuv::Timer>>,
     // ALIASING: `Cell` because on Windows the libuv timer callback (`on_uv_timer`) writes this
@@ -162,7 +158,6 @@ impl SpawnSyncEventLoop {
 
         this.write(Self {
             uws_loop: loop_,
-            original_event_loop_handle: None, // overwritten in `prepare`
             #[cfg(windows)]
             uv_timer: None,
             did_timeout: Cell::new(false),
@@ -286,13 +281,26 @@ impl Drop for SpawnSyncEventLoop {
 }
 
 impl SpawnSyncEventLoop {
-    /// Configure the event loop for a specific VM context
-    pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+    /// Configure the event loop for a specific VM context and point the VM's
+    /// event loop handle at this loop. Returns the handle that was current, for
+    /// [`cleanup`](Self::cleanup).
+    ///
+    /// The caller keeps that value rather than this struct: spawnSync can nest
+    /// (a test timing out inside spawnSync makes the test runner carry on with
+    /// the following tests, which may spawnSync again), and both levels share
+    /// the one loop stored in the VM's rare data. A single saved slot here
+    /// would be overwritten by the inner call and leave the VM pointing at this
+    /// loop for good after the outer call returned.
+    #[must_use = "pass this to cleanup() or the VM keeps running on the spawnSync loop"]
+    pub fn prepare(
+        &mut self,
+        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
+    ) -> VmEventLoopHandle {
         __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm);
         self.did_timeout.set(false);
         self.vm = vm;
 
-        self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
+        let previous = __bun_spawn_sync_vm_get_event_loop_handle(vm);
         #[cfg(unix)]
         let new_handle: VmEventLoopHandle = Some(self.uws_loop);
         #[cfg(windows)]
@@ -301,15 +309,18 @@ impl SpawnSyncEventLoop {
                 .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
         );
         __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
+        previous
     }
 
-    /// Restore the original event loop handle after spawnSync completes
+    /// Restore the event loop handle that [`prepare`](Self::prepare) returned
+    /// after spawnSync completes.
     pub fn cleanup(
         &mut self,
-        vm: *mut (),              /* SAFETY: erased *mut VirtualMachine */
+        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
+        previous_handle: VmEventLoopHandle,
         prev_event_loop: *mut (), /* SAFETY: erased *mut jsc::EventLoop */
     ) {
-        __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
+        __bun_spawn_sync_vm_set_event_loop_handle(vm, previous_handle);
         __bun_spawn_sync_vm_set_event_loop(vm, prev_event_loop);
 
         #[cfg(windows)]

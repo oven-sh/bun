@@ -299,6 +299,21 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
+
+    /// The loop whose `num_polls`/`active` this poll is counted in (and whose
+    /// epoll/kqueue fd it is registered with), null while not registered.
+    ///
+    /// Callers hand every register/unregister the loop that is *current*
+    /// (`EventLoopCtx::platform_event_loop`), and `Bun.spawnSync` points that
+    /// at its private loop for the duration of the call. A poll torn down
+    /// while the private loop is current (a GC sweep finalizing a reader, a
+    /// test body run by the test runner's timeout path) must still be
+    /// removed from, and uncounted on, the loop it was registered with:
+    /// decrementing the private loop instead lets its `num_polls` reach 0
+    /// while a child's pidfd is still registered, and `us_loop_run_bun_tick`
+    /// then returns without polling, so that spawnSync spins and never sees
+    /// the child exit.
+    counted_loop: *mut Loop,
 }
 
 #[cfg(not(windows))]
@@ -311,6 +326,7 @@ impl Default for FilePoll {
             generation_number: 0,
             next_to_free: ptr::null_mut(),
             allocator_type: AllocatorType::Js,
+            counted_loop: ptr::null_mut(),
         }
     }
 }
@@ -459,11 +475,32 @@ impl FilePoll {
                 || self.flags.contains(Flags::PollProcess))
     }
 
+    /// The loop a register/unregister must act on: the one this poll is
+    /// already counted on (see `counted_loop`), otherwise the current one the
+    /// caller passed.
+    fn counted_or<'a>(&self, current: &'a mut Loop) -> &'a mut Loop {
+        let counted = self.counted_loop;
+        if counted.is_null() || ptr::eq(counted, current) {
+            return current;
+        }
+        // SAFETY: `counted_loop` is set from a live loop in `activate` and
+        // cleared in `deactivate`; both the thread's loop and spawnSync's
+        // private loop (owned by the VM's RareData) outlive every poll counted
+        // on them. It is a different allocation from `current`, so the two
+        // `&mut` do not alias.
+        unsafe { &mut *counted }
+    }
+
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx
-            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        let count = self.flags.contains(Flags::HasIncrementedActiveCount) as u32;
+        if self.counted_loop.is_null() {
+            event_loop_ctx.loop_sub_active(count);
+        } else {
+            // SAFETY: see `counted_or`.
+            loop_sub_active(unsafe { &mut *self.counted_loop }, count);
+        }
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -474,8 +511,13 @@ impl FilePoll {
             return;
         }
 
-        event_loop_ctx
-            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+        let count = (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32;
+        if self.counted_loop.is_null() {
+            event_loop_ctx.loop_add_active(count);
+        } else {
+            // SAFETY: see `counted_or`.
+            loop_add_active(unsafe { &mut *self.counted_loop }, count);
+        }
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -483,6 +525,7 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(&mut self, loop_: &mut Loop) {
+        let loop_ = self.counted_or(loop_);
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
@@ -494,6 +537,7 @@ impl FilePoll {
         );
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
+        self.counted_loop = ptr::null_mut();
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -504,6 +548,7 @@ impl FilePoll {
             loop_.inc();
         }
         self.flags.insert(Flags::HasIncrementedPollCount);
+        self.counted_loop = loop_;
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
             loop_add_active(
@@ -537,6 +582,7 @@ impl FilePoll {
                 .wrapping_add(1),
             #[cfg(not(all(target_os = "macos", debug_assertions)))]
             generation_number: 0,
+            counted_loop: ptr::null_mut(),
         }
     }
 
@@ -580,7 +626,10 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        {
+            let loop_ = self.counted_or(loop_);
+            return self.register_with_fd_impl(loop_, flag, one_shot, fd);
+        }
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -880,6 +929,7 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        let loop_ = self.counted_or(loop_);
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(

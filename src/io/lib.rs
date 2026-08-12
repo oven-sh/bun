@@ -403,11 +403,6 @@ impl EventLoopCtx {
         self.loop_mut().ref_();
     }
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn loop_unref(&self) {
-        self.loop_mut().unref();
-    }
-    #[inline]
     #[cfg(windows)]
     pub(crate) fn loop_dec(&self) {
         self.loop_mut().dec();

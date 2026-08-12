@@ -4077,9 +4077,13 @@ function buildSensitiveNames(headers, sensitives) {
 }
 
 // Only objects run user code when coerced; primitives keep the native validator's exact errors.
-function coerceHeaderValue(value) {
+function isCoercibleHeaderValue(value) {
   const type = typeof value;
-  return (type === "object" && value !== null) || type === "function" ? `${value}` : value;
+  return (type === "object" && value !== null) || type === "function";
+}
+
+function coerceHeaderValue(value) {
+  return isCoercibleHeaderValue(value) ? `${value}` : value;
 }
 
 // Arrays stay arrays but are always copied: native must not read caller-owned storage.
@@ -4101,17 +4105,18 @@ function toWireHeaders(headers) {
     }
     return list;
   }
-  let wire = null;
   const keys = ObjectKeys(headers);
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
-    const value = headers[key];
-    const wireValue = toWireHeaderValue(value);
-    if (wireValue === value) continue;
-    if (wire === null) wire = { ...headers };
-    wire[key] = wireValue;
+  let i = 0;
+  while (i < keys.length && !isCoercibleHeaderValue(headers[keys[i]])) i++;
+  if (i === keys.length) return headers;
+  // Copied before any coercion runs and coerced in place: nothing a coercion does can reach native.
+  const wire = { ...headers };
+  const wireKeys = ObjectKeys(wire);
+  for (let j = 0; j < wireKeys.length; j++) {
+    const key = wireKeys[j];
+    wire[key] = toWireHeaderValue(wire[key]);
   }
-  return wire === null ? headers : wire;
+  return wire;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {

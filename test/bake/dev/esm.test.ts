@@ -658,6 +658,18 @@ devTest("a module that failed to load fails the same way when it is loaded again
       await 1;
       export const value = "k loaded";
     `,
+    "l.ts": `
+      import "./l-cjs";
+      export const value = "unreachable";
+    `,
+    "l-cjs.ts": `
+      require("./l-async");
+      module.exports = { value: "unreachable" };
+    `,
+    "l-async.ts": `
+      await 1;
+      export const value = "unreachable";
+    `,
     "routes/index.ts": `
       // A synchronous throw and a rejection produce the same result, so this
       // does not depend on which of the two import() reports a failure with.
@@ -720,6 +732,11 @@ devTest("a module that failed to load fails the same way when it is loaded again
           await attempt(() => import("../k")),
           await attempt(() => import("../k-mid")),
         ];
+        results.requireWithCommonJSDepThatFailedToRequire = [
+          await attempt(() => require("../l")),
+          await attempt(() => require("../l")),
+          await attempt(() => import("../l")),
+        ];
         return Response.json(results);
       }
     `,
@@ -766,6 +783,15 @@ devTest("a module that failed to load fails the same way when it is loaded again
         cannotRequire("k-mid.ts", "k-async.ts"),
         kLoaded,
         kLoaded,
+      ],
+      // Like j, but the dependency is CommonJS. A CommonJS module that throws
+      // is evaluated again on its next load rather than recorded as failed, so
+      // the importer is left loadable as well and fails afresh every time,
+      // through import() too (which only has the inner require() name the module).
+      requireWithCommonJSDepThatFailedToRequire: [
+        cannotRequire("l.ts", "l-async.ts"),
+        cannotRequire("l.ts", "l-async.ts"),
+        cannotRequire("l-async.ts", "l-async.ts"),
       ],
     });
   },

@@ -1,0 +1,212 @@
+--- a/crypto/x509/internal.h
++++ b/crypto/x509/internal.h
+@@ -500,6 +500,15 @@ int x509v3_conf_name_matches(const char *name, const char *cmp);
+ OPENSSL_EXPORT int x509v3_looks_like_dns_name(const unsigned char *in,
+                                               size_t len);
+ 
++// x509_check_common_name_constraints returns `X509_V_OK` if `x` has a dNSName
++// subjectAltName, or if every subject commonName of `x` that looks like a host
++// name or wildcard pattern (see `x509v3_looks_like_dns_name`) satisfies the DNS
++// name constraints in `nc`. Otherwise it returns an `X509_V_ERR_*` value
++// describing the violation. This is the counterpart of OpenSSL's
++// `NAME_CONSTRAINTS_check_CN`.
++int x509_check_common_name_constraints(const X509 *x,
++                                       const NAME_CONSTRAINTS *nc);
++
+ // x509v3_cache_extensions fills in a number of fields relating to X.509
+ // extensions in `x`. It returns one on success and zero if some extensions were
+ // invalid.
+--- a/crypto/x509/v3_ncons.cc
++++ b/crypto/x509/v3_ncons.cc
+@@ -796,3 +796,98 @@ int NAME_CONSTRAINTS_check(const X509 *x, const NAME_CONSTRAINTS *nc) {
+ 
+   return X509_V_OK;
+ }
++
++// Besides whole-label wildcards ("*.example.com"), common-name host matching in
++// the style of Node.js's `tls.checkServerIdentity` honours a single partial
++// wildcard in the leftmost label ("w*.example.com"), which
++// `x509v3_looks_like_dns_name` does not recognise. Widen such a label to "*" so
++// the name is recognised and `nc_dns` constrains it like the whole-label
++// wildcard that covers it.
++static void widen_partial_wildcard_label(unsigned char **inout,
++                                         size_t *inout_len) {
++  unsigned char *in = *inout;
++  size_t len = *inout_len;
++  size_t label_len = 0, stars = 0;
++  for (; label_len < len && in[label_len] != '.'; label_len++) {
++    unsigned char c = in[label_len];
++    if (c == '*') {
++      stars++;
++    } else if (!OPENSSL_isalnum(c) && c != '-' && c != '_') {
++      return;
++    }
++  }
++  if (stars != 1 || label_len < 2) {
++    return;
++  }
++  in += label_len - 1;
++  in[0] = '*';
++  *inout = in;
++  *inout_len = len - (label_len - 1);
++}
++
++// OpenSSL's `cn2dnsid` only treats a commonName with at least two labels as a
++// DNS identifier.
++static bool has_inner_dot(const unsigned char *in, size_t len) {
++  if (len > 0 && in[len - 1] == '.') {
++    len--;
++  }
++  return OPENSSL_memchr(in, '.', len) != nullptr;
++}
++
++int bssl::x509_check_common_name_constraints(const X509 *x,
++                                             const NAME_CONSTRAINTS *nc) {
++  const auto *x_impl = FromOpaque(x);
++  for (const GENERAL_NAME *gen : x_impl->altname) {
++    if (gen->type == GEN_DNS) {
++      return X509_V_OK;
++    }
++  }
++
++  const X509_NAME *name = X509_get_subject_name(x);
++  for (int i = -1;;) {
++    i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
++    if (i == -1) {
++      return X509_V_OK;
++    }
++
++    const ASN1_STRING *common_name =
++        X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, i));
++    unsigned char *idval;
++    int idlen = ASN1_STRING_to_UTF8(&idval, common_name);
++    if (idlen < 0) {
++      return X509_V_ERR_OUT_OF_MEM;
++    }
++    UniquePtr<unsigned char> free_idval(idval);
++    unsigned char *dns_id = idval;
++    size_t dns_id_len = (size_t)idlen;
++    while (dns_id_len > 0 && dns_id[dns_id_len - 1] == '\0') {
++      dns_id_len--;
++    }
++    if (OPENSSL_memchr(dns_id, '\0', dns_id_len) != nullptr) {
++      return X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
++    }
++    // On a certificate without a SAN extension this must cover every name
++    // `X509_check_host` may match against the common name, i.e.
++    // `x509v3_looks_like_dns_name`. Next to a SAN extension only Node.js-style
++    // matching consults the common name, and there, as in OpenSSL, a
++    // single-label name is not taken to be a DNS identifier.
++    widen_partial_wildcard_label(&dns_id, &dns_id_len);
++    if (!x509v3_looks_like_dns_name(dns_id, dns_id_len) ||
++        (x_impl->altname != nullptr && !has_inner_dot(dns_id, dns_id_len))) {
++      continue;
++    }
++
++    ASN1_IA5STRING dns_name;
++    dns_name.type = V_ASN1_IA5STRING;
++    dns_name.data = dns_id;
++    dns_name.length = (int)dns_id_len;
++    dns_name.flags = 0;
++    GENERAL_NAME gntmp;
++    gntmp.type = GEN_DNS;
++    gntmp.d.dNSName = &dns_name;
++    int r = nc_match(&gntmp, nc, /*case_insensitive_exclude_localpart=*/false);
++    if (r != X509_V_OK) {
++      return r;
++    }
++  }
++}
+--- a/crypto/x509/x509_vfy.cc
++++ b/crypto/x509/x509_vfy.cc
+@@ -518,35 +518,8 @@ static int check_chain_extensions(X509_STORE_CTX *ctx) {
+   return 1;
+ }
+ 
+-static int reject_dns_name_in_common_name(X509 *x509) {
+-  const X509_NAME *name = X509_get_subject_name(x509);
+-  int i = -1;
+-  for (;;) {
+-    i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
+-    if (i == -1) {
+-      return X509_V_OK;
+-    }
+-
+-    const X509_NAME_ENTRY *entry = X509_NAME_get_entry(name, i);
+-    const ASN1_STRING *common_name = X509_NAME_ENTRY_get_data(entry);
+-    unsigned char *idval;
+-    int idlen = ASN1_STRING_to_UTF8(&idval, common_name);
+-    if (idlen < 0) {
+-      return X509_V_ERR_OUT_OF_MEM;
+-    }
+-    // Only process attributes that look like host names. Note it is
+-    // important that this check be mirrored in `X509_check_host`.
+-    int looks_like_dns = x509v3_looks_like_dns_name(idval, (size_t)idlen);
+-    OPENSSL_free(idval);
+-    if (looks_like_dns) {
+-      return X509_V_ERR_NAME_CONSTRAINTS_WITHOUT_SANS;
+-    }
+-  }
+-}
+-
+ static int check_name_constraints(X509_STORE_CTX *ctx) {
+   int i, j, rv;
+-  int has_name_constraints = 0;
+   // Check name constraints for all certificates
+   for (i = (int)sk_X509_num(ctx->chain) - 1; i >= 0; i--) {
+     X509Impl *x = FromOpaque(sk_X509_value(ctx->chain, i));
+@@ -561,8 +534,16 @@ static int check_name_constraints(X509_STORE_CTX *ctx) {
+     for (j = (int)sk_X509_num(ctx->chain) - 1; j > i; j--) {
+       NAME_CONSTRAINTS *nc = FromOpaque(sk_X509_value(ctx->chain, j))->nc;
+       if (nc) {
+-        has_name_constraints = 1;
+         rv = NAME_CONSTRAINTS_check(x, nc);
++        // Bun matches host names against the subject common name whenever the
++        // leaf has no dNSName SAN (Node.js semantics), not only when it has no
++        // SAN extension as `X509_check_host` does. So, like OpenSSL's
++        // `NAME_CONSTRAINTS_check_CN`, hold host-name-like common names to
++        // the issuer's constraints in exactly that case, instead of upstream's
++        // outright rejection of DNS-like common names on SAN-less leaves.
++        if (rv == X509_V_OK && i == 0) {
++          rv = x509_check_common_name_constraints(x, nc);
++        }
+         switch (rv) {
+           case X509_V_OK:
+             continue;
+@@ -582,36 +563,6 @@ static int check_name_constraints(X509_STORE_CTX *ctx) {
+     }
+   }
+ 
+-  // Name constraints do not match against the common name, but
+-  // `X509_check_host` still implements the legacy behavior where, on
+-  // certificates lacking a SAN list, DNS-like names in the common name are
+-  // checked instead.
+-  //
+-  // While we could apply the name constraints to the common name, name
+-  // constraints are rare enough that can hold such certificates to a higher
+-  // standard. Note this does not make "DNS-like" heuristic failures any
+-  // worse. A decorative common-name misidentified as a DNS name would fail
+-  // the name constraint anyway.
+-  X509Impl *leaf = FromOpaque(sk_X509_value(ctx->chain, 0));
+-  if (has_name_constraints && leaf->altname == nullptr) {
+-    rv = reject_dns_name_in_common_name(leaf);
+-    switch (rv) {
+-      case X509_V_OK:
+-        break;
+-      case X509_V_ERR_OUT_OF_MEM:
+-        ctx->error = rv;
+-        return 0;
+-      default:
+-        ctx->error = rv;
+-        ctx->error_depth = 0;
+-        ctx->current_cert = leaf;
+-        if (!call_verify_cb(0, ctx)) {
+-          return 0;
+-        }
+-        break;
+-    }
+-  }
+-
+   return 1;
+ }
+ 

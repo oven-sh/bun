@@ -36,10 +36,18 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  // require-memory-hooks: upstream mem.cc gates OPENSSL_memory_* weak-symbol
+  // overrides on __ELF__; on Mach-O/COFF the hooks compile to static nullptr
+  // and OPENSSL_malloc goes straight to libc. Declare them as plain externs so
+  // lib.rs binds everywhere.
+  //
+  // name-constraints-common-name: Bun matches host names against the subject
+  // CN whenever a certificate has no DNS subjectAltName (Node.js semantics), so
+  // chain verification applies issuer nameConstraints to DNS-like CNs in that
+  // same case, as OpenSSL's NAME_CONSTRAINTS_check_CN does, instead of
+  // upstream's rule of rejecting DNS-like CNs only on leaves with no
+  // subjectAltName extension at all.
+  patches: ["patches/boringssl/require-memory-hooks.patch", "patches/boringssl/name-constraints-common-name.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

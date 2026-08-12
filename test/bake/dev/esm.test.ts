@@ -440,6 +440,8 @@ devTest("import() of a module that fails to evaluate rejects instead of throwing
       // First import evaluates the module; the second one hits its recorded failure.
       esm: "rejected: boom esm",
       esmAgain: "rejected: boom esm",
+      // CommonJS failures are not recorded: the module is marked stale and the
+      // second import runs its body again, which throws again.
       cjs: "rejected: boom cjs",
       cjsAgain: "rejected: boom cjs",
       // The failure comes from a static dependency of the imported module.

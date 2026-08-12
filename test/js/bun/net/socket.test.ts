@@ -3827,3 +3827,48 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
     expect(endCount).toBe(1);
   });
 });
+
+describe("allowHalfOpen socket shut down after the peer's FIN", () => {
+  // Once end() has been delivered the poll drops readable interest and, with
+  // nothing queued, settles with no events armed. shutdown() must re-arm it so
+  // the fully-closed state is delivered; unfixed, the libuv backend stranded.
+  it("closes when shutdown() runs after the poll has settled", async () => {
+    const ended = Promise.withResolvers<Socket>();
+    const closed = Promise.withResolvers<void>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end: s => ended.resolve(s),
+        error() {},
+        close: () => closed.resolve(),
+      },
+    });
+
+    const peerClosed = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: true,
+      socket: {
+        open: s => s.shutdown(), // FIN
+        data() {},
+        end() {},
+        error() {},
+        close: () => peerClosed.resolve(),
+      },
+    });
+
+    const victim = await ended.promise;
+    // Let the writable side drain and the poll settle before shutting down.
+    for (let i = 0; i < 5; i++) await new Promise<void>(r => setImmediate(r));
+    victim.shutdown();
+    await closed.promise;
+    await peerClosed.promise;
+    peer.end();
+  });
+});

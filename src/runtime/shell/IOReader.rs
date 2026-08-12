@@ -42,11 +42,8 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 struct State {
     fd: Fd,
     buf: Vec<u8>,
+    /// Listeners of the read cycle currently in flight; see `take_readers`.
     readers: Readers,
-    /// The raw `sys::Error`. `SystemError` is not `Clone`
-    /// in the Rust port yet, so we keep the source error to re-derive a fresh
-    /// `SystemError` per callee in `on_reader_done_cb`.
-    raw_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
@@ -127,7 +124,6 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
-                raw_err: None,
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
@@ -198,12 +194,12 @@ impl IOReader {
         #[cfg(not(windows))]
         {
             let r = self.reader();
-            let need_start = match &r.handle {
-                bun_io::pipes::PollOrFd::Closed => true,
-                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
-                bun_io::pipes::PollOrFd::Fd(_) => true,
-            };
-            if need_start {
+            // A finished cycle (EOF or error) leaves the one-shot poll fired
+            // and not re-armed: still `is_registered()`, but it will never
+            // fire again. `has_pending_read()` is false then, so a listener
+            // added after that cycle gets a new one (which reads EOF again on
+            // a pipe, or whatever the fd has to offer now).
+            if !r.has_pending_read() {
                 let fd = self.state().fd;
                 if let Err(e) = r.start(fd, true) {
                     self.on_reader_error(&e);
@@ -295,12 +291,8 @@ impl IOReader {
         // alive across the loop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        let s = self.state();
-        s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
-        let interp = s.interp;
-        for r in readers {
+        let interp = self.state().interp;
+        for r in self.take_readers() {
             // Re-derive a fresh SystemError per callee (see
             // IOWriter.on_error note).
             let ee = err.to_shell_system_error();
@@ -315,17 +307,20 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
-        let interp = s.interp;
-        // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
-        // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —
-        // same approach as `on_reader_error`.
-        let raw_err = s.raw_err.clone();
-        for r in readers {
-            let ee = raw_err.as_ref().map(|e| e.to_shell_system_error());
-            self.run_yield(dispatch_reader_done(r, ee, interp));
+        let interp = self.state().interp;
+        for r in self.take_readers() {
+            self.run_yield(dispatch_reader_done(r, None, interp));
         }
+    }
+
+    /// Detaches the listeners of the cycle that just ended before notifying
+    /// them. Notifying one can synchronously run the rest of the script: a
+    /// `cat` started there registers into the emptied list and restarts the
+    /// reader, so it is notified by its own cycle rather than by this one, and
+    /// nothing stays behind to be notified again by a later cycle under a
+    /// `NodeId` that has been freed or recycled by then.
+    fn take_readers(&self) -> Readers {
+        core::mem::take(&mut self.state().readers)
     }
 
     fn run_yield(&self, y: Yield) {

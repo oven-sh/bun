@@ -15,6 +15,7 @@ use bun_jsc::{
     JsResult, SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
+use bun_ptr::OwnedRef;
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -72,11 +73,6 @@ impl TerminalCreateResult {
     fn term(&self) -> &Terminal {
         self.terminal.get()
     }
-}
-
-#[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
-    core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -1294,7 +1290,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Note: build
     // the struct once with its final field values, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
-    let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
+    let spawn_ref = OwnedRef::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
@@ -1313,9 +1309,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
-        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
-        ref_count: bun_ptr::RefCount::init_exact_refs(2),
+        // The one ref is `spawn_ref`, which this function holds until it
+        // returns (spawnSync: until it tears the Subprocess down). The exit
+        // handler and the JS wrapper take their own refs where they are
+        // installed below.
+        ref_count: bun_ptr::RefCount::init(),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
         flags: Cell::new(if IS_SYNC {
@@ -1342,15 +1340,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
-    }));
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    });
+    // Shared, because the callbacks wired below re-enter the Subprocess before
+    // this function returns (R-2); `spawn_ref` keeps it alive for every use.
+    let subprocess: &SubprocessT<'static> = &spawn_ref;
     #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
-    // Erase the borrow lifetime to 'static for the intrusive back-pointer
-    // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
-    let subprocess_nn: NonNull<SubprocessT<'static>> =
-        NonNull::new(subprocess_ptr.cast()).expect("Box::into_raw returned null");
+    SubprocessT::record_stdio_pipe_ownership(spawn_ref.as_ptr());
+    let subprocess_nn = spawn_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     {
@@ -1373,7 +1369,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 .ipc_data
                 .set(core::ptr::NonNull::new(IPC::SendQueue::new(
                     ipc_mode,
-                    subprocess_ipc_owner(subprocess_ptr),
+                    Some(IPC::SendQueueOwner::Subprocess(subprocess_nn)),
                     IPC::SocketUnion::Uninitialized,
                 )));
         }
@@ -1391,13 +1387,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
-            // ref_count = 2 from the aggregate above, but neither the JS
-            // wrapper nor the process exit handler are wired up yet, so
-            // release both. stdout/stderr are still `.ignore` — close the raw
-            // spawned pipe handles directly since `Readable.init()` will not
-            // run. `finalizeStreams()` here only closes `stdio_pipes` and the
-            // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
-            // no-op.
+            // Neither the JS wrapper nor the process exit handler is wired up
+            // yet, so `spawn_ref` is the only ref and dropping it at the end
+            // of this arm frees the Subprocess. stdout/stderr are still
+            // `.ignore` — close the raw spawned pipe handles directly since
+            // `Readable.init()` will not run. `finalizeStreams()` here only
+            // closes `stdio_pipes` and the pidfd; stdin/stdout/stderr are
+            // `.ignore` so their `closeIO` is a no-op.
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
@@ -1449,8 +1445,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             let mut mb = subprocess.stderr_maxbuf.get();
             MaxBuf::remove_from_subprocess(&mut mb);
             subprocess.stderr_maxbuf.set(mb);
-            subprocess.deref();
-            subprocess.deref();
+            drop(spawn_ref);
             // Note: `Writable::init` returns
             // `crate::Error`. Map non-thrown to OOM.
             if global_this.has_exception() {
@@ -1501,10 +1496,16 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
-    // `process` and outlives it (handler ctx invariant).
+    // The handler holds its own ref, released at the end of
+    // `Subprocess::on_process_exit`, or by `finalize` if it never runs.
+    // SAFETY: `Subprocess` is the type the `Subprocess` variant dispatches to,
+    // and the ref handed over here keeps it live until the handler has run or
+    // been detached.
     subprocess.process_mut().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
+        bun_spawn::ProcessExit::new(
+            bun_spawn::ProcessExitKind::Subprocess,
+            spawn_ref.clone().into_raw(),
+        )
     });
 
     promise_for_stream.ensure_still_alive();
@@ -1557,7 +1558,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     .ipc_data
                     .set(core::ptr::NonNull::new(IPC::SendQueue::new(
                         mode,
-                        subprocess_ipc_owner(subprocess_ptr),
+                        Some(IPC::SendQueueOwner::Subprocess(subprocess_nn)),
                         IPC::SocketUnion::Uninitialized,
                     )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
@@ -1614,33 +1615,29 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     .as_err()
             {
                 let err_js = err.to_js(global_this);
-                subprocess.deref();
+                // `spawn_ref` drops on the way out; the exit handler's ref
+                // keeps the Subprocess alive until the child has been reaped.
                 return Err(global_this.throw_value(err_js));
             }
         }
         ipc_data.write_version_packet(global_this);
     }
 
-    if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // Store the whole-allocation `*mut Subprocess` so Writable::on_close can raw-project stdin.
-        // SAFETY: `subprocess_ptr` is the stable boxed Subprocess; stdin was just confirmed `Pipe`.
-        unsafe {
-            if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
-                (*pipe.as_ptr())
-                    .source
-                    .set(WebCore::streams::SourceHandle::Subprocess(
-                        bun_ptr::BackRef::from_raw(subprocess_ptr.cast::<SubprocessT<'static>>()),
-                    ));
-            }
-        }
+    if let Writable::Pipe(pipe) = subprocess.stdin.get()
+        && promise_for_stream == JSValue::ZERO
+    {
+        Writable::pipe_sink(*pipe)
+            .source
+            .set(WebCore::streams::SourceHandle::Subprocess(
+                bun_ptr::BackRef::new(subprocess),
+            ));
     }
 
     let out = if !IS_SYNC {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
-        // the by-value `JsClass::to_js` (which would re-box).
-        SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
+        // The wrapper gets a ref of its own (released by
+        // `SubprocessClass__finalize`); `spawn_ref` stays with this function,
+        // which keeps using the Subprocess below.
+        SubprocessT::to_js_from_ref(spawn_ref.clone(), global_this)
     } else {
         JSValue::ZERO
     };
@@ -1650,7 +1647,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess.update_has_pending_activity();
     }
 
-    let mut send_exit_notification = false;
+    // Set when `watch()` fails below (the child may already be gone); the
+    // guard after it then delivers the exit on the way out of this function,
+    // once the readers have been started. It carries its own ref rather than
+    // borrowing `spawn_ref`, which the spawnSync tail consumes.
+    let mut deliver_exit: Option<OwnedRef<SubprocessT<'static>>> = None;
 
     if !IS_SYNC {
         // This must go before other things happen so that the exit handler is
@@ -1711,20 +1712,15 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         match subprocess.process_mut().watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
-                send_exit_notification = true;
+                deliver_exit = Some(spawn_ref.clone());
                 lazy = false;
             }
         }
     }
 
-    // Note: reshaped for borrowck — copy `subprocess_ptr` so the
-    // non-`move` `defer!` closure captures a disjoint place from the
-    // `(*subprocess_ptr).abort_signal = …` writes that follow.
-    let subprocess_ptr_exit = subprocess_ptr;
     scopeguard::defer! {
-        if send_exit_notification {
-            // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
+        if let Some(subprocess) = &deliver_exit {
+            let proc = subprocess.process_mut();
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1742,9 +1738,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // the writer's start() throws below, both PipeReaders have taken their
     // start() ref and on_process_exit's later drain is refcount-balanced.
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
-        // captured above) instead of the live `&mut subprocess`, which would
-        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
         Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
@@ -1754,7 +1747,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // Note: see stdout arm above — avoid aliased &mut.
         Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
@@ -1802,14 +1794,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     if let Some(signal) = abort_signal.take() {
         // SAFETY: `signal` is a live *mut AbortSignal carrying the +1 ref taken
         // above; ownership of that ref transfers to `subprocess.abort_signal`.
-        // `add_listener` may synchronously fire `on_abort_signal` (already
-        // aborted), which re-enters via `subprocess_ptr` — write through the
-        // raw pointer so no `&mut Subprocess` is held across the call.
         unsafe {
             (*signal).pending_activity_ref();
-            let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-            (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
+            let _ =
+                (*signal).add_listener(subprocess.as_ctx_ptr().cast(), Subprocess::on_abort_signal);
         }
+        subprocess.abort_signal.set(NonNull::new(signal));
     }
 
     if !IS_SYNC {
@@ -1849,10 +1839,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // SAFETY: see the matching block above.
                 unsafe {
                     (*signal).pending_activity_ref();
-                    let _ =
-                        (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
-                    (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
+                    let _ = (*signal)
+                        .add_listener(subprocess.as_ctx_ptr().cast(), Subprocess::on_abort_signal);
                 }
+                subprocess.abort_signal.set(NonNull::new(signal));
             }
         }
         sys::Result::Err(_) => {
@@ -2016,6 +2006,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         }
     }
+
+    // There is no JS wrapper whose finalizer would tear the Subprocess down
+    // later, so from here on every exit does it, the throwing ones included.
+    let spawn_ref = scopeguard::guard(spawn_ref, SubprocessT::finalize_owned);
+    let subprocess: &SubprocessT<'static> = &spawn_ref;
+
     if global_this.has_exception() {
         // e.g. a termination exception.
         return Ok(JSValue::ZERO);
@@ -2039,10 +2035,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
-    // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
-    // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
-    // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
-    SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
+    // Tears the Subprocess down; nothing below reads it.
+    drop(spawn_ref);
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, b"exitCode", exit_code);

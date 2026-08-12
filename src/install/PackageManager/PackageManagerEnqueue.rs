@@ -1972,17 +1972,9 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // Determinism: passing `version` here lets a peer collapse onto whichever
-    // sibling-appended entry happens to be highest in the index *at this
-    // instant*, which depends on the order the registry's responses arrived
-    // in. The floor guard in `get_package_id` does not cover this case: every
-    // candidate is an exact-pinned same-major sibling. So while peers are
-    // still deferred (`!install_peer`), only an exact `eql(find_result)` may
-    // bind here; anything else falls through to the `is_peer && !install_peer`
-    // defer below and is resolved by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`, once every sibling has been appended.
-    // This includes `*`: it satisfies every sibling, so it is the range most
-    // exposed to arrival order.
+    // A peer that is still deferred may only reuse an exact match: which
+    // siblings exist at this point depends on response arrival order, so the
+    // range match waits for the `install_peer` pass, when all of them exist.
     let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,

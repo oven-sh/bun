@@ -8,35 +8,34 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // operation, and the code has to say so in both places it can be got wrong.
 //
 // A `MiniEventLoop` (bundler, shell, install, `bun run` script threads) is
-// owned by the thread that ticks it. Other threads post to it through the two
+// owned by the thread that ticks it. Other threads (work-pool completions via
+// `ConcurrentPoster::post_mini`, the process waiter thread, the bundler's parse
+// workers and plugin host thread) post to it through the two
 // `enqueue_task_concurrent*` fns, whose bodies are an MPSC push plus a wakeup
-// and so need only `&self`. Declaring them on `&mut self` does not make the
-// push any safer; it forces every cross-thread poster to mint a `&mut` to a
-// loop whose owner is inside `tick*` holding its own `&mut` at that moment.
-// That is the aliasing the JS loop already avoids (`VmHandle::post` forms
-// `&EventLoop` and uses `concurrent_tasks.push(&self)`), and it was how this
-// tree looked until the receivers were flipped:
-//
-//   - `ConcurrentPoster::post_mini` (work-pool completions for fs.cp, shell
-//     builtins, password hashing, zlib) and the process waiter thread posted
-//     through `unsafe { backref.get_mut() }.enqueue_task_concurrent(..)`;
-//   - `LinkerContext::any_loop_mut` handed `&mut AnyEventLoop` to every parse
-//     worker and to the plugin host's JS thread, concurrently with each other
-//     and with the bundle thread ticking the loop.
+// and so need only `&self`, which is also how the JS loop is posted to
+// (`VmHandle::post` forms `&EventLoop`). Declaring them on `&mut self` does not
+// make the push any safer; it forces every poster to mint a `&mut` to a loop
+// whose owner is inside `tick*` holding its own `&mut` at that moment, which is
+// what the posters did until the receivers were flipped, either directly
+// (`unsafe { backref.get_mut() }.enqueue_task_concurrent(..)`) or through an
+// accessor (below).
 //
 // Two checks, because fixing one side does not keep the other fixed:
 //
-//   1. the entry points in src/event_loop/ take `&self` (a `&mut self` here
-//      would force every poster back onto the `&mut` path);
+//   1. the entry points take `&self` (a `&mut self` here would force every
+//      poster back onto the `&mut` path);
 //   2. no call site reaches an entry point through `get_mut()` /
 //      `assume_mut()` (against a `&self` receiver that still compiles, and
 //      silently reintroduces the cross-thread `&mut`). The right spelling is
 //      the safe `BackRef` / `ParentRef` deref.
 //
-// Waking a loop (the `wakeup` receivers, one layer down) is the other half of
-// this and is out of scope here. Sibling guards: fn-long-mut-reborrow.test.ts
-// (the same aliasing, formed on the owning thread by re-entrant callbacks),
-// frozen-nonnull-reborrow.test.ts.
+// Not covered: a poster that gets its `&mut` from an accessor instead, which is
+// how the bundler's sites used to look (`LinkerContext::any_loop_mut` returning
+// `&mut AnyEventLoop`); those are held to `&` only by `LinkerContext::any_loop`'s
+// return type. Waking a loop (the `wakeup` receivers, one layer down) is the
+// other half of this and is out of scope here. Sibling guards:
+// fn-long-mut-reborrow.test.ts (the same aliasing, formed on the owning thread
+// by re-entrant callbacks), frozen-nonnull-reborrow.test.ts.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -54,8 +53,8 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// The cross-thread posting entry points of the loops defined under
-// src/event_loop/. Group 1 is the fn name, group 2 the receiver.
+// `MiniEventLoop`'s posting entry points (the only `enqueue_task_concurrent*`
+// definitions under src/event_loop/). Group 1 is the fn name, group 2 the receiver.
 const ENTRY_POINT_DIR = "src/event_loop/";
 const ENTRY_POINT =
   /\bfn\s+(enqueue_task_concurrent_with_extra_ctx|enqueue_task_concurrent)\b(?:<[^>]*>)?\s*\(\s*(&\s*mut\s+self|&\s*self)\b/g;
@@ -104,17 +103,17 @@ test("scans a non-empty set of tracked Rust sources", () => {
   expect(scanned).toBeGreaterThan(0);
 });
 
-test("the pattern still recognizes the event loops' posting entry points", () => {
+test("the pattern still recognizes MiniEventLoop's posting entry points", () => {
   // If this shrinks, the entry points were renamed or moved and the regex /
   // directory above need updating, not the assertions below.
   const names = new Set(entryPoints.map(e => e.slice(e.indexOf(": fn ") + 5, e.indexOf("("))));
   expect([...names].sort()).toEqual(["enqueue_task_concurrent", "enqueue_task_concurrent_with_extra_ctx"]);
 });
 
-test("event loop enqueue_task_concurrent* take &self", () => {
+test("MiniEventLoop::enqueue_task_concurrent* take &self", () => {
   expect(mutReceivers).toEqual([]);
 });
 
-test("no call site posts to an event loop through get_mut()/assume_mut()", () => {
+test("no call site posts to a MiniEventLoop through get_mut()/assume_mut()", () => {
   expect(postsThroughMut).toEqual([]);
 });

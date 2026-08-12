@@ -586,11 +586,12 @@ const _: () = assert!(State::Open as u8 == 0);
 
 // ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
 //
-// fs.cp (also used by the shell), shell builtins, password hashing, zlib run
-// on the work pool for whichever loop created them. For the JS case the
-// completion goes through the VM's handle; a MiniEventLoop (bundler / shell /
-// install threads) is owned by its thread and outlives the work it schedules,
-// so its concurrent queue is posted to directly, as before.
+// fs.cp (also behind the shell's `cp`) and the shell's pool-backed builtins
+// (`ShellTask`, the async states) run on the work pool for whichever loop
+// created them. For the JS case the completion goes through the VM's handle; a
+// MiniEventLoop (a shell running without a VM, e.g. `bun run` package scripts
+// or `bun exec`) is owned by its thread and outlives the work it schedules, so
+// its concurrent queue is posted to directly.
 
 /// Where an off-thread completion goes: a JS VM (through its handle) or a
 /// mini event loop. Captured on the owning thread when the work is created.
